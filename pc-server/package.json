@@ -1,0 +1,14 @@
+{
+  "name": "rikkahub-pc-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run server.ts --dev",
+    "start": "bun run server.ts",
+    "smoke:request-chain": "bun run scripts/request-chain-smoke.ts",
+    "compile": "bun build --compile --target=bun-windows-x64 server.ts --outfile ../dist/rikkahub-pc.exe"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.4"
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Rikkahub",
+  "version": "1.0.0",
+  "identifier": "com.rikkahub.pc",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:8080",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../build/client"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Rikkahub",
+        "url": "http://localhost:8080",
+        "width": 1280,
+        "height": 840,
+        "minWidth": 880,
+        "minHeight": 560,
+        "decorations": false,
+        "transparent": false,
+        "shadow": true,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "dragDropEnabled": false,
+        "windowEffects": {
+          "effects": ["mica"],
+          "state": "active"
+        }
+      }
+    ],
+    "security": {
+      "csp": null,
+      "dangerousDisableAssetCspModification": true
+    },
+    "withGlobalTauri": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "yuh-G",
+    "homepage": "https://github.com/yuh-G/rikkahub-pc",
+    "category": "Productivity",
+    "copyright": "© 2026 yuh-G. Based on RikkaHub by @re-ovo.",
+    "shortDescription": "Native Windows LLM chat client.",
+    "longDescription": "Rikkahub is a native Windows LLM chat client that supports multiple AI providers (OpenAI, Anthropic, Google), MCP tools, web search across 17 services, image generation, and local model support via Ollama / LM Studio.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../icons/": "icons/",
+      "../build/client/": "web-ui/build/client/"
+    },
+    "externalBin": ["binaries/rikkahub-server"],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "displayLanguageSelector": false,
+        "languages": ["SimpChinese", "English"],
+        "installMode": "currentUser",
+        "installerHooks": "nsis/installer-hooks.nsh",
+        "template": "nsis/installer.template.nsi",
+        "compression": "lzma",
+        "installerIcon": "icons/icon.ico"
+      }
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}

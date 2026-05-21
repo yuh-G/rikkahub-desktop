@@ -1,0 +1,29 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Main window capabilities — titlebar controls, data dir picker, OS info.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://localhost:8080/*", "http://127.0.0.1:8080/*"]
+  },
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-unminimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-is-maximized",
+    "core:window:allow-is-minimized",
+    "core:window:allow-set-title",
+    "core:webview:allow-internal-toggle-devtools",
+    "shell:allow-open",
+    "dialog:allow-open",
+    "fs:default",
+    "os:allow-platform",
+    "os:allow-version",
+    "process:allow-restart"
+  ]
+}
