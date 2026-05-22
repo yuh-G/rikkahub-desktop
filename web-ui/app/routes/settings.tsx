@@ -30,6 +30,8 @@ import {
   Trash2,
   Upload,
   UserRound,
+  Volume2,
+  Square,
   WandSparkles,
 } from "lucide-react";
 import { Link } from "react-router";
@@ -67,6 +69,7 @@ import api, { appendWebAuthQuery } from "~/services/api";
 import { useSettingsStore } from "~/stores/app-store";
 import type { AsrProviderProfile, AsrProviderType, AssistantAvatar, AssistantProfile, ProviderModel, ProviderProfile, SearchServiceOption, Settings, TtsProviderProfile, TtsProviderType } from "~/types";
 import { ModelEditDialog } from "~/components/model-edit-dialog";
+import { playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
 
 type Section = "general" | "providers" | "models" | "assistants" | "search" | "mcp" | "speech" | "data" | "stats" | "logs" | "proxy" | "about" | "plan";
 type ProviderKind = "openai" | "claude" | "google";
@@ -2713,6 +2716,50 @@ function createTtsProvider(type: TtsProviderType = "system"): TtsProviderProfile
   };
 }
 
+// Voice option lists per provider type. These mirror the curated dropdowns in Android's
+// `TTSProviderConfigure.kt` — using `<Select>` (vs free-text `<Input>`) prevents typos
+// that would otherwise cause silent 400/422 from the provider with no UI feedback.
+// Lists are taken verbatim from the Android source as of v2.2.5.
+const TTS_VOICES_OPENAI = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"] as const;
+const TTS_VOICES_GROQ = ["austin", "natalie", "kailin"] as const;
+const TTS_VOICES_QWEN = [
+  "Cherry", "Serene", "Ethan", "Chelsie",
+  "Momo", "Vivian", "Moon", "Maia", "Kai",
+  "Nofish", "Bella", "Jennifer", "Ryan",
+  "Katerina", "Aiden", "Eldric Sage", "Mia",
+  "Mochi", "Bellona", "Vincent", "Bunny",
+  "Neil", "Elias", "Arthur", "Nini",
+] as const;
+const TTS_VOICES_XAI = ["eve", "ara", "rex", "sal", "leo"] as const;
+const TTS_VOICES_MINIMAX = [
+  "male-qn-qingse", "male-qn-jingying", "male-qn-badao", "male-qn-daxuesheng",
+  "female-shaonv", "female-yujie", "female-chengshu", "female-tianmei",
+  "audiobook_male_1", "audiobook_female_1", "cartoon_pig",
+] as const;
+const TTS_EMOTIONS_MINIMAX = ["calm", "happy", "sad", "angry", "fearful", "disgusted", "surprised"] as const;
+const TTS_LANGUAGE_TYPES_QWEN = ["Auto", "Chinese", "English", "Japanese", "Korean"] as const;
+const TTS_LANGUAGES_XAI: { value: string; label: string }[] = [
+  { value: "auto", label: "Auto-detect" },
+  { value: "en", label: "English" },
+  { value: "zh", label: "Chinese (Simplified)" },
+  { value: "ja", label: "Japanese" },
+  { value: "ko", label: "Korean" },
+  { value: "fr", label: "French" },
+  { value: "de", label: "German" },
+  { value: "es-ES", label: "Spanish (Spain)" },
+  { value: "es-MX", label: "Spanish (Mexico)" },
+  { value: "pt-BR", label: "Portuguese (Brazil)" },
+  { value: "pt-PT", label: "Portuguese (Portugal)" },
+  { value: "it", label: "Italian" },
+  { value: "ru", label: "Russian" },
+  { value: "ar-EG", label: "Arabic (Egypt)" },
+  { value: "hi", label: "Hindi" },
+  { value: "tr", label: "Turkish" },
+  { value: "vi", label: "Vietnamese" },
+  { value: "id", label: "Indonesian" },
+  { value: "bn", label: "Bengali" },
+];
+
 function TtsSettingsPanel({ settings, onSettings }: { settings: Settings; onSettings: (settings: Settings) => void }) {
   const providers = settings.ttsProviders ?? [];
   const [selectedId, setSelectedId] = React.useState(settings.selectedTTSProviderId ?? providers[0]?.id ?? "");
@@ -2766,6 +2813,41 @@ function TtsSettingsPanel({ settings, onSettings }: { settings: Settings; onSett
     onSettings({ ...settings, ttsProviders, selectedTTSProviderId: settings.selectedTTSProviderId === draft.id ? ttsProviders[0]?.id ?? null : settings.selectedTTSProviderId });
     setSelectedId(ttsProviders[0]?.id ?? "");
   }, [draft, onSettings, providers, settings]);
+
+  // Test playback uses the global audio singleton with a synthetic key so the test button
+  // can toggle (play vs stop) and so that starting the test stops any in-progress chat
+  // message playback. The key embeds the draft id so multiple settings panels (if ever
+  // mounted) don't collide.
+  const testPlaybackKey = draft ? `__tts-test__:${draft.id}` : "__tts-test__";
+  const playingKey = useAudioPlaybackKey();
+  const isTestPlaying = playingKey === testPlaybackKey;
+
+  const handleTest = React.useCallback(async () => {
+    if (!draft) return;
+    if (isTestPlaying) {
+      stopAudio();
+      return;
+    }
+    try {
+      // The backend's `tts/speech` endpoint accepts a `providerId` override — this is
+      // critical so the test fires against the provider being edited, not the globally
+      // selected one (which may be a different provider entirely). The draft must be
+      // already saved for this to work; patchDraft auto-saves on every keystroke so
+      // by the time the user clicks test the latest config is persisted server-side.
+      const response = await api.postBlob("tts/speech", { text: "这是一段测试语音，用于验证当前 TTS 配置是否生效。", providerId: draft.id });
+      const contentType = response.headers.get("Content-Type") ?? "";
+      if (contentType.includes("application/json")) {
+        // System TTS path — Windows is speaking on-device; nothing for us to play.
+        toast.success("已通过 Windows 系统语音播报测试文本");
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      await playAudio(testPlaybackKey, url, url);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "TTS 测试失败");
+    }
+  }, [draft, isTestPlaying, testPlaybackKey]);
 
   const numericInput = (key: keyof TtsProviderProfile, label: string, description: string, min: number, max: number, step = 0.05) => {
     if (!draft) return null;
@@ -2841,6 +2923,10 @@ function TtsSettingsPanel({ settings, onSettings }: { settings: Settings; onSett
               <div className="text-sm text-muted-foreground">消息下方语音播报会调用当前 provider，并写入请求日志。</div>
             </div>
             <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => void handleTest()} title="使用当前配置朗读一段测试文本">
+                {isTestPlaying ? <Square className="size-4" /> : <Volume2 className="size-4" />}
+                {isTestPlaying ? "停止" : "测试"}
+              </Button>
               <Button variant={draft.id === settings.selectedTTSProviderId ? "secondary" : "outline"} onClick={() => void selectProvider(draft.id)}>
                 {draft.id === settings.selectedTTSProviderId ? "已选择" : "设为当前"}
               </Button>
@@ -2879,13 +2965,88 @@ function TtsSettingsPanel({ settings, onSettings }: { settings: Settings; onSett
                     <Input value={draft.voiceName ?? ""} onChange={(event) => patchDraft({ voiceName: event.target.value })} />
                   </div>
                 ) : null}
-                {draft.type === "minimax" || draft.type === "xai" ? (
+                {draft.type === "minimax" ? (() => {
+                  const voiceId = draft.voiceId ?? "";
+                  const isPreset = (TTS_VOICES_MINIMAX as readonly string[]).includes(voiceId);
+                  // Dropdown value: shows the matched preset, or our `__custom__` sentinel
+                  // when voiceId is empty / a custom-trained value not in the preset list.
+                  // The sentinel is needed because Radix Select reserves "" — we can't use
+                  // the empty string as an option value directly.
+                  const dropdownValue = isPreset ? voiceId : "__custom__";
+                  return (
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Voice ID</div>
+                      {/* Preset-first combobox: dropdown is the primary control on the left;
+                          a free-text Input appears on the right ONLY when the user picks
+                          "自定义". MiniMax's voice cloning produces opaque voice IDs that
+                          aren't in our preset list, so users need to be able to paste them.
+                          Matches Android's `ExposedDropdownMenuBox` UX
+                          (`TTSProviderConfigure.kt:382-431`) where the editable text field
+                          appears once a custom voice is in use. */}
+                      <div className="flex gap-2">
+                        <Select
+                          value={dropdownValue}
+                          onValueChange={(value) => {
+                            if (value === "__custom__") {
+                              // Switching from a preset to "custom" — wipe the voiceId so
+                              // the input starts empty and the user is prompted to fill it.
+                              // If we're already in custom mode (just re-selected "自定义"),
+                              // leave the existing custom voiceId alone.
+                              if (isPreset) patchDraft({ voiceId: "" });
+                            } else {
+                              patchDraft({ voiceId: value });
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="flex-1"><SelectValue placeholder="选择声音" /></SelectTrigger>
+                          <SelectContent>
+                            {TTS_VOICES_MINIMAX.map((voice) => (
+                              <SelectItem key={voice} value={voice}>{voice}</SelectItem>
+                            ))}
+                            <SelectItem value="__custom__">自定义...</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {dropdownValue === "__custom__" ? (
+                          <Input
+                            className="flex-1"
+                            value={voiceId}
+                            onChange={(event) => patchDraft({ voiceId: event.target.value })}
+                            placeholder="填入自定义 voice_id"
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })() : null}
+                {draft.type === "xai" ? (
                   <div className="space-y-2">
                     <div className="text-sm font-medium">Voice ID</div>
-                    <Input value={draft.voiceId ?? ""} onChange={(event) => patchDraft({ voiceId: event.target.value })} />
+                    <Select value={draft.voiceId ?? ""} onValueChange={(value) => patchDraft({ voiceId: value })}>
+                      <SelectTrigger><SelectValue placeholder="选择声音" /></SelectTrigger>
+                      <SelectContent>
+                        {TTS_VOICES_XAI.map((voice) => (
+                          <SelectItem key={voice} value={voice}>{voice}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 ) : null}
-                {draft.type === "openai" || draft.type === "qwen" || draft.type === "groq" || draft.type === "mimo" ? (
+                {draft.type === "openai" || draft.type === "qwen" || draft.type === "groq" ? (
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium">Voice</div>
+                    <Select value={draft.voice ?? ""} onValueChange={(value) => patchDraft({ voice: value })}>
+                      <SelectTrigger><SelectValue placeholder="选择声音" /></SelectTrigger>
+                      <SelectContent>
+                        {(draft.type === "openai" ? TTS_VOICES_OPENAI : draft.type === "qwen" ? TTS_VOICES_QWEN : TTS_VOICES_GROQ).map((voice) => (
+                          <SelectItem key={voice} value={voice}>{voice}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : null}
+                {draft.type === "mimo" ? (
+                  // Android keeps `mimo` voice as a free-text input — the provider exposes
+                  // an open-ended voice catalog (custom-trained voice IDs), not a fixed list.
                   <div className="space-y-2">
                     <div className="text-sm font-medium">Voice</div>
                     <Input value={draft.voice ?? ""} onChange={(event) => patchDraft({ voice: event.target.value })} />
@@ -2894,20 +3055,52 @@ function TtsSettingsPanel({ settings, onSettings }: { settings: Settings; onSett
                 {draft.type === "qwen" ? (
                   <div className="space-y-2">
                     <div className="text-sm font-medium">Language Type</div>
-                    <Input value={draft.languageType ?? ""} onChange={(event) => patchDraft({ languageType: event.target.value })} />
+                    <Select value={draft.languageType ?? "Auto"} onValueChange={(value) => patchDraft({ languageType: value })}>
+                      <SelectTrigger><SelectValue placeholder="选择语种" /></SelectTrigger>
+                      <SelectContent>
+                        {TTS_LANGUAGE_TYPES_QWEN.map((lang) => (
+                          <SelectItem key={lang} value={lang}>{lang}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 ) : null}
                 {draft.type === "xai" ? (
                   <div className="space-y-2">
                     <div className="text-sm font-medium">Language</div>
-                    <Input value={draft.language ?? ""} onChange={(event) => patchDraft({ language: event.target.value })} />
+                    <Select value={draft.language ?? "auto"} onValueChange={(value) => patchDraft({ language: value })}>
+                      <SelectTrigger><SelectValue placeholder="选择语言" /></SelectTrigger>
+                      <SelectContent>
+                        {TTS_LANGUAGES_XAI.map((lang) => (
+                          <SelectItem key={lang.value} value={lang.value}>{lang.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 ) : null}
                 {draft.type === "minimax" ? (
                   <>
                     <div className="space-y-2">
                       <div className="text-sm font-medium">Emotion</div>
-                      <Input value={draft.emotion ?? ""} onChange={(event) => patchDraft({ emotion: event.target.value })} />
+                      {/* "自动" maps to empty string in the persisted state, which the server
+                          uses as a signal to drop the `emotion` field entirely from the
+                          MiniMax request (letting MiniMax pick based on text). We can't
+                          actually USE `""` as a Radix `<SelectItem value>` — Radix reserves
+                          empty string — so we route it through a `__auto__` sentinel and
+                          convert at the boundary. The stored data stays clean (empty string),
+                          only the UI uses the sentinel. */}
+                      <Select
+                        value={(draft.emotion ?? "") === "" ? "__auto__" : draft.emotion}
+                        onValueChange={(value) => patchDraft({ emotion: value === "__auto__" ? "" : value })}
+                      >
+                        <SelectTrigger><SelectValue placeholder="选择情感" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__auto__">自动（由 MiniMax 决定）</SelectItem>
+                          {TTS_EMOTIONS_MINIMAX.map((emotion) => (
+                            <SelectItem key={emotion} value={emotion}>{emotion}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="md:col-span-2">{numericInput("speed", "Speed", "MiniMax 语速。", 0.5, 2, 0.05)}</div>
                   </>
@@ -5104,7 +5297,7 @@ function AboutSection() {
   // Hard-coded current version — must match pc-server/server.ts:APP_VERSION and
   // web-ui/src-tauri/tauri.conf.json:version. The update checker compares this against
   // the latest GitHub release.
-  const APP_VERSION = "1.0.2";
+  const APP_VERSION = "1.0.3";
 
   type UpdateInfo = {
     current: string;

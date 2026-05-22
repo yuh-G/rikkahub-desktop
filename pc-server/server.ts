@@ -380,7 +380,7 @@ const statePath = join(dataDir, "state.json");
 // MUST be kept in sync with web-ui/src-tauri/tauri.conf.json's `version` field. The update
 // checker compares this against the latest GitHub release tag and the version is also shown
 // verbatim in the About page. If you bump tauri.conf.json's version, bump this too.
-const APP_VERSION = "1.0.2";
+const APP_VERSION = "1.0.3";
 
 /** Compare two dotted-version strings. Returns -1/0/1 like `a - b`. Tolerates "v" prefix,
  *  missing patch parts (treated as 0), and non-numeric trailing labels (compared as strings). */
@@ -960,7 +960,10 @@ function defaultTtsProvider(type: TtsProvider["type"] = "system"): TtsProvider {
       baseUrl: "https://api.minimaxi.com/v1",
       model: "speech-2.6-turbo",
       voiceId: "female-shaonv",
-      emotion: "calm",
+      // Empty string == "自动" in the UI dropdown == omit the `emotion` field entirely from
+      // the request body so MiniMax picks an emotion based on the text. Switching the default
+      // from "calm" to auto matches Android's default behavior on the Kotlin side.
+      emotion: "",
       speed: 1,
     };
   }
@@ -5943,7 +5946,14 @@ function providerTestPayload(providerItem: Provider, mode: "non_stream" | "strea
   if (mode === "stream" && hostOfProvider(providerItem) !== "api.mistral.ai") body.stream_options = { include_usage: true };
   if (mode === "tools") {
     body.tools = [{ type: "function", function: { name: "get_current_time", description: "Get the current date and time.", parameters: { type: "object", properties: {} } } }];
-    body.tool_choice = { type: "function", function: { name: "get_current_time" } };
+    // Use `"auto"` to match the live request path (server.ts:6476) and the Android client
+    // (which never sets tool_choice at all — same as auto by default). The previous shape
+    // `{ type: "function", function: { name: ... } }` is the OpenAI "force this specific
+    // function" format; Deepseek's API doesn't reliably emit standard tool_calls deltas
+    // for that form when streaming, so the test would falsely fail. The user prompt
+    // ("Use the get_current_time tool.") is explicit enough that any well-behaved model
+    // will call the tool under "auto" mode.
+    body.tool_choice = "auto";
   }
   return { url: endpointFor(providerItem), body };
 }
@@ -8743,17 +8753,22 @@ async function generateSpeechWithTtsProvider(text: string, providerId?: string) 
     };
   } else if (provider.type === "minimax") {
     endpoint = `${provider.baseUrl.replace(/\/+$/, "")}/t2a_v2`;
+    // MiniMax's `emotion` is a soft-optional field: when omitted entirely from the request,
+    // MiniMax auto-selects an emotion based on the text content. The UI exposes this as the
+    // "自动" option (stored as empty string). We must NOT send `emotion: ""` — that's
+    // rejected — we have to drop the field entirely. Hence the conditional spread.
+    const voiceSetting: Record<string, JsonValue> = {
+      voice_id: provider.voiceId || "female-shaonv",
+      speed: Number(provider.speed ?? 1),
+    };
+    if (provider.emotion) voiceSetting.emotion = provider.emotion;
     body = {
       model: provider.model || "speech-2.6-turbo",
       text,
       stream: true,
       output_format: "hex",
       stream_options: { exclude_aggregated_audio: true },
-      voice_setting: {
-        voice_id: provider.voiceId || "female-shaonv",
-        emotion: provider.emotion || "calm",
-        speed: Number(provider.speed ?? 1),
-      },
+      voice_setting: voiceSetting,
     };
     parseAudio = async (response) => collectSseAudio(response, (data) => {
       if (data === "[DONE]") return null;

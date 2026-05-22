@@ -40,6 +40,7 @@ import { copyTextToClipboard } from "~/lib/clipboard";
 import { convertMessageToMarkdown, downloadMarkdown } from "~/lib/export-markdown";
 import { openExternal } from "~/lib/external-link";
 import { cn } from "~/lib/utils";
+import { getAudioPlaybackKey, playAudio, playSpeechSynthesis, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
 import { Button } from "~/components/ui/button";
 import api from "~/services/api";
 import {
@@ -119,9 +120,11 @@ function providerModelIdForMessageModel(
 function formatPartForCopy(part: UIMessagePart, t: TFunction): string | null {
   switch (part.type) {
     case "text":
-      return part.text;
+      return stripThinkTags(part.text);
     case "image":
       return `[${t("chat_message.copy_image")}] ${part.url}`;
+      // Media references are kept in copy output because the user may want the URL/filename
+      // to paste into a doc; speech output skips them via buildSpeechText.
     case "video":
       return `[${t("chat_message.copy_video")}] ${part.url}`;
     case "audio":
@@ -129,17 +132,54 @@ function formatPartForCopy(part: UIMessagePart, t: TFunction): string | null {
     case "document":
       return `[${t("chat_message.copy_document")}] ${part.fileName}`;
     case "reasoning":
-      return part.reasoning;
+      // Thinking chain is the model's internal scratchpad — never useful in a copy/paste.
+      // Returning null means buildCopyText.filter drops it.
+      return null;
     case "tool":
-      return `[${t("chat_message.copy_tool")}] ${part.toolName}`;
+      // Tool calls (web search, calculator, etc.) are conversation machinery, not body
+      // content. The model's answer that follows is what the user wants to copy.
+      return null;
     case "loading":
       return null;
   }
 }
 
+/**
+ * Some upstream models stream inline `<think>...</think>` reasoning instead of using a
+ * separate `reasoning` part. The PC `ThinkTagTransformer` should normally extract those
+ * before they reach a text part, but stale conversations may still contain raw think
+ * tags. Strip them here so they never leak into copy or speech output.
+ */
+function stripThinkTags(text: string): string {
+  return text
+    .replace(/<think\b[^>]*>[\s\S]*?<\/think\s*>/gi, "")
+    // Open tag with no close (truncated stream): drop everything from the open onward.
+    .replace(/<think\b[^>]*>[\s\S]*$/i, "")
+    .trim();
+}
+
 function buildCopyText(parts: UIMessagePart[], t: TFunction): string {
   return parts
     .map((part) => formatPartForCopy(part, t))
+    .filter((value): value is string => Boolean(value && value.trim().length > 0))
+    .join("\n\n")
+    .trim();
+}
+
+/**
+ * Like `buildCopyText`, but stricter — only `text` parts, no media references. Tailored
+ * for TTS playback. Skips:
+ *   - `reasoning` (思维链): users want the answer, not the model's internal scratchpad.
+ *   - `tool` (网络搜索 / 工具调用): tool-name placeholders aren't useful spoken aloud.
+ *   - Media references (`image` / `video` / `audio` / `document`): URLs are noise when
+ *     read aloud (TTS engines turn "https://..." into a string of letters).
+ *   - Inline `<think>` blocks: defense in depth in case a model streamed thinking inline.
+ *
+ * Matches Android's `message.toText()` behavior used by the chat-screen TTS button.
+ */
+function buildSpeechText(parts: UIMessagePart[]): string {
+  return parts
+    .map((part) => (part.type === "text" ? stripThinkTags(part.text) : null))
     .filter((value): value is string => Boolean(value && value.trim().length > 0))
     .join("\n\n")
     .trim();
@@ -384,14 +424,16 @@ const ChatMessageActionsRow = React.memo(({
   const { t } = useTranslation("message");
   const [regenerating, setRegenerating] = React.useState(false);
   const [translating, setTranslating] = React.useState(false);
-  const [speaking, setSpeaking] = React.useState(false);
+  // `speaking` is now derived from the global audio singleton — comparing against this
+  // message's id. Previously this was a local boolean and each message kept its own
+  // `audioRef`, which let users start multiple message playbacks in parallel.
+  const playingKey = useAudioPlaybackKey();
+  const speaking = playingKey === message.id;
   const [switchingBranch, setSwitchingBranch] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
   const [forking, setForking] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
   const copyTimerRef = React.useRef<number | null>(null);
-  const audioRef = React.useRef<HTMLAudioElement | null>(null);
-  const audioUrlRef = React.useRef<string | null>(null);
 
   const handleCopy = React.useCallback(async () => {
     const text = buildCopyText(message.parts, t);
@@ -468,60 +510,52 @@ const ChatMessageActionsRow = React.memo(({
     }
   }, [message.id, onFork]);
 
-  const stopSpeaking = React.useCallback(() => {
-    audioRef.current?.pause();
-    audioRef.current = null;
-    if (audioUrlRef.current) {
-      URL.revokeObjectURL(audioUrlRef.current);
-      audioUrlRef.current = null;
-    }
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-    }
-    setSpeaking(false);
-  }, []);
-
-  React.useEffect(() => () => stopSpeaking(), [stopSpeaking]);
+  // When THIS row unmounts, only stop playback if WE were the active speaker. With a
+  // virtualized list this fires whenever the message scrolls out of view; calling
+  // stopAudio() unconditionally would interrupt unrelated playback (e.g. user scrolled
+  // away while message A is being read aloud). We read the latest playback key via
+  // getAudioPlaybackKey() at cleanup time rather than relying on the captured
+  // `playingKey` — the captured value is stale (set when the effect was created, not
+  // when the cleanup fires).
+  React.useEffect(() => {
+    return () => {
+      if (getAudioPlaybackKey() === message.id) stopAudio();
+    };
+  }, [message.id]);
 
   const handleSpeak = React.useCallback(async () => {
+    // Toggle: if THIS message is currently playing, stop everything and bail.
     if (speaking) {
-      stopSpeaking();
+      stopAudio();
       return;
     }
-    const text = buildCopyText(message.parts, t);
+    // buildSpeechText (not buildCopyText) so the reasoning chain is skipped — users want to
+    // hear the answer, not the model's internal scratchpad.
+    const text = buildSpeechText(message.parts);
     if (!text) return;
-    setSpeaking(true);
     try {
       const response = await api.postBlob("tts/speech", { text });
       const contentType = response.headers.get("Content-Type") ?? "";
       if (contentType.includes("application/json")) {
-        setSpeaking(false);
+        // System TTS path: Windows is already speaking on-device, no audio bytes returned.
+        // We can't get a "speech ended" signal from the server, so we don't even claim
+        // this message is playing — that would leave the stop icon stuck on screen.
         return;
       }
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
-      audioUrlRef.current = url;
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      audio.onended = stopSpeaking;
-      audio.onerror = () => {
-        toast.error("语音播放失败");
-        stopSpeaking();
-      };
-      await audio.play();
+      // playAudio stops any other in-flight playback first (singleton guarantee) and
+      // takes ownership of the blob URL lifecycle.
+      await playAudio(message.id, url, url);
     } catch (error) {
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.onend = () => setSpeaking(false);
-        utterance.onerror = () => setSpeaking(false);
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(utterance);
-      } else {
-        setSpeaking(false);
+      // Fall back to the browser's built-in SpeechSynthesis API — covers the case
+      // where the user has no TTS provider configured / online provider is unreachable.
+      const fallback = playSpeechSynthesis(message.id, text);
+      if (!fallback) {
         toast.error(error instanceof Error ? error.message : "语音播报失败");
       }
     }
-  }, [message.parts, speaking, stopSpeaking, t]);
+  }, [message.id, message.parts, speaking]);
 
   const handleTranslate = React.useCallback(async () => {
     if (!onTranslate || translating) return;
