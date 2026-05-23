@@ -343,10 +343,10 @@
 
         <div class="feat-card bg-[#0a0a0f] p-7 hover:bg-white/[0.02]">
           <div class="inline-flex size-10 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-300">
-            <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
           </div>
-          <h3 data-i18n="feat4.title" class="mt-5 text-lg font-semibold">多模态输入</h3>
-          <p data-i18n="feat4.body" class="mt-2 text-sm text-zinc-500 leading-relaxed">图片、PDF、DOCX、纯文本拖入即用。模型不支持的格式自动转文本。</p>
+          <h3 data-i18n="feat4.title" class="mt-5 text-lg font-semibold">世界书 · 提示词注入 · Skills</h3>
+          <p data-i18n="feat4.body" class="mt-2 text-sm text-zinc-500 leading-relaxed">世界书条目按触发词自动注入，提示词注入按位置叠加到系统提示词，Skills 可从 GitHub 一键导入。三套机制可以混合使用，每个助手独立配置。</p>
         </div>
 
         <div class="feat-card bg-[#0a0a0f] p-7 hover:bg-white/[0.02]">
@@ -450,6 +450,34 @@
             <p data-i18n="screenshots.imageBody2" class="mt-3 text-zinc-400 leading-relaxed">
               生成的图片与对话历史一起本地存档，便于后续引用或导出。
             </p>
+          </div>
+        </div>
+
+        <!-- Third showcase: Extensions (world books, prompt injections, MCP, Skills, etc.) —
+             text on the left, screenshot on the right (same orientation as the first
+             showcase so the page has a left-right-left rhythm down the page). -->
+        <div class="grid items-center gap-12 lg:grid-cols-2">
+          <div>
+            <div class="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
+              <span data-i18n="screenshots.extBadge">扩展生态</span>
+            </div>
+            <h3 data-i18n="screenshots.extTitle" class="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">为每个助手注入个性</h3>
+            <p data-i18n="screenshots.extBody1" class="mt-4 text-zinc-400 leading-relaxed">
+              MCP 服务器、提示词注入、世界书、快捷消息、Agent Skills — 五种扩展机制可以混合使用。每个助手独立选择启用哪些扩展，互不干扰。
+            </p>
+            <p data-i18n="screenshots.extBody2" class="mt-3 text-zinc-400 leading-relaxed">
+              世界书条目按触发关键词自动注入上下文；提示词注入按"系统提示词前后 / 聊天开头结尾 / 指定深度"位置叠加；Skills 直接从 GitHub 仓库一键导入。
+            </p>
+          </div>
+          <div class="window-frame relative overflow-hidden rounded-2xl border border-white/[0.08] bg-zinc-900">
+            <div class="flex items-center gap-1.5 border-b border-white/[0.06] bg-zinc-900/80 px-4 py-2.5">
+              <span class="size-3 rounded-full bg-red-500/80"></span>
+              <span class="size-3 rounded-full bg-yellow-500/80"></span>
+              <span class="size-3 rounded-full bg-green-500/80"></span>
+              <span class="ml-3 font-mono text-xs text-zinc-500" data-i18n="screenshots.frameExt">设置 — MCP 与拓展</span>
+            </div>
+            <img src="screenshots/Extension.png" alt="Extensions — MCP, prompt injections, world books, Skills" loading="lazy"
+                 class="w-full" onerror="this.parentElement.style.display='none'" />
           </div>
         </div>
       </div>
@@ -559,8 +587,8 @@
         'feat2.body': 'Ollama / LM Studio / llama.cpp Server — 端点指向 <code class="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-xs">localhost:11434</code> 即可。',
         'feat3.title': 'MCP 与内置工具',
         'feat3.body': 'Model Context Protocol + Streamable HTTP，Gemini Search Grounding 与 OpenAI web_search 一键切换。',
-        'feat4.title': '多模态输入',
-        'feat4.body': '图片、PDF、DOCX、纯文本拖入即用。模型不支持的格式自动转文本。',
+        'feat4.title': '世界书 · 提示词注入 · Skills',
+        'feat4.body': '世界书条目按触发词自动注入，提示词注入按位置叠加到系统提示词，Skills 可从 GitHub 一键导入。三套机制可以混合使用，每个助手独立配置。',
         'feat5.title': '17 种联网搜索',
         'feat5.body': 'Tavily、Exa、Brave、Perplexity、博查、智谱、秘塔、Firecrawl、Grok、Jina、SearXNG、自定义 JS……',
         'feat6.title': '完整 Markdown 渲染',
@@ -581,6 +609,11 @@
         'screenshots.imageTitle': '文本到图像',
         'screenshots.imageBody1': '支持 gpt-image-2、DALL·E 3、Imagen、Qwen-Image、FLUX 等主流模型。可上传参考图编辑，自动保存历史参考便于复用。',
         'screenshots.imageBody2': '生成的图片与对话历史一起本地存档，便于后续引用或导出。',
+        'screenshots.extBadge': '扩展生态',
+        'screenshots.extTitle': '为每个助手注入个性',
+        'screenshots.extBody1': 'MCP 服务器、提示词注入、世界书、快捷消息、Agent Skills — 五种扩展机制可以混合使用。每个助手独立选择启用哪些扩展，互不干扰。',
+        'screenshots.extBody2': '世界书条目按触发关键词自动注入上下文；提示词注入按"系统提示词前后 / 聊天开头结尾 / 指定深度"位置叠加；Skills 直接从 GitHub 仓库一键导入。',
+        'screenshots.frameExt': '设置 — MCP 与拓展',
         'screenshots.frameSettings': '设置 — 供应商',
         'screenshots.frameImage': '图像生成',
         'tech.label': '基于现代技术构建',
@@ -625,8 +658,8 @@
         'feat2.body': 'Ollama / LM Studio / llama.cpp Server — just point the endpoint at <code class="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-xs">localhost:11434</code>.',
         'feat3.title': 'MCP & built-in tools',
         'feat3.body': 'Model Context Protocol with Streamable HTTP. Gemini Search Grounding and OpenAI web_search toggle in one click.',
-        'feat4.title': 'Multimodal input',
-        'feat4.body': 'Drop in images, PDF, DOCX, or plain text. Unsupported formats are auto-converted to text.',
+        'feat4.title': 'World books · Prompt injections · Skills',
+        'feat4.body': 'World book entries auto-inject by trigger keywords, prompt injections stack into the system prompt by position, Skills import directly from GitHub. Mix and match per assistant.',
         'feat5.title': '17 search engines',
         'feat5.body': 'Tavily, Exa, Brave, Perplexity, Bocha, Zhipu, Metaso, Firecrawl, Grok, Jina, SearXNG, custom JS, …',
         'feat6.title': 'Full Markdown rendering',
@@ -647,6 +680,11 @@
         'screenshots.imageTitle': 'Text to image',
         'screenshots.imageBody1': 'Supports gpt-image-2, DALL·E 3, Imagen, Qwen-Image, FLUX. Upload reference images for editing; history is kept for easy reuse.',
         'screenshots.imageBody2': 'Generated images are archived alongside conversation history for later reuse or export.',
+        'screenshots.extBadge': 'Extension ecosystem',
+        'screenshots.extTitle': 'Tailor every assistant',
+        'screenshots.extBody1': 'MCP servers, prompt injections, world books, quick messages, Agent Skills — five extension mechanisms that mix freely. Each assistant picks its own set independently.',
+        'screenshots.extBody2': 'World book entries auto-inject by trigger keywords; prompt injections stack by position (before/after system prompt, top/bottom of chat, at depth); Skills import directly from a GitHub repo.',
+        'screenshots.frameExt': 'Settings — MCP & Extensions',
         'screenshots.frameSettings': 'Settings — Providers',
         'screenshots.frameImage': 'Image generation',
         'tech.label': 'Built on modern foundations',
