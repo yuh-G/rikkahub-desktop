@@ -69,6 +69,7 @@ import api, { appendWebAuthQuery } from "~/services/api";
 import { useSettingsStore } from "~/stores/app-store";
 import type { AsrProviderProfile, AsrProviderType, AssistantAvatar, AssistantProfile, ProviderModel, ProviderProfile, SearchServiceOption, Settings, TtsProviderProfile, TtsProviderType } from "~/types";
 import { ModelEditDialog } from "~/components/model-edit-dialog";
+import Markdown from "~/components/markdown/markdown";
 import { playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
 
 type Section = "general" | "providers" | "models" | "assistants" | "search" | "mcp" | "speech" | "data" | "stats" | "logs" | "proxy" | "about" | "plan";
@@ -3408,6 +3409,14 @@ function McpServerEditor({ settings, assistant, onSettings }: { settings: Settin
   const dirtyRef = React.useRef(false);
 
   React.useEffect(() => {
+    // Race-condition guard: if the user has unsaved edits in the form (a tool toggle they
+    // just flipped, a header they're mid-typing), do NOT clobber them when settings.mcpServers
+    // gets refreshed from elsewhere (SSE settings broadcast, sibling-component pullSettings,
+    // a save completing for a *different* server, etc.). The user-flipped MCP-tool enable
+    // switch was visibly snapping back to its old value because every save round-tripped
+    // through pullSettings → settings.mcpServers changed → this effect reset the draft to
+    // whatever the server returned *before* the user's most recent edits had landed.
+    if (dirtyRef.current) return;
     const next = servers.find((item) => String(item.id) === selectedId) ?? servers[0];
     if (!next) return;
     setSelectedId(String(next.id));
@@ -3419,9 +3428,25 @@ function McpServerEditor({ settings, assistant, onSettings }: { settings: Settin
 
   const common = draft.commonOptions && typeof draft.commonOptions === "object" ? draft.commonOptions as Record<string, unknown> : {};
   const tools = Array.isArray(common.tools) ? common.tools as Array<Record<string, unknown>> : [];
+  // Master switch (commonOptions.enable). When OFF, the per-tool child switches stay
+  // visible AND show their last preference, but are read-only & greyed — the user can
+  // see what'll come back when they re-enable the master switch.
+  const serverEnabled = common.enable !== false;
+  // Inline expand state — matches Android McpToolCard (SettingMcpPage.kt:801 `var expanded`).
+  // Tracked by tool name (server-unique) so re-renders don't lose the open card.
+  const [expandedToolName, setExpandedToolName] = React.useState<string | null>(null);
   const patchDraft = (nextDraft: Record<string, unknown>) => {
     dirtyRef.current = true;
     setDraft(nextDraft);
+  };
+  // Update one tool's fields (enable / needsApproval) without losing other tools' edits.
+  // We mutate both the in-memory tools array (drives the UI) and toolsText (the canonical
+  // persistence source consumed by save()) so the debounced auto-save writes the toggle.
+  const updateToolAt = (index: number, patch: Partial<Record<string, unknown>>) => {
+    const nextTools = tools.map((tool, i) => i === index ? { ...tool, ...patch } : tool);
+    const nextCommon = { ...common, tools: nextTools };
+    patchDraft({ ...draft, commonOptions: nextCommon });
+    setToolsText(prettyJson(nextTools));
   };
   const patchCommon = (patch: Record<string, unknown>) => {
     let parsedHeaders: unknown[];
@@ -3579,17 +3604,88 @@ function McpServerEditor({ settings, assistant, onSettings }: { settings: Settin
         </label>
         <div className="rounded-md border">
           <div className="border-b px-3 py-2 text-sm font-medium">工具</div>
-          <div className="max-h-64 overflow-auto p-2">
+          <div className="max-h-[28rem] overflow-auto p-2">
             {tools.length === 0 ? <div className="p-3 text-sm text-muted-foreground">启用并保存后会自动同步工具。</div> : null}
-            {tools.map((tool) => (
-              <div key={textValue(tool.name)} className="rounded-md px-2 py-2 text-sm hover:bg-muted/40">
-                <div className="flex items-center gap-2">
-                  <span className={`size-2 rounded-full ${tool.enable === false ? "bg-red-500" : "bg-emerald-500"}`} />
-                  <span className="font-medium">{textValue(tool.name) || "unnamed_tool"}</span>
+            {/* McpToolCard mirror — first row: name + needs-approval switch + enable switch +
+                expand chevron. Expanded body: markdown description + JSON-schema property tags.
+                Matches Android SettingMcpPage.kt:795-902 (no Dialog, all inline).
+                Master/child semantics: when the MCP server's commonOptions.enable is false,
+                the per-tool switches are read-only and greyed out — but they STILL show the
+                user's last preference, which the master-on transition will revive. */}
+            {tools.map((tool, index) => {
+              const name = textValue(tool.name) || "unnamed_tool";
+              const description = textValue(tool.description);
+              const enabled = tool.enable !== false;
+              const needsApproval = tool.needsApproval === true;
+              const expanded = expandedToolName === name;
+              const schema = tool.inputSchema && typeof tool.inputSchema === "object"
+                ? tool.inputSchema as Record<string, unknown>
+                : null;
+              const properties = schema && schema.properties && typeof schema.properties === "object"
+                ? schema.properties as Record<string, Record<string, unknown>>
+                : {};
+              const required = Array.isArray(schema?.required) ? (schema!.required as unknown[]).map(String) : [];
+              const propertyEntries = Object.entries(properties);
+              return (
+                <div key={`${name}_${index}`} className={cn("rounded-md border bg-muted/20 px-3 py-2 mb-2 last:mb-0", !serverEnabled && "opacity-60")}>
+                  <div className="flex items-center gap-3">
+                    <span className="flex-1 truncate text-sm font-medium" title={name}>{name}</span>
+                    <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <span>需要用户审核</span>
+                      <Switch
+                        checked={needsApproval}
+                        disabled={!serverEnabled}
+                        onCheckedChange={(checked) => updateToolAt(index, { needsApproval: checked })}
+                      />
+                    </label>
+                    <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <span>启用</span>
+                      <Switch
+                        checked={enabled}
+                        disabled={!serverEnabled}
+                        onCheckedChange={(checked) => updateToolAt(index, { enable: checked })}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedToolName(expanded ? null : name)}
+                      className="text-muted-foreground hover:text-foreground"
+                      aria-label={expanded ? "收起" : "展开"}
+                    >
+                      <ChevronDownChip expanded={expanded} />
+                    </button>
+                  </div>
+                  {expanded ? (
+                    <div className="mt-2 space-y-2">
+                      {description ? (
+                        <div className="text-xs text-muted-foreground">
+                          <Markdown content={description} className="message-markdown" />
+                        </div>
+                      ) : null}
+                      {propertyEntries.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {propertyEntries.map(([propName]) => {
+                            const isRequired = required.includes(propName);
+                            return (
+                              <span
+                                key={propName}
+                                className={cn(
+                                  "rounded-md px-2 py-0.5 font-mono text-[11px]",
+                                  isRequired ? "bg-blue-500/10 text-blue-700 dark:text-blue-300" : "bg-background text-muted-foreground border",
+                                )}
+                                title={isRequired ? `${propName} (required)` : propName}
+                              >
+                                {propName}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
-                {textValue(tool.description) ? <div className="mt-1 line-clamp-2 pl-4 text-xs text-muted-foreground">{textValue(tool.description)}</div> : null}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
         <div className="flex justify-end gap-2">
@@ -5338,7 +5434,7 @@ function AboutSection() {
   // Hard-coded current version — must match pc-server/server.ts:APP_VERSION and
   // web-ui/src-tauri/tauri.conf.json:version. The update checker compares this against
   // the latest GitHub release.
-  const APP_VERSION = "1.0.4";
+  const APP_VERSION = "1.0.5";
 
   type UpdateInfo = {
     current: string;
@@ -5350,21 +5446,37 @@ function AboutSection() {
     downloadUrl: string;
     fileName: string;
     size: number;
+    // Set by the server when it detects an already-downloaded installer in %TEMP%
+    // matching `latest` — lets the user resume install without re-downloading.
+    cachedInstallerPath?: string | null;
   };
 
   const [checking, setChecking] = React.useState(false);
   const [updateInfo, setUpdateInfo] = React.useState<UpdateInfo | null>(null);
   const [downloading, setDownloading] = React.useState(false);
+  const [downloadProgress, setDownloadProgress] = React.useState(0); // 0–100
+  const [downloadedBytes, setDownloadedBytes] = React.useState(0);   // for human-readable label
+  const [totalBytes, setTotalBytes] = React.useState(0);
   const [installerPath, setInstallerPath] = React.useState<string | null>(null);
+  const [installerCached, setInstallerCached] = React.useState(false); // true when path came from prior session
   const [installerLaunching, setInstallerLaunching] = React.useState(false);
 
   const checkForUpdate = async () => {
     setChecking(true);
     try {
       const info = await api.get<UpdateInfo>("update/check");
-      // Always open the modal so the user gets feedback either way (newer / up-to-date).
       setUpdateInfo(info);
-      setInstallerPath(null);
+      // If the server found an existing installer in TEMP matching the latest version, pre-populate
+      // the local path so the dialog shows "已下载，可立即安装" instead of asking the user to
+      // download again. Fixes the case where user closed the dialog after a download but before
+      // clicking install.
+      if (info.cachedInstallerPath) {
+        setInstallerPath(info.cachedInstallerPath);
+        setInstallerCached(true);
+      } else {
+        setInstallerPath(null);
+        setInstallerCached(false);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "检查更新失败");
     } finally {
@@ -5375,12 +5487,46 @@ function AboutSection() {
   const downloadAndInstall = async () => {
     if (!updateInfo || !updateInfo.downloadUrl) return;
     setDownloading(true);
+    setDownloadProgress(0);
+    setDownloadedBytes(0);
+    setTotalBytes(0);
     try {
-      const result = await api.post<{ status: string; path: string; size: number }>("update/download", {
-        url: updateInfo.downloadUrl,
-        fileName: updateInfo.fileName,
+      // XHR (not fetch) because we need `progress` events. Fetch's ReadableStream
+      // body reader is bandwidth-aware but doesn't surface percentage without
+      // reading Content-Length manually, and ky doesn't expose that hook. XHR is
+      // simpler.
+      const result = await new Promise<{ status: string; path: string; size: number }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", appendWebAuthQuery("/api/update/download"));
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.responseType = "json";
+        xhr.timeout = 0; // No timeout — installer is ~37MB but slow connections can need minutes.
+        xhr.onprogress = (event) => {
+          if (event.lengthComputable && event.total > 0) {
+            setTotalBytes(event.total);
+            setDownloadedBytes(event.loaded);
+            setDownloadProgress(Math.round((event.loaded / event.total) * 100));
+          } else {
+            setDownloadedBytes(event.loaded);
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
+            resolve(xhr.response as { status: string; path: string; size: number });
+          } else {
+            reject(new Error(typeof xhr.response?.error === "string" ? xhr.response.error : `HTTP ${xhr.status}`));
+          }
+        };
+        xhr.onerror = () => reject(new Error("网络错误，无法连接后端"));
+        xhr.ontimeout = () => reject(new Error("下载超时"));
+        xhr.send(JSON.stringify({
+          url: updateInfo.downloadUrl,
+          fileName: updateInfo.fileName,
+        }));
       });
       setInstallerPath(result.path);
+      setInstallerCached(false);
+      setDownloadProgress(100);
       toast.success("下载完成，准备启动安装");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "下载失败");
@@ -5401,7 +5547,13 @@ function AboutSection() {
       const { exit } = await import("@tauri-apps/plugin-process");
       await exit(0);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "启动安装程序失败");
+      // Tauri's invoke() rejects with a string (the Err() value from the Rust handler), NOT
+      // an Error instance. The old code's `err instanceof Error` check therefore always
+      // fell through to the generic "启动安装程序失败" toast, hiding the real cause (path
+      // missing, permissions, AV scanner, etc.). Use String(err) to surface the actual
+      // Rust error so users / triage can see what's wrong.
+      const message = err instanceof Error ? err.message : (typeof err === "string" ? err : "启动安装程序失败");
+      toast.error(`启动安装程序失败：${message}`);
       setInstallerLaunching(false);
     }
   };
@@ -5471,7 +5623,7 @@ function AboutSection() {
           })}
         </div>
       </div>
-      <Dialog open={updateInfo !== null} onOpenChange={(open) => { if (!open) { setUpdateInfo(null); setInstallerPath(null); } }}>
+      <Dialog open={updateInfo !== null} onOpenChange={(open) => { if (!open) { setUpdateInfo(null); setInstallerPath(null); setInstallerCached(false); } }}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>
@@ -5489,21 +5641,45 @@ function AboutSection() {
               <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{updateInfo.notes}</pre>
             </div>
           ) : null}
+          {downloading ? (
+            <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{downloadProgress > 0 ? `下载中 · ${downloadProgress}%` : "下载中…"}</span>
+                {totalBytes > 0 ? (
+                  <span className="font-mono">
+                    {(downloadedBytes / (1024 * 1024)).toFixed(1)} / {(totalBytes / (1024 * 1024)).toFixed(1)} MB
+                  </span>
+                ) : downloadedBytes > 0 ? (
+                  <span className="font-mono">{(downloadedBytes / (1024 * 1024)).toFixed(1)} MB</span>
+                ) : null}
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className={cn(
+                    "h-full bg-primary transition-all",
+                    downloadProgress === 0 && "w-full animate-pulse",
+                  )}
+                  style={downloadProgress > 0 ? { width: `${downloadProgress}%` } : undefined}
+                />
+              </div>
+            </div>
+          ) : null}
           {installerPath ? (
             <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-emerald-700 dark:text-emerald-300">
-              安装包已下载到本地：<code className="font-mono">{installerPath}</code>
+              {installerCached ? "✅ 上次已下载，可直接安装：" : "安装包已下载到本地："}
+              <code className="ml-1 break-all font-mono">{installerPath}</code>
               <br />
               点击下方"启动安装并退出"会启动 NSIS 安装程序并自动退出 Rikkahub，安装过程会保留你的数据目录和配置。
             </div>
           ) : null}
           <DialogFooter>
             {!updateInfo?.isNewer ? (
-              <Button type="button" onClick={() => { setUpdateInfo(null); setInstallerPath(null); }}>
+              <Button type="button" onClick={() => { setUpdateInfo(null); setInstallerPath(null); setInstallerCached(false); }}>
                 我知道了
               </Button>
             ) : !installerPath ? (
               <>
-                <Button type="button" variant="outline" onClick={() => { setUpdateInfo(null); setInstallerPath(null); }}>
+                <Button type="button" variant="outline" onClick={() => { setUpdateInfo(null); setInstallerPath(null); setInstallerCached(false); }} disabled={downloading}>
                   稍后再说
                 </Button>
                 <Button type="button" onClick={() => void downloadAndInstall()} disabled={downloading || !updateInfo?.downloadUrl}>
@@ -5513,7 +5689,7 @@ function AboutSection() {
               </>
             ) : (
               <>
-                <Button type="button" variant="outline" onClick={() => { setUpdateInfo(null); setInstallerPath(null); }}>
+                <Button type="button" variant="outline" onClick={() => { setUpdateInfo(null); setInstallerPath(null); setInstallerCached(false); }}>
                   稍后再安装
                 </Button>
                 <Button type="button" onClick={() => void launchAndExit()} disabled={installerLaunching}>

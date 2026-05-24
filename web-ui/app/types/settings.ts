@@ -64,11 +64,19 @@ export interface LorebookProfile {
   [key: string]: unknown;
 }
 
+export interface McpToolOverride {
+  enable?: boolean;
+  needsApproval?: boolean;
+}
+
 export interface AssistantProfile {
   id: string;
   chatModelId?: string | null;
   reasoningLevel?: string | null;
   mcpServers?: string[];
+  // Per-assistant overrides for individual MCP tools. See server.ts:Assistant.mcpToolOverrides
+  // for the full semantics. Shape: { [serverId]: { [toolName]: { enable?, needsApproval? } } }.
+  mcpToolOverrides?: Record<string, Record<string, McpToolOverride>>;
   modeInjectionIds?: string[];
   lorebookIds?: string[];
   allowConversationSystemPrompt?: boolean;

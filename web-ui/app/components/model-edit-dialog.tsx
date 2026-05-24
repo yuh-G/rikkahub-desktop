@@ -634,7 +634,7 @@ function ProviderOverwriteSection({
         <div>
           <div className="text-sm font-medium">供应商覆盖</div>
           <div className="text-xs text-muted-foreground">
-            为这一个模型单独指定 baseUrl 与 API Key。设置后该模型的请求会走这里的配置，**不**走当前供应商的默认配置——典型用途是把某个模型走自建 OpenAI 兼容网关。
+            为这一个模型单独指定 baseUrl 与 API Key。设置后该模型的请求会走这里的配置，不走当前供应商的默认配置——典型用途是把某个模型走自建 OpenAI 兼容网关。
           </div>
         </div>
         {overwrite ? (

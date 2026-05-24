@@ -80,16 +80,21 @@ function hasBuiltInSearch(tools: ProviderModel["tools"] | undefined): boolean {
   return tools.some((tool) => getToolType(tool) === SEARCH_TOOL_NAME);
 }
 
-// Mirror Android's gating in SearchPicker.kt:166 — only Gemini family and GPT family
-// expose the built-in search toggle. Other providers don't have a native web-search tool
-// path in the request builder (`hasBuiltInTool` is only consumed by Google + OpenAI
-// Responses API in the backend), so showing the switch elsewhere would be a dead control.
+// Mirror Android's SearchPicker.kt:161 exactly — the built-in search toggle ONLY shows up for
+// Gemini-family models or models whose id contains "gpt-". Android's predicate is:
+//
+//   if (ModelRegistry.GEMINI_SERIES.match(model.modelId) || model.modelId.contains("gpt-"))
+//
+// Earlier PC code aggressively included sonar/perplexity/grok/glm-4.5/etc. via a regex — that
+// was invented, not ported, and ended up showing a dead toggle (the backend's hasBuiltInTool
+// path is only consumed by Google's native search grounding + OpenAI's Responses API, so
+// nothing else routes the option). Sticking to Android's predicate keeps the UI honest.
 function isKnownBuiltInSearchModel(model: ProviderModel | null): boolean {
   if (!model) return false;
   const id = model.modelId.toLowerCase();
-  // Match SearchPicker.kt:161 — only Gemini family and any GPT-* model expose this toggle.
   if (id.includes("gpt-")) return true;
-  if (id === "gemini" || id.includes("gemini-") || id.includes("gemini_")) return true;
+  // Gemini family detection mirrors ModelRegistry.GEMINI_SERIES (token-based: "gemini" in id).
+  if (id === "gemini" || id.startsWith("gemini-") || id.includes("gemini-") || id.includes("gemini_")) return true;
   return false;
 }
 
@@ -132,7 +137,13 @@ export function SearchPickerButton({ disabled = false, className }: SearchPicker
   const builtInSearchEnabled = hasBuiltInSearch(currentModel?.tools);
   const canUseBuiltInSearch = builtInSearchEnabled || isKnownBuiltInSearchModel(currentModel);
   const searchEnabled = settings?.enableWebSearch ?? false;
-  const currentService = settings?.searchServices?.[settings.searchServiceSelected] ?? null;
+  const rawSelectedService = settings?.searchServices?.[settings.searchServiceSelected] ?? null;
+  // Only use the selected service for the trigger button's logo when it's actually usable —
+  // i.e. it's a preset (Bing/RikkaHub) or it has passed connection test. Otherwise rendering
+  // the unverified provider's logo on the button is misleading: that service won't be used
+  // during chat (isServiceUsable filters it out of the chat picker too). Fallback to the
+  // generic Earth icon. Mirrors the chat picker's own usable-only filter.
+  const currentService = rawSelectedService && isServiceUsable(rawSelectedService) ? rawSelectedService : null;
   const checked = searchEnabled || builtInSearchEnabled;
 
   React.useEffect(() => {
@@ -251,10 +262,13 @@ export function SearchPickerButton({ disabled = false, className }: SearchPicker
             </div>
           ) : null}
 
-          {/* Web-search card always renders so the popover layout doesn't reflow when the user
-              flips the built-in switch above. When built-in is on, controls disable + a small
-              note explains why. Matches the Android sheet, which keeps both visible. */}
-          <div className={cn("space-y-4", builtInSearchEnabled && "opacity-60")}>
+          {/* Mirror Android's SearchPicker.kt:166 — the web-search card and service list are
+              ONLY rendered when the model's built-in search is OFF. The two paths are mutually
+              exclusive at the UI level so users can't accidentally configure both at once
+              (the backend already uses built-in search when present and falls back to the
+              external service otherwise, but Android hides the redundant settings entirely). */}
+          {builtInSearchEnabled ? null : (
+          <div className="space-y-4">
             <div className="flex items-center gap-3 rounded-lg border px-3 py-3">
               <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted">
                 <Earth className="size-4" />
@@ -262,16 +276,14 @@ export function SearchPickerButton({ disabled = false, className }: SearchPicker
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{t("search.web_title")}</div>
                 <div className="text-muted-foreground text-xs">
-                  {builtInSearchEnabled
-                    ? t("search.builtin_notice")
-                    : searchEnabled
-                      ? t("search.status_enabled")
-                      : t("search.status_disabled")}
+                  {searchEnabled
+                    ? t("search.status_enabled")
+                    : t("search.status_disabled")}
                 </div>
               </div>
               <Switch
                 checked={searchEnabled}
-                disabled={disabled || loading || builtInSearchEnabled}
+                disabled={disabled || loading}
                 onCheckedChange={(nextChecked) => {
                   if (!canUse) return;
                   toggleSearchEnabledMutation.mutate({ enabled: nextChecked });
@@ -310,7 +322,7 @@ export function SearchPickerButton({ disabled = false, className }: SearchPicker
                           "hover:bg-muted flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition",
                           selected && "border-primary bg-primary/5",
                         )}
-                        disabled={disabled || loading || builtInSearchEnabled}
+                        disabled={disabled || loading}
                         onClick={() => {
                           if (!canUse || !settings || originalIndex === settings.searchServiceSelected)
                             return;
@@ -348,6 +360,7 @@ export function SearchPickerButton({ disabled = false, className }: SearchPicker
               )}
             </ScrollArea>
           </div>
+          )}
         </div>
       </PopoverContent>
     </Popover>

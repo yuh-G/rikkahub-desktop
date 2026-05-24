@@ -96,6 +96,17 @@ interface Assistant {
   customHeaders: JsonValue[];
   customBodies: JsonValue[];
   mcpServers: string[];
+  // Per-assistant MCP-tool overrides. Outer key = MCP server id, inner key = tool name, value
+  // = { enable?: boolean, needsApproval?: boolean }. PC-only extension (Android's McpPicker
+  // is server-level only). Override semantics:
+  //   - global tool.enable === false  → tool hidden everywhere, override irrelevant
+  //   - global tool.enable === true && override.enable === false  → tool not exposed to the
+  //     model for THIS assistant (other assistants still see it)
+  //   - override.needsApproval !== undefined  → overrides the global per-tool needsApproval
+  //     for THIS assistant (true forces approval prompt, false skips it)
+  //   - missing override entry → behave as the global tool definition
+  // Default `{}` = inherit everything from the global tool list.
+  mcpToolOverrides: Record<string, Record<string, { enable?: boolean; needsApproval?: boolean }>>;
   localTools: JsonValue[];
   background: string | null;
   backgroundOpacity: number;
@@ -381,7 +392,77 @@ const statePath = join(dataDir, "state.json");
 // MUST be kept in sync with web-ui/src-tauri/tauri.conf.json's `version` field. The update
 // checker compares this against the latest GitHub release tag and the version is also shown
 // verbatim in the About page. If you bump tauri.conf.json's version, bump this too.
-const APP_VERSION = "1.0.4";
+const APP_VERSION = "1.0.5";
+
+type GithubRelease = {
+  tag_name?: string;
+  name?: string;
+  body?: string;
+  html_url?: string;
+  assets?: { name?: string; browser_download_url?: string; size?: number }[];
+};
+
+async function fetchGithubLatestRelease(repo: string): Promise<GithubRelease> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+    headers: { Accept: "application/vnd.github+json", "User-Agent": "RikkaHub-PC" },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`GitHub ${res.status}: ${text.slice(0, 300)}`);
+  }
+  return (await res.json()) as GithubRelease;
+}
+
+// Anonymous fallback when api.github.com refuses. github.com/<repo>/releases/latest is a
+// regular HTML page that 302-redirects to /releases/tag/v<latest>. We follow the redirect
+// manually and pull the tag out of the Location header. No API, no rate limit, no token.
+async function fetchLatestReleaseFromHtmlRedirect(repo: string): Promise<{ tag: string; htmlUrl: string }> {
+  const url = `https://github.com/${repo}/releases/latest`;
+  const res = await fetch(url, {
+    method: "HEAD",
+    redirect: "manual",
+    headers: { "User-Agent": "RikkaHub-PC" },
+  });
+  // GitHub returns 302 with Location: /<owner>/<repo>/releases/tag/v<tag> on success.
+  const location = res.headers.get("location") ?? "";
+  if (!location) {
+    throw new Error(`No redirect from ${url} (status ${res.status})`);
+  }
+  const match = location.match(/\/releases\/tag\/v?([^/?#]+)/i);
+  if (!match) {
+    throw new Error(`Unrecognized release redirect target: ${location}`);
+  }
+  const tag = match[1].replace(/^v/i, "");
+  const absoluteHtmlUrl = location.startsWith("http") ? location : `https://github.com${location}`;
+  return { tag, htmlUrl: absoluteHtmlUrl };
+}
+
+// Look for a previously-downloaded installer for this exact version in the temp dir so the
+// UI can offer "直接安装" without re-downloading. Matched first by canonical filename, then
+// by any *.exe whose name embeds the version tag (tolerates users moving/renaming files).
+// Returns null if isNewer is false (don't surface stale installers).
+function probeCachedInstaller(fileName: string, tag: string, isNewer: boolean): string | null {
+  if (!isNewer || !fileName) return null;
+  try {
+    const tmpDir = join(process.env.TEMP ?? process.env.TMP ?? dataDir, "rikkahub-updates");
+    if (!existsSync(tmpDir)) return null;
+    const canonical = join(tmpDir, fileName);
+    if (existsSync(canonical) && statSync(canonical).size > 0) {
+      return canonical;
+    }
+    for (const entry of readdirSync(tmpDir)) {
+      if (!/\.exe$/i.test(entry)) continue;
+      if (tag && !entry.includes(tag)) continue;
+      const candidate = join(tmpDir, entry);
+      try {
+        if (statSync(candidate).size > 0) return candidate;
+      } catch { /* ignore */ }
+    }
+  } catch (cacheErr) {
+    console.warn("[update/check] cache scan failed:", cacheErr);
+  }
+  return null;
+}
 
 /** Compare two dotted-version strings. Returns -1/0/1 like `a - b`. Tolerates "v" prefix,
  *  missing patch parts (treated as 0), and non-numeric trailing labels (compared as strings). */
@@ -431,10 +512,15 @@ function inferModelAbilities(modelId: string): string[] {
   return uniqueStrings(abilities);
 }
 
-function inferModelTools(modelId: string): JsonValue[] {
-  return /(gemini-2|gemini-3|sonar|perplexity|grok|search|online|web|glm-4\.5|kimi-k2|doubao-seed|hunyuan)/i.test(modelId)
-    ? [{ type: "search" }]
-    : [];
+function inferModelTools(_modelId: string): JsonValue[] {
+  // Previously this auto-tagged many models (gemini-2/sonar/perplexity/grok/glm-4.5/etc.)
+  // with the built-in search tool, so the chat input's "model built-in search" toggle
+  // started ON by default for fresh users. That violated the principle of "no surprise
+  // network calls" — users could send a message and unwittingly trigger search billing /
+  // upstream rate limits. Built-in search must be opt-in, configured per-model in the
+  // model edit dialog → 内置工具 tab. Returning empty here means new fetched models
+  // arrive with no tools and the toggle defaults OFF.
+  return [];
 }
 
 function inferInputModalities(modelId: string, raw?: any): string[] {
@@ -619,6 +705,7 @@ function defaultAssistant(): Assistant {
     customHeaders: [],
     customBodies: [],
     mcpServers: [],
+    mcpToolOverrides: {},
     localTools: [{ type: "time_info" }],
     background: null,
     backgroundOpacity: 1,
@@ -813,6 +900,14 @@ function normalizeState(input: Partial<State>): State {
     models: (providerItem.models ?? []).map((item) => enrichModel(item)),
   }));
   normalized.settings.assistants = mergeById(normalized.settings.assistants ?? [], defaults.assistants);
+  // Backfill mcpToolOverrides for assistants saved before this field existed. Default empty
+  // object = inherit all globally-enabled tools, no per-assistant overrides applied.
+  normalized.settings.assistants = normalized.settings.assistants.map((assistant) => ({
+    ...assistant,
+    mcpToolOverrides: isRecord(assistant.mcpToolOverrides)
+      ? assistant.mcpToolOverrides as Record<string, Record<string, { enable?: boolean; needsApproval?: boolean }>>
+      : {},
+  }));
   normalized.settings.displaySetting = { ...defaults.displaySetting, ...(normalized.settings.displaySetting ?? {}) };
   if (!String(normalized.settings.displaySetting.uiFontFamily ?? "").trim()) {
     normalized.settings.displaySetting.uiFontFamily = defaults.displaySetting.uiFontFamily;
@@ -2682,6 +2777,105 @@ async function webDavEnsureCollection(config: WebDavConfig) {
   }
 }
 
+// Wraps the current PC state in a zip that mirrors Android's S3Sync.prepareBackupFile /
+// WebDavSync.prepareBackupFile layout verbatim:
+//
+//   settings.json          ← Json.encodeToString(settingsStore.settingsFlow.value)
+//   upload/<filename>      ← every file in context.filesDir/upload/, by original name
+//   skills/<name>/<...>    ← recursive copy of context.filesDir/skills/
+//   rikka_hub.db / -wal / -shm  ← (skipped on PC: no Room DB; PC stores state as JSON)
+//
+// We do NOT add PC-only entries (no pc-backup.json, no pc-state.json) — divergence on the
+// shared backup format silently breaks cross-platform sync, and per project rule we copy
+// Android's layout verbatim. Uses PowerShell's Compress-Archive so the compiled exe carries
+// no extra zip dependency.
+function createSettingsBackupZip(): Buffer {
+  const tmpRoot = join(process.env.TEMP ?? process.env.TMP ?? dataDir, `rikkahub-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const stageDir = join(tmpRoot, "stage");
+  mkdirSync(stageDir, { recursive: true });
+  try {
+    // settings.json — Android reads this via SettingsJsonMigrator + Json {ignoreUnknownKeys=true},
+    // so PC-only fields are tolerated. PC's state.settings is structurally aligned with
+    // Android's Settings class (this is a port). Fields Android doesn't recognize fall through
+    // to defaults, which matches what happens when you restore a PC-origin backup to Android.
+    writeFileSync(join(stageDir, "settings.json"), JSON.stringify(state.settings, null, 2));
+
+    // upload/<displayName> — Android writes one entry per uploaded file under FileFolders.UPLOAD,
+    // keyed by the file's display name. PC stores files on disk as `<numericId>.<ext>` but tracks
+    // the original display name in state.files[].fileName; we honor that name in the zip so the
+    // Android side can restore them under their original identity.
+    if (state.files.length > 0) {
+      const uploadStage = join(stageDir, "upload");
+      mkdirSync(uploadStage, { recursive: true });
+      const usedNames = new Set<string>();
+      for (const file of state.files) {
+        if (!file.path || !existsSync(file.path)) continue;
+        let name = file.fileName || `${file.id}${extname(file.path) || ""}`;
+        // Two separately-uploaded files can legitimately share a display name. Disambiguate by
+        // suffixing the PC numeric id so neither gets overwritten in the zip.
+        if (usedNames.has(name)) {
+          const ext = extname(name);
+          const stem = name.slice(0, name.length - ext.length);
+          name = `${stem}_${file.id}${ext}`;
+        }
+        usedNames.add(name);
+        try {
+          writeFileSync(join(uploadStage, name), readFileSync(file.path));
+        } catch (copyErr) {
+          console.warn("[backup] failed to stage upload file", file.path, copyErr);
+        }
+      }
+    }
+
+    // skills/<skillName>/<...> — Android writes the entire skills directory recursively;
+    // we do the same since PC's on-disk layout (skillsDir/<skillName>/...) matches.
+    if (existsSync(skillsDir)) {
+      const skillsStage = join(stageDir, "skills");
+      mkdirSync(skillsStage, { recursive: true });
+      copyDirRecursive(skillsDir, skillsStage);
+    }
+
+    const zipPath = join(tmpRoot, "backup.zip");
+    // `\\*` so Compress-Archive zips the directory CONTENTS rather than the stage dir itself —
+    // we want the zip root to be `settings.json` / `upload/` / `skills/`, matching Android.
+    const script = `Compress-Archive -Path '${stageDir.replace(/'/g, "''")}\\*' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`;
+    const proc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]);
+    if (proc.exitCode !== 0) {
+      throw new Error(`Failed to create backup zip: ${new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 300)}`);
+    }
+    return readFileSync(zipPath);
+  } finally {
+    try { rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
+}
+
+// Restore from either a legacy `.json` backup (PC's pre-zip format) or a `.zip` backup
+// (current cross-platform format — same layout whether the zip was written by Android or PC).
+// All zip restores route through applyAndroidZipBackupFromPath, which already understands the
+// Android backup layout (settings.json + upload/ + skills/ + rikka_hub.db).
+function restoreBackupBuffer(buffer: Buffer, fileName: string): void {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".zip")) {
+    const tmpRoot = join(process.env.TEMP ?? process.env.TMP ?? dataDir, `rikkahub-restore-${Date.now()}`);
+    mkdirSync(tmpRoot, { recursive: true });
+    const zipPath = join(tmpRoot, fileName.replace(/[^A-Za-z0-9._\-]/g, "_") || "backup.zip");
+    try {
+      writeFileSync(zipPath, buffer);
+      applyAndroidZipBackupFromPath(zipPath);
+    } finally {
+      try { rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+    return;
+  }
+  // Legacy JSON path — backups written by older PC versions before zip support.
+  applyBackupPayload(JSON.parse(buffer.toString("utf-8")));
+}
+
+function backupStamp(): string {
+  // Match Android's DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss") so the filename stamp lines up.
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "_");
+}
+
 function parseWebDavItems(xml: string) {
   const blocks = xml.match(/<[^>]*response[\s\S]*?<\/[^>]*response>/gi) ?? [];
   return blocks.map((block) => {
@@ -2710,32 +2904,39 @@ async function webDavListBackups(config: WebDavConfig) {
   const text = await response.text();
   if (!response.ok && response.status !== 207) throw new Error(`WebDAV 列表失败：${response.status} ${text.slice(0, 500)}`);
   return parseWebDavItems(text)
-    .filter((item) => !item.isCollection && /^backup_.*\.json$/i.test(item.displayName))
+    // Accept both .zip (current PC + Android format) and .json (legacy PC format) so users
+    // who upgrade from an older PC version still see their old backups, and Android-origin
+    // backups become visible in the PC list.
+    .filter((item) => !item.isCollection && /^backup_.*\.(zip|json)$/i.test(item.displayName))
     .sort((a, b) => Date.parse(b.lastModified || "") - Date.parse(a.lastModified || ""));
 }
 
 async function webDavBackup(config: WebDavConfig) {
   await webDavEnsureCollection(config);
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "_");
-  const fileName = `backup_${stamp}.json`;
-  const payload = JSON.stringify(backupPayload(), null, 2);
+  // PC now writes .zip so the format matches Android. The zip contains settings.json (for
+  // Android-side restore) and pc-backup.json (PC's full state for lossless self-restore).
+  const fileName = `backup_${backupStamp()}.zip`;
+  const payload = createSettingsBackupZip();
   const response = await webDavRequest(config, "PUT", fileName, {
     headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "Content-Length": String(Buffer.byteLength(payload)),
+      "Content-Type": "application/zip",
+      "Content-Length": String(payload.length),
     },
     body: payload,
   });
   const text = await response.text();
   if (!response.ok) throw new Error(`WebDAV 备份失败：${response.status} ${text.slice(0, 500)}`);
-  return { fileName, size: Buffer.byteLength(payload) };
+  return { fileName, size: payload.length };
 }
 
 async function webDavRestore(config: WebDavConfig, fileName: string) {
   const response = await webDavRequest(config, "GET", fileName);
-  const text = await response.text();
-  if (!response.ok) throw new Error(`WebDAV 下载失败：${response.status} ${text.slice(0, 500)}`);
-  applyBackupPayload(JSON.parse(text));
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`WebDAV 下载失败：${response.status} ${text.slice(0, 500)}`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  restoreBackupBuffer(buffer, fileName);
 }
 
 async function webDavDelete(config: WebDavConfig, fileName: string) {
@@ -2879,7 +3080,8 @@ async function s3ListBackups(config: S3Config) {
     if (!keyMatch) continue;
     const fileKey = keyMatch[1];
     const displayName = fileKey.split("/").pop() ?? fileKey;
-    if (!/^backup_.*\.json$/i.test(displayName)) continue;
+    // Accept .zip (current cross-platform format) and .json (legacy PC backups).
+    if (!/^backup_.*\.(zip|json)$/i.test(displayName)) continue;
     items.push({
       href: fileKey,
       displayName,
@@ -2892,11 +3094,11 @@ async function s3ListBackups(config: S3Config) {
 }
 
 async function s3Backup(config: S3Config) {
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "_");
-  const fileName = `backup_${stamp}.json`;
+  // Match Android's .zip filename so cross-platform S3 sync works.
+  const fileName = `backup_${backupStamp()}.zip`;
   const key = `${s3Prefix(config)}${fileName}`;
-  const payload = Buffer.from(JSON.stringify(backupPayload(), null, 2), "utf-8");
-  const response = await s3Request(config, "PUT", key, { body: payload, contentType: "application/json; charset=utf-8" });
+  const payload = createSettingsBackupZip();
+  const response = await s3Request(config, "PUT", key, { body: payload, contentType: "application/zip" });
   const text = await response.text();
   if (!response.ok) throw new Error(`S3 备份失败：${response.status} ${text.slice(0, 500)}`);
   return { fileName, size: payload.length };
@@ -2905,9 +3107,12 @@ async function s3Backup(config: S3Config) {
 async function s3Restore(config: S3Config, fileName: string) {
   const key = `${s3Prefix(config)}${fileName}`;
   const response = await s3Request(config, "GET", key);
-  const text = await response.text();
-  if (!response.ok) throw new Error(`S3 下载失败：${response.status} ${text.slice(0, 500)}`);
-  applyBackupPayload(JSON.parse(text));
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`S3 下载失败：${response.status} ${text.slice(0, 500)}`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  restoreBackupBuffer(buffer, fileName);
 }
 
 async function s3Delete(config: S3Config, fileName: string) {
@@ -3232,9 +3437,17 @@ function nameOfSearchService(service: Record<string, JsonValue>) {
 }
 
 function searchResultSize(service: Record<string, JsonValue>) {
+  // Mirror Android: each *.SearchService.kt directly uses `commonOptions.resultSize` (default 10
+  // in SearchService.kt:94) with no upper clamp — Tavily/Perplexity/Brave/Exa/etc. all forward
+  // the raw value to the upstream API. The earlier PC code had a hard-coded `Math.min(10, …)`
+  // that silently capped requests at 10 even when the user had configured 15+ in settings;
+  // that cap was invented, not ported, and contradicted the user-visible "结果数量" input which
+  // has no max attribute. PC keeps the per-service `service.resultSize` field for backward
+  // compat with the UI, falling back to the Android-equivalent global `searchCommonOptions.resultSize`.
   const serviceSize = Number(service.resultSize ?? 0);
   const commonSize = Number(state.settings.searchCommonOptions?.resultSize ?? 10);
-  return Math.max(1, Math.min(10, serviceSize || commonSize || 5));
+  // Lower bound 1 prevents nonsensical zero/negative requests. No upper bound — match Android.
+  return Math.max(1, serviceSize || commonSize || 10);
 }
 
 function stripHtml(value: string) {
@@ -3366,7 +3579,11 @@ async function runSearchWeb(params: Record<string, JsonValue>) {
   const type = String(service.type ?? "bing_local").toLowerCase();
   const query = String(params.query ?? params.q ?? "").trim();
   if (!query) throw new Error("search_web requires query");
-  const maxResults = Math.max(1, Math.min(10, Number(params.max_results ?? params.maxResults ?? searchResultSize(service))));
+  // User's configured `resultSize` takes precedence over whatever the LLM passes — most
+  // models default to emitting `max_results: 5` for safety, which silently overrode the
+  // user-configured count of 10. Match Android: the per-service setting wins, with no
+  // additional upstream-side clamp (Android forwards the value verbatim).
+  const maxResults = Math.max(1, Number(searchResultSize(service)));
 
   if (type === "tavily") {
     const apiKey = String(service.apiKey ?? "");
@@ -4015,7 +4232,10 @@ The population is about 2.1 million. [citation,example.com](abc123) [citation,ex
           type: "object",
           properties: {
             query: { type: "string", description: "Focused search query" },
-            max_results: { type: "integer", minimum: 1, maximum: 10 },
+            // `max_results` deliberately omitted from the tool schema — see callSearchTool
+            // (server.ts:3369). The user-configured `resultSize` is the authoritative count;
+            // letting the LLM specify max_results caused most models to silently downgrade
+            // to 5 results even when the user had configured 10.
           },
           required: ["query"],
         },
@@ -4205,18 +4425,25 @@ function openAiMcpTools(assistant: Assistant) {
   return (state.settings.mcpServers as Array<Record<string, JsonValue>>)
     .filter((server) => selected.has(String(server.id ?? "")) && isRecord(server.commonOptions) && server.commonOptions.enable !== false)
     .flatMap((server) => {
+      const serverId = String(server.id ?? "");
       const serverName = String((server.commonOptions as Record<string, JsonValue>).name ?? server.id ?? "mcp");
       const tools = Array.isArray((server.commonOptions as Record<string, JsonValue>).tools)
         ? ((server.commonOptions as Record<string, JsonValue>).tools as JsonValue[])
         : [];
-      return tools.filter(isRecord).filter((tool) => tool.enable !== false).map((tool) => ({
-        type: "function",
-        function: {
-          name: `mcp__${String(tool.name ?? "").replace(/[^a-zA-Z0-9_-]/g, "_")}`,
-          description: String(tool.description ?? `MCP tool from ${serverName}`),
-          parameters: tool.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : { type: "object", properties: {} },
-        },
-      })).filter((tool) => tool.function.name !== "mcp__");
+      // Apply both the global tool.enable filter AND the per-assistant override. A tool that
+      // the user disabled at the chat-input MCP picker for this assistant is invisible to
+      // the model on this turn — matching how the chat-input MCP server switch already hides
+      // an entire server from the model.
+      return tools.filter(isRecord)
+        .filter((tool) => isMcpToolEnabledForAssistant(assistant, serverId, tool))
+        .map((tool) => ({
+          type: "function",
+          function: {
+            name: `mcp__${String(tool.name ?? "").replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+            description: String(tool.description ?? `MCP tool from ${serverName}`),
+            parameters: tool.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : { type: "object", properties: {} },
+          },
+        })).filter((tool) => tool.function.name !== "mcp__");
     });
 }
 
@@ -4448,8 +4675,26 @@ async function fetchMcpTools(server: Record<string, JsonValue>) {
 
 async function syncMcpServerTools(server: Record<string, JsonValue>) {
   const common = isRecord(server.commonOptions) ? server.commonOptions : {};
+  // Preserve user-set per-tool toggles (enable / needsApproval) across re-syncs. Without
+  // this, every detail-save would re-fetch tools/list and reset the user's switches —
+  // because settings/mcp-server/detail unconditionally calls this function whenever the
+  // server is enabled, including when the user toggled a single per-tool field in the UI.
+  const existingTools = Array.isArray(common.tools) ? common.tools.filter(isRecord) : [];
+  const prefs = new Map<string, { enable: boolean; needsApproval: boolean }>();
+  for (const t of existingTools) {
+    const n = String(t.name ?? "");
+    if (!n) continue;
+    prefs.set(n, {
+      enable: t.enable !== false,
+      needsApproval: t.needsApproval === true,
+    });
+  }
   try {
-    const tools = await fetchMcpTools(server);
+    const fetched = await fetchMcpTools(server);
+    const tools = fetched.map((tool) => {
+      const pref = prefs.get(tool.name);
+      return pref ? { ...tool, enable: pref.enable, needsApproval: pref.needsApproval } : tool;
+    });
     return {
       ...server,
       commonOptions: {
@@ -4473,6 +4718,35 @@ async function syncMcpServerTools(server: Record<string, JsonValue>) {
   }
 }
 
+// Read this assistant's per-tool override (PC-only). Returns the override entry or undefined
+// if the assistant hasn't customized this tool. Outer key is the server id from the global
+// MCP server list; inner key is the tool name (NOT the `mcp__<sanitized>` LLM-facing alias).
+function getMcpToolOverride(assistant: Assistant, serverId: string, toolName: string): { enable?: boolean; needsApproval?: boolean } | undefined {
+  const overrides = isRecord(assistant.mcpToolOverrides) ? assistant.mcpToolOverrides as Record<string, Record<string, { enable?: boolean; needsApproval?: boolean }>> : undefined;
+  if (!overrides) return undefined;
+  const perServer = overrides[serverId];
+  if (!perServer) return undefined;
+  return perServer[toolName];
+}
+
+// Per-assistant resolved enable state for a tool. Global tool.enable=false ⇒ false (override
+// can never reactivate a globally-disabled tool — matches the user's stated rule "设置中关闭
+// 的工具会话里看不见"). Otherwise, the override.enable wins; absence falls back to true.
+function isMcpToolEnabledForAssistant(assistant: Assistant, serverId: string, tool: Record<string, JsonValue>): boolean {
+  if (tool.enable === false) return false;
+  const override = getMcpToolOverride(assistant, serverId, String(tool.name ?? ""));
+  if (override?.enable === false) return false;
+  return true;
+}
+
+// Per-assistant resolved needsApproval state. Override wins when set (true/false), otherwise
+// falls back to the global per-tool needsApproval flag.
+function isMcpToolApprovalRequiredForAssistant(assistant: Assistant, serverId: string, tool: Record<string, JsonValue>): boolean {
+  const override = getMcpToolOverride(assistant, serverId, String(tool.name ?? ""));
+  if (typeof override?.needsApproval === "boolean") return override.needsApproval;
+  return tool.needsApproval === true;
+}
+
 async function callMcpTool(assistant: Assistant, toolName: string, args: Record<string, JsonValue>) {
   const selected = new Set(getStringArray(assistant.mcpServers));
   const servers = (state.settings.mcpServers as Array<Record<string, JsonValue>>)
@@ -4480,12 +4754,43 @@ async function callMcpTool(assistant: Assistant, toolName: string, args: Record<
   for (const server of servers) {
     const common = server.commonOptions as Record<string, JsonValue>;
     const tools = Array.isArray(common.tools) ? common.tools.filter(isRecord) : [];
-    const matched = tools.find((tool) => tool.enable !== false && `mcp__${String(tool.name ?? "").replace(/[^a-zA-Z0-9_-]/g, "_")}` === toolName);
+    const matched = tools.find((tool) =>
+      isMcpToolEnabledForAssistant(assistant, String(server.id ?? ""), tool)
+      && `mcp__${String(tool.name ?? "").replace(/[^a-zA-Z0-9_-]/g, "_")}` === toolName,
+    );
     if (!matched) continue;
     const result = await mcpJsonRpc(server, "tools/call", { name: String(matched.name), arguments: args });
     return result;
   }
   throw new Error(`MCP tool '${toolName}' is not available for this assistant`);
+}
+
+// Returns true if this tool requires user approval before executing — mirrors Android's
+// GenerationHandler.kt:184-189 logic (`toolDef?.needsApproval == true && state is Auto -> Pending`).
+// PC scope: `ask_user` is always pending (it's literally a "ask the user" prompt), and any
+// MCP tool whose effective needsApproval (override-resolved) is true gets pending too. Local
+// built-ins (search/scrape/memory/etc.) currently never need approval — Android matches.
+function toolNeedsApproval(toolName: string, assistant: Assistant): boolean {
+  if (!toolName) return false;
+  if (toolName === "ask_user") return true;
+  if (!toolName.startsWith("mcp__")) return false;
+  const selected = new Set(getStringArray(assistant.mcpServers));
+  const servers = (state.settings.mcpServers as Array<Record<string, JsonValue>>)
+    .filter((server) => selected.has(String(server.id ?? "")) && isRecord(server.commonOptions) && server.commonOptions.enable !== false);
+  for (const server of servers) {
+    const common = server.commonOptions as Record<string, JsonValue>;
+    const tools = Array.isArray(common.tools) ? common.tools.filter(isRecord) : [];
+    const matched = tools.find((tool) =>
+      isMcpToolEnabledForAssistant(assistant, String(server.id ?? ""), tool)
+      && `mcp__${String(tool.name ?? "").replace(/[^a-zA-Z0-9_-]/g, "_")}` === toolName,
+    );
+    if (matched) return isMcpToolApprovalRequiredForAssistant(assistant, String(server.id ?? ""), matched);
+  }
+  return false;
+}
+
+function initialApprovalState(toolName: string, assistant: Assistant): JsonValue {
+  return toolNeedsApproval(toolName, assistant) ? { type: "pending" } : { type: "auto" };
 }
 
 async function runPowerShell(command: string, input = "") {
@@ -6866,7 +7171,7 @@ async function readClaudeStreamingRound(
             toolName: String(block.name ?? ""),
             input: "",
             output: [],
-            approvalState: String(block.name ?? "") === "ask_user" ? { type: "pending" } : { type: "auto" },
+            approvalState: initialApprovalState(String(block.name ?? ""), assistant),
           };
           replaceLoadingReasoningWithTool(hooks.message, toolPart);
           touchStream(hooks);
@@ -7042,6 +7347,15 @@ async function streamClaudeChatWithTools(
       return allContent.trim() || "(empty response)";
     }
     const toolResultBlocks: Array<Record<string, JsonValue>> = [];
+    // Pre-scan for any tool that requires user approval. Anthropic requires every tool_use to
+    // be answered by a tool_result in the next turn, so we can't execute a mixed batch where
+    // some tools are pending — the safest correct behavior is to render the pending tool
+    // cards (already created during the stream above) and bail out of the turn. generateAnswer
+    // will see hasPendingToolApproval and pause until the user approves/denies.
+    const hasPendingInBatch = toolUses.some((toolUse) => toolNeedsApproval(String(toolUse.name ?? ""), assistant));
+    if (hasPendingInBatch) {
+      return allContent.trim() || "";
+    }
     for (const toolUse of toolUses) {
       const toolCallId = String(toolUse.id ?? id());
       const toolName = String(toolUse.name ?? "");
@@ -7158,6 +7472,9 @@ async function fetchClaudeTextWithTools(
     if (toolUses.length === 0) return allContent.trim() || "(empty response)";
 
     const toolResultBlocks = [];
+    // Same rationale as the stream path: bail out of the turn if any tool needs approval so
+    // we don't end up sending an unanswered tool_use to Anthropic on the next turn.
+    const hasPendingInBatch = toolUses.some((toolUse) => toolNeedsApproval(String(toolUse.name ?? ""), assistant));
     for (const toolUse of toolUses) {
       const toolCall = {
         id: String(toolUse.id ?? id()),
@@ -7173,12 +7490,17 @@ async function fetchClaudeTextWithTools(
         toolName: toolCall.function.name,
         input: toolCall.function.arguments,
         output: [],
-        approvalState: toolCall.function.name === "ask_user" ? { type: "pending" } : { type: "auto" },
+        approvalState: initialApprovalState(toolCall.function.name, assistant),
       };
       if (hooks?.message) {
         finishReasoningParts(hooks.message);
         replaceLoadingReasoningWithTool(hooks.message, toolPart);
         touchStream(hooks);
+      }
+      if (hasPendingInBatch) {
+        // Tool card is in pending state; skip execution and let the rest of the batch land
+        // as pending cards too (so the UI shows the full set of decisions to approve/deny).
+        continue;
       }
       let toolResult: unknown;
       try {
@@ -7194,6 +7516,9 @@ async function fetchClaudeTextWithTools(
         tool_use_id: toolCall.id,
         content: claudeBlocksFromUiParts(outputParts),
       });
+    }
+    if (hasPendingInBatch) {
+      return allContent.trim() || "";
     }
 
     messages = [
@@ -7253,6 +7578,7 @@ async function fetchOpenAiText(
     if (toolCalls.length === 0) return allContent.trim() || "(empty response)";
 
     const toolMessages = [];
+    const hasPendingInBatch = toolCalls.some((toolCall: any) => toolNeedsApproval(String(toolCall?.function?.name ?? ""), assistant));
     for (const toolCall of toolCalls) {
       const toolPart: JsonValue = {
         type: "tool",
@@ -7260,12 +7586,15 @@ async function fetchOpenAiText(
         toolName: String(toolCall.function?.name ?? ""),
         input: String(toolCall.function?.arguments ?? "{}"),
         output: [],
-        approvalState: String(toolCall.function?.name ?? "") === "ask_user" ? { type: "pending" } : { type: "auto" },
+        approvalState: initialApprovalState(String(toolCall.function?.name ?? ""), assistant),
       };
       if (hooks?.message) {
         finishReasoningParts(hooks.message);
         replaceLoadingReasoningWithTool(hooks.message, toolPart);
         touchStream(hooks);
+      }
+      if (hasPendingInBatch) {
+        continue;
       }
       let toolResult: unknown;
       try {
@@ -7281,6 +7610,9 @@ async function fetchOpenAiText(
         tool_call_id: (toolPart as Record<string, JsonValue>).toolCallId,
         content: openAiToolOutput(outputParts),
       });
+    }
+    if (hasPendingInBatch) {
+      return allContent.trim() || "";
     }
     messages = [
       ...messages,
@@ -8147,6 +8479,12 @@ async function fetchOpenAiTextStreaming(
     if (result.toolCalls.length === 0) return allContent.trim() || "(empty response)";
 
     const toolMessages = [];
+    // Pre-scan as in the chat-completions path: any pending tool aborts the whole batch's
+    // execution so we don't leave Auto tools without a tool_result on the next turn.
+    const hasPendingInBatch = result.toolCalls.some((toolCall: any) =>
+      toolCall && typeof toolCall === "object" && toolCall.function?.name &&
+      toolNeedsApproval(String(toolCall.function?.name ?? ""), assistant)
+    );
     for (const toolCall of result.toolCalls) {
       // Skip sparse-array holes. The Responses API stream parser indexes into toolCalls[]
       // by `output_index` (server.ts:7354) — when the model emits both a function_call
@@ -8167,15 +8505,17 @@ async function fetchOpenAiTextStreaming(
         toolName: String(toolCall.function?.name ?? ""),
         input: String(toolCall.function?.arguments ?? "{}"),
         output: [],
-        approvalState: String(toolCall.function?.name ?? "") === "ask_user" ? { type: "pending" } : { type: "auto" },
+        approvalState: initialApprovalState(String(toolCall.function?.name ?? ""), assistant),
       };
       if (hooks.message) {
         finishReasoningParts(hooks.message);
         replaceLoadingReasoningWithTool(hooks.message, toolPart);
         touchStream(hooks);
       }
-      if (toolPart.approvalState.type === "pending") {
-        return allContent.trim() || "";
+      if (hasPendingInBatch) {
+        // Render the card in whatever state we set; defer execution until the user approves
+        // or denies the pending one(s).
+        continue;
       }
       let toolResult: unknown;
       try {
@@ -8190,6 +8530,9 @@ async function fetchOpenAiTextStreaming(
           ? { type: "function_call_output", call_id: toolPart.toolCallId, output: resolvedToolOutput(toolPart) }
           : { role: "tool", tool_call_id: toolPart.toolCallId, content: resolvedToolOutput(toolPart) },
       );
+    }
+    if (hasPendingInBatch) {
+      return allContent.trim() || "";
     }
 
     if (useResponseInput) {
@@ -9740,9 +10083,120 @@ async function routeApi(request: Request, url: URL) {
     }
     updateSettings({
       ...state.settings,
-      assistants: state.settings.assistants.map((assistant) =>
-        assistant.id === body.assistantId ? { ...assistant, mcpServers: mcpServerIds } : assistant,
-      ),
+      assistants: state.settings.assistants.map((assistant) => {
+        if (assistant.id !== body.assistantId) return assistant;
+        // Master-on transition for assistant-level MCP servers. Mirror the global server's
+        // behavior: when the user flips an assistant's MCP server master ON, if every tool
+        // in this server is currently disabled-by-override for THIS assistant (meaning
+        // there's no surviving user preference at the assistant scope), wipe the overrides
+        // so the freshly-enabled MCP exposes all globally-enabled tools. If even one tool
+        // override doesn't disable a tool, the user has expressed an intentional subset —
+        // leave overrides untouched.
+        const prevServers = new Set(getStringArray(assistant.mcpServers));
+        const nextServers = new Set(mcpServerIds);
+        const newlyAdded: string[] = mcpServerIds.filter((sid) => !prevServers.has(sid));
+        const overrides = isRecord(assistant.mcpToolOverrides)
+          ? { ...assistant.mcpToolOverrides as Record<string, Record<string, { enable?: boolean; needsApproval?: boolean }>> }
+          : {};
+        for (const sid of newlyAdded) {
+          const globalServer = (state.settings.mcpServers as Array<Record<string, JsonValue>>).find((s) => String(s.id) === sid);
+          const globalCommon = globalServer && isRecord(globalServer.commonOptions) ? globalServer.commonOptions : null;
+          const globalTools = globalCommon && Array.isArray(globalCommon.tools) ? globalCommon.tools.filter(isRecord) : [];
+          const visibleTools = globalTools.filter((tool) => tool.enable !== false);
+          if (visibleTools.length === 0) continue;
+          const perServerOverride = overrides[sid] ?? {};
+          // Every visible tool effectively disabled by THIS assistant means the override
+          // map is the only thing standing in the way of these tools being exposed.
+          const allOverriddenOff = visibleTools.every((tool) => perServerOverride[String(tool.name ?? "")]?.enable === false);
+          if (allOverriddenOff) {
+            // Strip per-tool `enable` overrides for this server. Keep needsApproval entries —
+            // they're an independent dimension and shouldn't get wiped just because the
+            // user re-enabled the master switch.
+            const cleanedServerOverride: Record<string, { enable?: boolean; needsApproval?: boolean }> = {};
+            for (const [toolName, ov] of Object.entries(perServerOverride)) {
+              if (typeof ov?.needsApproval === "boolean") {
+                cleanedServerOverride[toolName] = { needsApproval: ov.needsApproval };
+              }
+            }
+            if (Object.keys(cleanedServerOverride).length === 0) {
+              delete overrides[sid];
+            } else {
+              overrides[sid] = cleanedServerOverride;
+            }
+          }
+        }
+        return { ...assistant, mcpServers: mcpServerIds, mcpToolOverrides: overrides };
+      }),
+    });
+    return json({ status: "ok" });
+  }
+  // Per-tool override within one MCP server, for ONE assistant. Body shape:
+  //   { assistantId, serverId, toolName, enable?, needsApproval? }
+  // - enable: null/undefined → clear override (revert to global); true/false → set
+  // - needsApproval: same semantics
+  // Sending both nulls removes the entry from mcpToolOverrides[serverId][toolName]. If that
+  // makes the server's override map empty, we drop the server key as well to keep state.json
+  // tidy.
+  if (path === "settings/assistant/mcp-tool-override" && request.method === "POST") {
+    const body = await readJson<{
+      assistantId?: string;
+      serverId?: string;
+      toolName?: string;
+      enable?: boolean | null;
+      needsApproval?: boolean | null;
+    }>(request);
+    const assistantId = String(body.assistantId ?? "");
+    const serverId = String(body.serverId ?? "");
+    const toolName = String(body.toolName ?? "");
+    if (!assistantId || !serverId || !toolName) {
+      return error("assistantId, serverId, toolName are required", 400);
+    }
+    const assistantExists = state.settings.assistants.some((assistant) => assistant.id === assistantId);
+    if (!assistantExists) return error("Assistant not found", 404);
+    const serverKnown = (state.settings.mcpServers as Array<Record<string, JsonValue>>).some((server) => String(server.id) === serverId);
+    if (!serverKnown) return error("MCP server not found", 404);
+    updateSettings({
+      ...state.settings,
+      assistants: state.settings.assistants.map((assistant) => {
+        if (assistant.id !== assistantId) return assistant;
+        const overrides = isRecord(assistant.mcpToolOverrides)
+          ? { ...assistant.mcpToolOverrides as Record<string, Record<string, { enable?: boolean; needsApproval?: boolean }>> }
+          : {};
+        const serverOverrides = isRecord(overrides[serverId])
+          ? { ...overrides[serverId] }
+          : {};
+        const next: { enable?: boolean; needsApproval?: boolean } = { ...(serverOverrides[toolName] ?? {}) };
+        if (body.enable === null) delete next.enable;
+        else if (typeof body.enable === "boolean") next.enable = body.enable;
+        if (body.needsApproval === null) delete next.needsApproval;
+        else if (typeof body.needsApproval === "boolean") next.needsApproval = body.needsApproval;
+        if (Object.keys(next).length === 0) {
+          delete serverOverrides[toolName];
+        } else {
+          serverOverrides[toolName] = next;
+        }
+        if (Object.keys(serverOverrides).length === 0) {
+          delete overrides[serverId];
+        } else {
+          overrides[serverId] = serverOverrides;
+        }
+        // Mirror the global server's "all tools off → master off" rule at the assistant
+        // scope: if every globally-enabled tool on this server is now disabled-by-override
+        // for this assistant, remove the server from assistant.mcpServers (auto master-off).
+        // This is the assistant-level counterpart of Transition 2 in settings/mcp-server/detail.
+        let mcpServers = assistant.mcpServers;
+        if (assistant.mcpServers.includes(serverId)) {
+          const globalServer = (state.settings.mcpServers as Array<Record<string, JsonValue>>).find((s) => String(s.id) === serverId);
+          const globalCommon = globalServer && isRecord(globalServer.commonOptions) ? globalServer.commonOptions : null;
+          const globalTools = globalCommon && Array.isArray(globalCommon.tools) ? globalCommon.tools.filter(isRecord) : [];
+          const visibleTools = globalTools.filter((tool) => tool.enable !== false);
+          const serverOverrideForCheck = overrides[serverId] ?? {};
+          if (visibleTools.length > 0 && visibleTools.every((tool) => serverOverrideForCheck[String(tool.name ?? "")]?.enable === false)) {
+            mcpServers = assistant.mcpServers.filter((sid) => sid !== serverId);
+          }
+        }
+        return { ...assistant, mcpServers, mcpToolOverrides: overrides };
+      }),
     });
     return json({ status: "ok" });
   }
@@ -9848,6 +10302,13 @@ async function routeApi(request: Request, url: URL) {
   if (path === "settings/mcp-server/detail" && request.method === "POST") {
     const body = await readJson<Record<string, JsonValue>>(request);
     const common = isRecord(body.commonOptions) ? body.commonOptions : {};
+    // Read the previous server state so we can detect the user transitioning the main MCP
+    // switch from off→on, which has special "revive child switches" semantics (see below).
+    const prevServer = (state.settings.mcpServers as Array<Record<string, JsonValue>>)
+      .find((item) => String(item.id) === String(body.id ?? "")) ?? null;
+    const prevCommon = prevServer && isRecord(prevServer.commonOptions) ? prevServer.commonOptions : null;
+    const wasEnabled = prevCommon ? prevCommon.enable !== false : false;
+    const willEnable = common.enable !== false;
     let server: Record<string, JsonValue> = {
       type: String(body.type ?? "streamable_http") === "sse" ? "sse" : "streamable_http",
       url: String(body.url ?? ""),
@@ -9855,7 +10316,7 @@ async function routeApi(request: Request, url: URL) {
       id: String(body.id ?? id()),
       ssePostEndpoint: String(body.ssePostEndpoint ?? ""),
       commonOptions: {
-        enable: common.enable !== false,
+        enable: willEnable,
         name: String(common.name ?? body.name ?? "MCP Server"),
         headers: Array.isArray(common.headers) ? common.headers : [],
         tools: Array.isArray(common.tools) ? common.tools : [],
@@ -9866,6 +10327,40 @@ async function routeApi(request: Request, url: URL) {
     };
     if (isRecord(server.commonOptions) && server.commonOptions.enable !== false && String(server.url ?? "").trim()) {
       server = await syncMcpServerTools(server);
+    }
+    // ── Master/child switch coupling ─────────────────────────────────────────────────
+    // The MCP server's `commonOptions.enable` is a master switch; each tool's `enable`
+    // is a child switch that persists across master toggles to preserve user intent.
+    //
+    // Transition 1 — master off → on:
+    //   If every child is currently off (i.e. there's no surviving user preference),
+    //   revive them all to ON so the freshly-enabled MCP isn't a no-op surprise. If even
+    //   one child is on, the user has expressed an intentional subset — leave it alone.
+    //
+    // Transition 2 — master is on AND user just turned every child off:
+    //   Auto-flip master to off, since an MCP with no enabled tools is a dead control.
+    //   This pairs with Transition 1: re-enabling later will revive everything.
+    //
+    // Transition 3 — master on → off (manual):
+    //   DON'T touch child states. The user might just be temporarily hiding MCP from
+    //   chat; we want their next re-enable to remember which tools were on.
+    if (isRecord(server.commonOptions)) {
+      const finalCommon = server.commonOptions as Record<string, JsonValue>;
+      const tools = Array.isArray(finalCommon.tools) ? finalCommon.tools.filter(isRecord) : [];
+      const allOff = tools.length > 0 && tools.every((tool) => tool.enable === false);
+      if (!wasEnabled && willEnable && allOff) {
+        // Transition 1: revive child switches.
+        server.commonOptions = {
+          ...finalCommon,
+          tools: tools.map((tool) => ({ ...tool, enable: true })),
+        };
+      } else if (willEnable && allOff) {
+        // Transition 2: auto-flip master off. This catches the "user turned off the last
+        // tool" case from the per-tool save path (settings/mcp-server/detail also handles
+        // tool toggle saves since the UI debounces a full server snapshot).
+        server.commonOptions = { ...finalCommon, enable: false };
+      }
+      // Transition 3 needs no action — the tools array is already preserved verbatim.
     }
     const result = upsertById(state.settings.mcpServers as JsonValue[], server);
     updateSettings({ ...state.settings, mcpServers: result.items });
@@ -11004,25 +11499,15 @@ async function routeApi(request: Request, url: URL) {
   // -- Update check / download ---------------------------------------------------
   // Queries GitHub Releases for the latest published release of the PC repo, compares its
   // tag (e.g. "v1.0.1") to APP_VERSION, and returns the diff so the About page can decide
-  // whether to prompt the user. We don't poll automatically — only fires on user click.
-  // Unauthenticated GitHub API has a 60-req/hr/IP limit, which is fine for "click to check".
+  // whether to prompt the user. Unauthenticated GitHub API is capped at 60 req/hr/IP and
+  // can 403 when the user's IP (or anyone behind the same NAT) has been hammering GitHub;
+  // when that happens we fall back to scraping the public `github.com/<repo>/releases/latest`
+  // redirect, which doesn't hit the API and isn't rate-limited.
   if (path === "update/check" && request.method === "GET") {
+    const repo = "yuh-G/rikkahub-desktop";
+
     try {
-      const repo = "yuh-G/rikkahub-desktop";
-      const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-        headers: { Accept: "application/vnd.github+json", "User-Agent": "RikkaHub-PC" },
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        return error(`GitHub ${res.status}: ${text.slice(0, 300)}`, 502);
-      }
-      const release = (await res.json()) as {
-        tag_name?: string;
-        name?: string;
-        body?: string;
-        html_url?: string;
-        assets?: { name?: string; browser_download_url?: string; size?: number }[];
-      };
+      const release = await fetchGithubLatestRelease(repo);
       const tag = (release.tag_name ?? "").replace(/^v/i, "");
       // Find the Windows x64 NSIS installer asset by suffix matching. Format from tauri.conf:
       // `Rikkahub_<version>_x64-setup.exe`. Fall back to the first .exe if nothing matches.
@@ -11034,6 +11519,7 @@ async function routeApi(request: Request, url: URL) {
       const fileName = installer?.name ?? "";
       const size = installer?.size ?? 0;
       const isNewer = compareSemver(tag, APP_VERSION) > 0;
+      const cachedInstallerPath = probeCachedInstaller(fileName, tag, isNewer);
       return json({
         current: APP_VERSION,
         latest: tag,
@@ -11044,9 +11530,39 @@ async function routeApi(request: Request, url: URL) {
         downloadUrl,
         fileName,
         size,
+        cachedInstallerPath,
+        source: "api",
       });
     } catch (err) {
-      return error(err instanceof Error ? err.message : "Failed to check for updates", 502);
+      // api.github.com hit a rate limit or transient failure. Last resort: read the public
+      // releases/latest URL on github.com (not the API host) — it 302-redirects to the
+      // tagged release, from which we can derive the version and predict the asset URL
+      // using our tauri.conf naming convention. No rate limit, no token needed.
+      try {
+        const fallback = await fetchLatestReleaseFromHtmlRedirect(repo);
+        const isNewer = compareSemver(fallback.tag, APP_VERSION) > 0;
+        const fileName = `Rikkahub_${fallback.tag}_x64-setup.exe`;
+        const downloadUrl = `https://github.com/${repo}/releases/download/v${fallback.tag}/${fileName}`;
+        const cachedInstallerPath = probeCachedInstaller(fileName, fallback.tag, isNewer);
+        return json({
+          current: APP_VERSION,
+          latest: fallback.tag,
+          isNewer,
+          title: `v${fallback.tag}`,
+          notes: "（API 限流，已退回到匿名页面探测，未获取到 release notes。请点击下方 GitHub 链接查看完整说明。）",
+          htmlUrl: fallback.htmlUrl,
+          downloadUrl,
+          fileName,
+          size: 0,
+          cachedInstallerPath,
+          source: "fallback",
+          warning: err instanceof Error ? err.message : String(err),
+        });
+      } catch (fallbackErr) {
+        const detail = err instanceof Error ? err.message : String(err);
+        const fallbackDetail = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+        return error(`检查更新失败：${detail}；fallback 也失败：${fallbackDetail}`, 502);
+      }
     }
   }
   // Downloads a release asset to %TEMP%\rikkahub-updates and returns the local path. The UI
@@ -11068,7 +11584,12 @@ async function routeApi(request: Request, url: URL) {
       if (!/^(github\.com|.*\.githubusercontent\.com|objects\.githubusercontent\.com)$/i.test(host)) {
         return error(`Refusing to download from non-GitHub host: ${host}`, 400);
       }
-      const fileName = (String(body.fileName ?? "").replace(/[^A-Za-z0-9._\-]/g, "") || "rikkahub-update.exe");
+      const sanitized = String(body.fileName ?? "").replace(/[^A-Za-z0-9._\-]/g, "") || "rikkahub-update.exe";
+      // The Tauri shell's launch_installer command refuses anything that doesn't end in .exe
+      // (lib.rs path check). Sanitization above can strip the dot if the source filename had
+      // weird characters, so guard explicitly here — otherwise the user gets "启动安装程序失败"
+      // after a successful download.
+      const fileName = /\.exe$/i.test(sanitized) ? sanitized : `${sanitized}.exe`;
       const tmpDir = join(process.env.TEMP ?? process.env.TMP ?? dataDir, "rikkahub-updates");
       mkdirSync(tmpDir, { recursive: true });
       const targetPath = join(tmpDir, fileName);

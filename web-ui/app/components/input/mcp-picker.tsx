@@ -1,7 +1,7 @@
 import * as React from "react";
 
 import { useMutation } from "@tanstack/react-query";
-import { LoaderCircle, Terminal } from "lucide-react";
+import { ChevronDown, ChevronRight, LoaderCircle, Terminal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useCurrentAssistant } from "~/hooks/use-current-assistant";
@@ -12,7 +12,7 @@ import { refreshSettingsStore } from "~/lib/settings-sync";
 import { safeStringArray } from "~/lib/type-guards";
 import { cn } from "~/lib/utils";
 import api from "~/services/api";
-import type { McpServerConfig, McpToolOption } from "~/types";
+import type { McpServerConfig, McpToolOption, McpToolOverride } from "~/types";
 import { Button } from "~/components/ui/button";
 import {
   Popover,
@@ -130,6 +130,46 @@ export function McpPickerButton({ disabled = false, className }: McpPickerButton
     [canUse, currentAssistant, knownServerIdSet, selectedServerIds, updateMcpMutation],
   );
 
+  // Per-tool override mutation. The backend persists `null` as "clear override (revert to
+  // global default)" — the React Query mutation just forwards the body as-is.
+  const updateToolOverrideMutation = useMutation({
+    mutationFn: (payload: {
+      assistantId: string;
+      serverId: string;
+      toolName: string;
+      enable?: boolean | null;
+      needsApproval?: boolean | null;
+    }) => api.post<{ status: string }>("settings/assistant/mcp-tool-override", payload),
+    onError: (overrideError) => {
+      setError(extractErrorMessage(overrideError, t("mcp.update_failed")));
+    },
+    onSuccess: async () => {
+      await refreshSettingsStore();
+      setError(null);
+    },
+  });
+
+  // Per-server expand/collapse state. Default collapsed. Tracking by server id since servers
+  // get reordered/removed independent of the user's expand state.
+  const [expandedServerIds, setExpandedServerIds] = React.useState<Set<string>>(new Set());
+  const toggleExpand = (serverId: string) => {
+    setExpandedServerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(serverId)) next.delete(serverId);
+      else next.add(serverId);
+      return next;
+    });
+  };
+
+  // Read current assistant's override for one (server, tool). Returns the override entry or
+  // an empty object so callers can do `override.enable ?? true` style fallbacks.
+  const getOverride = (serverId: string, toolName: string): McpToolOverride => {
+    const overrides = currentAssistant?.mcpToolOverrides as
+      | Record<string, Record<string, McpToolOverride>>
+      | undefined;
+    return overrides?.[serverId]?.[toolName] ?? {};
+  };
+
   return (
     <Popover {...popoverProps}>
       <PopoverTrigger asChild>
@@ -176,44 +216,146 @@ export function McpPickerButton({ disabled = false, className }: McpPickerButton
                   const switching =
                     updateMcpMutation.isPending &&
                     updateMcpMutation.variables?.serverId === server.id;
-                  const tools = getEnabledToolsCount(server.commonOptions?.tools);
+                  const toolCount = getEnabledToolsCount(server.commonOptions?.tools);
+                  const expanded = expandedServerIds.has(server.id);
+                  // Only globally-enabled tools surface here. A tool with global enable=false
+                  // is invisible to the user in this picker — matching the rule "设置中关闭的
+                  // 工具会话里看不见". The per-assistant override only refines among the
+                  // globally-enabled set.
+                  const visibleTools: McpToolOption[] = (server.commonOptions?.tools ?? []).filter(
+                    (tool) => tool.enable !== false,
+                  );
 
                   return (
                     <div
                       key={server.id}
                       className={cn(
-                        "flex items-center gap-1.5 rounded-md border px-2 py-1.5 transition",
+                        "rounded-md border transition",
                         selected && "border-primary bg-primary/5",
                       )}
                     >
-                      <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted">
-                        {switching ? (
-                          <LoaderCircle className="size-3 animate-spin" />
-                        ) : (
-                          <Terminal className="size-3" />
-                        )}
+                      <div className="flex items-center gap-1.5 px-2 py-1.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleExpand(server.id)}
+                          className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground hover:text-foreground"
+                          aria-label={expanded ? "收起" : "展开"}
+                          disabled={visibleTools.length === 0}
+                          title={visibleTools.length === 0 ? "暂无可用工具" : (expanded ? "收起工具列表" : "展开工具列表")}
+                        >
+                          {switching ? (
+                            <LoaderCircle className="size-3 animate-spin" />
+                          ) : expanded ? (
+                            <ChevronDown className="size-3" />
+                          ) : (
+                            <ChevronRight className="size-3" />
+                          )}
+                        </button>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[11px] font-medium leading-tight">
+                            {getDisplayName(server.commonOptions?.name, t("mcp.unnamed_server"))}
+                          </div>
+                          <div className="text-muted-foreground text-[10px] leading-tight">
+                            {t("mcp.tools_enabled", {
+                              enabled: toolCount.enabled,
+                              total: toolCount.total,
+                            })}
+                          </div>
+                        </div>
+
+                        <Switch
+                          size="sm"
+                          checked={selected}
+                          disabled={disabled || updateMcpMutation.isPending}
+                          onCheckedChange={(nextChecked) => {
+                            handleToggleServer(server.id, nextChecked);
+                          }}
+                        />
                       </div>
 
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[11px] font-medium leading-tight">
-                          {getDisplayName(server.commonOptions?.name, t("mcp.unnamed_server"))}
-                        </div>
-                        <div className="text-muted-foreground text-[10px] leading-tight">
-                          {t("mcp.tools_enabled", {
-                            enabled: tools.enabled,
-                            total: tools.total,
+                      {expanded && visibleTools.length > 0 ? (
+                        // Per-tool override panel. The rule for each tool's `enable` state:
+                        //   global=true & no override          → checked (default behavior)
+                        //   global=true & override.enable=false → unchecked (assistant disabled)
+                        //   global=true & override.enable=true  → checked (explicit, same as default)
+                        // We send `null` to the backend to clear an override (restore default).
+                        //
+                        // Master/child semantics: when the assistant has the MCP server master
+                        // OFF (`!selected`), the per-tool switches stay visible AND show their
+                        // last preference, but are read-only & greyed — toggling the server
+                        // back on will revive whatever the user had configured.
+                        <div className={cn("border-t bg-muted/30 px-2 py-1.5 space-y-1", !selected && "opacity-60")}>
+                          {visibleTools.map((tool) => {
+                            const override = getOverride(server.id, tool.name);
+                            const effectiveEnabled = override.enable !== false;
+                            const effectiveNeedsApproval =
+                              typeof override.needsApproval === "boolean"
+                                ? override.needsApproval
+                                : tool.needsApproval === true;
+                            const isMutating =
+                              updateToolOverrideMutation.isPending &&
+                              updateToolOverrideMutation.variables?.serverId === server.id &&
+                              updateToolOverrideMutation.variables?.toolName === tool.name;
+                            return (
+                              <div
+                                key={tool.name}
+                                className="flex items-center gap-1.5 rounded px-1 py-1"
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div
+                                    className="truncate text-[11px] leading-tight"
+                                    title={tool.name}
+                                  >
+                                    {tool.name}
+                                  </div>
+                                </div>
+                                {isMutating ? <LoaderCircle className="size-3 animate-spin text-muted-foreground" /> : null}
+                                <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                  <span>需要用户审核</span>
+                                  <Switch
+                                    size="sm"
+                                    checked={effectiveNeedsApproval}
+                                    disabled={disabled || !currentAssistant || !selected}
+                                    onCheckedChange={(nextChecked) => {
+                                      if (!currentAssistant) return;
+                                      // If the toggle matches the global default, clear the
+                                      // override (send null) to keep state minimal. Otherwise
+                                      // store the explicit override.
+                                      const matchesGlobal = nextChecked === (tool.needsApproval === true);
+                                      updateToolOverrideMutation.mutate({
+                                        assistantId: currentAssistant.id,
+                                        serverId: server.id,
+                                        toolName: tool.name,
+                                        needsApproval: matchesGlobal ? null : nextChecked,
+                                      });
+                                    }}
+                                  />
+                                </label>
+                                <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                  <span>启用</span>
+                                  <Switch
+                                    size="sm"
+                                    checked={effectiveEnabled}
+                                    disabled={disabled || !currentAssistant || !selected}
+                                    onCheckedChange={(nextChecked) => {
+                                      if (!currentAssistant) return;
+                                      // enable=true is the global default → clear the override.
+                                      // enable=false → explicit override to disable for this assistant.
+                                      updateToolOverrideMutation.mutate({
+                                        assistantId: currentAssistant.id,
+                                        serverId: server.id,
+                                        toolName: tool.name,
+                                        enable: nextChecked ? null : false,
+                                      });
+                                    }}
+                                  />
+                                </label>
+                              </div>
+                            );
                           })}
                         </div>
-                      </div>
-
-                      <Switch
-                        size="sm"
-                        checked={selected}
-                        disabled={disabled || updateMcpMutation.isPending}
-                        onCheckedChange={(nextChecked) => {
-                          handleToggleServer(server.id, nextChecked);
-                        }}
-                      />
+                      ) : null}
                     </div>
                   );
                 })}

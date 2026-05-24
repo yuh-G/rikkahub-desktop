@@ -58,7 +58,7 @@
     "url": "https://rikkahub-desktop.pages.dev/",
     "downloadUrl": "https://github.com/yuh-G/rikkahub-desktop/releases/latest",
     "image": "https://rikkahub-desktop.pages.dev/icon.png",
-    "softwareVersion": "1.0.4",
+    "softwareVersion": "1.0.5",
     "fileSize": "37MB",
     "softwareRequirements": "Windows 10 1809+ or Windows 11",
     "author": {
@@ -733,19 +733,70 @@
       setLang(saved || browser);
     })();
 
-    // ━━━━━━━━━━━━━━━━━━━ DOWNLOAD URL UPGRADE ━━━━━━━━━━━━━━━━━━━
-    // All `[data-download="primary"]` buttons start with the GitHub Releases href as
-    // their static value (so search engine crawlers and JS-disabled browsers see a real,
-    // usable link). On page load we upgrade them to the Cloudflare R2 mirror URL which
-    // is significantly faster for users in China and adds CDN edge-cache for everyone
-    // globally. Each release we bump RIKKAHUB_VERSION below; that's the single source
-    // of truth for the website's download URL.
-    const RIKKAHUB_VERSION = '1.0.4';
+    // ━━━━━━━━━━━━━━━━━━━ DYNAMIC DOWNLOAD URL UPGRADE ━━━━━━━━━━━━━━━━━━━
+    // The page loads with `[data-download="primary"]` buttons pointing at the GitHub
+    // Releases /latest page (set in the HTML attribute), so crawlers and JS-disabled
+    // browsers always have a working download. On load we:
+    //   1. Ask api.github.com what the latest release tag is — this is the single
+    //      source of truth, and it bumps the moment you publish a new GitHub Release.
+    //   2. Fall back to a static `latest.txt` on R2 (just one line, e.g. "1.0.5") if
+    //      the GitHub API is rate-limited (60 req/hr/IP) or otherwise unreachable.
+    //   3. Fall back to RIKKAHUB_FALLBACK_VERSION if both routes fail, so users on
+    //      flaky networks still get a usable link.
+    // Why this matters: the only file that has to track the current version is whatever
+    // you upload to R2 (the .exe itself, named Rikkahub_<version>_x64-setup.exe). You
+    // don't need to touch this page on every release — just publish the GitHub Release
+    // and drop the .exe on R2.
     const RIKKAHUB_R2_BASE = 'https://pub-d26eee7d911c4bab937ebe1729a4cefe.r2.dev';
-    const RIKKAHUB_DOWNLOAD_URL = `${RIKKAHUB_R2_BASE}/Rikkahub_${RIKKAHUB_VERSION}_x64-setup.exe`;
-    document.querySelectorAll('[data-download="primary"]').forEach((el) => {
-      el.setAttribute('href', RIKKAHUB_DOWNLOAD_URL);
-    });
+    const RIKKAHUB_GITHUB_REPO = 'yuh-G/rikkahub-desktop';
+    const RIKKAHUB_FALLBACK_VERSION = '1.0.5'; // safety net only; do NOT rely on bumping this
+    const RIKKAHUB_GITHUB_FALLBACK_URL = `https://github.com/${RIKKAHUB_GITHUB_REPO}/releases/latest`;
+
+    function rikkahubR2DownloadUrl(version) {
+      return `${RIKKAHUB_R2_BASE}/Rikkahub_${version}_x64-setup.exe`;
+    }
+
+    async function resolveLatestVersion() {
+      // Primary: GitHub Releases API. CORS is open here, so the fetch works from any
+      // origin. We don't authenticate — 60 req/hr/IP is plenty per visitor.
+      try {
+        const res = await fetch(`https://api.github.com/repos/${RIKKAHUB_GITHUB_REPO}/releases/latest`, {
+          headers: { Accept: 'application/vnd.github+json' },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const tag = String(data.tag_name || '').replace(/^v/i, '').trim();
+          if (tag) return { version: tag, source: 'github-api' };
+        }
+      } catch (err) {
+        console.warn('[rikkahub] GitHub API check failed', err);
+      }
+      // Fallback: a tiny `latest.txt` on R2 (one line, version only). Upload this
+      // alongside the .exe and it covers the case where GitHub API is rate-limited.
+      try {
+        const res = await fetch(`${RIKKAHUB_R2_BASE}/latest.txt`, { cache: 'no-store' });
+        if (res.ok) {
+          const tag = (await res.text()).trim().replace(/^v/i, '');
+          if (tag) return { version: tag, source: 'r2-latest-txt' };
+        }
+      } catch (err) {
+        console.warn('[rikkahub] R2 latest.txt check failed', err);
+      }
+      return { version: RIKKAHUB_FALLBACK_VERSION, source: 'fallback' };
+    }
+
+    (async () => {
+      const { version, source } = await resolveLatestVersion();
+      console.info(`[rikkahub] resolved latest version: ${version} (source: ${source})`);
+      const downloadUrl = rikkahubR2DownloadUrl(version);
+      document.querySelectorAll('[data-download="primary"]').forEach((el) => {
+        el.setAttribute('href', downloadUrl);
+      });
+      // Update visible version labels if any element opts in via data-rikkahub-version.
+      document.querySelectorAll('[data-rikkahub-version]').forEach((el) => {
+        el.textContent = `v${version}`;
+      });
+    })();
   </script>
 </body>
 </html>
