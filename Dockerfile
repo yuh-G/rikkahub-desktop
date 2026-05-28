@@ -1,3 +1,18 @@
+#  — Stage 0: System tools for runtime (unzip, zip) —
+# Use the same Debian version as distroless/base-debian12 (bookworm)
+FROM debian:bookworm-slim AS tools
+RUN apt-get update && apt-get install -y --no-install-recommends unzip zip && \
+    rm -rf /var/lib/apt/lists/*
+
+# Bundle binaries and every shared library they depend on into /tools
+RUN mkdir -p /tools/bin && \
+    cp /usr/bin/unzip /usr/bin/zip /tools/bin/ && \
+    ldd /usr/bin/unzip /usr/bin/zip 2>/dev/null | \
+    awk '/=> \// {print $3}' | sort -u | \
+    while read -r lib; do \
+      install -D "$lib" "/tools$lib"; \
+    done
+
 #  — Stage 1: Build —
 # --platform=$BUILDPLATFORM ensures Bun runs natively (no QEMU emulation).
 # Cross-compilation to TARGETARCH is handled via Bun's --target flag below.
@@ -38,6 +53,7 @@ RUN set -eux; \
 FROM gcr.io/distroless/base-debian12
 WORKDIR /app
 
+COPY --from=tools /tools/ /
 COPY --from=builder /build/rikkahub-pc ./
 COPY --from=builder /build/build/client/ ./web-ui/build/client/
 
