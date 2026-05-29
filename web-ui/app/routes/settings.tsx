@@ -300,7 +300,7 @@ function renderMessageTemplatePreview(template: string, message: string, role: s
     char: assistant.name?.trim() || "Assistant",
     model_id: model?.modelId || "gpt-4o",
     model_name: model?.displayName || model?.modelId || "GPT-4o",
-    system_version: `Windows PC (${navigator.platform || "web"})`,
+    system_version: `${(() => { const p = navigator.platform || "web"; const n = /Win/i.test(p) ? "Windows" : /Linux/i.test(p) ? "Linux" : /Mac/i.test(p) ? "macOS" : ""; return n ? `${n} PC` : "PC"; })()} (${navigator.platform || "web"})`,
   };
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, key) => values[key] ?? match);
 }
@@ -2124,8 +2124,8 @@ function AssistantsSection({ settings, onSettings }: { settings: Settings; onSet
               {[
                 ["time_info", "时间信息", "读取 PC 本地时间、时区、星期和时间戳。"],
                 ["javascript_engine", "JavaScript 引擎", "用于计算和纯文本数据转换，不提供 DOM/Node API。"],
-                ["clipboard", "剪贴板", "读写 Windows 系统剪贴板；除非用户明确要求，否则模型不应写入。"],
-                ["tts", "语音播报", "调用 Windows 系统语音朗读文本。"],
+                ["clipboard", "剪贴板", "读写系统剪贴板；除非用户明确要求，否则模型不应写入。"],
+                ["tts", "语音播报", "调用系统语音朗读文本。"],
                 ["ask_user", "询问用户", "需要澄清时在对话中展示问题，由用户回答后继续。"],
               ].map(([type, label, desc]) => {
                 const enabled = Array.isArray(draft.localTools) && draft.localTools.some((tool) => isPlainRecord(tool) ? tool.type === type : tool === type);
@@ -2856,7 +2856,7 @@ function TtsSettingsPanel({ settings, onSettings }: { settings: Settings; onSett
       const contentType = response.headers.get("Content-Type") ?? "";
       if (contentType.includes("application/json")) {
         // System TTS path — Windows is speaking on-device; nothing for us to play.
-        toast.success("已通过 Windows 系统语音播报测试文本");
+        toast.success("已通过系统语音播报测试文本");
         return;
       }
       const blob = await response.blob();
@@ -3126,8 +3126,8 @@ function TtsSettingsPanel({ settings, onSettings }: { settings: Settings; onSett
               </>
             ) : (
               <div className="space-y-5 md:col-span-2">
-                {numericInput("speechRate", "Speech Rate", "Windows System.Speech 语速，1 为默认。", 0.2, 3, 0.05)}
-                {numericInput("pitch", "Pitch", "Windows 系统语音当前不支持直接调整音高，此设置仅会随配置导出。", 0.2, 3, 0.05)}
+                {numericInput("speechRate", "Speech Rate", "系统语音语速，1 为默认。", 0.2, 3, 0.05)}
+                {numericInput("pitch", "Pitch", "系统语音当前不支持直接调整音高，此设置仅会随配置导出。", 0.2, 3, 0.05)}
               </div>
             )}
           </div>
@@ -5630,7 +5630,7 @@ function ProxySection({ settings, onSettings }: { settings: Settings; onSettings
         patch({ url: result.detected });
         toast.success(`检测到系统代理：${result.detected}`);
       } else {
-        toast.message("未检测到系统代理", { description: "Windows 系统代理当前未开启，或代理工具尚未启动。" });
+        toast.message("未检测到系统代理", { description: "系统代理当前未开启，或代理工具尚未启动。" });
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "检测失败");
@@ -5837,7 +5837,7 @@ function AboutSection() {
 
   const aboutRows = [
     { label: "版本", value: APP_VERSION, icon: Settings2, onClick: undefined, action: "update" as const },
-    { label: "系统", value: typeof navigator === "undefined" ? "Windows / Web" : navigator.userAgent, icon: Smartphone, onClick: undefined, action: undefined },
+    { label: "系统", value: typeof navigator === "undefined" ? "Web" : navigator.userAgent, icon: Smartphone, onClick: undefined, action: undefined },
     { label: "官网", value: "https://rikka-ai.com", icon: Globe, onClick: () => void openExternal("https://rikka-ai.com/"), action: undefined },
     { label: "GitHub", value: "https://github.com/yuh-G/rikkahub-desktop", icon: Github, onClick: () => void openExternal("https://github.com/yuh-G/rikkahub-desktop"), action: undefined },
     { label: "License", value: "https://github.com/yuh-G/rikkahub-desktop/blob/master/LICENSE", icon: FileClock, onClick: () => void openExternal("https://github.com/yuh-G/rikkahub-desktop/blob/master/LICENSE"), action: undefined },

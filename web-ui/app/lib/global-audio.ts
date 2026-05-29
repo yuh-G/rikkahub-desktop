@@ -54,8 +54,7 @@ export function stopAudio() {
           window.speechSynthesis.cancel();
         }
       }
-      // system-hint has nothing to stop client-side (Windows is speaking on the
-      // server); we just clear our local "currently speaking" flag.
+      // system-hint TTS produces audio server-side; we clear the speaking flag.
     } catch {
       // Best-effort cleanup — never throw from stopAudio.
     }
@@ -128,10 +127,9 @@ export function playSpeechSynthesis(key: string, text: string): boolean {
 
 /**
  * Mark "system TTS speaking" so the button can show the stop icon. The actual
- * audio is being produced server-side by Windows System.Speech; we don't know when
- * it ends, so we auto-clear after the provided estimated duration. The user can
- * also click stop manually but that won't actually stop the on-device playback —
- * a limitation of the current Windows System.Speech wrapper.
+ * audio is produced server-side; we don't know when it ends, so we auto-clear
+ * after the provided estimated duration. The user can also click stop manually
+ * but that won't stop the on-device playback — a limitation of the system TTS wrapper.
  */
 export function markSystemTtsSpeaking(key: string, estimatedDurationMs: number): void {
   stopAudio();

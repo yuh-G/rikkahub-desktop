@@ -1,0 +1,16 @@
+web-ui/node_modules/
+web-ui/build/
+dist/
+pc-data/
+.git/
+.gitignore
+**/*.exe
+**/*.cmd
+**/*.nsi
+**/*.nsh
+web-ui/src-tauri/
+icons/
+docs/
+.github/
+CLAUDE.md
+README*.md

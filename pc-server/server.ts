@@ -389,6 +389,19 @@ const sourceRootDir = resolve(import.meta.dir, "..");
 const executableDir = dirname(process.execPath);
 const rootDir = existsSync(join(executableDir, "web-ui")) ? executableDir : sourceRootDir;
 const dataDir = resolve(process.env.RIKKAHUB_PC_DATA_DIR ?? join(rootDir, "pc-data"));
+
+function tempDir(): string {
+  const t = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP;
+  if (t) return t;
+  return process.platform === "win32" ? dataDir : "/tmp";
+}
+
+function osType(): string {
+  if (process.platform === "linux") return "Linux";
+  if (process.platform === "darwin") return "macOS";
+  return "Windows";
+}
+
 const filesDir = join(dataDir, "files");
 const skillsDir = join(dataDir, "skills");
 const statePath = join(dataDir, "state.json");
@@ -448,7 +461,7 @@ async function fetchLatestReleaseFromHtmlRedirect(repo: string): Promise<{ tag: 
 function probeCachedInstaller(fileName: string, tag: string, isNewer: boolean): string | null {
   if (!isNewer || !fileName) return null;
   try {
-    const tmpDir = join(process.env.TEMP ?? process.env.TMP ?? dataDir, "rikkahub-updates");
+    const tmpDir = join(tempDir(), "rikkahub-updates");
     if (!existsSync(tmpDir)) return null;
     const canonical = join(tmpDir, fileName);
     if (existsSync(canonical) && statSync(canonical).size > 0) {
@@ -2066,7 +2079,7 @@ function templateVariables(messageText: string, role: string, assistant: Assista
     char: assistant.name?.trim() || "Assistant",
     model_id: modelItem.modelId,
     model_name: modelItem.displayName?.trim() || modelItem.modelId,
-    system_version: `Windows PC (${process.platform})`,
+    system_version: `${osType()} PC (${process.platform})`,
     device_info: "RikkaHub PC",
     battery_level: "unknown",
   };
@@ -2616,13 +2629,20 @@ function applyAndroidZipBackupFromPath(zipPath: string): { settingsImported: boo
   const extractDir = join(tmpRoot, "extracted");
   rmSync(extractDir, { recursive: true, force: true });
   mkdirSync(extractDir, { recursive: true });
-  const script = [
-    "Add-Type -AssemblyName System.IO.Compression.FileSystem",
-    `[System.IO.Compression.ZipFile]::ExtractToDirectory('${zipPath.replace(/'/g, "''")}', '${extractDir.replace(/'/g, "''")}')`,
-  ].join("; ");
-  const proc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]);
-  if (proc.exitCode !== 0) {
-    throw new Error(`Failed to extract Android backup zip: ${new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 300)}`);
+  if (process.platform === "win32") {
+    const script = [
+      "Add-Type -AssemblyName System.IO.Compression.FileSystem",
+      `[System.IO.Compression.ZipFile]::ExtractToDirectory('${zipPath.replace(/'/g, "''")}', '${extractDir.replace(/'/g, "''")}')`,
+    ].join("; ");
+    const proc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]);
+    if (proc.exitCode !== 0) {
+      throw new Error(`Failed to extract backup zip: ${new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 300)}`);
+    }
+  } else {
+    const proc = Bun.spawnSync(["unzip", "-o", zipPath, "-d", extractDir]);
+    if (proc.exitCode !== 0) {
+      throw new Error(`Failed to extract backup zip: ${new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 300)}`);
+    }
   }
 
   // PC-origin zip fast path: if pc-backup.json exists, this came from a PC export — restore
@@ -3138,7 +3158,7 @@ function insertConversationsIntoDb(db: InstanceType<typeof Database>) {
 
 
 function createSettingsBackupZip(): Buffer {
-  const tmpRoot = join(process.env.TEMP ?? process.env.TMP ?? dataDir, `rikkahub-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const tmpRoot = join(tempDir(), `rikkahub-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const stageDir = join(tmpRoot, "stage");
   mkdirSync(stageDir, { recursive: true });
   try {
@@ -3229,13 +3249,20 @@ function createSettingsBackupZip(): Buffer {
     }
 
     const zipPath = join(tmpRoot, "backup.zip");
-    const script = [
-      "Add-Type -AssemblyName System.IO.Compression.FileSystem",
-      `[System.IO.Compression.ZipFile]::CreateFromDirectory('${stageDir.replace(/'/g, "''")}', '${zipPath.replace(/'/g, "''")}')`,
-    ].join("; ");
-    const proc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]);
-    if (proc.exitCode !== 0) {
-      throw new Error(`Failed to create backup zip: ${new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 300)}`);
+    if (process.platform === "win32") {
+      const script = [
+        "Add-Type -AssemblyName System.IO.Compression.FileSystem",
+        `[System.IO.Compression.ZipFile]::CreateFromDirectory('${stageDir.replace(/'/g, "''")}', '${zipPath.replace(/'/g, "''")}')`,
+      ].join("; ");
+      const proc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]);
+      if (proc.exitCode !== 0) {
+        throw new Error(`Failed to create backup zip: ${new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 300)}`);
+      }
+    } else {
+      const proc = Bun.spawnSync(["zip", "-rq", zipPath, "."], { cwd: stageDir });
+      if (proc.exitCode !== 0) {
+        throw new Error(`Failed to create backup zip: ${new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 300)}`);
+      }
     }
     return readFileSync(zipPath);
   } finally {
@@ -3248,7 +3275,7 @@ function createSettingsBackupZip(): Buffer {
 // around and stream it as the HTTP response — for users with multi-GB attachments, the zip
 // itself can exceed 4 GB and Buffer.from(...) on it is an OOM in waiting.
 function createSettingsBackupZipToPath(targetZipPath: string): number {
-  const tmpRoot = join(process.env.TEMP ?? process.env.TMP ?? dataDir, `rikkahub-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const tmpRoot = join(tempDir(), `rikkahub-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const stageDir = join(tmpRoot, "stage");
   mkdirSync(stageDir, { recursive: true });
   try {
@@ -3306,24 +3333,30 @@ function createSettingsBackupZipToPath(targetZipPath: string): number {
       mkdirSync(skillsStage, { recursive: true });
       copyDirRecursive(skillsDir, skillsStage);
     }
-    // Use .NET System.IO.Compression directly (available on all Windows 10+ without needing
-    // the PowerShell Archive module which is missing on some Win11 installs). This is more
-    // reliable than Compress-Archive and works with both powershell.exe 5.1 and pwsh 7+.
     if (existsSync(targetZipPath)) rmSync(targetZipPath);
-    const script = [
-      "Add-Type -AssemblyName System.IO.Compression.FileSystem",
-      `[System.IO.Compression.ZipFile]::CreateFromDirectory('${stageDir.replace(/'/g, "''")}', '${targetZipPath.replace(/'/g, "''")}')`,
-    ].join("; ");
     console.log(`[backup] creating zip from ${stageDir} → ${targetZipPath} (${readdirSync(stageDir).join(", ")})`);
-    const proc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], { timeout: 120_000 });
-    if (proc.exitCode !== 0) {
-      const stderr = new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 500);
-      const stdout = new TextDecoder().decode(proc.stdout ?? new Uint8Array()).slice(0, 200);
-      console.error("[backup] zip creation failed, exit:", proc.exitCode, "stderr:", stderr, "stdout:", stdout);
-      throw new Error(`Zip creation failed (exit ${proc.exitCode}): ${stderr || stdout || "unknown error"}`);
+    if (process.platform === "win32") {
+      const script = [
+        "Add-Type -AssemblyName System.IO.Compression.FileSystem",
+        `[System.IO.Compression.ZipFile]::CreateFromDirectory('${stageDir.replace(/'/g, "''")}', '${targetZipPath.replace(/'/g, "''")}')`,
+      ].join("; ");
+      const proc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], { timeout: 120_000 });
+      if (proc.exitCode !== 0) {
+        const stderr = new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 500);
+        const stdout = new TextDecoder().decode(proc.stdout ?? new Uint8Array()).slice(0, 200);
+        console.error("[backup] zip creation failed, exit:", proc.exitCode, "stderr:", stderr, "stdout:", stdout);
+        throw new Error(`Zip creation failed (exit ${proc.exitCode}): ${stderr || stdout || "unknown error"}`);
+      }
+    } else {
+      const proc = Bun.spawnSync(["zip", "-rq", targetZipPath, "."], { cwd: stageDir, timeout: 120_000 });
+      if (proc.exitCode !== 0) {
+        const stderr = new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 500);
+        console.error("[backup] zip creation failed, exit:", proc.exitCode, "stderr:", stderr);
+        throw new Error(`Zip creation failed (exit ${proc.exitCode}): ${stderr || "unknown error"}`);
+      }
     }
     if (!existsSync(targetZipPath)) {
-      throw new Error("Zip file was not created (file missing after PowerShell exited 0)");
+      throw new Error("Zip file was not created (file missing after archiver exited 0)");
     }
     return statSync(targetZipPath).size;
   } finally {
@@ -3338,7 +3371,7 @@ function createSettingsBackupZipToPath(targetZipPath: string): number {
 function restoreBackupBuffer(buffer: Buffer, fileName: string): void {
   const lower = fileName.toLowerCase();
   if (lower.endsWith(".zip")) {
-    const tmpRoot = join(process.env.TEMP ?? process.env.TMP ?? dataDir, `rikkahub-restore-${Date.now()}`);
+    const tmpRoot = join(tempDir(), `rikkahub-restore-${Date.now()}`);
     mkdirSync(tmpRoot, { recursive: true });
     const zipPath = join(tmpRoot, fileName.replace(/[^A-Za-z0-9._\-]/g, "_") || "backup.zip");
     try {
@@ -3375,7 +3408,7 @@ function backupStamp(): string {
  *  Used by s3Restore + webDavRestore. Mirrors the local data/import streaming-path so
  *  multi-GB backups can be restored from cloud the same way they can from a local picker. */
 async function streamResponseToTempAndRestore(response: Response, fileName: string): Promise<void> {
-  const tmpRoot = join(process.env.TEMP ?? process.env.TMP ?? dataDir, `rikkahub-restore-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const tmpRoot = join(tempDir(), `rikkahub-restore-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(tmpRoot, { recursive: true });
   // PowerShell's Expand-Archive checks the extension, so anything that isn't `.zip` we
   // still save as such (the magic-byte check below decides what to do with it).
@@ -3453,7 +3486,7 @@ async function webDavBackup(config: WebDavConfig) {
   // (PC's lossless self-restore data). Streamed off disk so multi-GB attachment libraries
   // don't OOM the JS heap before the PUT starts.
   const fileName = `backup_${backupStamp()}.zip`;
-  const tmpRoot = join(process.env.TEMP ?? process.env.TMP ?? dataDir, `rikkahub-webdav-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const tmpRoot = join(tempDir(), `rikkahub-webdav-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(tmpRoot, { recursive: true });
   const zipPath = join(tmpRoot, fileName);
   try {
@@ -3678,7 +3711,7 @@ async function s3Backup(config: S3Config) {
   // otherwise OOM the JS heap before the PUT even starts (and again on the SigV4 SHA256
   // pass). We pre-stage on disk via createSettingsBackupZipToPath, then hand fetch a
   // ReadableStream + Content-Length and switch SigV4 to UNSIGNED-PAYLOAD.
-  const tmpRoot = join(process.env.TEMP ?? process.env.TMP ?? dataDir, `rikkahub-s3-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const tmpRoot = join(tempDir(), `rikkahub-s3-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(tmpRoot, { recursive: true });
   const zipPath = join(tmpRoot, fileName);
   try {
@@ -5567,65 +5600,117 @@ async function runPowerShell(command: string, input = "") {
   return stdout;
 }
 
+function clipboardCommand(): string | null {
+  if (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland") {
+    return "wl";
+  }
+  if (process.env.DISPLAY || process.env.XDG_SESSION_TYPE === "x11") {
+    return "x11";
+  }
+  return null;
+}
+
 async function readSystemClipboardText() {
-  return runPowerShell("[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); Get-Clipboard -Raw");
+  if (process.platform === "win32") {
+    return runPowerShell("[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); Get-Clipboard -Raw");
+  }
+  const backend = clipboardCommand();
+  try {
+    if (backend === "wl") {
+      const proc = Bun.spawnSync(["wl-paste"]);
+      if (proc.exitCode === 0) return new TextDecoder().decode(proc.stdout).trim();
+    } else if (backend === "x11") {
+      const proc = Bun.spawnSync(["xclip", "-selection", "clipboard", "-o"]);
+      if (proc.exitCode === 0) return new TextDecoder().decode(proc.stdout).trim();
+    }
+  } catch {}
+  return "";
 }
 
 async function writeSystemClipboardText(text: string) {
-  await runPowerShell("[Console]::InputEncoding=[Text.UTF8Encoding]::new($false); Set-Clipboard -Value ([Console]::In.ReadToEnd())", text);
+  if (process.platform === "win32") {
+    await runPowerShell("[Console]::InputEncoding=[Text.UTF8Encoding]::new($false); Set-Clipboard -Value ([Console]::In.ReadToEnd())", text);
+    return;
+  }
+  const backend = clipboardCommand();
+  try {
+    if (backend === "wl") {
+      const proc = Bun.spawn(["wl-copy"], { stdin: "pipe" });
+      proc.stdin.write(text);
+      proc.stdin.end();
+      await proc.exited;
+    } else if (backend === "x11") {
+      const proc = Bun.spawn(["xclip", "-selection", "clipboard"], { stdin: "pipe" });
+      proc.stdin.write(text);
+      proc.stdin.end();
+      await proc.exited;
+    }
+  } catch {}
 }
 
-// Global serialization lock for Windows System.Speech. Without this, parallel client
-// fetches (chunked-playback prefetch) would each spawn their own PowerShell process
-// running SpeechSynthesizer, producing the "multiple voices speaking at once" bug.
+// Global serialization lock for system TTS. Without this, parallel client
+// fetches (chunked-playback prefetch) would each spawn their own TTS process,
+// producing the "multiple voices speaking at once" bug.
 let systemTtsChain: Promise<void> = Promise.resolve();
 
-// All currently-spawned system-TTS PowerShell processes — keyed by Subprocess so we can
+// All currently-spawned system-TTS processes — keyed by Subprocess so we can
 // `kill()` them when the client calls /api/tts/cancel.
 const activeSystemTtsProcs = new Set<ReturnType<typeof Bun.spawn>>();
 
-/** Synthesize text to a WAV file using Windows System.Speech, then return the WAV bytes.
- *  This mirrors Android's SystemTTSProvider.synthesizeToFile() approach: the audio is
- *  rendered to a temp file, read back as bytes, and returned to the client for playback
- *  via HTMLAudioElement. This way the chunked-playback controller can pause/resume/seek
- *  system TTS audio the same way it does online-provider audio — no special-casing needed
- *  on the client side. */
 async function synthesizeSystemTtsToWav(text: string, speechRate = 1): Promise<Buffer> {
-  const rate = Math.max(-10, Math.min(10, Math.round((speechRate - 1) * 5)));
   const prev = systemTtsChain;
   let release: () => void = () => {};
   systemTtsChain = new Promise<void>((resolve) => { release = resolve; });
-  const tmpWav = join(process.env.TEMP ?? process.env.TMP ?? dataDir, `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.wav`);
+  const tmpWav = join(tempDir(), `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.wav`);
   try {
     await prev.catch(() => undefined);
-    // PowerShell script: create SpeechSynthesizer, set rate, output to WAV file, speak,
-    // then close the output. The WAV file is then read by Bun and returned as bytes.
-    const script = [
-      "Add-Type -AssemblyName System.Speech",
-      "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer",
-      `$s.Rate = ${rate}`,
-      `$s.SetOutputToWaveFile('${tmpWav.replace(/'/g, "''")}')`,
-      "$s.Speak([Console]::In.ReadToEnd())",
-      "$s.Dispose()",
-    ].join("; ");
-    const proc = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    activeSystemTtsProcs.add(proc);
-    try {
-      proc.stdin.write(text);
-      proc.stdin.end();
-      const exitCode = await proc.exited;
-      if (exitCode !== 0 && exitCode !== null) {
-        const stderrText = await new Response(proc.stderr).text().catch(() => "");
-        if (stderrText.trim()) console.warn(`[tts] System TTS exited ${exitCode}: ${stderrText.slice(0, 200)}`);
+    if (process.platform === "win32") {
+      const rate = Math.max(-10, Math.min(10, Math.round((speechRate - 1) * 5)));
+      const script = [
+        "Add-Type -AssemblyName System.Speech",
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer",
+        `$s.Rate = ${rate}`,
+        `$s.SetOutputToWaveFile('${tmpWav.replace(/'/g, "''")}')`,
+        "$s.Speak([Console]::In.ReadToEnd())",
+        "$s.Dispose()",
+      ].join("; ");
+      const proc = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      activeSystemTtsProcs.add(proc);
+      try {
+        proc.stdin.write(text);
+        proc.stdin.end();
+        const exitCode = await proc.exited;
+        if (exitCode !== 0 && exitCode !== null) {
+          const stderrText = await new Response(proc.stderr).text().catch(() => "");
+          if (stderrText.trim()) console.warn(`[tts] System TTS exited ${exitCode}: ${stderrText.slice(0, 200)}`);
+        }
+      } finally {
+        activeSystemTtsProcs.delete(proc);
       }
-    } finally {
-      activeSystemTtsProcs.delete(proc);
+    } else {
+      const speed = Math.max(80, Math.min(450, Math.round(175 * speechRate)));
+      const proc = Bun.spawn(["espeak-ng", "-w", tmpWav, "-s", String(speed), "--stdin"], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      activeSystemTtsProcs.add(proc);
+      try {
+        proc.stdin.write(text);
+        proc.stdin.end();
+        const exitCode = await proc.exited;
+        if (exitCode !== 0 && exitCode !== null) {
+          const stderrText = await new Response(proc.stderr).text().catch(() => "");
+          if (stderrText.trim()) console.warn(`[tts] espeak-ng exited ${exitCode}: ${stderrText.slice(0, 200)}`);
+        }
+      } finally {
+        activeSystemTtsProcs.delete(proc);
+      }
     }
-    // Read the WAV file back
     if (!existsSync(tmpWav)) throw new Error("System TTS failed to produce audio file");
     return readFileSync(tmpWav);
   } finally {
@@ -12338,7 +12423,7 @@ async function routeApi(request: Request, url: URL) {
     });
   }
   if (path === "data/register-schema" && request.method === "POST") {
-    const tmpRoot = join(process.env.TEMP ?? process.env.TMP ?? dataDir, `rikkahub-schema-${Date.now()}`);
+    const tmpRoot = join(tempDir(), `rikkahub-schema-${Date.now()}`);
     mkdirSync(tmpRoot, { recursive: true });
     const zipPath = join(tmpRoot, "upload.zip");
     try {
@@ -12356,11 +12441,15 @@ async function routeApi(request: Request, url: URL) {
       writeFileSync(zipPath, zipBuffer);
       const extractDir = join(tmpRoot, "extracted");
       mkdirSync(extractDir, { recursive: true });
-      const script = [
-        "Add-Type -AssemblyName System.IO.Compression.FileSystem",
-        `[System.IO.Compression.ZipFile]::ExtractToDirectory('${zipPath.replace(/'/g, "''")}', '${extractDir.replace(/'/g, "''")}')`,
-      ].join("; ");
-      Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]);
+      if (process.platform === "win32") {
+        const script = [
+          "Add-Type -AssemblyName System.IO.Compression.FileSystem",
+          `[System.IO.Compression.ZipFile]::ExtractToDirectory('${zipPath.replace(/'/g, "''")}', '${extractDir.replace(/'/g, "''")}')`,
+        ].join("; ");
+        Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]);
+      } else {
+        Bun.spawnSync(["unzip", "-o", zipPath, "-d", extractDir]);
+      }
       const dbFile = join(extractDir, "rikka_hub.db");
       if (!existsSync(dbFile)) return error("备份文件中未找到 rikka_hub.db", 400);
       // Rename WAL files for SQLite to pick up
@@ -12393,7 +12482,7 @@ async function routeApi(request: Request, url: URL) {
     // large attachment libraries (issue reported 2026-05).
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").replace(/T/, "_").replace(/Z$/, "").replace(/-/g, "").slice(0, 15);
     const exportFileName = `rikkahub-backup-${stamp}.zip`;
-    const tmpRoot = join(process.env.TEMP ?? process.env.TMP ?? dataDir, `rikkahub-export-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    const tmpRoot = join(tempDir(), `rikkahub-export-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
     mkdirSync(tmpRoot, { recursive: true });
     const zipPath = join(tmpRoot, exportFileName);
     try {
@@ -12617,7 +12706,7 @@ async function routeApi(request: Request, url: URL) {
       // weird characters, so guard explicitly here — otherwise the user gets "启动安装程序失败"
       // after a successful download.
       const fileName = /\.exe$/i.test(sanitized) ? sanitized : `${sanitized}.exe`;
-      const tmpDir = join(process.env.TEMP ?? process.env.TMP ?? dataDir, "rikkahub-updates");
+      const tmpDir = join(tempDir(), "rikkahub-updates");
       mkdirSync(tmpDir, { recursive: true });
       const targetPath = join(tmpDir, fileName);
       const res = await fetch(url, {
