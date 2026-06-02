@@ -409,7 +409,7 @@ const statePath = join(dataDir, "state.json");
 // MUST be kept in sync with web-ui/src-tauri/tauri.conf.json's `version` field. The update
 // checker compares this against the latest GitHub release tag and the version is also shown
 // verbatim in the About page. If you bump tauri.conf.json's version, bump this too.
-const APP_VERSION = "1.0.7";
+const APP_VERSION = "1.0.8";
 
 type GithubRelease = {
   tag_name?: string;
