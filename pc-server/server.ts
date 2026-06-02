@@ -12970,6 +12970,19 @@ const portEqualsArg = Bun.argv.find((arg) => arg.startsWith("--port="));
 const portValue = portEqualsArg?.split("=")[1] ?? (portIndex >= 0 ? Bun.argv[portIndex + 1] : undefined);
 const port = Number(portValue ?? process.env.PORT ?? "8080");
 
+if (process.platform === "linux") {
+  const missing: string[] = [];
+  const has = (cmd: string) => Bun.spawnSync(["which", cmd]).exitCode === 0;
+  if (!has("unzip")) missing.push("unzip  (backup restore / skill import from ZIP)");
+  if (!has("zip")) missing.push("zip  (backup export)");
+  if (!has("wl-copy") && !has("xclip")) missing.push("wl-clipboard or xclip  (clipboard tool)");
+  if (!has("espeak-ng")) missing.push("espeak-ng  (system TTS)");
+  if (missing.length > 0) {
+    console.warn("[startup] Missing optional Linux tools — some features will not work:");
+    for (const dep of missing) console.warn(`  - ${dep}`);
+  }
+}
+
 const server = (() => {
   try {
     return Bun.serve({
