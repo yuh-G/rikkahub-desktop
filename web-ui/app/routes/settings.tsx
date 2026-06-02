@@ -5711,7 +5711,7 @@ function AboutSection() {
   // Hard-coded current version — must match pc-server/server.ts:APP_VERSION and
   // web-ui/src-tauri/tauri.conf.json:version. The update checker compares this against
   // the latest GitHub release.
-  const APP_VERSION = "1.0.7";
+  const APP_VERSION = "1.0.8";
 
   type UpdateInfo = {
     current: string;
