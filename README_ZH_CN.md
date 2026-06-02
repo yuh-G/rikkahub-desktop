@@ -2,7 +2,8 @@
   <img src="docs/icon.png" alt="App 图标" width="100" />
   <h1>Rikkahub</h1>
 
-  Rikkahub 是一个原生 Windows LLM 聊天客户端，支持切换不同的供应商进行聊天 🤖💬
+  Rikkahub 是一个原生 Windows 桌面 LLM 聊天客户端，支持切换不同的供应商进行聊天 🤖💬
+  —— 同时也能在 Linux 上运行（原生二进制或 Docker）。
 
   依赖作者 RE 构建的 [Android 版 Rikkahub](https://github.com/rikkahub/rikkahub) 重构而成。
 
@@ -24,10 +25,14 @@
 
 无遥测、无管理员权限、无云端账号，**一切在本地完成**。
 
+> **用 Linux？** 目前还没有预编译的下载包——可以从源码编译原生二进制，或直接跑 Docker 镜像。
+> 详见下方 [Linux 二进制](#-linux-二进制) 与 [Docker](#docker) 两节。
+
 ## ✨ 功能特色
 
 - 🎨 多套主题色（Claude / RikkaHub / Mono / 自定义）+ 🌙 深色模式
 - 🪟 原生桌面应用 + 自定义标题栏，跟着主题走
+- 🐧 同样支持 Linux —— 自带依赖的原生二进制，或多架构 Docker 镜像（amd64 / arm64）
 - 🔄 多种供应商支持：OpenAI / Anthropic / Google Gemini + 任意 OpenAI 兼容接口
 - 🦙 开箱即用的本地模型支持：通过 [Ollama](https://ollama.com/) /
   [LM Studio](https://lmstudio.ai/) /
@@ -46,7 +51,7 @@
 - 🛠️ 模型精细化配置：手动添加模型，每个模型可设自定义请求头 / 请求体 / 供应商覆盖（per-model
   baseUrl + API Key）
 - 🎨 图像生成：gpt-image-2、DALL·E 3、Imagen、Qwen-Image、FLUX、…
-- 🎙️ TTS 与 ASR：Windows 系统语音、OpenAI、Gemini、Qwen、Groq、MiniMax、MiMo，**带测试按钮**
+- 🎙️ TTS 与 ASR：系统语音（Windows SAPI / Linux espeak-ng）、OpenAI、Gemini、Qwen、Groq、MiniMax、MiMo，**带测试按钮**
 - 📥 一键导入 Android 端 .zip 备份：对话历史、设置、附件、Skills、MCP、提示词注入、世界书、快捷消息
 - 📤 WebDAV 与 S3 兼容云端备份，JSON 导入导出
 - 🔄 应用内检查更新：自动下载安装新版本，覆盖安装保留所有数据
@@ -102,6 +107,61 @@ bun run smoke:request-chain
 ```
 
 会拉起 mock 供应商 / MCP / WebDAV / S3 服务，跑一遍完整的请求链路。
+
+### 🐧 Linux 二进制
+
+编译一个自带依赖的 Linux x64 原生二进制（只需要 [Bun](https://bun.sh/)）：
+
+```bash
+# 1. 构建前端 SPA
+cd web-ui && bun install && bun run build
+
+# 2. 编译后端二进制
+cd ../pc-server && bun run compile:linux
+# → dist/rikkahub-pc
+```
+
+运行：
+
+```bash
+./dist/rikkahub-pc
+# 浏览器打开 http://localhost:8080
+# 数据保存在 ./pc-data/
+```
+
+**需要的系统包** —— 用到对应功能前安装即可：
+
+| 系统包 | 对应功能 |
+|---|---|
+| `espeak-ng` | 系统语音播报（TTS 工具、语音播放） |
+| `xclip`（X11）或 `wl-clipboard`（Wayland） | 剪贴板读写工具 |
+| `unzip`、`zip` | 备份恢复 / 从 ZIP 导入 Skill |
+
+Debian/Ubuntu：`sudo apt install espeak-ng xclip unzip zip`  
+Fedora/RHEL：`sudo dnf install espeak-ng xclip unzip zip`
+
+缺失的工具会在启动时被检测并以警告列出——服务照常启动，其它功能不受影响。
+
+### Docker
+
+用项目自带的 `Dockerfile` 可以构建多架构镜像：
+
+```bash
+docker build -t rikkahub-pc .
+```
+
+带持久化数据运行：
+
+```bash
+docker run -d \
+  --name rikkahub \
+  -p 8080:8080 \
+  -v ./pc-data:/app/pc-data \
+  rikkahub-pc
+```
+
+然后浏览器打开 `http://localhost:8080`。镜像基于 `distroless/base-debian12`，已内置
+`unzip`/`zip`；剪贴板和 TTS 在无头容器内不可用。
 
 ## 🧰 技术栈
 

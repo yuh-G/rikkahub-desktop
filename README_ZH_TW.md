@@ -2,7 +2,8 @@
   <img src="docs/icon.png" alt="App 圖示" width="100" />
   <h1>Rikkahub</h1>
 
-  Rikkahub 是一個原生 Windows LLM 聊天客戶端，支援切換不同的供應商進行對話 🤖💬
+  Rikkahub 是一個原生 Windows 桌面 LLM 聊天客戶端，支援切換不同的供應商進行對話 🤖💬
+  —— 同時也能在 Linux 上執行（原生二進位檔或 Docker）。
 
   基於作者 RE 構建的 [Android 版 Rikkahub](https://github.com/rikkahub/rikkahub) 重構而成。
 
@@ -24,10 +25,14 @@
 
 無遙測、不需要管理員權限、不需要雲端帳號，**一切都在本機完成**。
 
+> **使用 Linux？** 目前還沒有預先編譯的下載包——可以從原始碼建置原生二進位檔，或直接執行 Docker
+> 映像。詳見下方 [Linux 二進位檔](#-linux-二進位檔) 與 [Docker](#docker) 兩節。
+
 ## ✨ 功能特色
 
 - 🎨 多套主題色（Claude / RikkaHub / Mono / 自訂）+ 🌙 深色模式
 - 🪟 原生桌面應用 + 自訂標題列，會跟著主題色變化
+- 🐧 同樣支援 Linux —— 自帶相依套件的原生二進位檔，或多架構 Docker 映像（amd64 / arm64）
 - 🔄 多種供應商支援：OpenAI / Anthropic / Google Gemini + 任意 OpenAI 相容介面
 - 🦙 開箱即用的本地模型支援：透過 [Ollama](https://ollama.com/) /
   [LM Studio](https://lmstudio.ai/) /
@@ -46,7 +51,7 @@
 - 🛠️ 模型精細化配置：手動新增模型，每個模型可設自訂請求標頭 / 請求內容 / 供應商覆寫（per-model
   baseUrl + API Key）
 - 🎨 圖像生成：gpt-image-2、DALL·E 3、Imagen、Qwen-Image、FLUX、…
-- 🎙️ TTS 與 ASR：Windows 系統語音、OpenAI、Gemini、Qwen、Groq、MiniMax、MiMo，**內建測試按鈕**
+- 🎙️ TTS 與 ASR：系統語音（Windows SAPI / Linux espeak-ng）、OpenAI、Gemini、Qwen、Groq、MiniMax、MiMo，**內建測試按鈕**
 - 📥 一鍵匯入 Android 端 .zip 備份：對話歷史、設定、附件、Skills、MCP、提示詞注入、世界書、快捷訊息
 - 📤 WebDAV 與 S3 相容雲端備份，JSON 匯入匯出
 - 🔄 應用內檢查更新：自動下載並安裝新版本，覆蓋安裝完整保留資料
@@ -102,6 +107,61 @@ bun run smoke:request-chain
 ```
 
 會啟動 mock 供應商 / MCP / WebDAV / S3 服務，跑完整的請求鏈路。
+
+### 🐧 Linux 二進位檔
+
+建置一個自帶相依套件的 Linux x64 原生二進位檔（只需要 [Bun](https://bun.sh/)）：
+
+```bash
+# 1. 建置前端 SPA
+cd web-ui && bun install && bun run build
+
+# 2. 編譯後端二進位檔
+cd ../pc-server && bun run compile:linux
+# → dist/rikkahub-pc
+```
+
+執行：
+
+```bash
+./dist/rikkahub-pc
+# 瀏覽器開啟 http://localhost:8080
+# 資料儲存在 ./pc-data/
+```
+
+**需要的系統套件** —— 用到對應功能前安裝即可：
+
+| 系統套件 | 對應功能 |
+|---|---|
+| `espeak-ng` | 系統語音播報（TTS 工具、語音播放） |
+| `xclip`（X11）或 `wl-clipboard`（Wayland） | 剪貼簿讀寫工具 |
+| `unzip`、`zip` | 備份還原 / 從 ZIP 匯入 Skill |
+
+Debian/Ubuntu：`sudo apt install espeak-ng xclip unzip zip`  
+Fedora/RHEL：`sudo dnf install espeak-ng xclip unzip zip`
+
+缺少的工具會在啟動時被偵測並以警告列出——服務照常啟動，其它功能不受影響。
+
+### Docker
+
+用專案自帶的 `Dockerfile` 可以建置多架構映像：
+
+```bash
+docker build -t rikkahub-pc .
+```
+
+帶持久化資料執行：
+
+```bash
+docker run -d \
+  --name rikkahub \
+  -p 8080:8080 \
+  -v ./pc-data:/app/pc-data \
+  rikkahub-pc
+```
+
+接著瀏覽器開啟 `http://localhost:8080`。映像基於 `distroless/base-debian12`，已內建
+`unzip`/`zip`；剪貼簿和 TTS 在無頭容器內無法使用。
 
 ## 🧰 技術棧
 

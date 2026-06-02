@@ -2,8 +2,8 @@
   <img src="docs/icon.png" alt="App Icon" width="100" />
   <h1>Rikkahub</h1>
 
-  A native Windows LLM chat client that supports switching between different providers
-  for conversations 🤖💬
+  A native Windows desktop LLM chat client that supports switching between different
+  providers for conversations 🤖💬 — also runs on Linux (native binary or Docker).
 
   Reconstructed on top of [Android edition of Rikkahub](https://github.com/rikkahub/rikkahub) by RE.
 
@@ -28,10 +28,14 @@ Uninstall via Windows "Apps & features". `pc-data/` is yours — back it up if y
 
 No telemetry, no admin, no cloud account required. Everything is local.
 
+> **On Linux?** There's no prebuilt download yet — build a native binary from source or run
+> the Docker image. See [Linux binary](#linux-binary) and [Docker](#docker) below.
+
 ## ✨ Features
 
 - 🎨 Multiple theme palettes (Claude / RikkaHub / Mono / Custom) + 🌙 dark mode
 - 🪟 Native desktop app with a custom titlebar that follows the theme
+- 🐧 Runs on Linux too — self-contained native binary or multi-arch Docker image (amd64 / arm64)
 - 🔄 Multi-provider support: OpenAI / Anthropic / Google Gemini + any OpenAI-compatible endpoint
 - 🦙 Local model support via [Ollama](https://ollama.com/) /
   [LM Studio](https://lmstudio.ai/) /
@@ -51,7 +55,7 @@ No telemetry, no admin, no cloud account required. Everything is local.
 - 🛠️ Granular per-model configuration: manually add models, set custom request headers /
   custom request bodies / provider overwrite (per-model baseUrl + API Key)
 - 🎨 Image generation: gpt-image-2, DALL·E 3, Imagen, Qwen-Image, FLUX, …
-- 🎙️ TTS and ASR via Windows SAPI, OpenAI, Gemini, Qwen, Groq, MiniMax, MiMo, **with built-in test buttons**
+- 🎙️ TTS and ASR via system speech (Windows SAPI / Linux espeak-ng), OpenAI, Gemini, Qwen, Groq, MiniMax, MiMo, **with built-in test buttons**
 - 📥 One-click import from Android .zip backups: conversation history, settings, attachments,
   Skills, MCP, prompt injections, world books, quick messages
 - 📤 WebDAV and S3-compatible cloud backup, plus JSON import/export
