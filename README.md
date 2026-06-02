@@ -113,6 +113,64 @@ bun run smoke:request-chain
 
 Spins up mock provider / MCP / WebDAV / S3 servers and exercises the full request chain.
 
+### Linux binary
+
+Build a self-contained Linux x64 binary (requires only [Bun](https://bun.sh/)):
+
+```bash
+# 1. Build the SPA
+cd web-ui && bun install && bun run build
+
+# 2. Compile the server binary
+cd ../pc-server && bun run compile:linux
+# → dist/rikkahub-pc
+```
+
+Run it:
+
+```bash
+./dist/rikkahub-pc
+# Open http://localhost:8080 in your browser
+# Data is stored in ./pc-data/
+```
+
+**Required system packages** — install before using the relevant features:
+
+| Package | Feature |
+|---|---|
+| `espeak-ng` | System TTS (text-to-speech tool, voice playback) |
+| `xclip` (X11) or `wl-clipboard` (Wayland) | Clipboard read/write tool |
+| `unzip`, `zip` | Backup restore / skill import from ZIP |
+
+On Debian/Ubuntu: `sudo apt install espeak-ng xclip unzip zip`  
+On Fedora/RHEL: `sudo dnf install espeak-ng xclip unzip zip`
+
+Missing tools are detected at startup and listed as warnings — the server still starts and
+all other features remain available.
+
+### Docker
+
+A multi-arch image can be built from the included `Dockerfile`:
+
+```bash
+docker build -t rikkahub-pc .
+```
+
+Run with persistent data:
+
+```bash
+docker run -d \
+  --name rikkahub \
+  -p 8080:8080 \
+  -v ./pc-data:/app/pc-data \
+  rikkahub-pc
+```
+
+Then open `http://localhost:8080` in your browser. The image uses
+`distroless/base-debian12` and bundles `unzip`/`zip`; clipboard and TTS are
+not available inside a headless container.
+
+
 ## 🧰 Tech stack
 
 - [Bun](https://bun.sh/) — runtime, bundler, package manager
