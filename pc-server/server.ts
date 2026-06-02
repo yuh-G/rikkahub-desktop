@@ -5657,6 +5657,63 @@ let systemTtsChain: Promise<void> = Promise.resolve();
 // `kill()` them when the client calls /api/tts/cancel.
 const activeSystemTtsProcs = new Set<ReturnType<typeof Bun.spawn>>();
 
+async function speakSystemText(text: string, speechRate = 1) {
+  const prev = systemTtsChain;
+  let release: () => void = () => {};
+  systemTtsChain = new Promise<void>((resolve) => { release = resolve; });
+  try {
+    await prev.catch(() => undefined);
+    if (process.platform === "win32") {
+      const rate = Math.max(-10, Math.min(10, Math.round((speechRate - 1) * 5)));
+      const script = [
+        "Add-Type -AssemblyName System.Speech",
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer",
+        `$s.Rate = ${rate}`,
+        "$s.Speak([Console]::In.ReadToEnd())",
+        "$s.Dispose()",
+      ].join("; ");
+      const proc = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      activeSystemTtsProcs.add(proc);
+      try {
+        proc.stdin.write(text);
+        proc.stdin.end();
+        const exitCode = await proc.exited;
+        if (exitCode !== 0 && exitCode !== null) {
+          const stderrText = await new Response(proc.stderr).text().catch(() => "");
+          if (stderrText.trim()) console.warn(`[tts] System TTS exited ${exitCode}: ${stderrText.slice(0, 200)}`);
+        }
+      } finally {
+        activeSystemTtsProcs.delete(proc);
+      }
+    } else {
+      const speed = Math.max(80, Math.min(450, Math.round(175 * speechRate)));
+      const proc = Bun.spawn(["espeak-ng", "--stdin", "-s", String(speed)], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      activeSystemTtsProcs.add(proc);
+      try {
+        proc.stdin.write(text);
+        proc.stdin.end();
+        const exitCode = await proc.exited;
+        if (exitCode !== 0 && exitCode !== null) {
+          const stderrText = await new Response(proc.stderr).text().catch(() => "");
+          if (stderrText.trim()) console.warn(`[tts] espeak-ng exited ${exitCode}: ${stderrText.slice(0, 200)}`);
+        }
+      } finally {
+        activeSystemTtsProcs.delete(proc);
+      }
+    }
+  } finally {
+    release();
+  }
+}
+
 async function synthesizeSystemTtsToWav(text: string, speechRate = 1): Promise<Buffer> {
   const prev = systemTtsChain;
   let release: () => void = () => {};
@@ -10131,18 +10188,6 @@ async function generateSpeechWithTtsProvider(text: string, providerId?: string, 
       outputTokens: wavBytes.length,
     });
     return { audio: wavBytes, mime: "audio/wav", provider };
-    addLog({
-      providerId: provider.id,
-      providerName: provider.name,
-      url: "windows:System.Speech",
-      ok: true,
-      status: 0,
-      kind: "provider:tts",
-      durationMs: Date.now() - started,
-      requestPreview: `system tts\ntextLength=${text.length}\nspeechRate=${provider.speechRate ?? 1}`,
-      responsePreview: "spoken by Windows System.Speech",
-    });
-    return { audio: null as Buffer | null, mime: "application/json", provider };
   }
   if (!provider.apiKey.trim()) throw new Error("TTS API Key is empty");
   let endpoint = "";
