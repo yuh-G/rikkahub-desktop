@@ -4726,6 +4726,7 @@ function DataSection({ settings, onSettings }: { settings: Settings; onSettings:
   const [webDavDraft, setWebDavDraft] = React.useState<WebDavConfig>(defaultWebDav);
   const [webDavItems, setWebDavItems] = React.useState<WebDavBackupItem[]>([]);
   const [webDavBusy, setWebDavBusy] = React.useState("");
+  const [webDavBackupProgress, setWebDavBackupProgress] = React.useState<{ message: string; percent: number } | null>(null);
   const [showWebDavPassword, setShowWebDavPassword] = React.useState(false);
   const webDavDirtyRef = React.useRef(false);
 
@@ -4742,6 +4743,7 @@ function DataSection({ settings, onSettings }: { settings: Settings; onSettings:
   const [s3Draft, setS3Draft] = React.useState<S3Config>(defaultS3);
   const [s3Items, setS3Items] = React.useState<S3BackupItem[]>([]);
   const [s3Busy, setS3Busy] = React.useState("");
+  const [s3BackupProgress, setS3BackupProgress] = React.useState<{ message: string; percent: number } | null>(null);
   const [showS3Secret, setShowS3Secret] = React.useState(false);
   const s3DirtyRef = React.useRef(false);
 
@@ -4753,6 +4755,46 @@ function DataSection({ settings, onSettings }: { settings: Settings; onSettings:
   React.useEffect(() => {
     fetch(appendWebAuthQuery("/api/data/export/status")).then(r => r.ok ? r.json() : null).then(s => { if (s) setSchemaStatus(s); }).catch(() => {});
   }, []);
+
+  const consumeBackupSse = async (
+    url: string,
+    onProgress: (message: string, percent: number) => void,
+    body?: string,
+  ) => {
+    const response = await fetch(appendWebAuthQuery(url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: body ?? undefined,
+    });
+    if (!response.ok || !response.body) {
+      const text = await response.text();
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split(/\n\n+/);
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) {
+        const eventName = block.split(/\r?\n/).find((line) => line.startsWith("event:"))?.slice(6).trim() ?? "message";
+        const dataText = block.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+        if (!dataText) continue;
+        const data = JSON.parse(dataText) as Record<string, unknown>;
+        if (eventName === "progress") {
+          onProgress(String(data.message ?? ""), Number(data.percent ?? 0));
+        } else if (eventName === "done") {
+          return data;
+        } else if (eventName === "error") {
+          throw new Error(String(data.error ?? "操作失败"));
+        }
+      }
+    }
+    throw new Error("连接意外关闭");
+  };
 
   const patchWebDav = (patch: Partial<WebDavConfig>) => {
     webDavDirtyRef.current = true;
@@ -4814,29 +4856,37 @@ function DataSection({ settings, onSettings }: { settings: Settings; onSettings:
   const backupWebDav = async () => {
     await warnIfNoSchema();
     setWebDavBusy("backup");
+    setWebDavBackupProgress({ message: "准备中...", percent: 0 });
     try {
       await saveWebDav(false);
-      const result = await api.post<{ items: WebDavBackupItem[] }>("data/webdav/backup", {}, { timeout: false });
-      setWebDavItems(result.items);
+      const data = await consumeBackupSse("/api/data/webdav/backup/stream", (message, percent) => {
+        setWebDavBackupProgress({ message, percent });
+      });
+      if (Array.isArray(data.items)) setWebDavItems(data.items as WebDavBackupItem[]);
       toast.success("WebDAV 备份完成");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "WebDAV 备份失败");
     } finally {
       setWebDavBusy("");
+      setWebDavBackupProgress(null);
     }
   };
 
   const restoreWebDav = async (item: WebDavBackupItem) => {
     if (!window.confirm(`恢复 ${item.displayName} 会覆盖当前本地设置、会话和日志。继续？`)) return;
     setWebDavBusy(`restore:${item.displayName}`);
+    setWebDavBackupProgress({ message: "准备中...", percent: 0 });
     try {
-      const result = await api.post<{ settings: Settings }>("data/webdav/restore", { fileName: item.displayName }, { timeout: false });
-      onSettings(result.settings);
+      const data = await consumeBackupSse("/api/data/webdav/restore/stream", (message, percent) => {
+        setWebDavBackupProgress({ message, percent });
+      }, JSON.stringify({ fileName: item.displayName }));
+      if (data.settings) onSettings(data.settings as Settings);
       toast.success("WebDAV 备份已恢复");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "WebDAV 恢复失败");
     } finally {
       setWebDavBusy("");
+      setWebDavBackupProgress(null);
     }
   };
 
@@ -4904,28 +4954,36 @@ function DataSection({ settings, onSettings }: { settings: Settings; onSettings:
   const backupS3 = async () => {
     await warnIfNoSchema();
     setS3Busy("backup");
+    setS3BackupProgress({ message: "准备中...", percent: 0 });
     try {
       await saveS3(false);
-      const result = await api.post<{ items: S3BackupItem[] }>("data/s3/backup", {}, { timeout: false });
-      setS3Items(result.items);
+      const data = await consumeBackupSse("/api/data/s3/backup/stream", (message, percent) => {
+        setS3BackupProgress({ message, percent });
+      });
+      if (Array.isArray(data.items)) setS3Items(data.items as S3BackupItem[]);
       toast.success("S3 备份完成");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "S3 备份失败");
     } finally {
       setS3Busy("");
+      setS3BackupProgress(null);
     }
   };
   const restoreS3 = async (item: S3BackupItem) => {
     if (!window.confirm(`从远端备份 ${item.displayName} 恢复？这会覆盖当前本地状态。`)) return;
     setS3Busy(`restore:${item.displayName}`);
+    setS3BackupProgress({ message: "准备中...", percent: 0 });
     try {
-      const result = await api.post<{ settings: Settings }>("data/s3/restore", { fileName: item.displayName }, { timeout: false });
-      onSettings(result.settings);
+      const data = await consumeBackupSse("/api/data/s3/restore/stream", (message, percent) => {
+        setS3BackupProgress({ message, percent });
+      }, JSON.stringify({ fileName: item.displayName }));
+      if (data.settings) onSettings(data.settings as Settings);
       toast.success("S3 备份已恢复");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "S3 恢复失败");
     } finally {
       setS3Busy("");
+      setS3BackupProgress(null);
     }
   };
   const deleteS3 = async (item: S3BackupItem) => {
@@ -5329,10 +5387,24 @@ function DataSection({ settings, onSettings }: { settings: Settings; onSettings:
               刷新备份
             </Button>
             <Button onClick={() => void backupWebDav()} disabled={Boolean(webDavBusy) || !webDavDraft.url.trim()}>
-              {webDavBusy === "backup" ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+              {webDavBusy === "backup" && !webDavBackupProgress ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
               立即备份
             </Button>
           </div>
+          {(webDavBusy === "backup" || webDavBusy.startsWith("restore:")) && webDavBackupProgress ? (
+            <div className="mt-3 space-y-1.5">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{webDavBackupProgress.message}</span>
+                {webDavBackupProgress.percent > 0 ? <span>{webDavBackupProgress.percent}%</span> : null}
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className={cn("h-full bg-primary transition-all", webDavBackupProgress.percent === 0 && "animate-pulse w-full")}
+                  style={webDavBackupProgress.percent > 0 ? { width: `${webDavBackupProgress.percent}%` } : undefined}
+                />
+              </div>
+            </div>
+          ) : null}
           <div className="mt-4 rounded-md border">
             {webDavItems.length === 0 ? <div className="p-4 text-sm text-muted-foreground">暂无远端备份。点击“刷新备份”读取 WebDAV 目录。</div> : null}
             {webDavItems.map((item, index) => (
@@ -5409,10 +5481,24 @@ function DataSection({ settings, onSettings }: { settings: Settings; onSettings:
               刷新备份
             </Button>
             <Button onClick={() => void backupS3()} disabled={Boolean(s3Busy) || !s3Draft.bucket.trim() || !s3Draft.accessKeyId.trim()}>
-              {s3Busy === "backup" ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+              {s3Busy === "backup" && !s3BackupProgress ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
               立即备份
             </Button>
           </div>
+          {(s3Busy === "backup" || s3Busy.startsWith("restore:")) && s3BackupProgress ? (
+            <div className="mt-3 space-y-1.5">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{s3BackupProgress.message}</span>
+                {s3BackupProgress.percent > 0 ? <span>{s3BackupProgress.percent}%</span> : null}
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className={cn("h-full bg-primary transition-all", s3BackupProgress.percent === 0 && "animate-pulse w-full")}
+                  style={s3BackupProgress.percent > 0 ? { width: `${s3BackupProgress.percent}%` } : undefined}
+                />
+              </div>
+            </div>
+          ) : null}
           <div className="mt-3 overflow-hidden rounded-md border">
             {s3Items.length === 0 ? <div className="p-4 text-sm text-muted-foreground">暂无远端备份。点击"刷新备份"读取 S3 目录。</div> : null}
             {s3Items.map((item, index) => (

@@ -3281,11 +3281,12 @@ function createSettingsBackupZip(): Buffer {
 // by the local-export endpoint to avoid pulling the whole zip into a Buffer just to turn
 // around and stream it as the HTTP response — for users with multi-GB attachments, the zip
 // itself can exceed 4 GB and Buffer.from(...) on it is an OOM in waiting.
-function createSettingsBackupZipToPath(targetZipPath: string): number {
+function createSettingsBackupZipToPath(targetZipPath: string, onProgress?: (message: string) => void): number {
   const tmpRoot = join(tempDir(), `rikkahub-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const stageDir = join(tmpRoot, "stage");
   mkdirSync(stageDir, { recursive: true });
   try {
+    onProgress?.("正在准备配置文件...");
     console.log(`[backup] staging settings.json...`);
     writeFileSync(
       join(stageDir, "settings.json"),
@@ -3293,10 +3294,8 @@ function createSettingsBackupZipToPath(targetZipPath: string): number {
     );
     console.log(`[backup] staging pc-backup.json...`);
     writeFileSync(join(stageDir, "pc-backup.json"), safeJsonStringify(backupPayloadMetadataOnly()));
-    // Generate rikka_hub.db so Android can restore conversations. PC stores conversations
-    // in state.json; Android stores them in a Room SQLite database. We create a compatible
-    // db from PC's conversation data so the zip is fully restorable on the phone.
     if (state.conversations.length > 0) {
+      onProgress?.("正在生成对话数据库...");
       const dbPath = join(stageDir, "rikka_hub.db");
       try {
         const ok = generateRikkaHubDb(dbPath);
@@ -3319,6 +3318,8 @@ function createSettingsBackupZipToPath(targetZipPath: string): number {
       const uploadStage = join(stageDir, "upload");
       mkdirSync(uploadStage, { recursive: true });
       const usedNames = new Set<string>();
+      const totalFiles = state.files.length;
+      let stagedFiles = 0;
       for (const file of state.files) {
         if (!file.path || !existsSync(file.path)) continue;
         let name = file.fileName || `${file.id}${extname(file.path) || ""}`;
@@ -3328,6 +3329,8 @@ function createSettingsBackupZipToPath(targetZipPath: string): number {
           name = `${stem}_${file.id}${ext}`;
         }
         usedNames.add(name);
+        stagedFiles++;
+        onProgress?.(`正在打包附件 (${stagedFiles}/${totalFiles})...`);
         try {
           writeFileSync(join(uploadStage, name), readFileSync(file.path));
         } catch (copyErr) {
@@ -3336,10 +3339,12 @@ function createSettingsBackupZipToPath(targetZipPath: string): number {
       }
     }
     if (existsSync(skillsDir)) {
+      onProgress?.("正在打包技能文件...");
       const skillsStage = join(stageDir, "skills");
       mkdirSync(skillsStage, { recursive: true });
       copyDirRecursive(skillsDir, skillsStage);
     }
+    onProgress?.("正在压缩...");
     if (existsSync(targetZipPath)) rmSync(targetZipPath);
     console.log(`[backup] creating zip from ${stageDir} → ${targetZipPath} (${readdirSync(stageDir).join(", ")})`);
     if (process.platform === "win32") {
@@ -3414,11 +3419,9 @@ function backupStamp(): string {
  *  saved file through applyAndroidZipBackupFromPath / applyBackupPayload as appropriate.
  *  Used by s3Restore + webDavRestore. Mirrors the local data/import streaming-path so
  *  multi-GB backups can be restored from cloud the same way they can from a local picker. */
-async function streamResponseToTempAndRestore(response: Response, fileName: string): Promise<void> {
+async function streamResponseToTempAndRestore(response: Response, fileName: string, onProgress?: (message: string, percent?: number) => void): Promise<void> {
   const tmpRoot = join(tempDir(), `rikkahub-restore-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(tmpRoot, { recursive: true });
-  // PowerShell's Expand-Archive checks the extension, so anything that isn't `.zip` we
-  // still save as such (the magic-byte check below decides what to do with it).
   const sanitized = fileName.replace(/[^A-Za-z0-9._\-]/g, "_") || "backup.zip";
   const onDiskName = sanitized.toLowerCase().endsWith(".zip") || sanitized.toLowerCase().endsWith(".json")
     ? sanitized
@@ -3427,6 +3430,8 @@ async function streamResponseToTempAndRestore(response: Response, fileName: stri
   try {
     const body = response.body;
     if (!body) throw new Error("Empty response body");
+    const totalSize = Number(response.headers.get("Content-Length") || "0");
+    let downloaded = 0;
     const writer = Bun.file(onDiskPath).writer();
     const reader = body.getReader();
     try {
@@ -3434,17 +3439,21 @@ async function streamResponseToTempAndRestore(response: Response, fileName: stri
         const { done, value } = await reader.read();
         if (done) break;
         writer.write(value);
+        downloaded += value.length;
+        if (totalSize > 0) {
+          const pct = Math.round(downloaded / totalSize * 100);
+          onProgress?.(`正在下载 (${pct}%)`, pct);
+        }
       }
     } finally {
       await writer.end();
     }
-    // Detect zip vs json from first 4 bytes — same trick the local-import endpoint uses.
+    onProgress?.("正在导入数据...");
     const magic = new Uint8Array(await Bun.file(onDiskPath).slice(0, 4).arrayBuffer());
     const isZip = magic.length >= 4 && magic[0] === 0x50 && magic[1] === 0x4B && magic[2] === 0x03 && magic[3] === 0x04;
     if (isZip) {
       applyAndroidZipBackupFromPath(onDiskPath);
     } else {
-      // Legacy JSON backup. These are tiny (KB-MB), so reading them into memory is fine.
       applyBackupPayload(JSON.parse(readFileSync(onDiskPath, "utf-8")));
     }
   } finally {
@@ -3487,25 +3496,42 @@ async function webDavListBackups(config: WebDavConfig) {
     .sort((a, b) => Date.parse(b.lastModified || "") - Date.parse(a.lastModified || ""));
 }
 
-async function webDavBackup(config: WebDavConfig) {
+async function webDavBackup(config: WebDavConfig, onProgress?: (message: string, percent?: number) => void) {
   await webDavEnsureCollection(config);
-  // .zip layout matches Android: settings.json (for cross-platform restore) + pc-backup.json
-  // (PC's lossless self-restore data). Streamed off disk so multi-GB attachment libraries
-  // don't OOM the JS heap before the PUT starts.
   const fileName = `backup_${backupStamp()}.zip`;
   const tmpRoot = join(tempDir(), `rikkahub-webdav-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(tmpRoot, { recursive: true });
   const zipPath = join(tmpRoot, fileName);
   try {
-    const size = createSettingsBackupZipToPath(zipPath);
-    const bodyStream = Bun.file(zipPath).stream();
+    const size = createSettingsBackupZipToPath(zipPath, (msg) => onProgress?.(msg));
+    onProgress?.("正在上传...", 0);
+    const file = Bun.file(zipPath);
+    let uploaded = 0;
+    const progressStream = new ReadableStream<Uint8Array>({
+      async start(ctrl) {
+        const reader = file.stream().getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            ctrl.enqueue(value);
+            uploaded += value.length;
+            const pct = Math.round(uploaded / size * 100);
+            onProgress?.(`正在上传 (${pct}%)`, pct);
+          }
+          ctrl.close();
+        } catch (err) {
+          ctrl.error(err);
+        }
+      },
+    });
     const response = await webDavRequest(config, "PUT", fileName, {
       headers: {
         "Content-Type": "application/zip",
         "Content-Length": String(size),
       },
-      body: bodyStream as unknown as BodyInit,
-      timeoutMs: 0, // no timeout — multi-GB uploads can take minutes
+      body: progressStream as unknown as BodyInit,
+      timeoutMs: 0,
     });
     const text = await response.text();
     if (!response.ok) throw new Error(`WebDAV 备份失败：${response.status} ${text.slice(0, 500)}`);
@@ -3515,13 +3541,14 @@ async function webDavBackup(config: WebDavConfig) {
   }
 }
 
-async function webDavRestore(config: WebDavConfig, fileName: string) {
+async function webDavRestore(config: WebDavConfig, fileName: string, onProgress?: (message: string, percent?: number) => void) {
+  onProgress?.("正在下载...", 0);
   const response = await webDavRequest(config, "GET", fileName, { timeoutMs: 0 });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`WebDAV 下载失败：${response.status} ${text.slice(0, 500)}`);
   }
-  await streamResponseToTempAndRestore(response, fileName);
+  await streamResponseToTempAndRestore(response, fileName, onProgress);
 }
 
 async function webDavDelete(config: WebDavConfig, fileName: string) {
@@ -3713,25 +3740,40 @@ async function s3ListBackups(config: S3Config) {
   return items;
 }
 
-async function s3Backup(config: S3Config) {
-  // Match Android's .zip filename so cross-platform S3 sync works.
+async function s3Backup(config: S3Config, onProgress?: (message: string, percent?: number) => void) {
   const fileName = `backup_${backupStamp()}.zip`;
   const key = `${s3Prefix(config)}${fileName}`;
-  // Stream the zip from disk instead of buffering it. Multi-GB attachment libraries would
-  // otherwise OOM the JS heap before the PUT even starts (and again on the SigV4 SHA256
-  // pass). We pre-stage on disk via createSettingsBackupZipToPath, then hand fetch a
-  // ReadableStream + Content-Length and switch SigV4 to UNSIGNED-PAYLOAD.
   const tmpRoot = join(tempDir(), `rikkahub-s3-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(tmpRoot, { recursive: true });
   const zipPath = join(tmpRoot, fileName);
   try {
-    const size = createSettingsBackupZipToPath(zipPath);
-    const bodyStream = Bun.file(zipPath).stream();
+    const size = createSettingsBackupZipToPath(zipPath, (msg) => onProgress?.(msg));
+    onProgress?.("正在上传...", 0);
+    const file = Bun.file(zipPath);
+    let uploaded = 0;
+    const progressStream = new ReadableStream<Uint8Array>({
+      async start(ctrl) {
+        const reader = file.stream().getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            ctrl.enqueue(value);
+            uploaded += value.length;
+            const pct = Math.round(uploaded / size * 100);
+            onProgress?.(`正在上传 (${pct}%)`, pct);
+          }
+          ctrl.close();
+        } catch (err) {
+          ctrl.error(err);
+        }
+      },
+    });
     const response = await s3Request(config, "PUT", key, {
-      bodyStream,
+      bodyStream: progressStream,
       bodyLength: size,
       contentType: "application/zip",
-      timeoutMs: 0, // no timeout — multi-GB uploads can take minutes
+      timeoutMs: 0,
     });
     const text = await response.text();
     if (!response.ok) throw new Error(`S3 备份失败：${response.status} ${text.slice(0, 500)}`);
@@ -3741,18 +3783,15 @@ async function s3Backup(config: S3Config) {
   }
 }
 
-async function s3Restore(config: S3Config, fileName: string) {
+async function s3Restore(config: S3Config, fileName: string, onProgress?: (message: string, percent?: number) => void) {
   const key = `${s3Prefix(config)}${fileName}`;
+  onProgress?.("正在下载...", 0);
   const response = await s3Request(config, "GET", key, { timeoutMs: 0 });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`S3 下载失败：${response.status} ${text.slice(0, 500)}`);
   }
-  // Stream the response body to a temp file so we never hold the whole zip in JS memory.
-  // restoreBackupBuffer's API still takes a Buffer (used by the small local-upload path),
-  // but for the cross-platform .zip case applyAndroidZipBackupFromPath already accepts a
-  // file path and is the only call we make — so we shortcut directly to it.
-  await streamResponseToTempAndRestore(response, fileName);
+  await streamResponseToTempAndRestore(response, fileName, onProgress);
 }
 
 async function s3Delete(config: S3Config, fileName: string) {
@@ -12394,6 +12433,46 @@ async function routeApi(request: Request, url: URL) {
       return error(err instanceof Error ? err.message : String(err), 502);
     }
   }
+  if (path === "data/webdav/backup/stream" && request.method === "POST") {
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: string, payload: Record<string, unknown>) => controller.enqueue(sseFrame(event, payload));
+        try {
+          const result = await webDavBackup(state.settings.webDavConfig, (message, percent) => {
+            send("progress", { message, percent: percent ?? 0 });
+          });
+          const items = await webDavListBackups(state.settings.webDavConfig);
+          send("done", { status: "ok", fileName: result.fileName, size: result.size, items });
+        } catch (err) {
+          send("error", { error: err instanceof Error ? err.message : String(err) });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" } });
+  }
+  if (path === "data/webdav/restore/stream" && request.method === "POST") {
+    const body = await readJson<{ fileName?: string }>(request);
+    const fileName = String(body.fileName ?? "").trim();
+    if (!fileName || fileName.includes("/") || fileName.includes("\\")) return error("Invalid WebDAV backup file name", 400);
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: string, payload: Record<string, unknown>) => controller.enqueue(sseFrame(event, payload));
+        try {
+          await webDavRestore(state.settings.webDavConfig, fileName, (message, percent) => {
+            send("progress", { message, percent: percent ?? 0 });
+          });
+          send("done", { status: "restored", settings: state.settings });
+        } catch (err) {
+          send("error", { error: err instanceof Error ? err.message : String(err) });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" } });
+  }
   if (path === "data/s3/config" && request.method === "POST") {
     const body = await readJson<Partial<S3Config>>(request);
     const s3Config = normalizeS3Config(body);
@@ -12445,6 +12524,46 @@ async function routeApi(request: Request, url: URL) {
     } catch (err) {
       return error(err instanceof Error ? err.message : String(err), 502);
     }
+  }
+  if (path === "data/s3/backup/stream" && request.method === "POST") {
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: string, payload: Record<string, unknown>) => controller.enqueue(sseFrame(event, payload));
+        try {
+          const result = await s3Backup(state.settings.s3Config, (message, percent) => {
+            send("progress", { message, percent: percent ?? 0 });
+          });
+          const items = await s3ListBackups(state.settings.s3Config);
+          send("done", { status: "ok", fileName: result.fileName, size: result.size, items });
+        } catch (err) {
+          send("error", { error: err instanceof Error ? err.message : String(err) });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" } });
+  }
+  if (path === "data/s3/restore/stream" && request.method === "POST") {
+    const body = await readJson<{ fileName?: string }>(request);
+    const fileName = String(body.fileName ?? "").trim();
+    if (!fileName || fileName.includes("\\")) return error("Invalid S3 backup file name", 400);
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: string, payload: Record<string, unknown>) => controller.enqueue(sseFrame(event, payload));
+        try {
+          await s3Restore(state.settings.s3Config, fileName, (message, percent) => {
+            send("progress", { message, percent: percent ?? 0 });
+          });
+          send("done", { status: "restored", settings: state.settings });
+        } catch (err) {
+          send("error", { error: err instanceof Error ? err.message : String(err) });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" } });
   }
   if (path === "settings/proxy" && request.method === "POST") {
     const body = await readJson<Partial<ProxyConfig>>(request);
