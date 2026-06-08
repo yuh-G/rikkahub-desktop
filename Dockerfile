@@ -39,7 +39,15 @@ RUN rm -f node_modules/react-dom/server.bun.js \
 
 RUN bun run build
 
-# Compile server — cross-compile to match the runtime platform
+# Compile server — cross-compile to match the runtime platform.
+# Lay out a separate /build/pc-server subtree so we don't mix the pc-server lockfile
+# with the web-ui one above. We need `bun install` here for one reason only: server.ts
+# does `import wasm with { type: "file" }` from ./node_modules/mupdf/dist/mupdf-wasm.wasm,
+# and the wasm asset has to actually exist on disk so bun --compile can bundle it into the
+# final exe. After install the wasm is at /build/pc-server/node_modules/mupdf/dist/...
+WORKDIR /build/pc-server
+COPY pc-server/package.json pc-server/bun.lock ./
+RUN bun install
 COPY pc-server/server.ts ./
 RUN set -eux; \
     case "$TARGETARCH" in \
@@ -54,7 +62,7 @@ FROM gcr.io/distroless/base-debian12
 WORKDIR /app
 
 COPY --from=tools /tools/ /
-COPY --from=builder /build/rikkahub-pc ./
+COPY --from=builder /build/pc-server/rikkahub-pc ./
 COPY --from=builder /build/build/client/ ./web-ui/build/client/
 
 VOLUME ["/app/pc-data"]
