@@ -6,6 +6,34 @@ import process from "node:process";
 import { gunzipSync, gzipSync, inflateRawSync, inflateSync } from "node:zlib";
 import { Database } from "bun:sqlite";
 
+// mupdf-wasm.wasm 通过 `with { type: "file" }` 让 bun build --compile 把这个 9.6MB 的
+// wasm 二进制嵌进单 exe。运行时通过 readFileSync(mupdfWasmPath) 读出字节,塞进 mupdf 暴露
+// 的全局 `$libmupdf_wasm_Module.wasmBinary`,这样 mupdf 初始化时不会再尝试按文件路径查找
+// wasm —— 而在 compile 后的单 exe 里,那个文件路径根本不存在。
+//
+// 必须用相对路径(而非 "mupdf/dist/mupdf-wasm.wasm" 这种 package 名前缀): Bun 的
+// `with { type: "file" }` 走的是文件路径解析,不走 node module resolution;后者在 compile
+// 后的 exe 内会找不到 package。已在 Windows 隔离目录(无 node_modules)实测验证,dev 和
+// compile 后的 exe 都能正确加载并提取 PDF。
+import mupdfWasmPath from "./node_modules/mupdf/dist/mupdf-wasm.wasm" with { type: "file" };
+
+type MupdfModule = typeof import("mupdf");
+let mupdfModule: MupdfModule | null = null;
+let mupdfLoadingPromise: Promise<MupdfModule> | null = null;
+async function loadMupdf(): Promise<MupdfModule> {
+  if (mupdfModule) return mupdfModule;
+  // 并发的多个 PDF 上传共用同一个 init,避免重复实例化 wasm。
+  if (mupdfLoadingPromise) return mupdfLoadingPromise;
+  mupdfLoadingPromise = (async () => {
+    const wasmBinary = readFileSync(mupdfWasmPath);
+    (globalThis as Record<string, unknown>)["$libmupdf_wasm_Module"] = { wasmBinary };
+    const mod = await import("mupdf");
+    mupdfModule = mod;
+    return mod;
+  })();
+  return mupdfLoadingPromise;
+}
+
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 interface Model {
