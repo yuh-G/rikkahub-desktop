@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import process from "node:process";
@@ -6179,6 +6179,67 @@ function readZipEntries(buffer: Buffer) {
   return entries;
 }
 
+// Extract a single named member from a (potentially huge) zip via an external `unzip` /
+// `tar.exe` invocation, so we don't decompress every entry into JS heap just to read one
+// XML file. Returns the member's raw bytes or null on failure.
+//
+// Platform support:
+//   - Windows 10+ : System32\tar.exe (BSD libarchive build) speaks zip natively. We
+//     spell out the full path to avoid PATH resolving to GNU tar shipped with Git Bash etc.,
+//     which only handles tar archives and rejects zip with "This does not look like a tar archive".
+//   - Linux: standard `unzip -p <zip> <member>` writes the decompressed bytes to stdout.
+//
+// Falls back to in-memory readZipEntries if the spawn fails (e.g. missing tool, sandboxed
+// environment), so the caller doesn't have to handle that case.
+function extractSingleZipMemberStreaming(zipPath: string, memberName: string): Buffer | null {
+  try {
+    const isWindows = process.platform === "win32";
+    const cmd = isWindows
+      ? [join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe"), "-xOf", zipPath, memberName]
+      : ["unzip", "-p", zipPath, memberName];
+    const proc = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "pipe" });
+    if (proc.exitCode !== 0) {
+      const stderr = new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 200);
+      console.warn(`[document] ${cmd[0]} exit ${proc.exitCode}: ${stderr}`);
+      return null;
+    }
+    const out = proc.stdout;
+    if (!out || out.length === 0) return null;
+    return Buffer.from(out);
+  } catch (err) {
+    console.warn(`[document] streaming zip extract spawn failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+// --- Document extraction OOM protection ---------------------------------------------------
+//
+// Android's document module is fully streaming (InputStream.copyTo / ZipFile.getInputStream
+// / MuPDF page-by-page), so it doesn't need explicit size caps — single-file memory peak
+// stays low even for multi-hundred-MB files. PC end's readFileSync-and-parse approach can't
+// match that everywhere without rewriting the zip parser, so we layer in size guards: above
+// these thresholds, extraction is skipped and prompt falls back to a brief notice (see
+// extractDocumentPromptText). 240 KB extracted-text cap is the existing prompt limit.
+const MAX_PDF_EXTRACT_BYTES = 100 * 1024 * 1024;   // 100 MB — MuPDF streams pages, headroom for big books
+const MAX_DOCX_EXTRACT_BYTES = 50 * 1024 * 1024;   // 50 MB compressed (~5-10× decompressed XML)
+const MAX_PPTX_EXTRACT_BYTES = 100 * 1024 * 1024;  // 100 MB — PPTX often padded with embedded images
+const MAX_EPUB_EXTRACT_BYTES = 100 * 1024 * 1024;
+const MAX_TEXT_EXTRACT_BYTES = 10 * 1024 * 1024;   // plain text/code; above this we read only head
+const MAX_EXTRACTED_CHARS = 240_000;
+// DOCX above this size routes to the external-unzip path (`tar.exe` on Windows, `unzip` on
+// Linux) to extract only `word/document.xml`, instead of decompressing every zip entry into
+// JS heap. Threshold picked at the point where in-memory cost starts to matter.
+const DOCX_STREAMING_THRESHOLD_BYTES = 20 * 1024 * 1024;
+
+function getStoredFileSize(entry: StoredFile): number {
+  if (typeof entry.size === "number" && entry.size > 0) return entry.size;
+  try {
+    return statSync(entry.path).size;
+  } catch {
+    return 0;
+  }
+}
+
 function extractEpubText(pathValue: string) {
   const entries = readZipEntries(readFileSync(pathValue));
   const textEntries = entries
@@ -6189,7 +6250,7 @@ function extractEpubText(pathValue: string) {
     .map((entry) => stripXmlText(entry.data.toString("utf8")))
     .filter(Boolean)
     .join("\n\n");
-  return text.slice(0, 240_000);
+  return text.slice(0, MAX_EXTRACTED_CHARS);
 }
 
 // Synchronous text extraction for the non-PDF formats. The three on-demand call sites
@@ -6198,20 +6259,57 @@ function extractEpubText(pathValue: string) {
 function extractStoredFileTextSync(entry: StoredFile): string {
   const name = entry.fileName.toLowerCase();
   const mimeValue = entry.mime.toLowerCase();
+  const size = getStoredFileSize(entry);
   try {
-    if (mimeValue === "application/epub+zip" || name.endsWith(".epub")) return extractEpubText(entry.path);
-    if (mimeValue === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || name.endsWith(".docx")) return extractDocxText(entry.path);
-    if (mimeValue === "application/vnd.openxmlformats-officedocument.presentationml.presentation" || name.endsWith(".pptx")) return extractPptxText(entry.path);
+    if (mimeValue === "application/epub+zip" || name.endsWith(".epub")) {
+      if (size > MAX_EPUB_EXTRACT_BYTES) {
+        console.warn(`[document] skipping EPUB extraction: ${entry.fileName} ${size} > ${MAX_EPUB_EXTRACT_BYTES}`);
+        return "";
+      }
+      return extractEpubText(entry.path);
+    }
+    if (mimeValue === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || name.endsWith(".docx")) {
+      if (size > MAX_DOCX_EXTRACT_BYTES) {
+        console.warn(`[document] skipping DOCX extraction: ${entry.fileName} ${size} > ${MAX_DOCX_EXTRACT_BYTES}`);
+        return "";
+      }
+      return extractDocxText(entry.path, size);
+    }
+    if (mimeValue === "application/vnd.openxmlformats-officedocument.presentationml.presentation" || name.endsWith(".pptx")) {
+      if (size > MAX_PPTX_EXTRACT_BYTES) {
+        console.warn(`[document] skipping PPTX extraction: ${entry.fileName} ${size} > ${MAX_PPTX_EXTRACT_BYTES}`);
+        return "";
+      }
+      return extractPptxText(entry.path);
+    }
     if (
       mimeValue.startsWith("text/") ||
       /\.(txt|md|markdown|csv|tsv|json|jsonl|yaml|yml|xml|html|htm|css|js|ts|tsx|jsx|py|java|kt|rs|go|c|cpp|h|hpp|cs|php|rb|sh|ps1|sql)$/i.test(name)
     ) {
-      return readFileSync(entry.path, "utf8").slice(0, 240_000);
+      if (size > MAX_TEXT_EXTRACT_BYTES) {
+        // Don't readFileSync a 200 MB log file just to slice the first 240 KB —
+        // open + read the head with a bounded buffer instead.
+        return readTextFileHead(entry.path, MAX_EXTRACTED_CHARS);
+      }
+      return readFileSync(entry.path, "utf8").slice(0, MAX_EXTRACTED_CHARS);
     }
   } catch (err) {
     console.warn(`[document] sync extract failed for ${entry.fileName}:`, err);
   }
   return "";
+}
+
+// Read at most `maxBytes` from the start of a text file without buffering the rest.
+// Used for very large text/log uploads where readFileSync would balloon JS heap.
+function readTextFileHead(pathValue: string, maxBytes: number): string {
+  const fd = openSync(pathValue, "r");
+  try {
+    const buf = Buffer.alloc(maxBytes);
+    const bytesRead = readSync(fd, buf, 0, maxBytes, 0);
+    return buf.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
 }
 
 // Full async version, used only by the upload endpoint. Adds PDF handling on top of the
@@ -6220,6 +6318,11 @@ async function extractStoredFileText(entry: StoredFile): Promise<string> {
   const name = entry.fileName.toLowerCase();
   const mimeValue = entry.mime.toLowerCase();
   if (mimeValue === "application/pdf" || name.endsWith(".pdf")) {
+    const size = getStoredFileSize(entry);
+    if (size > MAX_PDF_EXTRACT_BYTES) {
+      console.warn(`[document] skipping PDF extraction: ${entry.fileName} ${size} > ${MAX_PDF_EXTRACT_BYTES}`);
+      return "";
+    }
     try {
       return await extractPdfText(entry.path);
     } catch (err) {
@@ -6261,7 +6364,7 @@ async function extractPdfText(pathValue: string): Promise<string> {
           totalLen += pageText.length;
           // Early-stop once we've crossed the prompt cap. Saves time and memory for
           // 1000-page PDFs where the model only sees the first chunk anyway.
-          if (totalLen > 240_000) break;
+          if (totalLen > MAX_EXTRACTED_CHARS) break;
         } finally {
           stext.destroy?.();
         }
@@ -6269,7 +6372,7 @@ async function extractPdfText(pathValue: string): Promise<string> {
         page.destroy?.();
       }
     }
-    return parts.join("\n").slice(0, 240_000);
+    return parts.join("\n").slice(0, MAX_EXTRACTED_CHARS);
   } finally {
     doc.destroy?.();
   }
@@ -6277,14 +6380,28 @@ async function extractPdfText(pathValue: string): Promise<string> {
 
 // DOCX parser — mirrors Android's DocxParser.kt:
 // Parse word/document.xml from the ZIP, extract paragraphs with heading/list/table structure.
-function extractDocxText(pathValue: string) {
-  const entries = readZipEntries(readFileSync(pathValue));
-  const docEntry = entries.find((e) => e.name === "word/document.xml");
-  if (!docEntry) return "";
-  const xml = docEntry.data.toString("utf8");
+// For files above DOCX_STREAMING_THRESHOLD_BYTES, route to extractSingleZipMemberStreaming
+// (external unzip) so we only spend RAM on the one entry we care about instead of every
+// member in the archive.
+function extractDocxText(pathValue: string, sizeBytes?: number) {
+  const size = sizeBytes ?? statSync(pathValue).size;
+  let docXmlData: Buffer | null = null;
+  if (size >= DOCX_STREAMING_THRESHOLD_BYTES) {
+    docXmlData = extractSingleZipMemberStreaming(pathValue, "word/document.xml");
+    if (!docXmlData) {
+      console.warn(`[document] streaming extract failed for ${pathValue}; falling back to in-memory`);
+    }
+  }
+  if (!docXmlData) {
+    const entries = readZipEntries(readFileSync(pathValue));
+    const docEntry = entries.find((e) => e.name === "word/document.xml");
+    if (!docEntry) return "";
+    docXmlData = docEntry.data;
+  }
+  const xml = docXmlData.toString("utf8");
   // Extract body content
   const bodyMatch = xml.match(/<w:body[\s>]?([\s\S]*?)<\/w:body>/i);
-  if (!bodyMatch) return stripXmlText(xml).slice(0, 240_000);
+  if (!bodyMatch) return stripXmlText(xml).slice(0, MAX_EXTRACTED_CHARS);
   const body = bodyMatch[1];
   const result: string[] = [];
   // Walk top-level blocks in document order. We can't naively split on </w:p> because
@@ -6302,7 +6419,7 @@ function extractDocxText(pathValue: string) {
       if (text) result.push(text);
     }
   }
-  return result.join("\n\n").slice(0, 240_000);
+  return result.join("\n\n").slice(0, MAX_EXTRACTED_CHARS);
 }
 
 function extractDocxParagraph(xml: string): string {
@@ -6413,7 +6530,7 @@ function extractPptxText(pathValue: string) {
     if (notes) slide += `\n\n### Speaker Notes\n\n${notes}`;
     slides.push(slide);
   }
-  return slides.join("\n\n").slice(0, 240_000);
+  return slides.join("\n\n").slice(0, MAX_EXTRACTED_CHARS);
 }
 
 function documentPromptText(fileName: string, content: string) {
