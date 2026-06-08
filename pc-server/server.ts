@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import * as fsPromises from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import process from "node:process";
-import { gunzipSync, gzipSync, inflateRawSync, inflateSync } from "node:zlib";
+import { gunzipSync, gzipSync, inflateRawSync } from "node:zlib";
 import { Database } from "bun:sqlite";
 
 // mupdf-wasm.wasm 通过 `with { type: "file" }` 让 bun build --compile 把这个 9.6MB 的
@@ -6192,12 +6192,14 @@ function extractEpubText(pathValue: string) {
   return text.slice(0, 240_000);
 }
 
-function extractStoredFileText(entry: StoredFile) {
+// Synchronous text extraction for the non-PDF formats. The three on-demand call sites
+// (contentPartsForApi / Claude blocks / responses) stay sync and use this to back-fill
+// extractedText for legacy entries; PDFs there fall back to a "[Document]" prompt.
+function extractStoredFileTextSync(entry: StoredFile): string {
   const name = entry.fileName.toLowerCase();
   const mimeValue = entry.mime.toLowerCase();
   try {
     if (mimeValue === "application/epub+zip" || name.endsWith(".epub")) return extractEpubText(entry.path);
-    if (mimeValue === "application/pdf" || name.endsWith(".pdf")) return extractPdfText(entry.path);
     if (mimeValue === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || name.endsWith(".docx")) return extractDocxText(entry.path);
     if (mimeValue === "application/vnd.openxmlformats-officedocument.presentationml.presentation" || name.endsWith(".pptx")) return extractPptxText(entry.path);
     if (
@@ -6207,76 +6209,70 @@ function extractStoredFileText(entry: StoredFile) {
       return readFileSync(entry.path, "utf8").slice(0, 240_000);
     }
   } catch (err) {
-    console.warn(`[document] extract failed for ${entry.fileName}:`, err);
-    return "";
+    console.warn(`[document] sync extract failed for ${entry.fileName}:`, err);
   }
   return "";
 }
 
-// --- Document parsers: aligned with Android's document module ---
-
-function inflatePdfStream(raw: Buffer): Buffer | null {
-  // PDF FlateDecode streams are zlib-wrapped (0x78 header). Try zlib first,
-  // then raw deflate as a fallback for non-standard producers.
-  try {
-    return inflateSync(raw);
-  } catch { /* not zlib-wrapped */ }
-  try {
-    return inflateRawSync(raw);
-  } catch { /* not raw deflate either */ }
-  return null;
-}
-
-function extractPdfText(pathValue: string) {
-  // Android uses MuPDF; for Bun we extract text from FlateDecode streams.
-  // Covers the vast majority of text-heavy PDFs.
-  const buf = readFileSync(pathValue);
-  const text: string[] = [];
-  const streamRe = /stream\r?\n/g;
-  const latin1 = buf.toString("latin1");
-  let match: RegExpExecArray | null;
-  while ((match = streamRe.exec(latin1)) !== null) {
-    const start = match.index + match[0].length;
-    const endBuf = buf.subarray(start);
-    const endIdx = endBuf.indexOf(Buffer.from("endstream"));
-    if (endIdx < 0) continue;
-    // Trim a trailing EOL that sits between the stream data and the `endstream` keyword.
-    let rawEnd = endIdx;
-    if (rawEnd >= 2 && endBuf[rawEnd - 2] === 0x0d && endBuf[rawEnd - 1] === 0x0a) rawEnd -= 2;
-    else if (rawEnd >= 1 && (endBuf[rawEnd - 1] === 0x0a || endBuf[rawEnd - 1] === 0x0d)) rawEnd -= 1;
-    const raw = endBuf.subarray(0, rawEnd);
-    const decompressed = inflatePdfStream(raw);
-    if (!decompressed) continue;
-    const str = decompressed.toString("latin1");
-    // Tj operator: (text) Tj
-    const tjMatch = str.match(/\(([^\\)]*(?:\\.[^\\)]*)*)\)\s*Tj/g);
-    if (tjMatch) {
-      for (const m of tjMatch) {
-        const inner = m.replace(/^\(/, "").replace(/\)\s*Tj$/, "");
-        text.push(unescapePdfString(inner));
-      }
-    }
-    // TJ array operator: [(text) num (text)] TJ
-    const tjArrayMatch = str.match(/\[([^\]]*)\]\s*TJ/g);
-    if (tjArrayMatch) {
-      for (const m of tjArrayMatch) {
-        const arrContent = m.replace(/^\[/, "").replace(/\]\s*TJ$/, "");
-        const parts = arrContent.match(/\(([^\\)]*(?:\\.[^\\)]*)*)\)/g);
-        if (parts) {
-          text.push(parts.map((p) => unescapePdfString(p.slice(1, -1))).join(""));
-        }
-      }
+// Full async version, used only by the upload endpoint. Adds PDF handling on top of the
+// sync formats. Run once at upload time and cache into entry.extractedText.
+async function extractStoredFileText(entry: StoredFile): Promise<string> {
+  const name = entry.fileName.toLowerCase();
+  const mimeValue = entry.mime.toLowerCase();
+  if (mimeValue === "application/pdf" || name.endsWith(".pdf")) {
+    try {
+      return await extractPdfText(entry.path);
+    } catch (err) {
+      console.warn(`[document] PDF extract failed for ${entry.fileName}:`, err);
+      return "";
     }
   }
-  const result = text.join(" ").replace(/\s+/g, " ").trim();
-  return result.slice(0, 240_000);
+  return extractStoredFileTextSync(entry);
 }
 
-function unescapePdfString(s: string) {
-  return s
-    .replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t")
-    .replace(/\\\(/g, "(").replace(/\\\)/g, ")").replace(/\\\\/g, "\\")
-    .replace(/\\(\d{1,3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
+// --- Document parsers: aligned with Android's document module ---
+
+// PDF parser — mirrors Android's PdfParser.kt:
+//   document = PDFDocument.openDocument(file.absolutePath).asPDF()
+//   for i in 0 until pages: page.toStructuredText().asText()
+//
+// Uses MuPDF WASM (the same engine Android uses as native via JNI). Same API surface,
+// same extraction quality —— scanned pages, CID fonts, complex layouts all handled by
+// MuPDF's structured-text extractor rather than our previous regex-based approach.
+//
+// Memory: MuPDF maintains its own wasm heap; we MUST destroy() doc/page/stext explicitly
+// because JS GC can't reach into wasm memory. try/finally pairing is non-negotiable.
+async function extractPdfText(pathValue: string): Promise<string> {
+  const mupdf = await loadMupdf();
+  const buf = readFileSync(pathValue);
+  const doc = mupdf.Document.openDocument(buf, "application/pdf");
+  try {
+    const pageCount = doc.countPages();
+    const parts: string[] = [];
+    let totalLen = 0;
+    for (let i = 0; i < pageCount; i++) {
+      const page = doc.loadPage(i);
+      try {
+        const stext = page.toStructuredText();
+        try {
+          // Aligned with Android: "---Page ${i+1}:\n${stext.asText()}"
+          const pageText = stext.asText();
+          parts.push(`---Page ${i + 1}:\n${pageText}`);
+          totalLen += pageText.length;
+          // Early-stop once we've crossed the prompt cap. Saves time and memory for
+          // 1000-page PDFs where the model only sees the first chunk anyway.
+          if (totalLen > 240_000) break;
+        } finally {
+          stext.destroy?.();
+        }
+      } finally {
+        page.destroy?.();
+      }
+    }
+    return parts.join("\n").slice(0, 240_000);
+  } finally {
+    doc.destroy?.();
+  }
 }
 
 // DOCX parser — mirrors Android's DocxParser.kt:
@@ -6464,7 +6460,7 @@ function contentPartsForApi(parts: JsonValue[], targetModel?: Model) {
       // Match Android's DocumentAsPromptTransformer: extract text on demand if not cached.
       let extractedText = String(entry?.extractedText ?? "").trim();
       if (!extractedText && entry) {
-        const fresh = extractStoredFileText(entry);
+        const fresh = extractStoredFileTextSync(entry);
         if (fresh) {
           extractedText = fresh;
           // Cache for future requests (matches Android reading file on each send,
@@ -6559,7 +6555,7 @@ function claudeBlocksFromUiParts(parts: JsonValue[]) {
       const entry = fileEntryFromApiUrl(url);
       let extractedText = String(entry?.extractedText ?? "").trim();
       if (!extractedText && entry) {
-        const fresh = extractStoredFileText(entry);
+        const fresh = extractStoredFileTextSync(entry);
         if (fresh) {
           extractedText = fresh;
           entry.extractedText = fresh;
@@ -7111,7 +7107,7 @@ function responseApiDocumentPart(part: Record<string, JsonValue>) {
   const entry = fileEntryFromApiUrl(url);
   let extractedText = String(entry?.extractedText ?? "").trim();
   if (!extractedText && entry) {
-    const fresh = extractStoredFileText(entry);
+    const fresh = extractStoredFileTextSync(entry);
     if (fresh) {
       extractedText = fresh;
       entry.extractedText = fresh;
@@ -12515,11 +12511,13 @@ async function routeApi(request: Request, url: URL) {
         const target = join(filesDir, `${fileId}${extname(file.name)}`);
         await Bun.write(target, file);
         const entry: StoredFile = { id: fileId, path: target, fileName: file.name, mime: file.type || "application/octet-stream", size: file.size };
-        const extractedText = extractStoredFileText(entry);
+        const t0 = Date.now();
+        const extractedText = await extractStoredFileText(entry);
         if (extractedText) {
           entry.extractedText = extractedText;
           entry.extractedAt = Date.now();
         }
+        console.log(`[upload] ${entry.fileName} (${(file.size / 1024).toFixed(1)} KB) extracted ${extractedText.length} chars in ${Date.now() - t0}ms`);
         state.files.push(entry);
         return {
           id: fileId,
