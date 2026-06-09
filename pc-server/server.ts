@@ -7985,7 +7985,10 @@ function responseApiInstructions(messagesForApi: ApiMessage[]) {
 }
 
 function isModelAllowTemperature(modelItem: Model) {
-  return !/(^o\d|[/:_-]o\d|gpt-5)/i.test(modelItem.modelId);
+  // Mirror Android's ModelRegistry-based check: OPENAI_O_MODELS (o1, o3, o4 etc.)
+  // and GPT_5 (exact "gpt-5" only — NOT gpt-5.1, gpt-5.2 etc., which Android allows).
+  const id = modelItem.modelId;
+  return !/(^o\d|[/:_-]o\d)/i.test(id) && !/^gpt[-._]?5$/i.test(id);
 }
 
 function hostOfProvider(providerItem: Provider) {
@@ -8001,6 +8004,7 @@ function reasoningPayloadForProvider(providerItem: Provider, modelItem: Model, l
   const normalized = reasoningLevelNormalized(level);
   const enabled = normalized !== "off";
   const host = hostOfProvider(providerItem);
+  if (host === "api.mistral.ai") return {}; // Mistral 不支持 reasoning params
   if (host === "openrouter.ai") {
     if (normalized === "off") return { reasoning: { effort: "none" } };
     if (normalized === "auto") return { reasoning: { enabled: true } };
