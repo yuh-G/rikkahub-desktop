@@ -16,8 +16,10 @@ import "./i18n";
 import { Toaster } from "./components/ui/sonner";
 import { ThemeProvider } from "./components/theme-provider";
 import { TitleBar } from "./components/title-bar";
+import { UpdateDialog, type UpdateInfo } from "./components/update-dialog";
 import { WebAuthGate } from "./components/web-auth-gate";
 import { openExternal } from "./lib/external-link";
+import api from "~/services/api";
 
 const queryClient = new QueryClient();
 
@@ -40,6 +42,33 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Scripts />
       </body>
     </html>
+  );
+}
+
+// Silent startup update check: queries GitHub once, shows the full download/install dialog
+// only when a newer version exists. Errors and "already latest" are swallowed completely.
+function SilentUpdateChecker() {
+  const [update, setUpdate] = React.useState<UpdateInfo | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    api
+      .get<UpdateInfo>("update/check")
+      .then((info) => {
+        if (!cancelled && info.isNewer) setUpdate(info);
+      })
+      .catch(() => {
+        /* network error — silently ignore */
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <UpdateDialog
+      info={update!}
+      open={update !== null}
+      onClose={() => setUpdate(null)}
+    />
   );
 }
 
@@ -82,6 +111,7 @@ function AppContent() {
       <Outlet />
       <WebAuthGate />
       <Toaster position="top-center"/>
+      <SilentUpdateChecker />
     </ThemeProvider>
   );
 }
