@@ -7467,6 +7467,12 @@ function reasoningLevelNormalized(level: string | null | undefined) {
   return normalized === "off" || normalized === "none" ? "off" : normalized;
 }
 
+// Token budgets per level — mirrors Android's ReasoningLevel enum values.
+function budgetTokensFor(level: string): number {
+  const map: Record<string, number> = { off: 0, low: 1_000, medium: 2_000, high: 8_000, xhigh: 16_000 };
+  return map[level] ?? 8_000;
+}
+
 function supportsAbility(modelItem: Model, ability: string) {
   return (modelItem.abilities ?? []).map((item) => String(item).toUpperCase()).includes(ability.toUpperCase());
 }
@@ -7796,7 +7802,9 @@ function reasoningPayloadForProvider(providerItem: Provider, modelItem: Model, l
     return { reasoning: { enabled: true } };
   }
   if (host === "dashscope.aliyuncs.com") {
-    return { enable_thinking: enabled };
+    const result: Record<string, any> = { enable_thinking: enabled };
+    if (normalized !== "auto") result.thinking_budget = budgetTokensFor(normalized);
+    return result;
   }
   if (host === "api.siliconflow.cn") {
     const siliconflowThinkingModels = new Set([
@@ -8639,6 +8647,29 @@ async function callProvider(
       : undefined;
     const googleUrl = `${providerItem.baseUrl.replace(/\/+$/, "")}/models/${selectedModel}:generateContent?key=${encodeURIComponent(providerItem.apiKey)}`;
     const systemContent = messagesForApi.find((item) => item.role === "system")?.content;
+    const normalizedReasoning = reasoningLevelNormalized(assistant.reasoningLevel);
+    const isGemini3 = /\bgemini[-._]?3\b/i.test(picked.model.modelId);
+    const isGeminiPro = /2[.-]5.*pro/i.test(picked.model.modelId);
+    // Android uses top-level thinkingConfig, not generationConfig.
+    const hasReasoning = supportsAbility(picked.model, "REASONING");
+    let thinkingConfig: Record<string, any> | undefined;
+    if (hasReasoning) {
+      thinkingConfig = { includeThoughts: true };
+      if (normalizedReasoning === "off") {
+        if (isGemini3) {
+          thinkingConfig.thinkingLevel = "minimal";
+        } else if (!isGeminiPro) {
+          thinkingConfig.thinkingBudget = 0;
+          thinkingConfig.includeThoughts = false;
+        }
+      } else if (normalizedReasoning !== "auto") {
+        if (isGemini3) {
+          thinkingConfig.thinkingLevel = normalizedReasoning === "xhigh" ? "high" : normalizedReasoning;
+        } else {
+          thinkingConfig.thinkingBudget = budgetTokensFor(normalizedReasoning);
+        }
+      }
+    }
     body = {
       contents: messagesForApi
         .filter((item) => item.role !== "system")
@@ -8646,6 +8677,7 @@ async function callProvider(
       systemInstruction: systemContent
         ? { parts: [{ text: systemContent }] }
         : undefined,
+      ...(thinkingConfig ? { thinkingConfig } : {}),
       tools: googleTools,
     };
     return fetchText(googleUrl, headers, applyCustomBody(body, assistant, picked.model), providerItem, (raw) => raw.candidates?.[0]?.content?.parts?.[0]?.text, signal);
