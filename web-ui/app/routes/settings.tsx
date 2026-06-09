@@ -71,6 +71,7 @@ import type { AsrProviderProfile, AsrProviderType, AssistantAvatar, AssistantPro
 import { ModelEditDialog } from "~/components/model-edit-dialog";
 import Markdown from "~/components/markdown/markdown";
 import { playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
+import { UpdateDialog, type UpdateInfo } from "~/components/update-dialog";
 
 type Section = "general" | "providers" | "models" | "assistants" | "search" | "mcp" | "speech" | "data" | "stats" | "logs" | "proxy" | "about" | "plan";
 type ProviderKind = "openai" | "claude" | "google";
@@ -5827,125 +5828,18 @@ function AboutSection() {
   // the latest GitHub release.
   const APP_VERSION = "1.0.8";
 
-  type UpdateInfo = {
-    current: string;
-    latest: string;
-    isNewer: boolean;
-    title: string;
-    notes: string;
-    htmlUrl: string;
-    downloadUrl: string;
-    fileName: string;
-    size: number;
-    // Set by the server when it detects an already-downloaded installer in %TEMP%
-    // matching `latest` — lets the user resume install without re-downloading.
-    cachedInstallerPath?: string | null;
-  };
-
   const [checking, setChecking] = React.useState(false);
   const [updateInfo, setUpdateInfo] = React.useState<UpdateInfo | null>(null);
-  const [downloading, setDownloading] = React.useState(false);
-  const [downloadProgress, setDownloadProgress] = React.useState(0); // 0–100
-  const [downloadedBytes, setDownloadedBytes] = React.useState(0);   // for human-readable label
-  const [totalBytes, setTotalBytes] = React.useState(0);
-  const [installerPath, setInstallerPath] = React.useState<string | null>(null);
-  const [installerCached, setInstallerCached] = React.useState(false); // true when path came from prior session
-  const [installerLaunching, setInstallerLaunching] = React.useState(false);
 
   const checkForUpdate = async () => {
     setChecking(true);
     try {
       const info = await api.get<UpdateInfo>("update/check");
       setUpdateInfo(info);
-      // If the server found an existing installer in TEMP matching the latest version, pre-populate
-      // the local path so the dialog shows "已下载，可立即安装" instead of asking the user to
-      // download again. Fixes the case where user closed the dialog after a download but before
-      // clicking install.
-      if (info.cachedInstallerPath) {
-        setInstallerPath(info.cachedInstallerPath);
-        setInstallerCached(true);
-      } else {
-        setInstallerPath(null);
-        setInstallerCached(false);
-      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "检查更新失败");
     } finally {
       setChecking(false);
-    }
-  };
-
-  const downloadAndInstall = async () => {
-    if (!updateInfo || !updateInfo.downloadUrl) return;
-    setDownloading(true);
-    setDownloadProgress(0);
-    setDownloadedBytes(0);
-    setTotalBytes(0);
-    try {
-      // XHR (not fetch) because we need `progress` events. Fetch's ReadableStream
-      // body reader is bandwidth-aware but doesn't surface percentage without
-      // reading Content-Length manually, and ky doesn't expose that hook. XHR is
-      // simpler.
-      const result = await new Promise<{ status: string; path: string; size: number }>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", appendWebAuthQuery("/api/update/download"));
-        xhr.setRequestHeader("Content-Type", "application/json");
-        xhr.responseType = "json";
-        xhr.timeout = 0; // No timeout — installer is ~37MB but slow connections can need minutes.
-        xhr.onprogress = (event) => {
-          if (event.lengthComputable && event.total > 0) {
-            setTotalBytes(event.total);
-            setDownloadedBytes(event.loaded);
-            setDownloadProgress(Math.round((event.loaded / event.total) * 100));
-          } else {
-            setDownloadedBytes(event.loaded);
-          }
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
-            resolve(xhr.response as { status: string; path: string; size: number });
-          } else {
-            reject(new Error(typeof xhr.response?.error === "string" ? xhr.response.error : `HTTP ${xhr.status}`));
-          }
-        };
-        xhr.onerror = () => reject(new Error("网络错误，无法连接后端"));
-        xhr.ontimeout = () => reject(new Error("下载超时"));
-        xhr.send(JSON.stringify({
-          url: updateInfo.downloadUrl,
-          fileName: updateInfo.fileName,
-        }));
-      });
-      setInstallerPath(result.path);
-      setInstallerCached(false);
-      setDownloadProgress(100);
-      toast.success("下载完成，准备启动安装");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "下载失败");
-    } finally {
-      setDownloading(false);
-    }
-  };
-
-  const launchAndExit = async () => {
-    if (!installerPath) return;
-    setInstallerLaunching(true);
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("launch_installer", { path: installerPath });
-      toast.success("安装程序已启动，应用即将退出");
-      // Give the installer a moment to come up before we exit so the user sees both windows.
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      const { exit } = await import("@tauri-apps/plugin-process");
-      await exit(0);
-    } catch (err) {
-      // Tauri's invoke() rejects with a string (the Err() value from the Rust handler), NOT
-      // an Error instance. The old code's `err instanceof Error` check therefore always
-      // fell through to the generic "启动安装程序失败" toast, hiding the real cause (path
-      // missing, permissions, AV scanner, etc.). Use String(err) to surface the actual
-      // Rust error so users / triage can see what's wrong.
-      const message = err instanceof Error ? err.message : (typeof err === "string" ? err : "启动安装程序失败");
-      toast.error(`启动安装程序失败：${message}`);
-      setInstallerLaunching(false);
     }
   };
 
@@ -6014,84 +5908,11 @@ function AboutSection() {
           })}
         </div>
       </div>
-      <Dialog open={updateInfo !== null} onOpenChange={(open) => { if (!open) { setUpdateInfo(null); setInstallerPath(null); setInstallerCached(false); } }}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>
-              {updateInfo?.isNewer ? "发现新版本" : "当前已是最新版本"}
-            </DialogTitle>
-            <DialogDescription>
-              {updateInfo?.isNewer
-                ? `当前版本 ${updateInfo.current} → 最新版本 ${updateInfo.latest}`
-                : `当前 ${updateInfo?.current ?? APP_VERSION}，已是最新（${updateInfo?.latest || "未知"}）。`}
-            </DialogDescription>
-          </DialogHeader>
-          {updateInfo?.notes ? (
-            <div className="rounded-md border bg-muted/30 p-3">
-              <div className="mb-1 text-xs font-medium text-muted-foreground">更新说明</div>
-              <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{updateInfo.notes}</pre>
-            </div>
-          ) : null}
-          {downloading ? (
-            <div className="space-y-2 rounded-md border bg-muted/30 p-3">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{downloadProgress > 0 ? `下载中 · ${downloadProgress}%` : "下载中…"}</span>
-                {totalBytes > 0 ? (
-                  <span className="font-mono">
-                    {(downloadedBytes / (1024 * 1024)).toFixed(1)} / {(totalBytes / (1024 * 1024)).toFixed(1)} MB
-                  </span>
-                ) : downloadedBytes > 0 ? (
-                  <span className="font-mono">{(downloadedBytes / (1024 * 1024)).toFixed(1)} MB</span>
-                ) : null}
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn(
-                    "h-full bg-primary transition-all",
-                    downloadProgress === 0 && "w-full animate-pulse",
-                  )}
-                  style={downloadProgress > 0 ? { width: `${downloadProgress}%` } : undefined}
-                />
-              </div>
-            </div>
-          ) : null}
-          {installerPath ? (
-            <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-emerald-700 dark:text-emerald-300">
-              {installerCached ? "✅ 上次已下载，可直接安装：" : "安装包已下载到本地："}
-              <code className="ml-1 break-all font-mono">{installerPath}</code>
-              <br />
-              点击下方"启动安装并退出"会启动 NSIS 安装程序并自动退出 Rikkahub，安装过程会保留你的数据目录和配置。
-            </div>
-          ) : null}
-          <DialogFooter>
-            {!updateInfo?.isNewer ? (
-              <Button type="button" onClick={() => { setUpdateInfo(null); setInstallerPath(null); setInstallerCached(false); }}>
-                我知道了
-              </Button>
-            ) : !installerPath ? (
-              <>
-                <Button type="button" variant="outline" onClick={() => { setUpdateInfo(null); setInstallerPath(null); setInstallerCached(false); }} disabled={downloading}>
-                  稍后再说
-                </Button>
-                <Button type="button" onClick={() => void downloadAndInstall()} disabled={downloading || !updateInfo?.downloadUrl}>
-                  {downloading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-                  {downloading ? "下载中…" : "下载安装包"}
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button type="button" variant="outline" onClick={() => { setUpdateInfo(null); setInstallerPath(null); setInstallerCached(false); }}>
-                  稍后再安装
-                </Button>
-                <Button type="button" onClick={() => void launchAndExit()} disabled={installerLaunching}>
-                  {installerLaunching ? <Loader2 className="size-4 animate-spin" /> : null}
-                  启动安装并退出
-                </Button>
-              </>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <UpdateDialog
+        info={updateInfo!}
+        open={updateInfo !== null}
+        onClose={() => setUpdateInfo(null)}
+      />
     </>
   );
 }
