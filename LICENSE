@@ -9,7 +9,7 @@
 本项目在以下条件下，可以免费使用，并遵循 **GNU Affero General Public License v3.0 (AGPL v3)**：
 - 使用场景为 **非商业用途**；
 - 或者用于 **个人/教育/研究** 目的；
-- 或者由 **用户总数不超过 10 人** 的个人或组织使用。
+- 或者由 **用户总数不超过 50 人** 的个人或组织使用。
 
 AGPL v3 的全文请见：https://www.gnu.org/licenses/agpl-3.0.html
 
@@ -21,12 +21,13 @@ AGPL v3 的全文请见：https://www.gnu.org/licenses/agpl-3.0.html
 
 如果您的使用场景不符合上述条件，例如：
 - 用于 **商业用途**（直接或间接产生商业利益的服务或产品）；
-- 或者 **用户总数超过 10 人**；
+- 或者 **用户总数超过 50 人**；
 - 或者您希望避免 AGPL v3 的源代码开源义务；
 
 那么您必须事先与项目维护者签署 **商业许可证 (Commercial License)**。
 
-申请商业授权请联系：
+申请商业授权请联系（需双方共同同意）：
+- 邮箱：gyh88077515@163.com
 - 邮箱：re_dev@qq.com
 
 ---
@@ -48,7 +49,7 @@ This project adopts a **Segmented Dual Licensing** model:
 You may use this project under the **GNU Affero General Public License v3.0 (AGPL v3)** if one of the following applies:
 - Your usage is strictly **non-commercial**;
 - Your usage is for **personal, educational, or research** purposes;
-- You are an individual or organization with **no more than 10 total users**.
+- You are an individual or organization with **no more than 50 total users**.
 
 Full text of AGPL v3: https://www.gnu.org/licenses/agpl-3.0.html
 
@@ -60,12 +61,13 @@ Full text of AGPL v3: https://www.gnu.org/licenses/agpl-3.0.html
 
 If your use does not meet the above criteria, for example:
 - **Commercial purposes** (services or products that directly or indirectly generate revenue);
-- Organizations with **more than 10 users**;
+- Organizations with **more than 50 users**;
 - Or if you wish to avoid the obligations of AGPL v3;
 
 Then you must obtain a **Commercial License** from the project maintainer.
 
-For commercial licensing, please contact:
+For commercial licensing, please contact (requires mutual agreement from both parties):
+- Email: gyh88077515@163.com
 - Email: re_dev@qq.com
 
 ---
