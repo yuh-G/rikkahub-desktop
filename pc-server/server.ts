@@ -14056,69 +14056,76 @@ async function routeApi(request: Request, url: URL) {
   if (path === "update/check" && request.method === "GET") {
     const repo = "yuh-G/rikkahub-desktop";
 
-    try {
-      const release = await fetchGithubLatestRelease(repo);
-      const tag = (release.tag_name ?? "").replace(/^v/i, "");
-      // Find the Windows x64 NSIS installer asset by suffix matching. Format from tauri.conf:
-      // `Rikkahub_<version>_x64-setup.exe`. Fall back to the first .exe if nothing matches.
-      const assets = release.assets ?? [];
-      const installer =
-        assets.find((asset) => /x64[-_]setup\.exe$/i.test(asset.name ?? "")) ??
-        assets.find((asset) => /\.exe$/i.test(asset.name ?? ""));
-      const downloadUrl = installer?.browser_download_url ?? "";
-      const fileName = installer?.name ?? "";
-      const size = installer?.size ?? 0;
-      const isNewer = compareSemver(tag, APP_VERSION) > 0;
+    // Helper: build the JSON response for a given release tag + metadata, apply skip logic.
+    const buildResponse = (fields: Record<string, unknown>) => {
+      const latest = String(fields.latest ?? "");
+      const isNewer = compareSemver(latest, APP_VERSION) > 0;
       const skipped = readSkippedVersion();
-      const isSkipped = isNewer && tag === skipped;
-      const cachedInstallerPath = probeCachedInstaller(fileName, tag, isNewer && !isSkipped);
-      return json({
-        current: APP_VERSION,
-        latest: tag,
-        isNewer,
-        isSkipped,
-        title: release.name ?? release.tag_name ?? "",
-        notes: release.body ?? "",
-        htmlUrl: release.html_url ?? `https://github.com/${repo}/releases/latest`,
-        downloadUrl,
-        fileName,
-        size,
-        cachedInstallerPath,
-        source: "api",
-      });
-    } catch (err) {
-      // api.github.com hit a rate limit or transient failure. Last resort: read the public
-      // releases/latest URL on github.com (not the API host) — it 302-redirects to the
-      // tagged release, from which we can derive the version and predict the asset URL
-      // using our tauri.conf naming convention. No rate limit, no token needed.
+      fields.current = APP_VERSION;
+      fields.isNewer = isNewer;
+      fields.isSkipped = isNewer && latest === skipped;
+      fields.cachedInstallerPath = probeCachedInstaller(String(fields.fileName ?? ""), latest, isNewer && !fields.isSkipped);
+      return json(fields);
+    };
+
+    // Step 1: Use the rate-limit-free HTML redirect (HEAD to github.com/releases/latest)
+    // to discover the latest version tag. This never hits api.github.com so it never
+    // 403s — even when the user's IP has exhausted the 60 req/hr unauthenticated quota.
+    try {
+      const redirect = await fetchLatestReleaseFromHtmlRedirect(repo);
+      const isNewer = compareSemver(redirect.tag, APP_VERSION) > 0;
+
+      // If no update available, return immediately — zero API calls.
+      if (!isNewer) {
+        return buildResponse({
+          latest: redirect.tag,
+          title: "",
+          notes: "",
+          htmlUrl: redirect.htmlUrl,
+          downloadUrl: "",
+          fileName: "",
+          size: 0,
+          source: "redirect",
+        });
+      }
+
+      // Step 2: There IS a newer version. Try the GitHub API for full release details
+      // (release notes, asset URLs, etc.). If the API is rate-limited, fall back to
+      // predicting the asset URL from the naming convention.
       try {
-        const fallback = await fetchLatestReleaseFromHtmlRedirect(repo);
-        const isNewer = compareSemver(fallback.tag, APP_VERSION) > 0;
-        const skipped = readSkippedVersion();
-        const isSkipped = isNewer && fallback.tag === skipped;
-        const fileName = `Rikkahub_${fallback.tag}_x64-setup.exe`;
-        const downloadUrl = `https://github.com/${repo}/releases/download/v${fallback.tag}/${fileName}`;
-        const cachedInstallerPath = probeCachedInstaller(fileName, fallback.tag, isNewer && !isSkipped);
-        return json({
-          current: APP_VERSION,
-          latest: fallback.tag,
-          isNewer,
-          isSkipped,
-          title: `v${fallback.tag}`,
-          notes: "（API 限流，已退回到匿名页面探测，未获取到 release notes。请点击下方 GitHub 链接查看完整说明。）",
-          htmlUrl: fallback.htmlUrl,
-          downloadUrl,
+        const release = await fetchGithubLatestRelease(repo);
+        const tag = (release.tag_name ?? "").replace(/^v/i, "");
+        const assets = release.assets ?? [];
+        const installer =
+          assets.find((asset) => /x64[-_]setup\.exe$/i.test(asset.name ?? "")) ??
+          assets.find((asset) => /\.exe$/i.test(asset.name ?? ""));
+        return buildResponse({
+          latest: tag,
+          title: release.name ?? release.tag_name ?? "",
+          notes: release.body ?? "",
+          htmlUrl: release.html_url ?? redirect.htmlUrl,
+          downloadUrl: installer?.browser_download_url ?? "",
+          fileName: installer?.name ?? "",
+          size: installer?.size ?? 0,
+          source: "api",
+        });
+      } catch {
+        // API failed (rate limit etc.) — use the version from redirect + predicted asset URL.
+        const fileName = `Rikkahub_${redirect.tag}_x64-setup.exe`;
+        return buildResponse({
+          latest: redirect.tag,
+          title: `v${redirect.tag}`,
+          notes: "",
+          htmlUrl: redirect.htmlUrl,
+          downloadUrl: `https://github.com/${repo}/releases/download/v${redirect.tag}/${fileName}`,
           fileName,
           size: 0,
-          cachedInstallerPath,
-          source: "fallback",
-          warning: err instanceof Error ? err.message : String(err),
+          source: "redirect",
         });
-      } catch (fallbackErr) {
-        const detail = err instanceof Error ? err.message : String(err);
-        const fallbackDetail = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-        return error(`检查更新失败：${detail}；fallback 也失败：${fallbackDetail}`, 502);
       }
+    } catch {
+      // Both redirect and API failed — very rare (network down, DNS failure, etc.)
+      return error("检查更新失败：无法连接 GitHub，请检查网络连接", 502);
     }
   }
   // Downloads a release asset to %TEMP%\rikkahub-updates and returns the local path. The UI
