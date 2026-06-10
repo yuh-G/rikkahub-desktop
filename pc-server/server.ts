@@ -433,6 +433,14 @@ function osType(): string {
 const filesDir = join(dataDir, "files");
 const skillsDir = join(dataDir, "skills");
 const statePath = join(dataDir, "state.json");
+const skipVersionPath = join(dataDir, "skip-version.txt");
+
+function readSkippedVersion(): string {
+  try { return readFileSync(skipVersionPath, "utf-8").trim(); } catch { return ""; }
+}
+function writeSkippedVersion(version: string) {
+  try { writeFileSync(skipVersionPath, version.trim()); } catch { /* best-effort */ }
+}
 
 // MUST be kept in sync with web-ui/src-tauri/tauri.conf.json's `version` field. The update
 // checker compares this against the latest GitHub release tag and the version is also shown
@@ -14061,11 +14069,14 @@ async function routeApi(request: Request, url: URL) {
       const fileName = installer?.name ?? "";
       const size = installer?.size ?? 0;
       const isNewer = compareSemver(tag, APP_VERSION) > 0;
-      const cachedInstallerPath = probeCachedInstaller(fileName, tag, isNewer);
+      const skipped = readSkippedVersion();
+      const isSkipped = isNewer && tag === skipped;
+      const cachedInstallerPath = probeCachedInstaller(fileName, tag, isNewer && !isSkipped);
       return json({
         current: APP_VERSION,
         latest: tag,
         isNewer,
+        isSkipped,
         title: release.name ?? release.tag_name ?? "",
         notes: release.body ?? "",
         htmlUrl: release.html_url ?? `https://github.com/${repo}/releases/latest`,
@@ -14083,13 +14094,16 @@ async function routeApi(request: Request, url: URL) {
       try {
         const fallback = await fetchLatestReleaseFromHtmlRedirect(repo);
         const isNewer = compareSemver(fallback.tag, APP_VERSION) > 0;
+        const skipped = readSkippedVersion();
+        const isSkipped = isNewer && fallback.tag === skipped;
         const fileName = `Rikkahub_${fallback.tag}_x64-setup.exe`;
         const downloadUrl = `https://github.com/${repo}/releases/download/v${fallback.tag}/${fileName}`;
-        const cachedInstallerPath = probeCachedInstaller(fileName, fallback.tag, isNewer);
+        const cachedInstallerPath = probeCachedInstaller(fileName, fallback.tag, isNewer && !isSkipped);
         return json({
           current: APP_VERSION,
           latest: fallback.tag,
           isNewer,
+          isSkipped,
           title: `v${fallback.tag}`,
           notes: "（API 限流，已退回到匿名页面探测，未获取到 release notes。请点击下方 GitHub 链接查看完整说明。）",
           htmlUrl: fallback.htmlUrl,
@@ -14149,6 +14163,13 @@ async function routeApi(request: Request, url: URL) {
     } catch (err) {
       return error(err instanceof Error ? err.message : "Download failed", 502);
     }
+  }
+  if (path === "update/skip" && request.method === "POST") {
+    const body = await readJson<{ version?: string }>(request);
+    const version = String(body.version ?? "").trim().replace(/^v/i, "");
+    if (!version) return error("Missing version", 400);
+    writeSkippedVersion(version);
+    return json({ status: "ok", skipped: version });
   }
 
   if (path === "settings/asr-provider/detail" && request.method === "POST") {

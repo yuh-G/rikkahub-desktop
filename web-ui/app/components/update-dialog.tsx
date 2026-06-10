@@ -10,13 +10,14 @@ import {
 import { Button } from "~/components/ui/button";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { appendWebAuthQuery } from "~/services/api";
+import api, { appendWebAuthQuery } from "~/services/api";
 import { cn } from "~/lib/utils";
 
 export type UpdateInfo = {
   current: string;
   latest: string;
   isNewer: boolean;
+  isSkipped?: boolean;
   title: string;
   notes: string;
   htmlUrl: string;
@@ -48,6 +49,16 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
     setDownloadProgress(0);
     setDownloadedBytes(0);
     setTotalBytes(0);
+  };
+
+  const skipThisVersion = async () => {
+    try {
+      await api.post("update/skip", { version: info.latest });
+      toast.success(`已忽略 ${info.latest} 的更新提醒`);
+    } catch {
+      toast.error("操作失败");
+    }
+    onClose();
   };
 
   const downloadAndInstall = async () => {
@@ -168,6 +179,9 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
             </Button>
           ) : !installerPath ? (
             <>
+              <Button type="button" variant="outline" className="mr-auto" onClick={() => void skipThisVersion()} disabled={downloading}>
+                忽略此版本
+              </Button>
               <Button type="button" variant="outline" onClick={handleClose} disabled={downloading}>
                 稍后再说
               </Button>

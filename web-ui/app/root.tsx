@@ -55,7 +55,7 @@ function SilentUpdateChecker() {
     api
       .get<UpdateInfo>("update/check")
       .then((info) => {
-        if (!cancelled && info.isNewer) setUpdate(info);
+        if (!cancelled && info.isNewer && !info.isSkipped) setUpdate(info);
       })
       .catch(() => {
         /* network error — silently ignore */
