@@ -97,7 +97,7 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
       setInstallerPath(result.path);
       setInstallerCached(false);
       setDownloadProgress(100);
-      toast.success("下载完成，准备启动安装");
+      toast.success("更新包下载完成");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "下载失败");
     } finally {
@@ -144,7 +144,7 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
         {downloading ? (
           <div className="space-y-2 rounded-md border bg-muted/30 p-3">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>{downloadProgress > 0 ? `下载中 · ${downloadProgress}%` : "下载中…"}</span>
+              <span>{downloadProgress > 0 ? `正在更新 · ${downloadProgress}%` : "正在更新…"}</span>
               {totalBytes > 0 ? (
                 <span className="font-mono">
                   {(downloadedBytes / (1024 * 1024)).toFixed(1)} / {(totalBytes / (1024 * 1024)).toFixed(1)} MB
@@ -166,10 +166,10 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
         ) : null}
         {installerPath ? (
           <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-emerald-700 dark:text-emerald-300">
-            {installerCached ? "✅ 上次已下载，可直接安装：" : "安装包已下载到本地："}
+            {installerCached ? "✅ 更新包已就绪，点击下方按钮完成更新：" : "更新包已下载完成，点击下方按钮重启并更新："}
             <code className="ml-1 break-all font-mono">{installerPath}</code>
             <br />
-            点击下方"启动安装并退出"会启动 NSIS 安装程序并自动退出 Rikkahub，安装过程会保留你的数据目录和配置。
+            安装过程会自动保留你的数据目录和配置。
           </div>
         ) : null}
         <DialogFooter>
@@ -187,17 +187,17 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
               </Button>
               <Button type="button" onClick={() => void downloadAndInstall()} disabled={downloading || !info.downloadUrl}>
                 {downloading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-                {downloading ? "下载中…" : "下载安装包"}
+                {downloading ? "正在更新…" : "立即更新"}
               </Button>
             </>
           ) : (
             <>
               <Button type="button" variant="outline" onClick={handleClose}>
-                稍后再安装
+                稍后再更新
               </Button>
               <Button type="button" onClick={() => void launchAndExit()} disabled={installerLaunching}>
                 {installerLaunching ? <Loader2 className="size-4 animate-spin" /> : null}
-                启动安装并退出
+                重启并更新
               </Button>
             </>
           )}
