@@ -1,0 +1,16 @@
+name = "rikkahub-analytics"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 database — run `npx wrangler d1 create rikkahub-stats` first,
+# then paste the database_id here.
+[[d1_databases]]
+binding = "DB"
+database_name = "rikkahub-stats"
+database_id = "PLACEHOLDER_D1_DATABASE_ID"
+
+# Dashboard auth token — change this to your own secret!
+# Access dashboard at /dashboard?token=YOUR_TOKEN
+[vars]
+AUTH_TOKEN = "CHANGE_ME_TO_A_SECRET_TOKEN"
