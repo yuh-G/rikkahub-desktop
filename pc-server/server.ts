@@ -14278,8 +14278,8 @@ async function routeApi(request: Request, url: URL) {
       }
       const sanitized = String(body.fileName ?? "").replace(/[^A-Za-z0-9._\-]/g, "") || "rikkahub-update";
       // Windows: the Tauri shell's launch_installer refuses anything that doesn't end in .exe
-      // (lib.rs path check), so force the suffix. Linux/macOS: the asset is a bare executable
-      // binary with no extension — keep the sanitized name as-is.
+      // (lib.rs path check), so force the suffix. Linux: the asset is a tar.gz — keep the
+      // sanitized name as-is (the sanitize regex keeps dots, so the .tar.gz suffix survives).
       const fileName = RUNTIME_PLATFORM === "win"
         ? (/\.exe$/i.test(sanitized) ? sanitized : `${sanitized}.exe`)
         : sanitized;
