@@ -9,7 +9,9 @@
     "source": "源码",
     "window_not_available": "窗口对象不可用",
     "download_code": "下载代码",
-    "download": "下载"
+    "download": "下载",
+    "downloaded": "已下载",
+    "downloaded_toast": "已下载至\"下载\"文件夹：{{name}}"
   },
   "markdown": {
     "code_preview_title": "{{language}} 预览"

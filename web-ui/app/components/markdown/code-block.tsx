@@ -3,6 +3,7 @@ import type { ComponentProps, CSSProperties, HTMLAttributes } from "react";
 
 import { Check, Code2, Copy, Download, Eye } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import {
   bundledLanguages,
   createHighlighter,
@@ -605,32 +606,52 @@ export function CodeBlockDownloadButton({
   className,
   onDownload,
   onError,
+  timeout = 2000,
   ...props
-}: CodeBlockDownloadButtonProps) {
+}: CodeBlockDownloadButtonProps & { timeout?: number }) {
   const { t } = useTranslation("markdown");
   const { code, language } = React.useContext(CodeBlockContext);
+  const [isDownloaded, setIsDownloaded] = React.useState(false);
+  const timeoutRef = React.useRef<number>(0);
 
   const handleDownload = React.useCallback(() => {
+    if (isDownloaded) return;
+
     if (typeof window === "undefined") {
       onError?.(new Error(t("code_block.window_not_available")));
       return;
     }
 
     try {
+      const fileName = toDownloadFileName(language);
       const blob = new Blob([code], { type: "text/plain;charset=utf-8" });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = toDownloadFileName(language);
+      link.download = fileName;
       document.body.append(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
+      setIsDownloaded(true);
       onDownload?.();
+      timeoutRef.current = window.setTimeout(() => {
+        setIsDownloaded(false);
+      }, timeout);
+      toast.success(t("code_block.downloaded_toast", { name: fileName }), {
+        duration: 5000,
+      });
     } catch (error) {
       onError?.(error as Error);
     }
-  }, [code, language, onDownload, onError, t]);
+  }, [code, isDownloaded, language, onDownload, onError, t, timeout]);
+
+  React.useEffect(
+    () => () => {
+      window.clearTimeout(timeoutRef.current);
+    },
+    [],
+  );
 
   return (
     <Button
@@ -642,12 +663,18 @@ export function CodeBlockDownloadButton({
       variant="ghost"
       {...props}
     >
-      {children ?? (
-        <>
-          <Download className="size-3" />
-          <span>{t("code_block.download")}</span>
-        </>
-      )}
+      {children ??
+        (isDownloaded ? (
+          <>
+            <Check className="size-3" />
+            <span>{t("code_block.downloaded")}</span>
+          </>
+        ) : (
+          <>
+            <Download className="size-3" />
+            <span>{t("code_block.download")}</span>
+          </>
+        ))}
     </Button>
   );
 }
@@ -716,7 +743,7 @@ export function CodeBlock({
 
   React.useEffect(() => {
     setInlinePreview(canInlinePreview);
-  }, [canInlinePreview, code, previewLanguage]);
+  }, [canInlinePreview, previewLanguage]);
 
   return (
     <CodeBlockContext.Provider value={contextValue}>

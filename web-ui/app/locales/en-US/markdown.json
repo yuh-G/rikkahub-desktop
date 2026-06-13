@@ -9,7 +9,9 @@
     "source": "Source",
     "window_not_available": "Window is not available",
     "download_code": "Download code",
-    "download": "Download"
+    "download": "Download",
+    "downloaded": "Downloaded",
+    "downloaded_toast": "Downloaded to Downloads folder: {{name}}"
   },
   "markdown": {
     "code_preview_title": "{{language}} preview"
