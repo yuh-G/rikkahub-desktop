@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import process from "node:process";
@@ -430,6 +430,17 @@ function osType(): string {
   return "Windows";
 }
 
+// 运行平台（用于自动更新：Windows 走 Tauri NSIS 安装器，Linux 走二进制原地替换）。
+// 与 analyticsOs() 的划分保持一致 —— Docker 容器内 process.platform 也是 "linux"，
+// 这是对的：Docker 镜像就是 Linux 二进制，只是它的更新路径不同（见下）。
+const RUNTIME_PLATFORM: "win" | "mac" | "linux" =
+  process.platform === "darwin" ? "mac" : process.platform === "linux" ? "linux" : "win";
+
+// 容器化部署检测。Docker 内即使替换了 /app/rikkahub-pc，容器一旦重建就会回到镜像里的
+// 旧版本，原地更新没有意义 —— 这类部署应当 docker pull 新镜像。检测 /.dockerenv（Docker
+// 标准标记）或显式注入的环境变量（兼容其他容器运行时）。
+const RUNNING_IN_CONTAINER = existsSync("/.dockerenv") || process.env.RIKKAHUB_CONTAINER === "1";
+
 const filesDir = join(dataDir, "files");
 const skillsDir = join(dataDir, "skills");
 const statePath = join(dataDir, "state.json");
@@ -562,8 +573,11 @@ async function fetchLatestReleaseFromHtmlRedirect(repo: string): Promise<{ tag: 
 
 // Look for a previously-downloaded installer for this exact version in the temp dir so the
 // UI can offer "直接安装" without re-downloading. Matched first by canonical filename, then
-// by any *.exe whose name embeds the version tag (tolerates users moving/renaming files).
+// by any file whose name embeds the version tag (tolerates users moving/renaming files).
 // Returns null if isNewer is false (don't surface stale installers).
+//
+// 不限定后缀：Windows 缓存的是 .exe，Linux 缓存的是无后缀二进制，只要文件名包含版本号
+// 且非空就认可 —— 临时目录由我们自己的 update/download 写入，来源可信。
 function probeCachedInstaller(fileName: string, tag: string, isNewer: boolean): string | null {
   if (!isNewer || !fileName) return null;
   try {
@@ -574,7 +588,6 @@ function probeCachedInstaller(fileName: string, tag: string, isNewer: boolean): 
       return canonical;
     }
     for (const entry of readdirSync(tmpDir)) {
-      if (!/\.exe$/i.test(entry)) continue;
       if (tag && !entry.includes(tag)) continue;
       const candidate = join(tmpDir, entry);
       try {
@@ -14127,6 +14140,31 @@ async function routeApi(request: Request, url: URL) {
   if (path === "update/check" && request.method === "GET") {
     const repo = "yuh-G/rikkahub-desktop";
 
+    // 按当前运行平台挑选 release asset。命名约定：
+    //   Windows: Rikkahub_<tag>_x64-setup.exe
+    //   Linux:   Rikkahub_<tag>_linux_x64   (无后缀的可执行二进制)
+    //   macOS:   暂未发布 —— 返回 undefined，前端引导用户去 Release 页手动下载。
+    // 容器化部署(Docker 等)无法通过替换二进制持久更新，直接返回 undefined，
+    // 前端会提示用 docker pull 升级镜像。
+    const pickAsset = (assets: GithubRelease["assets"]): GithubRelease["assets"][number] | undefined => {
+      if (RUNNING_IN_CONTAINER) return undefined;
+      if (RUNTIME_PLATFORM === "linux") {
+        return assets.find((a) => /linux[-_]x64$/i.test(a.name ?? ""));
+      }
+      if (RUNTIME_PLATFORM === "mac") {
+        return assets.find((a) => /\.dmg$/i.test(a.name ?? ""))
+          ?? assets.find((a) => /(?:macos|darwin|mac)[-_]x64/i.test(a.name ?? ""));
+      }
+      return assets.find((a) => /x64[-_]setup\.exe$/i.test(a.name ?? ""))
+        ?? assets.find((a) => /\.exe$/i.test(a.name ?? ""));
+    };
+
+    // API 不可用(rate limit)时的兜底:按命名约定直接拼 asset URL。
+    const predictAssetName = (tag: string): string =>
+      RUNTIME_PLATFORM === "linux" ? `Rikkahub_${tag}_linux_x64`
+      : RUNTIME_PLATFORM === "mac" ? `Rikkahub_${tag}_mac_x64.dmg`
+      : `Rikkahub_${tag}_x64-setup.exe`;
+
     // Helper: build the JSON response for a given release tag + metadata, apply skip logic.
     const buildResponse = (fields: Record<string, unknown>) => {
       const latest = String(fields.latest ?? "");
@@ -14135,7 +14173,11 @@ async function routeApi(request: Request, url: URL) {
       fields.current = APP_VERSION;
       fields.isNewer = isNewer;
       fields.isSkipped = isNewer && latest === skipped;
-      fields.cachedInstallerPath = probeCachedInstaller(String(fields.fileName ?? ""), latest, isNewer && !fields.isSkipped);
+      fields.platform = RUNTIME_PLATFORM;
+      fields.containerized = RUNNING_IN_CONTAINER;
+      if (!RUNNING_IN_CONTAINER) {
+        fields.cachedInstallerPath = probeCachedInstaller(String(fields.fileName ?? ""), latest, isNewer && !fields.isSkipped);
+      }
       return json(fields);
     };
 
@@ -14167,9 +14209,7 @@ async function routeApi(request: Request, url: URL) {
         const release = await fetchGithubLatestRelease(repo);
         const tag = (release.tag_name ?? "").replace(/^v/i, "");
         const assets = release.assets ?? [];
-        const installer =
-          assets.find((asset) => /x64[-_]setup\.exe$/i.test(asset.name ?? "")) ??
-          assets.find((asset) => /\.exe$/i.test(asset.name ?? ""));
+        const installer = pickAsset(assets);
         return buildResponse({
           latest: tag,
           title: release.name ?? release.tag_name ?? "",
@@ -14182,7 +14222,20 @@ async function routeApi(request: Request, url: URL) {
         });
       } catch {
         // API failed (rate limit etc.) — use the version from redirect + predicted asset URL.
-        const fileName = `Rikkahub_${redirect.tag}_x64-setup.exe`;
+        // 容器化或 macOS(无发布物)时不预测 URL,让前端引导用户手动处理。
+        if (RUNNING_IN_CONTAINER || RUNTIME_PLATFORM === "mac") {
+          return buildResponse({
+            latest: redirect.tag,
+            title: `v${redirect.tag}`,
+            notes: "",
+            htmlUrl: redirect.htmlUrl,
+            downloadUrl: "",
+            fileName: "",
+            size: 0,
+            source: "redirect",
+          });
+        }
+        const fileName = predictAssetName(redirect.tag);
         return buildResponse({
           latest: redirect.tag,
           title: `v${redirect.tag}`,
@@ -14199,9 +14252,10 @@ async function routeApi(request: Request, url: URL) {
       return error("检查更新失败：无法连接 GitHub，请检查网络连接", 502);
     }
   }
-  // Downloads a release asset to %TEMP%\rikkahub-updates and returns the local path. The UI
-  // then asks the Tauri shell to launch the installer; the user explicitly confirms exit so
-  // we don't race the installer's "close target app" check.
+  // Downloads a release asset to the temp dir's rikkahub-updates subfolder and returns the
+  // local path. Windows: the UI then asks the Tauri shell to launch the .exe installer.
+  // Linux: the UI calls update/apply to swap the running binary. The user explicitly confirms
+  // the restart so we don't race a process that's about to be replaced.
   if (path === "update/download" && request.method === "POST") {
     try {
       const body = await readJson<{ url?: string; fileName?: string }>(request);
@@ -14218,12 +14272,13 @@ async function routeApi(request: Request, url: URL) {
       if (!/^(github\.com|.*\.githubusercontent\.com|objects\.githubusercontent\.com)$/i.test(host)) {
         return error(`Refusing to download from non-GitHub host: ${host}`, 400);
       }
-      const sanitized = String(body.fileName ?? "").replace(/[^A-Za-z0-9._\-]/g, "") || "rikkahub-update.exe";
-      // The Tauri shell's launch_installer command refuses anything that doesn't end in .exe
-      // (lib.rs path check). Sanitization above can strip the dot if the source filename had
-      // weird characters, so guard explicitly here — otherwise the user gets "启动安装程序失败"
-      // after a successful download.
-      const fileName = /\.exe$/i.test(sanitized) ? sanitized : `${sanitized}.exe`;
+      const sanitized = String(body.fileName ?? "").replace(/[^A-Za-z0-9._\-]/g, "") || "rikkahub-update";
+      // Windows: the Tauri shell's launch_installer refuses anything that doesn't end in .exe
+      // (lib.rs path check), so force the suffix. Linux/macOS: the asset is a bare executable
+      // binary with no extension — keep the sanitized name as-is.
+      const fileName = RUNTIME_PLATFORM === "win"
+        ? (/\.exe$/i.test(sanitized) ? sanitized : `${sanitized}.exe`)
+        : sanitized;
       const tmpDir = join(tempDir(), "rikkahub-updates");
       mkdirSync(tmpDir, { recursive: true });
       const targetPath = join(tmpDir, fileName);
@@ -14237,9 +14292,73 @@ async function routeApi(request: Request, url: URL) {
       }
       const buffer = Buffer.from(await res.arrayBuffer());
       writeFileSync(targetPath, buffer);
+      // Linux/macOS binary needs the executable bit set or update/apply's rename would leave
+      // a non-runnable file. Windows ignores POSIX permission bits.
+      if (RUNTIME_PLATFORM !== "win") {
+        try { chmodSync(targetPath, 0o755); } catch { /* best-effort — fs may not support it */ }
+      }
       return json({ status: "ok", path: targetPath, size: buffer.length });
     } catch (err) {
       return error(err instanceof Error ? err.message : "Download failed", 502);
+    }
+  }
+  // Linux/macOS only: swaps the running executable for the freshly-downloaded binary.
+  // The new binary was placed in the temp rikkahub-updates dir by update/download and is
+  // already chmod +x. We rename it over process.execPath — Linux allows renaming a file that
+  // is currently executing (the running process keeps using the old inode), so the swap is
+  // atomic and the old binary keeps serving requests until the process exits. The UI then
+  // tells the user to restart; systemd-managed installs with Restart=always come back alone.
+  //
+  // Windows is handled entirely by the Tauri shell's launch_installer (NSIS), so this endpoint
+  // refuses to run there. Docker is also refused — a container rebuild would throw the swap
+  // away, so the right path there is `docker pull`.
+  if (path === "update/apply" && request.method === "POST") {
+    if (RUNTIME_PLATFORM === "win") return error("Windows 请使用安装程序更新", 400);
+    if (RUNNING_IN_CONTAINER) return error("容器化部署无法原地更新，请通过 docker pull 升级镜像", 400);
+    try {
+      const body = await readJson<{ path?: string }>(request);
+      const srcPath = String(body.path ?? "").trim();
+      if (!srcPath) return error("缺少更新文件路径", 400);
+      // Security: only accept files directly inside our own temp updates dir, so a crafted
+      // request can't trick us into copying an arbitrary file over the executable.
+      const updatesDir = resolve(join(tempDir(), "rikkahub-updates"));
+      const resolvedSrc = resolve(srcPath);
+      if (dirname(resolvedSrc) !== updatesDir) {
+        return error("更新文件路径不在受信任目录内", 400);
+      }
+      if (!existsSync(resolvedSrc)) return error("更新文件不存在", 404);
+      if (statSync(resolvedSrc).size === 0) return error("更新文件为空", 400);
+
+      const currentExe = resolve(process.execPath);
+      if (!existsSync(currentExe)) return error(`当前可执行文件路径无效：${currentExe}`, 500);
+
+      // Back up the running binary so a botched update can be rolled back by hand
+      // (<exe>.bak). Best-effort — if the dir is read-only we skip the backup, not fail.
+      const backupPath = `${currentExe}.bak`;
+      try {
+        copyFileSync(currentExe, backupPath);
+      } catch (backupErr) {
+        console.warn("[update/apply] backup skipped:", backupErr);
+      }
+
+      // Defensive: ensure the new file is executable even if it arrived via the cache probe
+      // or was dropped here by hand (update/download already chmod'd it).
+      try { chmodSync(resolvedSrc, 0o755); } catch { /* fs may not support it */ }
+
+      // Atomic swap. rename on the same filesystem is atomic; if src and dest cross a mount
+      // boundary (rare — the temp dir usually shares the root fs), fall back to copy + unlink.
+      try {
+        renameSync(resolvedSrc, currentExe);
+      } catch (renameErr) {
+        console.warn("[update/apply] rename failed, falling back to copy:", renameErr);
+        copyFileSync(resolvedSrc, currentExe);
+        try { chmodSync(currentExe, 0o755); } catch { /* */ }
+        try { unlinkSync(resolvedSrc); } catch { /* */ }
+      }
+
+      return json({ status: "ok", exePath: currentExe, backupPath: existsSync(backupPath) ? backupPath : null, needRestart: true });
+    } catch (err) {
+      return error(`应用更新失败：${err instanceof Error ? err.message : String(err)}`, 500);
     }
   }
   if (path === "update/skip" && request.method === "POST") {

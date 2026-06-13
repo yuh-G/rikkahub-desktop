@@ -25,6 +25,10 @@ export type UpdateInfo = {
   fileName: string;
   size: number;
   cachedInstallerPath?: string | null;
+  /** 运行平台，决定走哪种更新应用流程（win→NSIS 安装器，linux→二进制替换）。 */
+  platform?: "win" | "mac" | "linux";
+  /** 容器化部署（Docker 等）无法原地更新，前端改为提示 docker pull。 */
+  containerized?: boolean;
 };
 
 interface UpdateDialogProps {
@@ -105,6 +109,8 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
     }
   };
 
+  // Windows only: hand the downloaded installer to the Tauri shell, which launches it as a
+  // detached NSIS process and then we exit so the installer's "close target app" check passes.
   const launchAndExit = async () => {
     if (!installerPath) return;
     setInstallerLaunching(true);
@@ -118,6 +124,23 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
     } catch (err) {
       const message = err instanceof Error ? err.message : (typeof err === "string" ? err : "启动安装程序失败");
       toast.error(`启动安装程序失败：${message}`);
+      setInstallerLaunching(false);
+    }
+  };
+
+  // Linux: the binary was downloaded + chmod'd by the backend. Ask it to atomically swap
+  // process.execPath for the new file. The running process keeps serving on the old inode
+  // until it exits, so the call returns cleanly; the user then restarts to run the new version.
+  const applyUpdate = async () => {
+    if (!installerPath) return;
+    setInstallerLaunching(true);
+    try {
+      await api.post("update/apply", { path: installerPath });
+      toast.success("更新已应用，请重启 Rikkahub 生效");
+      handleClose();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "应用更新失败";
+      toast.error(message);
       setInstallerLaunching(false);
     }
   };
@@ -139,6 +162,13 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
           <div className="rounded-md border bg-muted/30 p-3">
             <div className="mb-1 text-xs font-medium text-muted-foreground">更新说明</div>
             <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{info.notes}</pre>
+          </div>
+        ) : null}
+        {info.containerized ? (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300">
+            检测到容器化部署，无法在应用内自动更新。请运行
+            <code className="mx-0.5 rounded bg-amber-500/10 px-1 py-0.5 font-mono">docker pull</code>
+            拉取最新镜像后重建容器。
           </div>
         ) : null}
         {downloading ? (
@@ -166,10 +196,16 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
         ) : null}
         {installerPath ? (
           <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-emerald-700 dark:text-emerald-300">
-            {installerCached ? "✅ 更新包已就绪，点击下方按钮完成更新：" : "更新包已下载完成，点击下方按钮重启并更新："}
+            {installerCached
+              ? "✅ 更新包已就绪："
+              : info.platform === "linux"
+                ? "更新包已下载完成，点击下方按钮应用更新："
+                : "更新包已下载完成，点击下方按钮重启并更新："}
             <code className="ml-1 break-all font-mono">{installerPath}</code>
             <br />
-            安装过程会自动保留你的数据目录和配置。
+            {info.platform === "linux"
+              ? "数据目录与配置不受影响，应用后需手动重启 Rikkahub 生效。"
+              : "安装过程会自动保留你的数据目录和配置。"}
           </div>
         ) : null}
         <DialogFooter>
@@ -177,6 +213,27 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
             <Button type="button" onClick={handleClose}>
               我知道了
             </Button>
+          ) : info.containerized ? (
+            <>
+              <Button type="button" variant="outline" className="mr-auto" onClick={() => void skipThisVersion()}>
+                忽略此版本
+              </Button>
+              <Button type="button" variant="outline" onClick={() => info.htmlUrl && window.open(info.htmlUrl, "_blank")}>
+                查看 Release
+              </Button>
+              <Button type="button" onClick={handleClose}>
+                稍后再说
+              </Button>
+            </>
+          ) : !info.downloadUrl ? (
+            <>
+              <Button type="button" variant="outline" className="mr-auto" onClick={() => void skipThisVersion()}>
+                忽略此版本
+              </Button>
+              <Button type="button" onClick={() => info.htmlUrl && window.open(info.htmlUrl, "_blank")}>
+                前往 GitHub 下载
+              </Button>
+            </>
           ) : !installerPath ? (
             <>
               <Button type="button" variant="outline" className="mr-auto" onClick={() => void skipThisVersion()} disabled={downloading}>
@@ -188,6 +245,16 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
               <Button type="button" onClick={() => void downloadAndInstall()} disabled={downloading || !info.downloadUrl}>
                 {downloading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
                 {downloading ? "正在更新…" : "立即更新"}
+              </Button>
+            </>
+          ) : info.platform === "linux" ? (
+            <>
+              <Button type="button" variant="outline" onClick={handleClose}>
+                稍后重启
+              </Button>
+              <Button type="button" onClick={() => void applyUpdate()} disabled={installerLaunching}>
+                {installerLaunching ? <Loader2 className="size-4 animate-spin" /> : null}
+                应用并重启
               </Button>
             </>
           ) : (
