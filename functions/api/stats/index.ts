@@ -13,7 +13,7 @@ export const onRequest = async (context) => {
     const wau = await uniqueDevices(DB, today, 7);
     const mau = await uniqueDevices(DB, today, 30);
 
-    const todayRow = trends.rows?.[0];
+    const todayRow = trends.results?.[0];
     const dau = todayRow?.dau ?? 0;
     const stickinessMau = mau > 0 ? Math.round((dau / mau) * 100) : 0;
     const stickinessWau = wau > 0 ? Math.round((dau / wau) * 100) : 0;
@@ -63,7 +63,7 @@ export const onRequest = async (context) => {
     const avgRetention = computeAvgRetention(retention.cohorts);
 
     return new Response(JSON.stringify({
-      trends: (trends.rows ?? []).reverse(),
+      trends: (trends.results ?? []).reverse(),
       wau, mau,
       stickiness: stickinessMau,         // 兼容老字段
       stickinessMau, stickinessWau,
@@ -77,7 +77,7 @@ export const onRequest = async (context) => {
         b20p: buckets?.b20p ?? 0,
       },
       avgRetention,
-      versions: versions.rows ?? [],
+      versions: versions.results ?? [],
       retention,
     }), {
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
@@ -113,12 +113,12 @@ async function computeRetention(DB, cohortDays) {
        GROUP BY date ORDER BY date DESC LIMIT 60`
     ).bind(since).all();
 
-    if (!cohorts.rows?.length) return { cohorts: [] };
+    if (!cohorts.results?.length) return { cohorts: [] };
 
     const result = [];
     const offsets = [1, 3, 7, 14, 30];
 
-    for (const cohort of cohorts.rows) {
+    for (const cohort of cohorts.results) {
       const retention = {};
       for (const offset of offsets) {
         const targetDate = new Date(cohort.date + "T00:00:00Z");
