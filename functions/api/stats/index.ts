@@ -5,7 +5,7 @@ export const onRequest = async (context) => {
 
   try {
     const trends = await DB.prepare(
-      `SELECT date, dau, eff_dau, new_users, total_msgs, win_users, linux_users
+      `SELECT date, dau, eff_dau, new_users, total_msgs, win_users, linux_users, mac_users
        FROM daily_summary ORDER BY date DESC LIMIT ?`
     ).bind(days).all();
 

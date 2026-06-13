@@ -47,19 +47,21 @@ async function refreshDay(DB, date) {
        SUM(CASE WHEN first_seen THEN 1 ELSE 0 END)    AS new_users,
        SUM(msg_count)           AS total_msgs,
        SUM(CASE WHEN os = 'win' THEN 1 ELSE 0 END)    AS win_users,
-       SUM(CASE WHEN os = 'linux' THEN 1 ELSE 0 END)  AS linux_users
+       SUM(CASE WHEN os = 'linux' THEN 1 ELSE 0 END)  AS linux_users,
+       SUM(CASE WHEN os = 'mac' THEN 1 ELSE 0 END)    AS mac_users
      FROM pings WHERE date = ?`
   ).bind(date).first();
 
   if (!agg || agg.dau === 0) return;
 
   await DB.prepare(
-    `INSERT INTO daily_summary (date, dau, eff_dau, new_users, total_msgs, win_users, linux_users)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO daily_summary (date, dau, eff_dau, new_users, total_msgs, win_users, linux_users, mac_users)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(date) DO UPDATE SET
        dau = excluded.dau, eff_dau = excluded.eff_dau, new_users = excluded.new_users,
-       total_msgs = excluded.total_msgs, win_users = excluded.win_users, linux_users = excluded.linux_users`
-  ).bind(date, agg.dau, agg.eff_dau, agg.new_users, agg.total_msgs, agg.win_users, agg.linux_users).run();
+       total_msgs = excluded.total_msgs, win_users = excluded.win_users,
+       linux_users = excluded.linux_users, mac_users = excluded.mac_users`
+  ).bind(date, agg.dau, agg.eff_dau, agg.new_users, agg.total_msgs, agg.win_users, agg.linux_users, agg.mac_users).run();
 
   await DB.prepare(`DELETE FROM version_dist WHERE date = ?`).bind(date).run();
   await DB.prepare(

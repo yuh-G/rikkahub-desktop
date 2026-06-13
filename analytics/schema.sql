@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS daily_summary (
   new_users    INTEGER NOT NULL DEFAULT 0,
   total_msgs   INTEGER NOT NULL DEFAULT 0,
   win_users    INTEGER NOT NULL DEFAULT 0,
-  linux_users  INTEGER NOT NULL DEFAULT 0
+  linux_users  INTEGER NOT NULL DEFAULT 0,
+  mac_users    INTEGER NOT NULL DEFAULT 0
 );
 
 -- version_distribution: snapshot of active versions per day

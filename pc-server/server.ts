@@ -446,6 +446,11 @@ function writeSkippedVersion(version: string) {
 // One ping per app start + periodic updates during the session.  Sends only:
 //   device UUID, date, version, OS, cumulative message count for the day.
 // No user content, no IP storage, no model names, no file names.
+//
+// 设计准则:
+//   - 完全静默:无网络/DNS 失败/防火墙拦截都不能让用户看到任何报错
+//   - 不阻塞:fetch 出错只能被 Promise 链吞掉,绝不能冒泡成 UnhandledRejection
+//   - 不持久错误状态:连续失败不退避、不停跳,因为我们根本不关心是否送达
 const ANALYTICS_ENDPOINT = "https://rikkahub-desktop.pages.dev/ping";
 const deviceIdPath = join(dataDir, "device-id.txt");
 let analyticsDeviceId = "";
@@ -464,27 +469,47 @@ function localDateStr(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+function analyticsOs(): string {
+  // 区分 win / mac / linux —— Docker 容器内 process.platform === "linux",
+  // 算 Linux 用户,合理(Docker 镜像也是基于 Linux 二进制)。
+  if (process.platform === "darwin") return "mac";
+  if (process.platform === "linux") return "linux";
+  return "win";
+}
+
 function sendAnalyticsPing(): void {
   if (!analyticsDeviceId) return;
   const url = `${ANALYTICS_ENDPOINT}?id=${encodeURIComponent(analyticsDeviceId)}`
     + `&d=${localDateStr()}`
     + `&v=${encodeURIComponent(APP_VERSION)}`
-    + `&os=${process.platform === "linux" ? "linux" : "win"}`
+    + `&os=${analyticsOs()}`
     + `&mc=${analyticsMsgCount}`;
-  fetch(url, { method: "GET", signal: AbortSignal.timeout(5000) }).catch(() => { /* fire-and-forget */ });
+  // 三重静默防御:
+  //   (1) try/catch 包裹同步部分,防 fetch() 同步抛错(比如 URL 不合法)
+  //   (2) AbortSignal.timeout 限制网络等待,DNS 失败/连接超时都会被吞
+  //   (3) .then/.catch 双 noop 确保 promise 既不打印未捕获 reject,也不让
+  //       响应体引起任何后续处理
+  try {
+    fetch(url, { method: "GET", signal: AbortSignal.timeout(5000) })
+      .then(() => {}, () => {});
+  } catch { /* fire-and-forget — never block, never warn */ }
 }
 
 function startAnalytics(): void {
-  analyticsDeviceId = readOrCreateDeviceId();
-  // Reset daily counter if the date rolled over (long-running instance)
-  const today = localDateStr();
-  let lastDate = today;
-  sendAnalyticsPing(); // startup ping
-  setInterval(() => {
-    const now = localDateStr();
-    if (now !== lastDate) { analyticsMsgCount = 0; lastDate = now; }
-    sendAnalyticsPing();
-  }, 10 * 60 * 1000); // every 10 minutes
+  // 同步部分(读 device-id、设置 interval)绝不可能抛错;唯一可能的失败点是
+  // fetch,已在 sendAnalyticsPing 内部隔离。这里整体再加一层 try/catch 兜底,
+  // 防御未来代码改动时引入意外异常 —— analytics 永远不应该让 server 启动失败。
+  try {
+    analyticsDeviceId = readOrCreateDeviceId();
+    const today = localDateStr();
+    let lastDate = today;
+    sendAnalyticsPing(); // startup ping
+    setInterval(() => {
+      const now = localDateStr();
+      if (now !== lastDate) { analyticsMsgCount = 0; lastDate = now; }
+      sendAnalyticsPing();
+    }, 10 * 60 * 1000); // every 10 minutes
+  } catch { /* analytics must never break the app */ }
 }
 
 // MUST be kept in sync with web-ui/src-tauri/tauri.conf.json's `version` field. The update

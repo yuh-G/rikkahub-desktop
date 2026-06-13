@@ -612,7 +612,7 @@ function render(data) {
 
   // ── 版本 + 系统(双栏) ──
   const hasVersionData = data.versions && data.versions.length;
-  const hasOsData = (today.win_users || 0) + (today.linux_users || 0) > 0;
+  const hasOsData = (today.win_users || 0) + (today.linux_users || 0) + (today.mac_users || 0) > 0;
   html += '<div class="grid two">';
   html += card({
     title: '版本分布',
@@ -799,6 +799,7 @@ function drawCharts(data, trends) {
   const latest = trends[trends.length - 1] || {};
   const osData = [
     { label: 'Windows', value: latest.win_users || 0, color: '#38bdf8' },
+    { label: 'macOS', value: latest.mac_users || 0, color: '#a78bfa' },
     { label: 'Linux', value: latest.linux_users || 0, color: '#fbbf24' },
   ].filter(d => d.value > 0);
   if (osCanvas && osData.length) {
