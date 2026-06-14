@@ -9113,23 +9113,28 @@ function addStreamText(hooks: StreamHooks | undefined, text: string) {
 // 策略参考 opencode 的 models-dev.ts:磁盘缓存 + 原子写(tmp→rename)+ 失败用旧缓存。
 const MODELS_DEV_URL = "https://models.dev/api.json";
 const MODELS_DEV_CACHE_PATH = join(dataDir, "models-dev-cache.json");
-const MODELS_DEV_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MODELS_DEV_TTL_MS = 24 * 60 * 60 * 1000; // 1 天
 let modelsDevCache: Record<string, any> | null = null;
 let modelsDevLoading: Promise<void> | null = null;
 
 // 启动时 fire-and-forget 触发(见文件末尾),之后内存命中。失败只打日志,绝不抛。
-async function loadModelsDev(): Promise<void> {
-  if (modelsDevCache !== null || modelsDevLoading) return modelsDevLoading ?? Promise.resolve();
+// force=true 时跳过磁盘 TTL 检查、总是拉最新(用于"获取模型列表"等用户主动想试新模型的场景)。
+async function loadModelsDev(force = false): Promise<void> {
+  // 正在加载 → 复用(避免并发 fetch);非强制且内存已有 → 复用。
+  if (modelsDevLoading) return modelsDevLoading;
+  if (!force && modelsDevCache !== null) return Promise.resolve();
   modelsDevLoading = (async () => {
-    // 1. 磁盘缓存未过期 → 直接用
-    try {
-      const stat = statSync(MODELS_DEV_CACHE_PATH);
-      if (Date.now() - stat.mtimeMs < MODELS_DEV_TTL_MS) {
-        modelsDevCache = JSON.parse(readFileSync(MODELS_DEV_CACHE_PATH, "utf8"));
-        return;
+    // 1. 磁盘缓存未过期且非强制 → 直接用(force 时跳过,总是拉最新)
+    if (!force) {
+      try {
+        const stat = statSync(MODELS_DEV_CACHE_PATH);
+        if (Date.now() - stat.mtimeMs < MODELS_DEV_TTL_MS) {
+          modelsDevCache = JSON.parse(readFileSync(MODELS_DEV_CACHE_PATH, "utf8"));
+          return;
+        }
+      } catch {
+        // 无缓存文件或损坏 → 继续 fetch
       }
-    } catch {
-      // 无缓存文件或损坏 → 继续 fetch
     }
     // 2. fetch(超时 10s)
     try {
@@ -9219,11 +9224,15 @@ function appendUsageFromRaw(msg: Message | undefined, raw: any) {
   if (!msg) return;
   const usage = raw?.usage;
   if (!usage || typeof usage !== "object") return;
+  // 流式过程中本函数会被多次调用(每个 usage delta),每次重设 msg.usage 对象会丢掉已填的
+  // contextLimit,触发 fillContextLimit 重查 models.dev。保留前值避免重复查找。
+  const prevContextLimit = (msg.usage as Record<string, unknown> | null)?.contextLimit;
   msg.usage = {
     promptTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? usage.promptTokens ?? 0),
     completionTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? usage.completionTokens ?? 0),
     totalTokens: Number(usage.total_tokens ?? usage.totalTokens ?? 0),
     cachedTokens: Number(usage.prompt_tokens_details?.cached_tokens ?? usage.input_tokens_details?.cached_tokens ?? usage.cachedTokens ?? 0),
+    ...(prevContextLimit !== undefined ? { contextLimit: prevContextLimit as number | null } : {}),
   };
   fillContextLimit(msg);
 }
@@ -13351,10 +13360,21 @@ async function routeApi(request: Request, url: URL) {
       },
     });
   }
+  if (path === "context-limit" && request.method === "GET") {
+    // 查询某模型的 context window 上限(来自 models.dev)。前端切换当前模型时调用,
+    // 让统计行分母跟随"当前选中模型"而非"生成时模型"。cache 未加载或匹配不到返回 null。
+    const mid = url.searchParams.get("modelId");
+    const ptype = url.searchParams.get("providerType") ?? "";
+    if (!mid || !modelsDevCache) return json({ contextLimit: null });
+    return json({ contextLimit: lookupContextLimit(modelsDevCache, ptype, mid) });
+  }
   if (path === "settings/provider/models" && request.method === "POST") {
     const body = await readJson<{ providerId: string; save?: boolean }>(request);
     const providerItem = state.settings.providers.find((item) => item.id === body.providerId);
     if (!providerItem) return error("Provider not found", 404);
+    // 用户主动获取模型列表——大概率是想试新模型。顺带刷新 models.dev 缓存,让新模型
+    // 的 context 上限立即可用(不用等每日 TTL)。fire-and-forget,不阻塞模型列表返回。
+    void loadModelsDev(true);
     try {
       const result = await fetchProviderModels(providerItem);
       if (body.save) {

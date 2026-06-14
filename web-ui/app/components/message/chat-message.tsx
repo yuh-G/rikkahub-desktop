@@ -45,6 +45,7 @@ import { getAudioPlaybackKey, playAudio, playSpeechSynthesis, stopAudio, useAudi
 import { ttsController, useIsTtsActiveForKey } from "~/lib/tts/tts-controller";
 import { Button } from "~/components/ui/button";
 import api from "~/services/api";
+import { useCurrentModel } from "~/hooks/use-current-model";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -202,6 +203,48 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat().format(value);
 }
 
+// 当前选中模型的 context limit 缓存(按 "providerType/modelId" 键)。让统计行分母跟随
+// "当前模型"而非"生成时模型"——切模型时分母立即更新,辅助用户判断"换成这个模型容量够不够"。
+const contextLimitCache = new Map<string, number | null>();
+function useCurrentContextLimit(): number | null | undefined {
+  const { currentModel, currentProvider } = useCurrentModel();
+  const modelId = currentModel?.modelId;
+  // currentProvider.type 经 ProviderProfile 的索引签名返回 unknown,显式窄化为 string。
+  const providerType = typeof currentProvider?.type === "string" ? currentProvider.type : "";
+  const [limit, setLimit] = React.useState<number | null | undefined>(undefined);
+  React.useEffect(() => {
+    if (!modelId || !providerType) {
+      setLimit(undefined);
+      return;
+    }
+    const cacheKey = `${providerType}/${modelId}`;
+    const cached = contextLimitCache.get(cacheKey);
+    if (cached !== undefined) {
+      setLimit(cached);
+      return;
+    }
+    let cancelled = false;
+    setLimit(undefined); // loading:此时 getNerdStats 回退到 usage.contextLimit(不闪烁)
+    void api
+      .get<{ contextLimit: number | null }>(
+        `context-limit?modelId=${encodeURIComponent(modelId)}&providerType=${encodeURIComponent(providerType)}`,
+      )
+      .then((res) => {
+        if (cancelled) return;
+        const v = res.contextLimit ?? null;
+        contextLimitCache.set(cacheKey, v);
+        setLimit(v);
+      })
+      .catch(() => {
+        if (!cancelled) setLimit(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modelId, providerType]);
+  return limit;
+}
+
 function getDurationMs(createdAt: string, finishedAt?: string | null): number | null {
   const start = Date.parse(createdAt);
   if (Number.isNaN(start)) return null;
@@ -217,6 +260,7 @@ function getNerdStats(
   createdAt: string,
   finishedAt: string | null | undefined,
   t: TFunction,
+  liveContextLimit?: number | null,
 ) {
   const stats: Array<{ key: string; icon: React.ReactNode; label: string }> = [];
 
@@ -268,7 +312,11 @@ function getNerdStats(
   // models.dev 目录,后端按 modelId 匹配)。匹配不到分母则只显示分子;promptTokens 为 0 则不显示。
   if (usage.promptTokens > 0) {
     const used = usage.promptTokens >= 1000 ? `${(usage.promptTokens / 1000).toFixed(1)}k` : String(usage.promptTokens);
-    const limitValue = usage.contextLimit && usage.contextLimit > 0 ? usage.contextLimit : null;
+    // 分母优先用当前选中模型的 contextLimit(切模型即更新);loading(undefined)或查不到(null)
+    // 时回退到该消息生成时的快照(usage.contextLimit),避免切换瞬间分母闪烁/消失。
+    const liveValue = liveContextLimit != null && liveContextLimit > 0 ? liveContextLimit : null;
+    const snapValue = usage.contextLimit && usage.contextLimit > 0 ? usage.contextLimit : null;
+    const limitValue = liveValue ?? snapValue;
     const limit = limitValue != null
       ? limitValue >= 1000 ? `${(limitValue / 1000).toFixed(1)}k` : String(limitValue)
       : null;
@@ -800,12 +848,15 @@ const ChatMessageNerdLineRow = React.memo(({
 }) => {
   const { t } = useTranslation("message");
   const displaySetting = useSettingsStore((state) => state.settings?.displaySetting);
+  // 分母跟随当前选中模型:切模型时这条统计行的分母立即更新(产品意图是"当下决策依据",
+  // 而非"生成时的历史快照")。loading/查不到时 getNerdStats 内部回退到 usage.contextLimit。
+  const liveContextLimit = useCurrentContextLimit();
 
   if (!displaySetting?.showTokenUsage || !message.usage) {
     return null;
   }
 
-  const stats = getNerdStats(message.usage, message.createdAt, message.finishedAt, t);
+  const stats = getNerdStats(message.usage, message.createdAt, message.finishedAt, t, liveContextLimit);
   if (stats.length === 0) return null;
 
   return (
