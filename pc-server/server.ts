@@ -2128,6 +2128,7 @@ function ensureUsage(msg: Message, conversation?: Conversation) {
     cachedTokens: 0,
     estimated: true,
   };
+  fillContextLimit(msg);
 }
 
 function toolApprovalType(part: JsonValue) {
@@ -9106,6 +9107,114 @@ function addStreamText(hooks: StreamHooks | undefined, text: string) {
   touchStream(hooks);
 }
 
+// models.dev 开源模型目录缓存 —— 用于查询模型的最大上下文窗口,显示在对话统计行
+// (分子 = 当前上下文 = promptTokens,分母 = 模型 contextLimit)。
+// 数据源 https://models.dev/api.json,缓存到 pc-data,7 天 TTL,fetch 失败降级为空(不报错)。
+// 策略参考 opencode 的 models-dev.ts:磁盘缓存 + 原子写(tmp→rename)+ 失败用旧缓存。
+const MODELS_DEV_URL = "https://models.dev/api.json";
+const MODELS_DEV_CACHE_PATH = join(dataDir, "models-dev-cache.json");
+const MODELS_DEV_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+let modelsDevCache: Record<string, any> | null = null;
+let modelsDevLoading: Promise<void> | null = null;
+
+// 启动时 fire-and-forget 触发(见文件末尾),之后内存命中。失败只打日志,绝不抛。
+async function loadModelsDev(): Promise<void> {
+  if (modelsDevCache !== null || modelsDevLoading) return modelsDevLoading ?? Promise.resolve();
+  modelsDevLoading = (async () => {
+    // 1. 磁盘缓存未过期 → 直接用
+    try {
+      const stat = statSync(MODELS_DEV_CACHE_PATH);
+      if (Date.now() - stat.mtimeMs < MODELS_DEV_TTL_MS) {
+        modelsDevCache = JSON.parse(readFileSync(MODELS_DEV_CACHE_PATH, "utf8"));
+        return;
+      }
+    } catch {
+      // 无缓存文件或损坏 → 继续 fetch
+    }
+    // 2. fetch(超时 10s)
+    try {
+      const res = await fetch(MODELS_DEV_URL, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      const parsed = JSON.parse(text) as Record<string, any>;
+      // 3. 原子写:tmp → rename,避免半截文件
+      const tmp = `${MODELS_DEV_CACHE_PATH}.${process.pid}.tmp`;
+      try {
+        writeFileSync(tmp, text);
+        renameSync(tmp, MODELS_DEV_CACHE_PATH);
+      } catch {
+        try { unlinkSync(tmp); } catch { /* best-effort */ }
+      }
+      modelsDevCache = parsed;
+    } catch (err) {
+      console.warn(
+        "[models-dev] fetch failed, falling back to stale cache or empty:",
+        err instanceof Error ? err.message : err,
+      );
+      try {
+        modelsDevCache = JSON.parse(readFileSync(MODELS_DEV_CACHE_PATH, "utf8"));
+      } catch {
+        modelsDevCache = {};
+      }
+    } finally {
+      modelsDevLoading = null;
+    }
+  })();
+  return modelsDevLoading;
+}
+
+// 按 provider type + modelId 查 context limit。匹配不到返回 null。
+// ① 精确:provider type → models.dev provider key(claude→anthropic),modelId 精确匹配;
+// ② 版本后缀前缀:claude-3-5-sonnet → claude-3-5-sonnet-20241022(models.dev 用带日期的 id,
+//    用户常用简短 id)。用 `modelId + "-"` 锚定,避免 gpt-4 误匹配 gpt-4o;
+// ③ 跨 provider:中转站可能 type=openai 但实际模型(如 deepseek)在别的 provider下;
+// ④ 都没有 → null(前端只显示分子)。
+function lookupContextLimit(
+  catalog: Record<string, any> | null,
+  providerType: string,
+  modelId: string,
+): number | null {
+  if (!catalog || !modelId) return null;
+  const providerKey = providerType === "claude" ? "anthropic" : providerType;
+  const contextOf = (models: any): number | null => {
+    if (!models) return null;
+    const exact = models[modelId]?.limit?.context;
+    if (typeof exact === "number" && exact > 0) return exact;
+    for (const key of Object.keys(models)) {
+      if (key.startsWith(`${modelId}-`) || key.startsWith(`${modelId}.`)) {
+        const v = models[key]?.limit?.context;
+        if (typeof v === "number" && v > 0) return v;
+      }
+    }
+    return null;
+  };
+  const primary = contextOf(catalog[providerKey]?.models);
+  if (primary) return primary;
+  for (const key of Object.keys(catalog)) {
+    const v = contextOf(catalog[key]?.models);
+    if (v) return v;
+  }
+  return null;
+}
+
+// 给 message.usage 填充 contextLimit(基于 msg.modelId 查 models.dev)。cache 未加载或
+// 匹配不到时填 null(降级:前端只显示分子)。已填则跳过,避免重复 findModel。
+function fillContextLimit(msg: Message) {
+  if (!msg.usage || typeof msg.usage !== "object") return;
+  const usage = msg.usage as Record<string, unknown>;
+  if (usage.contextLimit !== undefined) return;
+  if (!msg.modelId || !modelsDevCache) {
+    usage.contextLimit = null;
+    return;
+  }
+  const found = findModel(msg.modelId);
+  if (!found) {
+    usage.contextLimit = null;
+    return;
+  }
+  usage.contextLimit = lookupContextLimit(modelsDevCache, found.provider.type, found.model.modelId);
+}
+
 function appendUsageFromRaw(msg: Message | undefined, raw: any) {
   if (!msg) return;
   const usage = raw?.usage;
@@ -9116,6 +9225,7 @@ function appendUsageFromRaw(msg: Message | undefined, raw: any) {
     totalTokens: Number(usage.total_tokens ?? usage.totalTokens ?? 0),
     cachedTokens: Number(usage.prompt_tokens_details?.cached_tokens ?? usage.input_tokens_details?.cached_tokens ?? usage.cachedTokens ?? 0),
   };
+  fillContextLimit(msg);
 }
 
 async function callProviderStreaming(conversation: Conversation, assistantMessage: Message, assistantNode: MessageNode, signal?: AbortSignal) {
@@ -14792,6 +14902,8 @@ console.log(`RIKKAHUB_PORT:${port}`);
 
 console.log(`RikkaHub PC server running at http://localhost:${port}`);
 console.log(`Data directory: ${dataDir}`);
+// 懒加载 models.dev 模型目录(用于 context window 显示)。fire-and-forget,失败不影响启动。
+void loadModelsDev();
 console.log("Press Ctrl+C to stop RikkaHub PC.");
 
 // Start anonymous analytics (DAU tracking).  Fire-and-forget — a failed ping

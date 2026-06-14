@@ -12,6 +12,7 @@ import {
   Copy,
   Ellipsis,
   FileDown,
+  Gauge,
   GitFork,
   Languages,
   Pencil,
@@ -260,6 +261,21 @@ function getNerdStats(
       label: t("chat_message.duration_seconds", {
         value: durationSeconds.toFixed(1),
       }),
+    });
+  }
+
+  // Context window 占用:分子 = 当前上下文(= 输入 token),分母 = 模型最大上下文(来自
+  // models.dev 目录,后端按 modelId 匹配)。匹配不到分母则只显示分子;promptTokens 为 0 则不显示。
+  if (usage.promptTokens > 0) {
+    const used = usage.promptTokens >= 1000 ? `${(usage.promptTokens / 1000).toFixed(1)}k` : String(usage.promptTokens);
+    const limitValue = usage.contextLimit && usage.contextLimit > 0 ? usage.contextLimit : null;
+    const limit = limitValue != null
+      ? limitValue >= 1000 ? `${(limitValue / 1000).toFixed(1)}k` : String(limitValue)
+      : null;
+    stats.push({
+      key: "context",
+      icon: <Gauge className="size-3" />,
+      label: limit ? `${used} / ${limit}` : used,
     });
   }
 

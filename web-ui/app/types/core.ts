@@ -13,4 +13,6 @@ export interface TokenUsage {
   completionTokens: number;
   cachedTokens: number;
   totalTokens: number;
+  /** Model's max context window (from models.dev catalog). null = unknown / no match. */
+  contextLimit?: number | null;
 }
