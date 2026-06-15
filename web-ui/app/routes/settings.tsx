@@ -39,6 +39,7 @@ import { Link } from "react-router";
 import { toast } from "sonner";
 
 import { AvatarCropper } from "~/components/avatar-cropper";
+import { FontPicker } from "~/components/font-picker";
 import { AIIcon } from "~/components/ui/ai-icon";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
@@ -333,32 +334,6 @@ function PasswordInput({ value, onChange, placeholder }: { value: string; onChan
   );
 }
 
-const FONT_OPTIONS = [
-  { label: "跟随系统", value: "__system", family: "" },
-  {
-    label: "Tailwind Sans",
-    value: "tailwind-sans",
-    family: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, \"Noto Sans\", sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
-  },
-  {
-    label: "Tailwind Serif",
-    value: "tailwind-serif",
-    family: "ui-serif, Georgia, Cambria, \"Times New Roman\", Times, serif",
-  },
-  {
-    label: "Tailwind Mono",
-    value: "tailwind-mono",
-    family: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
-  },
-  { label: "Microsoft YaHei", value: "Microsoft YaHei", family: "\"Microsoft YaHei\", system-ui, sans-serif" },
-  { label: "Segoe UI", value: "Segoe UI", family: "\"Segoe UI\", system-ui, sans-serif" },
-  { label: "Noto Sans SC", value: "Noto Sans SC", family: "\"Noto Sans SC\", \"Microsoft YaHei\", sans-serif" },
-  { label: "Source Han Sans", value: "Source Han Sans", family: "\"Source Han Sans SC\", \"Microsoft YaHei\", sans-serif" },
-  { label: "思源宋体", value: "Source Han Serif", family: "\"Source Han Serif SC\", SimSun, serif" },
-  { label: "霞鹜文楷", value: "LXGW WenKai", family: "\"LXGW WenKai\", \"Microsoft YaHei\", sans-serif" },
-  { label: "等宽字体", value: "monospace", family: "ui-monospace, SFMono-Regular, Consolas, monospace" },
-];
-
 const DEFAULT_PROMPTS = {
   titlePrompt: `I will give you some dialogue content in the \`<content>\` block.
 You need to summarize the conversation between user and assistant into a short title.
@@ -423,47 +398,6 @@ Requirements:
 {content}
 </conversation>`,
 };
-
-function FontSelect({
-  label,
-  value,
-  fallbackFamily,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  fallbackFamily: string;
-  onChange: (value: string, family: string) => void;
-}) {
-  const selected = FONT_OPTIONS.find((item) => item.value === value) ?? FONT_OPTIONS[0];
-  const previewFamily = selected.family || fallbackFamily;
-  return (
-    <label className="block space-y-2">
-      <span className="text-sm font-medium">{label}</span>
-      <Select value={selected.value} onValueChange={(next) => {
-        const option = FONT_OPTIONS.find((item) => item.value === next) ?? FONT_OPTIONS[0];
-        onChange(option.value, option.family);
-      }}>
-        <SelectTrigger className="w-full">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {FONT_OPTIONS.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <div
-        className="rounded-md border bg-muted/30 px-3 py-2 text-sm"
-        style={{ fontFamily: previewFamily }}
-      >
-        RikkaHub 字体预览：你好，Hello 123
-      </div>
-    </label>
-  );
-}
 
 function balanceOptionOf(provider: ProviderProfile): Record<string, unknown> {
   return provider.balanceOption && typeof provider.balanceOption === "object"
@@ -813,13 +747,13 @@ function GeneralSection({ settings, onSettings }: { settings: Settings; onSettin
             />
           </label>
           <div className="grid gap-3 md:grid-cols-2">
-            <FontSelect
+            <FontPicker
               label="界面字体"
               value={textValue(display.uiFontFamily)}
               fallbackFamily={"\"Noto Sans SC\", \"Microsoft YaHei\", ui-sans-serif, system-ui, sans-serif"}
               onChange={(value, family) => void patchDisplay({ uiFontFamily: value, uiFontFamilyCss: family })}
             />
-            <FontSelect
+            <FontPicker
               label="对话字体"
               value={textValue(display.chatFontFamily)}
               fallbackFamily={textValue(display.uiFontFamilyCss) || "\"Noto Sans SC\", \"Microsoft YaHei\", ui-sans-serif, system-ui, sans-serif"}

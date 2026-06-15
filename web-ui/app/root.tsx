@@ -18,6 +18,7 @@ import { ThemeProvider } from "./components/theme-provider";
 import { TitleBar } from "./components/title-bar";
 import { UpdateDialog, type UpdateInfo } from "./components/update-dialog";
 import { WebAuthGate } from "./components/web-auth-gate";
+import { FontFaceInjector } from "./components/font-face-injector";
 import { openExternal } from "./lib/external-link";
 import api from "~/services/api";
 
@@ -111,6 +112,7 @@ function AppContent() {
       <TitleBar />
       <Outlet />
       <WebAuthGate />
+      <FontFaceInjector />
       <Toaster position="top-center"/>
       <SilentUpdateChecker />
     </ThemeProvider>
