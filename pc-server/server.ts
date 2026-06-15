@@ -476,6 +476,8 @@ const RUNNING_IN_CONTAINER = existsSync("/.dockerenv") || process.env.RIKKAHUB_C
 
 const filesDir = join(dataDir, "files");
 const skillsDir = join(dataDir, "skills");
+// 用户上传的自定义字体。跟 files/skills 同级,落在 pc-data/ 下,gitignored 且应用更新不覆盖。
+const customFontsDir = join(dataDir, "fonts");
 const statePath = join(dataDir, "state.json");
 const skipVersionPath = join(dataDir, "skip-version.txt");
 
@@ -8987,6 +8989,198 @@ async function serveAIIcon(name: string) {
   });
 }
 
+// ── 字体系统 ───────────────────────────────────────────────────────────────
+// 三层来源:
+//   builtin — 随应用分发。repo 根 fonts/ 经 Tauri resources 打到 executableDir/fonts/,
+//             跟 icons 完全同构;dev 时从 rootDir/fonts/ 读。
+//   custom  — 用户上传,存在 pc-data/fonts/(gitignored,更新不覆盖)。
+//   system  — 系统已装字体。Linux 走 `fc-list`,Windows 走 PowerShell +
+//             System.Drawing.Text.InstalledFontCollection(真枚举,非硬编码清单);
+//             两者都失败才降级到 COMMON_FONTS_FALLBACK。
+// 关键:@font-face 的 font-family 名由我们掌控(= 文件名 stem),所以不解析字体文件
+// 内部的 name 表——绕开了"从二进制读真实族名"这个最烦的活,也保证 @font-face 名与 CSS
+// font-family 链首项严格一致(浏览器靠这个名字匹配 @font-face 规则加载文件)。
+
+interface FontEntry {
+  id: string;        // catalog 内唯一:`builtin:<file>` / `custom:<file>` / `system:<name>`
+  label: string;     // 下拉框显示名
+  cssName: string;   // @font-face 的 font-family 名(builtin/custom);system 即族名本身
+  family: string;    // 完整 CSS font-family 值(含 fallback 链)——root.tsx 实际注入 CSS 变量的值
+  source: "builtin" | "custom" | "system";
+  fileName?: string; // builtin/custom 的文件名(前端拼 @font-face 的 src url 用)
+  format?: string;   // woff2/truetype/...(@font-face 的 format() 提示)
+}
+
+const FONT_EXTENSIONS = [".woff2", ".woff", ".ttf", ".otf", ".ttc"] as const;
+const FONT_EXTENSIONS_SET = new Set<string>(FONT_EXTENSIONS);
+const FONT_MIME: Record<string, string> = {
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".ttc": "font/collection",
+};
+const FONT_FORMAT: Record<string, string> = {
+  ".woff2": "woff2",
+  ".woff": "woff",
+  ".ttf": "truetype",
+  ".otf": "opentype",
+  // .ttc(TrueType Collection)没有独立的 format 值,浏览器只认 truetype/opentype 等;
+  // 写 "collection" 会让浏览器跳过整个 @font-face。用 truetype 取集合首个字形,是标准做法。
+  ".ttc": "truetype",
+};
+// CJK 单文件可能十几 MB,留 50MB 余量足够;超过几乎一定是误传。
+const MAX_FONT_BYTES = 50 * 1024 * 1024;
+const FONT_DEFAULT_FALLBACK = "system-ui, sans-serif";
+
+// 真枚举失败时的兜底清单(Windows 锁死系统等情况)。
+const COMMON_FONTS_FALLBACK: FontEntry[] = [
+  "Microsoft YaHei", "DengXian", "Segoe UI", "SimSun", "SimHei", "KaiTi", "FangSong",
+  "Consolas", "Times New Roman", "Arial", "Courier New",
+].map((name) => ({
+  id: `system:${name}`,
+  label: name,
+  cssName: name,
+  family: `"${name}", ${FONT_DEFAULT_FALLBACK}`,
+  source: "system" as const,
+}));
+
+function fontExtension(name: string): string {
+  return name.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
+}
+function isFontFile(name: string): boolean {
+  return FONT_EXTENSIONS_SET.has(fontExtension(name));
+}
+// 纯文件名:无路径分隔符、无 NUL。用于拒绝 path traversal(../etc/passwd 之类)。
+function isBareFileName(name: string): boolean {
+  return !!name && !name.includes("/") && !name.includes("\\") && !name.includes("\0");
+}
+// @font-face family 名 = 文件名去扩展名。用全 stem(不去 -Regular 之类后缀)保证不撞名。
+function fontCssName(fileName: string): string {
+  return fileName.replace(/\.[^.]+$/, "");
+}
+function fontFormat(fileName: string): string | undefined {
+  return FONT_FORMAT[fontExtension(fileName)];
+}
+// 显示名美化:"LXGWWenKai-Regular" → "LXGWWenKai"。去掉常见字重后缀,空格替分隔符。
+function prettifyFontLabel(fileName: string): string {
+  return fontCssName(fileName)
+    .replace(/[-_](regular|normal|book|light|medium|semibold|demibold|bold|black|thin|extralight|extrabold)$/i, "")
+    .replace(/[-_]+/g, " ")
+    .trim() || fontCssName(fileName);
+}
+// 从 CSS font-family 链中取出第一个族名(@font-face 用它做 font-family)。
+// `"A B", serif` → `A B`;`Cursive, serif` → `Cursive`。
+function firstFamilyName(family: string): string {
+  const m = family.trim().match(/^"([^"]+)"|^'([^']+)'|^([^,]+)/);
+  return (m?.[1] ?? m?.[2] ?? m?.[3] ?? family.trim()).trim();
+}
+
+// 可选 builtin 清单:repo 根 fonts/manifest.json,把文件名映射到 { label?, family? }。
+// 没有就用文件名自动派生。有它就能给内置字体配中文名/精调 fallback,不用改代码。
+type BuiltinManifest = Record<string, { label?: string; family?: string }>;
+function readBuiltinFontManifest(): BuiltinManifest {
+  for (const p of [resolve(executableDir, "fonts", "manifest.json"), resolve(rootDir, "fonts", "manifest.json")]) {
+    if (existsSync(p)) {
+      try { return JSON.parse(readFileSync(p, "utf-8")) as BuiltinManifest; }
+      catch { /* 坏 manifest 忽略,降级到自动派生 */ }
+    }
+  }
+  return {};
+}
+
+function makeBundledFontEntry(source: "builtin" | "custom", fileName: string, override?: { label?: string; family?: string }): FontEntry {
+  const cssName = override?.family?.trim() ? firstFamilyName(override.family) : fontCssName(fileName);
+  const label = override?.label?.trim() || prettifyFontLabel(fileName);
+  const family = override?.family?.trim() || `"${fontCssName(fileName)}", ${FONT_DEFAULT_FALLBACK}`;
+  return { id: `${source}:${fileName}`, label, cssName, family, source, fileName, format: fontFormat(fileName) };
+}
+
+function listBuiltinFonts(): FontEntry[] {
+  const manifest = readBuiltinFontManifest();
+  const manifestLower: BuiltinManifest = {};
+  for (const [k, v] of Object.entries(manifest)) manifestLower[k.toLowerCase()] = v;
+  const seen = new Set<string>();
+  const out: FontEntry[] = [];
+  // executableDir 优先(分发包),rootDir 兜底(dev 源码树)。同文件名只取第一个。
+  for (const dir of [resolve(executableDir, "fonts"), resolve(rootDir, "fonts")]) {
+    let entries: string[] = [];
+    try { entries = readdirSync(dir); } catch { continue; }
+    for (const name of entries) {
+      if (!isFontFile(name)) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(makeBundledFontEntry("builtin", name, manifestLower[key]));
+    }
+  }
+  return out;
+}
+
+function listCustomFonts(): FontEntry[] {
+  try {
+    mkdirSync(customFontsDir, { recursive: true });
+    return readdirSync(customFontsDir).filter(isFontFile).map((name) => makeBundledFontEntry("custom", name));
+  } catch {
+    return [];
+  }
+}
+
+let cachedSystemFonts: FontEntry[] | null = null;
+function listSystemFonts(): FontEntry[] {
+  if (cachedSystemFonts) return cachedSystemFonts;
+  const families = new Set<string>();
+  try {
+    if (process.platform === "linux") {
+      // fc-list 的 family 字段:每行一个或多个族名(逗号分隔)。
+      const proc = Bun.spawnSync(["fc-list", ":", "family"], { stdout: "pipe", stderr: "pipe", timeout: 5_000 });
+      const out = proc.stdout instanceof Buffer ? proc.stdout.toString("utf8") : String(proc.stdout ?? "");
+      for (const line of out.split(/\r?\n/)) {
+        for (const f of line.split(",")) {
+          const name = f.trim();
+          if (name && !name.includes(":")) families.add(name);
+        }
+      }
+    } else if (process.platform === "win32") {
+      // powershell.exe = Windows PowerShell 5.1,全 Windows 自带,System.Drawing 开箱即用。
+      // InstalledFontCollection 返回干净的族名(无需解析字体二进制 name 表)。
+      const script = "Add-Type -AssemblyName System.Drawing; (New-Object System.Drawing.Text.InstalledFontCollection).Families | ForEach-Object { $_.Name }";
+      const proc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+      const out = proc.stdout instanceof Buffer ? proc.stdout.toString("utf8") : String(proc.stdout ?? "");
+      for (const line of out.split(/\r?\n/)) {
+        const name = line.trim();
+        if (name) families.add(name);
+      }
+    }
+  } catch {
+    /* 枚举失败 → families 为空 → 走兜底清单 */
+  }
+  cachedSystemFonts = families.size > 0
+    ? [...families].sort((a, b) => a.localeCompare(b)).map((name) => ({
+        id: `system:${name}`,
+        label: name,
+        cssName: name,
+        family: `"${name}", ${FONT_DEFAULT_FALLBACK}`,
+        source: "system" as const,
+      }))
+    : COMMON_FONTS_FALLBACK;
+  return cachedSystemFonts;
+}
+
+// 服务字体文件:builtin 从 executableDir/fonts 或 rootDir/fonts 找;custom 从 pc-data/fonts 找。
+function resolveFontFile(source: "builtin" | "custom", fileName: string): string | null {
+  if (!isBareFileName(fileName) || !isFontFile(fileName)) return null;
+  if (source === "custom") {
+    const p = join(customFontsDir, fileName);
+    return existsSync(p) ? p : null;
+  }
+  for (const dir of [resolve(executableDir, "fonts"), resolve(rootDir, "fonts")]) {
+    const p = join(dir, fileName);
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
 async function callProvider(
   conversation: Conversation,
   signal?: AbortSignal,
@@ -12613,6 +12807,54 @@ async function routeApi(request: Request, url: URL) {
     const name = url.searchParams.get("name")?.trim();
     if (!name) return error("Missing name", 400);
     return serveAIIcon(name);
+  }
+  // 字体目录:三层来源一起返回,前端拼下拉框 + 注入 @font-face。
+  if (path === "fonts/list" && request.method === "GET") {
+    return json({ builtin: listBuiltinFonts(), custom: listCustomFonts(), system: listSystemFonts() });
+  }
+  const fontServe = path.match(/^fonts\/(builtin|custom)\/(.+)$/);
+  if (fontServe && request.method === "GET") {
+    const source = fontServe[1] as "builtin" | "custom";
+    let fileName: string;
+    try { fileName = decodeURIComponent(fontServe[2]); }
+    catch { return error("Invalid font name", 400); }
+    const target = resolveFontFile(source, fileName);
+    if (!target) return error("Font not found", 404);
+    return new Response(Bun.file(target), {
+      headers: {
+        "Content-Type": FONT_MIME[fontExtension(fileName)] ?? "application/octet-stream",
+        "Cache-Control": "public, max-age=86400",
+      },
+    });
+  }
+  if (path === "fonts/upload" && request.method === "POST") {
+    const form = await request.formData();
+    const file = form.get("file");
+    if (!(file instanceof File)) return error("Missing file", 400);
+    const ext = fontExtension(file.name);
+    if (!FONT_EXTENSIONS_SET.has(ext)) return error("Unsupported font format (use ttf/otf/woff/woff2)", 400);
+    if (file.size > MAX_FONT_BYTES) return error(`Font too large (max ${MAX_FONT_BYTES / 1024 / 1024}MB)`, 413);
+    // sanitize:只保留文件名部分,去掉任何路径前缀,防 traversal。
+    const rawName = fontCssName(file.name) + ext;
+    const safeName = rawName.replace(/[\\/ ]/g, "_");
+    if (!isBareFileName(safeName) || safeName === "." || safeName === "..") return error("Invalid filename", 400);
+    mkdirSync(customFontsDir, { recursive: true });
+    const target = join(customFontsDir, safeName);
+    await Bun.write(target, file);
+    console.log(`[fonts] uploaded ${safeName} (${(file.size / 1024).toFixed(1)} KB)`);
+    return json({ font: makeBundledFontEntry("custom", safeName) });
+  }
+  const fontDelete = path.match(/^fonts\/custom\/(.+)$/);
+  if (fontDelete && request.method === "DELETE") {
+    let fileName: string;
+    try { fileName = decodeURIComponent(fontDelete[1]); }
+    catch { return error("Invalid font name", 400); }
+    if (!isBareFileName(fileName) || !isFontFile(fileName)) return error("Invalid font name", 400);
+    const target = join(customFontsDir, fileName);
+    if (!existsSync(target)) return error("Font not found", 404);
+    rmSync(target, { force: true });
+    console.log(`[fonts] deleted ${fileName}`);
+    return json({ status: "deleted" });
   }
   if (path === "settings" && request.method === "GET") return json(state.settings);
   if (path === "settings/stream") {
