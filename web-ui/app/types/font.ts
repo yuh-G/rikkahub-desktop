@@ -1,6 +1,12 @@
 // 字体目录条目。与 pc-server/server.ts 的 FontEntry 保持一致(手动同步,无编译期链接)。
+export interface FontWeightFile {
+  fileName: string;
+  weight: number; // CSS font-weight:100-900
+  style: "normal" | "italic";
+  format?: string;
+}
 export interface FontEntry {
-  /** catalog 内唯一 id:`builtin:<file>` / `custom:<file>` / `system:<name>` */
+  /** catalog 内唯一 id:`builtin:<family>` / `custom:<file>` / `system:<name>` */
   id: string;
   /** 下拉框显示名 */
   label: string;
@@ -9,10 +15,8 @@ export interface FontEntry {
   /** 完整 CSS font-family 值(含 fallback 链)——这是实际注入 CSS 变量的值。 */
   family: string;
   source: "builtin" | "custom" | "system";
-  /** builtin/custom 的文件名,前端拼 @font-face 的 src url 用。 */
-  fileName?: string;
-  /** woff2/truetype/...,@font-face 的 format() 提示。 */
-  format?: string;
+  /** 字体族的文件列表(可多字重)。系统字体为空数组。 */
+  weights: FontWeightFile[];
 }
 
 export interface FontCatalog {

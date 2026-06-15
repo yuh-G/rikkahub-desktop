@@ -9001,14 +9001,23 @@ async function serveAIIcon(name: string) {
 // 内部的 name 表——绕开了"从二进制读真实族名"这个最烦的活,也保证 @font-face 名与 CSS
 // font-family 链首项严格一致(浏览器靠这个名字匹配 @font-face 规则加载文件)。
 
+interface FontWeightFile {
+  fileName: string;   // 字体文件名
+  weight: number;     // CSS font-weight:100-900
+  style: "normal" | "italic";
+  format?: string;    // woff2/truetype/...(@font-face 的 format() 提示)
+}
 interface FontEntry {
-  id: string;        // catalog 内唯一:`builtin:<file>` / `custom:<file>` / `system:<name>`
+  id: string;        // catalog 内唯一:`builtin:<family>` / `custom:<file>` / `system:<name>`
   label: string;     // 下拉框显示名
-  cssName: string;   // @font-face 的 font-family 名(builtin/custom);system 即族名本身
+  cssName: string;   // @font-face 的 font-family 名(builtin/custom);system 即族名本身。
+                     // 必须与 family 链首项一致——浏览器靠它匹配 @font-face。
   family: string;    // 完整 CSS font-family 值(含 fallback 链)——root.tsx 实际注入 CSS 变量的值
   source: "builtin" | "custom" | "system";
-  fileName?: string; // builtin/custom 的文件名(前端拼 @font-face 的 src url 用)
-  format?: string;   // woff2/truetype/...(@font-face 的 format() 提示)
+  // 字体族由一个或多个文件组成。单字重字体只有一个元素。多字重字体(HarmonyOS Sans 6 个
+  // 字重)共享同一 cssName,每个文件声明对应 font-weight,这样浏览器遇到 <b>/700 自动
+  // 挑 Bold 文件,而不是用 Regular 合成假粗体。
+  weights: FontWeightFile[];
 }
 
 const FONT_EXTENSIONS = [".woff2", ".woff", ".ttf", ".otf", ".ttc"] as const;
@@ -9043,6 +9052,7 @@ const COMMON_FONTS_FALLBACK: FontEntry[] = [
   cssName: name,
   family: `"${name}", ${FONT_DEFAULT_FALLBACK}`,
   source: "system" as const,
+  weights: [],
 }));
 
 function fontExtension(name: string): string {
@@ -9076,9 +9086,18 @@ function firstFamilyName(family: string): string {
   return (m?.[1] ?? m?.[2] ?? m?.[3] ?? family.trim()).trim();
 }
 
-// 可选 builtin 清单:repo 根 fonts/manifest.json,把文件名映射到 { label?, family? }。
-// 没有就用文件名自动派生。有它就能给内置字体配中文名/精调 fallback,不用改代码。
-type BuiltinManifest = Record<string, { label?: string; family?: string }>;
+// 可选 builtin 清单:repo 根 fonts/manifest.json。
+// 两种写法:
+//   1) 单文件映射(向后兼容老 manifest):"<file>": { label?, family? }
+//   2) 字重族定义(一个 family 下多个文件):"<id>": { label, family, weights:[{file,weight,style?}] }
+//      weights 里每个 file 必须真实存在于 fonts/ 目录;family 是共享的 @font-face 名。
+type ManifestWeight = { file: string; weight: number; style?: "normal" | "italic" };
+interface ManifestEntry {
+  label?: string;
+  family?: string;
+  weights?: ManifestWeight[];
+}
+type BuiltinManifest = Record<string, ManifestEntry>;
 function readBuiltinFontManifest(): BuiltinManifest {
   for (const p of [resolve(executableDir, "fonts", "manifest.json"), resolve(rootDir, "fonts", "manifest.json")]) {
     if (existsSync(p)) {
@@ -9089,29 +9108,73 @@ function readBuiltinFontManifest(): BuiltinManifest {
   return {};
 }
 
+// 用 manifest 的 weights 定义构造一个字重族 entry。校验每个文件真实存在,过滤掉缺失的。
+function makeWeightedFamilyEntry(source: "builtin" | "custom", manifestId: string, entry: ManifestEntry, fontDirs: string[]): FontEntry | null {
+  const family = entry.family?.trim();
+  if (!family || !Array.isArray(entry.weights) || entry.weights.length === 0) return null;
+  const cssName = firstFamilyName(family);
+  const weights: FontWeightFile[] = [];
+  const seenFiles = new Set<string>();
+  for (const w of entry.weights) {
+    const fileName = w.file;
+    if (!isBareFileName(fileName) || !isFontFile(fileName) || seenFiles.has(fileName.toLowerCase())) continue;
+    seenFiles.add(fileName.toLowerCase());
+    // 文件必须真实存在(任一目录),否则跳过——避免 @font-face 指向不存在的文件。
+    const exists = fontDirs.some((d) => existsSync(join(d, fileName)));
+    if (!exists) continue;
+    weights.push({ fileName, weight: w.weight || 400, style: w.style === "italic" ? "italic" : "normal", format: fontFormat(fileName) });
+  }
+  if (weights.length === 0) return null;
+  const label = entry.label?.trim() || cssName;
+  return { id: `${source}:${manifestId}`, label, cssName, family, source, weights };
+}
+
 function makeBundledFontEntry(source: "builtin" | "custom", fileName: string, override?: { label?: string; family?: string }): FontEntry {
   const cssName = override?.family?.trim() ? firstFamilyName(override.family) : fontCssName(fileName);
   const label = override?.label?.trim() || prettifyFontLabel(fileName);
   const family = override?.family?.trim() || `"${fontCssName(fileName)}", ${FONT_DEFAULT_FALLBACK}`;
-  return { id: `${source}:${fileName}`, label, cssName, family, source, fileName, format: fontFormat(fileName) };
+  return {
+    id: `${source}:${fileName}`,
+    label,
+    cssName,
+    family,
+    source,
+    weights: [{ fileName, weight: 400, style: "normal", format: fontFormat(fileName) }],
+  };
 }
 
 function listBuiltinFonts(): FontEntry[] {
   const manifest = readBuiltinFontManifest();
-  const manifestLower: BuiltinManifest = {};
-  for (const [k, v] of Object.entries(manifest)) manifestLower[k.toLowerCase()] = v;
-  const seen = new Set<string>();
+  // 单文件 override 按文件名小写建索引,方便不区分大小写查找。
+  const manifestByLowerFile: Record<string, ManifestEntry> = {};
+  for (const [k, v] of Object.entries(manifest)) {
+    if (!v.weights) manifestByLowerFile[k.toLowerCase()] = v;
+  }
+  const fontDirs = [resolve(executableDir, "fonts"), resolve(rootDir, "fonts")];
   const out: FontEntry[] = [];
-  // executableDir 优先(分发包),rootDir 兜底(dev 源码树)。同文件名只取第一个。
-  for (const dir of [resolve(executableDir, "fonts"), resolve(rootDir, "fonts")]) {
+  const consumedFiles = new Set<string>();   // 已被某个 manifest 族消费的文件,跳过自动派生
+  const seenAutoFiles = new Set<string>();
+
+  // 1) 先处理 manifest 里带 weights 的字重族定义(HarmonyOS Sans 等)。
+  for (const [manifestId, entry] of Object.entries(manifest)) {
+    if (!entry.weights) continue;
+    const built = makeWeightedFamilyEntry("builtin", manifestId, entry, fontDirs);
+    if (built) {
+      out.push(built);
+      for (const w of built.weights) consumedFiles.add(w.fileName.toLowerCase());
+    }
+  }
+
+  // 2) 扫描目录,对未被 manifest weights 消费的文件,自动派生(或读 manifest 单文件 override)。
+  for (const dir of fontDirs) {
     let entries: string[] = [];
     try { entries = readdirSync(dir); } catch { continue; }
     for (const name of entries) {
       if (!isFontFile(name)) continue;
       const key = name.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(makeBundledFontEntry("builtin", name, manifestLower[key]));
+      if (seenAutoFiles.has(key) || consumedFiles.has(key)) continue;
+      seenAutoFiles.add(key);
+      out.push(makeBundledFontEntry("builtin", name, manifestByLowerFile[key]));
     }
   }
   return out;
@@ -9120,15 +9183,19 @@ function listBuiltinFonts(): FontEntry[] {
 function listCustomFonts(): FontEntry[] {
   try {
     mkdirSync(customFontsDir, { recursive: true });
-    return readdirSync(customFontsDir).filter(isFontFile).map((name) => makeBundledFontEntry("custom", name));
+    return readdirSync(customFontsDir)
+      .filter(isFontFile)
+      .map((name) => makeBundledFontEntry("custom", name));
   } catch {
     return [];
   }
 }
 
-let cachedSystemFonts: FontEntry[] | null = null;
-function listSystemFonts(): FontEntry[] {
-  if (cachedSystemFonts) return cachedSystemFonts;
+// 系统字体枚举结果缓存(平台层一次)。去重(剔除与 builtin 重名的)在 listFontCatalog 做,
+// 因为那依赖 builtin 列表,而 builtin 可能随 manifest 变化。
+let cachedRawSystemFamilies: string[] | null = null;
+function readSystemFontFamilies(): string[] {
+  if (cachedRawSystemFamilies) return cachedRawSystemFamilies;
   const families = new Set<string>();
   try {
     if (process.platform === "linux") {
@@ -9155,16 +9222,24 @@ function listSystemFonts(): FontEntry[] {
   } catch {
     /* 枚举失败 → families 为空 → 走兜底清单 */
   }
-  cachedSystemFonts = families.size > 0
-    ? [...families].sort((a, b) => a.localeCompare(b)).map((name) => ({
-        id: `system:${name}`,
-        label: name,
-        cssName: name,
-        family: `"${name}", ${FONT_DEFAULT_FALLBACK}`,
-        source: "system" as const,
-      }))
-    : COMMON_FONTS_FALLBACK;
-  return cachedSystemFonts;
+  cachedRawSystemFamilies = families.size > 0 ? [...families].sort((a, b) => a.localeCompare(b)) : null;
+  return cachedRawSystemFamilies;
+}
+
+// 系统 FontEntry:剔除与 builtin/custom 同名的(用户:自带与系统重合的用自带的,不重复显示)。
+function listSystemFonts(excludeNames: Set<string>): FontEntry[] {
+  const raw = readSystemFontFamilies();
+  if (!raw) return COMMON_FONTS_FALLBACK.filter((entry) => !excludeNames.has(entry.cssName.toLowerCase()));
+  return raw
+    .filter((name) => !excludeNames.has(name.toLowerCase()))
+    .map((name) => ({
+      id: `system:${name}`,
+      label: name,
+      cssName: name,
+      family: `"${name}", ${FONT_DEFAULT_FALLBACK}`,
+      source: "system" as const,
+      weights: [],
+    }));
 }
 
 // 服务字体文件:builtin 从 executableDir/fonts 或 rootDir/fonts 找;custom 从 pc-data/fonts 找。
@@ -12809,8 +12884,14 @@ async function routeApi(request: Request, url: URL) {
     return serveAIIcon(name);
   }
   // 字体目录:三层来源一起返回,前端拼下拉框 + 注入 @font-face。
+  // 系统/自定义字体去重:与 builtin 同名(cssName)的系统字体不返回,避免重复显示。
   if (path === "fonts/list" && request.method === "GET") {
-    return json({ builtin: listBuiltinFonts(), custom: listCustomFonts(), system: listSystemFonts() });
+    const builtin = listBuiltinFonts();
+    const custom = listCustomFonts();
+    const exclude = new Set<string>();
+    for (const entry of [...builtin, ...custom]) exclude.add(entry.cssName.toLowerCase());
+    const system = listSystemFonts(exclude);
+    return json({ builtin, custom, system });
   }
   const fontServe = path.match(/^fonts\/(builtin|custom)\/(.+)$/);
   if (fontServe && request.method === "GET") {

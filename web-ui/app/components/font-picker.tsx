@@ -321,12 +321,13 @@ export function FontManagerDialog({ open, onClose, onChanged }: FontManagerDialo
                         variant="ghost"
                         size="icon"
                         className="size-7 text-muted-foreground hover:text-destructive"
-                        disabled={deletingName === entry.fileName}
+                        disabled={deletingName === entry.weights[0]?.fileName}
                         onClick={() => {
-                          if (entry.fileName) void handleDelete(entry.fileName);
+                          const fn = entry.weights[0]?.fileName;
+                          if (fn) void handleDelete(fn);
                         }}
                       >
-                        {deletingName === entry.fileName ? <LoaderCircle className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                        {deletingName === entry.weights[0]?.fileName ? <LoaderCircle className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
                       </Button>
                     </div>
                   ))}

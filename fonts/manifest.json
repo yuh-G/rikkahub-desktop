@@ -1,0 +1,45 @@
+{
+  "harmonyos-sans": {
+    "label": "HarmonyOS Sans",
+    "family": "\"HarmonyOS Sans\", system-ui, sans-serif",
+    "weights": [
+      { "file": "HarmonyOS_Sans_Thin.ttf", "weight": 100 },
+      { "file": "HarmonyOS_Sans_Light.ttf", "weight": 300 },
+      { "file": "HarmonyOS_Sans_Regular.ttf", "weight": 400 },
+      { "file": "HarmonyOS_Sans_Medium.ttf", "weight": 500 },
+      { "file": "HarmonyOS_Sans_Bold.ttf", "weight": 700 },
+      { "file": "HarmonyOS_Sans_Black.ttf", "weight": 900 }
+    ]
+  },
+  "harmonyos-sans-sc": {
+    "label": "HarmonyOS Sans SC",
+    "family": "\"HarmonyOS Sans SC\", \"HarmonyOS Sans\", system-ui, sans-serif",
+    "weights": [
+      { "file": "HarmonyOS_Sans_SC_Regular.ttf", "weight": 400 }
+    ]
+  },
+  "MiSans-Regular.woff2": {
+    "label": "MiSans",
+    "family": "\"MiSans\", system-ui, sans-serif"
+  },
+  "NotoSerifSC-Regular.ttf": {
+    "label": "思源宋体 (Noto Serif SC)",
+    "family": "\"Noto Serif SC\", serif"
+  },
+  "Charter BT.ttf": {
+    "label": "Charter BT",
+    "family": "\"Charter BT\", Georgia, serif"
+  },
+  "Georgia.ttf": {
+    "label": "Georgia",
+    "family": "\"Georgia\", serif"
+  },
+  "STIXGeneral-Regular.ttf": {
+    "label": "STIX 通用",
+    "family": "\"STIXGeneral\", serif"
+  },
+  "gulliver.otf": {
+    "label": "Gulliver (类 Times)",
+    "family": "\"Gulliver\", \"Times New Roman\", serif"
+  }
+}
