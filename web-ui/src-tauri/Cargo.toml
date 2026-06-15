@@ -1,6 +1,6 @@
 [package]
 name = "rikkahub"
-version = "1.1.0"
+version = "1.1.1"
 description = "Rikkahub — a native Windows LLM chat client."
 authors = ["yuh-G"]
 edition = "2021"
