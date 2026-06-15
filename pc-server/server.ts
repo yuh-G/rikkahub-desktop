@@ -851,6 +851,14 @@ function defaultProviders(): Provider[] {
     provider({ id: "f4f8870e-82d3-495b-9b64-d58e508b3b2c", name: "阶跃星辰", baseUrl: "https://api.stepfun.com/v1" }),
     provider({ id: "ef5d149b-8e34-404b-818c-6ec242e5c3c5", name: "腾讯Hunyuan", baseUrl: "https://api.hunyuan.cloud.tencent.com/v1" }),
     provider({ id: "ff3cde7e-0f65-43d7-8fb2-6475c99f5990", name: "xAI", baseUrl: "https://api.x.ai/v1", useResponseApi: true }),
+    provider({
+      id: "e7a2b5c3-8f4d-4e6a-9b1c-3d5f7e8a2c04",
+      name: "钠API",
+      baseUrl: "https://naapi.cc/v1",
+      shortDescription: "钠 API 提供 ChatGPT、Claude、Gemini 等 100+ 全球顶级模型接口",
+      description: "钠 API 提供 ChatGPT、Claude、Gemini 等 100+ 全球顶级模型接口,Focusing on competitive pricing and superior stability.",
+      balanceOption: { enabled: true, apiPath: "/credits", resultPath: "data.total_credits" },
+    }),
   ];
 }
 
@@ -8953,6 +8961,7 @@ const iconRules: Array<[RegExp, string]> = [
   [/jina/i, "jina.svg"],
   [/tinyfish/i, "tinyfish.svg"],
   [/searxng/i, "searxng.svg"],
+  [/naapi|钠/i, "naapi.jpg"],
 ];
 
 function iconForName(name: string) {
