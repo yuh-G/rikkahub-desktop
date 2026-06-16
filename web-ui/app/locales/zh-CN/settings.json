@@ -478,7 +478,8 @@
     "no_files": "暂无文件",
     "directory": "目录",
     "skill_desc_default": "描述何时应使用这个 skill",
-    "skill_body_default": "写入 Skill 指令。"
+    "skill_body_default": "写入 Skill 指令。",
+    "add_new": "新增"
   },
   "speech": {
     "tts_title": "文字转语音",

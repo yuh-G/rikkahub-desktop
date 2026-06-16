@@ -505,7 +505,8 @@
     "no_files": "No files",
     "directory": "Directory",
     "skill_desc_default": "Describe when this skill should be used",
-    "skill_body_default": "Write skill instructions."
+    "skill_body_default": "Write skill instructions.",
+    "add_new": "Add"
   },
   "speech": {
     "tts_title": "Text to speech",

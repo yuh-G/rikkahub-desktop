@@ -5778,6 +5778,7 @@ function LorebookEditor({
         // selectedId changes, doesn't find the new id in settings (not saved yet), and
         // snaps the user back to lorebooks[0] — silently dropping the new entry.
         const next = createLorebook();
+        next.name = t("settings:mcp.tab.lorebook");
         try {
           await api.post("settings/lorebook/detail", next);
           await pullSettings(onSettings);
@@ -6137,6 +6138,7 @@ function PromptItemEditor({
         // Saving first removes both races: by the time we touch any state, the new item
         // is already in settings, so both effects behave correctly.
         const next = createItem();
+        next.name = title;
         try {
           await api.post(savePath, next);
           await pullSettings(onSettings);
@@ -6602,12 +6604,13 @@ function EditorShell({
   onCreate: () => void;
   children: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
       <div className="rounded-lg border bg-card p-3">
         <Button className="mb-3 w-full" variant="outline" onClick={onCreate}>
           <Plus className="size-4" />
-          新增
+          {t("settings:mcp.add_new")}
         </Button>
         <div className="space-y-1">
           {items.length === 0 ? (
