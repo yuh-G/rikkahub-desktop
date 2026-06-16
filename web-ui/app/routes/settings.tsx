@@ -2547,6 +2547,7 @@ function SearchSection({ settings, onSettings }: { settings: Settings; onSetting
 }
 
 function DefaultModelsSection({ settings, onSettings }: { settings: Settings; onSettings: (settings: Settings) => void }) {
+  const { t } = useTranslation();
   const allModels = settings.providers.flatMap((provider) =>
     provider.enabled ? (provider.models ?? []).map((model) => ({ ...model, providerName: provider.name })) : [],
   );
@@ -2604,7 +2605,7 @@ function DefaultModelsSection({ settings, onSettings }: { settings: Settings; on
   };
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
-      void save().catch((error: Error) => toast.error(error.message || "自动保存默认模型失败"));
+      void save().catch((error: Error) => toast.error(error.message || t("settings:models.autosave_failed")));
     }, 500);
     return () => window.clearTimeout(timer);
   }, [draft]);
@@ -2616,7 +2617,7 @@ function DefaultModelsSection({ settings, onSettings }: { settings: Settings; on
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="__none">未设置</SelectItem>
+          <SelectItem value="__none">{t("settings:models.not_set")}</SelectItem>
           {options.map((model) => (
             <SelectItem key={`${key}-${model.id}`} value={model.id}>
               {model.providerName} / {model.displayName || model.modelId}
@@ -2627,12 +2628,12 @@ function DefaultModelsSection({ settings, onSettings }: { settings: Settings; on
     );
   };
   const promptMeta: Record<PromptKey, { title: string; variables: string; defaultValue: string }> = {
-    titlePrompt: { title: "标题生成 Prompt", variables: "{locale}, {content}", defaultValue: DEFAULT_PROMPTS.titlePrompt },
-    translatePrompt: { title: "翻译 Prompt", variables: "{source_text}, {target_lang}", defaultValue: DEFAULT_PROMPTS.translatePrompt },
-    suggestionPrompt: { title: "建议回复 Prompt", variables: "{locale}, {content}", defaultValue: DEFAULT_PROMPTS.suggestionPrompt },
-    ocrPrompt: { title: "OCR Prompt", variables: "图片输入", defaultValue: DEFAULT_PROMPTS.ocrPrompt },
-    compressPrompt: { title: "上下文压缩 Prompt", variables: "{content}, {target_tokens}, {additional_context}, {locale}", defaultValue: DEFAULT_PROMPTS.compressPrompt },
-    promptOptimizePrompt: { title: "提示词优化 Prompt", variables: "用户草稿 + 可选对话背景", defaultValue: DEFAULT_PROMPTS.promptOptimizePrompt },
+    titlePrompt: { title: t("settings:models.prompt.title"), variables: t("settings:models.vars.title"), defaultValue: DEFAULT_PROMPTS.titlePrompt },
+    translatePrompt: { title: t("settings:models.prompt.translate"), variables: t("settings:models.vars.translate"), defaultValue: DEFAULT_PROMPTS.translatePrompt },
+    suggestionPrompt: { title: t("settings:models.prompt.suggestion"), variables: t("settings:models.vars.suggestion"), defaultValue: DEFAULT_PROMPTS.suggestionPrompt },
+    ocrPrompt: { title: t("settings:models.prompt.ocr"), variables: t("settings:models.vars.ocr"), defaultValue: DEFAULT_PROMPTS.ocrPrompt },
+    compressPrompt: { title: t("settings:models.prompt.compress"), variables: t("settings:models.vars.compress"), defaultValue: DEFAULT_PROMPTS.compressPrompt },
+    promptOptimizePrompt: { title: t("settings:models.prompt.optimize"), variables: t("settings:models.vars.optimize"), defaultValue: DEFAULT_PROMPTS.promptOptimizePrompt },
   };
   const features: Array<{
     modelKey: ModelKey;
@@ -2641,23 +2642,23 @@ function DefaultModelsSection({ settings, onSettings }: { settings: Settings; on
     title: string;
     description: string;
   }> = [
-    { modelKey: "chatModelId", icon: Bot, title: "默认聊天模型", description: "首页未手动选择模型时使用。" },
-    { modelKey: "promptOptimizeModelId", promptKey: "promptOptimizePrompt", icon: Sparkles, title: "提示词优化", description: "对话输入框「优化提示词」按钮使用这个模型,把你的草稿改写得更清晰专业。" },
-    { modelKey: "titleModelId", promptKey: "titlePrompt", icon: NotebookText, title: "标题生成", description: "对话首次回复后读取最近消息自动生成会话标题。" },
-    { modelKey: "translateModeId", promptKey: "translatePrompt", icon: Globe, title: "翻译", description: "AI 回复下方翻译按钮使用这个模型和 Prompt。" },
-    { modelKey: "suggestionModelId", promptKey: "suggestionPrompt", icon: MessageSquareText, title: "建议回复", description: "回复完成后生成 3 到 5 条用户可点选建议。" },
-    { modelKey: "compressModelId", promptKey: "compressPrompt", icon: FileClock, title: "上下文压缩", description: "长会话压缩时保留关键上下文并写回会话。" },
-    { modelKey: "ocrModelId", promptKey: "ocrPrompt", icon: FileImage, title: "OCR", description: "图片转文字的备用通道，用于不支持视觉输入的聊天模型。" },
-    { modelKey: "imageGenerationModelId", icon: WandSparkles, title: "图像生成", description: "用于支持具备图像生成能力的模型入口。" },
+    { modelKey: "chatModelId", icon: Bot, title: t("settings:models.feature.chat.title"), description: t("settings:models.feature.chat.desc") },
+    { modelKey: "promptOptimizeModelId", promptKey: "promptOptimizePrompt", icon: Sparkles, title: t("settings:models.feature.optimize.title"), description: t("settings:models.feature.optimize.desc") },
+    { modelKey: "titleModelId", promptKey: "titlePrompt", icon: NotebookText, title: t("settings:models.feature.title.title"), description: t("settings:models.feature.title.desc") },
+    { modelKey: "translateModeId", promptKey: "translatePrompt", icon: Globe, title: t("settings:models.feature.translate.title"), description: t("settings:models.feature.translate.desc") },
+    { modelKey: "suggestionModelId", promptKey: "suggestionPrompt", icon: MessageSquareText, title: t("settings:models.feature.suggestion.title"), description: t("settings:models.feature.suggestion.desc") },
+    { modelKey: "compressModelId", promptKey: "compressPrompt", icon: FileClock, title: t("settings:models.feature.compress.title"), description: t("settings:models.feature.compress.desc") },
+    { modelKey: "ocrModelId", promptKey: "ocrPrompt", icon: FileImage, title: t("settings:models.feature.ocr.title"), description: t("settings:models.feature.ocr.desc") },
+    { modelKey: "imageGenerationModelId", icon: WandSparkles, title: t("settings:models.feature.image.title"), description: t("settings:models.feature.image.desc") },
   ];
   const activePrompt = editingPrompt ? promptMeta[editingPrompt] : null;
 
   return (
     <>
-      <SectionHeader icon={Settings2} title="默认模型与提示词" subtitle="为聊天、标题、翻译、建议、OCR、压缩等场景分别指定默认模型和 Prompt。" />
+      <SectionHeader icon={Settings2} title={t("settings:models.title")} subtitle={t("settings:models.subtitle")} />
       <div className="space-y-4">
         <div className="rounded-md border bg-card p-3 text-sm text-muted-foreground">
-          这里只显示已通过供应商测试的模型。标题、翻译、建议回复、OCR 和压缩 Prompt 均预置了合理的默认模板，点右侧工具按钮可查看和恢复默认值。
+          {t("settings:models.note")}
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           {features.map((feature) => {
@@ -2673,7 +2674,7 @@ function DefaultModelsSection({ settings, onSettings }: { settings: Settings; on
                     <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{feature.description}</div>
                   </div>
                   {feature.promptKey ? (
-                    <Button type="button" variant="ghost" size="icon-sm" onClick={() => setEditingPrompt(feature.promptKey ?? null)} title="编辑 Prompt">
+                    <Button type="button" variant="ghost" size="icon-sm" onClick={() => setEditingPrompt(feature.promptKey ?? null)} title={t("settings:models.edit_prompt")}>
                       <Settings2 className="size-4" />
                     </Button>
                   ) : null}
@@ -2683,13 +2684,13 @@ function DefaultModelsSection({ settings, onSettings }: { settings: Settings; on
             );
           })}
         </div>
-        <div className="flex justify-end text-xs text-muted-foreground">已自动保存</div>
+        <div className="flex justify-end text-xs text-muted-foreground">{t("settings:models.autosaved")}</div>
       </div>
       <Dialog open={Boolean(editingPrompt)} onOpenChange={(open) => !open && setEditingPrompt(null)}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>{activePrompt?.title ?? "Prompt"}</DialogTitle>
-            <DialogDescription>变量：{activePrompt?.variables}</DialogDescription>
+            <DialogDescription>{t("settings:models.variables_label")}{activePrompt?.variables}</DialogDescription>
           </DialogHeader>
           {editingPrompt ? (
             <Textarea
@@ -2702,10 +2703,10 @@ function DefaultModelsSection({ settings, onSettings }: { settings: Settings; on
             {editingPrompt ? (
               <Button type="button" variant="outline" onClick={() => setDraft({ ...draft, [editingPrompt]: promptMeta[editingPrompt].defaultValue })}>
                 <RefreshCw className="size-4" />
-                恢复默认
+                {t("settings:models.reset_default")}
               </Button>
             ) : null}
-            <Button type="button" onClick={() => setEditingPrompt(null)}>完成</Button>
+            <Button type="button" onClick={() => setEditingPrompt(null)}>{t("settings:models.done")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

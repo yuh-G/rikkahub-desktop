@@ -137,6 +137,44 @@
     "passed": "已通过测试",
     "not_passed": "未通过测试"
   },
+  "models": {
+    "title": "默认模型与提示词",
+    "subtitle": "为聊天、标题、翻译、建议、OCR、压缩等场景分别指定默认模型和 Prompt。",
+    "note": "这里只显示已通过供应商测试的模型。标题、翻译、建议回复、OCR 和压缩 Prompt 均预置了合理的默认模板，点右侧工具按钮可查看和恢复默认值。",
+    "not_set": "未设置",
+    "autosaved": "已自动保存",
+    "autosave_failed": "自动保存默认模型失败",
+    "edit_prompt": "编辑 Prompt",
+    "variables_label": "变量：",
+    "reset_default": "恢复默认",
+    "done": "完成",
+    "prompt": {
+      "title": "标题生成 Prompt",
+      "translate": "翻译 Prompt",
+      "suggestion": "建议回复 Prompt",
+      "ocr": "OCR Prompt",
+      "compress": "上下文压缩 Prompt",
+      "optimize": "提示词优化 Prompt"
+    },
+    "vars": {
+      "title": "{locale}, {content}",
+      "translate": "{source_text}, {target_lang}",
+      "suggestion": "{locale}, {content}",
+      "ocr": "图片输入",
+      "compress": "{content}, {target_tokens}, {additional_context}, {locale}",
+      "optimize": "用户草稿 + 可选对话背景"
+    },
+    "feature": {
+      "chat": { "title": "默认聊天模型", "desc": "首页未手动选择模型时使用。" },
+      "optimize": { "title": "提示词优化", "desc": "对话输入框「优化提示词」按钮使用这个模型，把你的草稿改写得更清晰专业。" },
+      "title": { "title": "标题生成", "desc": "对话首次回复后读取最近消息自动生成会话标题。" },
+      "translate": { "title": "翻译", "desc": "AI 回复下方翻译按钮使用这个模型和 Prompt。" },
+      "suggestion": { "title": "建议回复", "desc": "回复完成后生成 3 到 5 条用户可点选建议。" },
+      "compress": { "title": "上下文压缩", "desc": "长会话压缩时保留关键上下文并写回会话。" },
+      "ocr": { "title": "OCR", "desc": "图片转文字的备用通道，用于不支持视觉输入的聊天模型。" },
+      "image": { "title": "图像生成", "desc": "用于支持具备图像生成能力的模型入口。" }
+    }
+  },
   "speech": {
     "tts_title": "文字转语音",
     "tts_subtitle": "TTS provider 用于消息语音播报，ASR provider 用于输入框实时语音识别。",

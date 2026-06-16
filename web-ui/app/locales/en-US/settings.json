@@ -137,6 +137,44 @@
     "passed": "Passed the test",
     "not_passed": "Did not pass the test"
   },
+  "models": {
+    "title": "Default models & prompts",
+    "subtitle": "Pick a default model and prompt for chat, titles, translation, suggestions, OCR, compression and more.",
+    "note": "Only models that passed the provider test are shown here. Title, translation, suggestion, OCR and compression prompts ship with sensible defaults — click the tool button on the right to view or restore them.",
+    "not_set": "Not set",
+    "autosaved": "Saved automatically",
+    "autosave_failed": "Failed to auto-save default models",
+    "edit_prompt": "Edit prompt",
+    "variables_label": "Variables: ",
+    "reset_default": "Reset to default",
+    "done": "Done",
+    "prompt": {
+      "title": "Title generation prompt",
+      "translate": "Translation prompt",
+      "suggestion": "Suggestion prompt",
+      "ocr": "OCR prompt",
+      "compress": "Context compression prompt",
+      "optimize": "Prompt optimization prompt"
+    },
+    "vars": {
+      "title": "{locale}, {content}",
+      "translate": "{source_text}, {target_lang}",
+      "suggestion": "{locale}, {content}",
+      "ocr": "image input",
+      "compress": "{content}, {target_tokens}, {additional_context}, {locale}",
+      "optimize": "user draft + optional conversation context"
+    },
+    "feature": {
+      "chat": { "title": "Default chat model", "desc": "Used when no model is manually selected on the home page." },
+      "optimize": { "title": "Prompt optimization", "desc": "The “Optimize prompt” button in the chat input uses this model to rewrite your draft more clearly and professionally." },
+      "title": { "title": "Title generation", "desc": "Reads recent messages after the first reply to auto-generate a conversation title." },
+      "translate": { "title": "Translation", "desc": "The translate button under an AI reply uses this model and prompt." },
+      "suggestion": { "title": "Suggested replies", "desc": "Generates 3–5 clickable suggestions after a reply completes." },
+      "compress": { "title": "Context compression", "desc": "Keeps key context when compressing long conversations and writes it back." },
+      "ocr": { "title": "OCR", "desc": "A fallback image-to-text channel for chat models without vision input." },
+      "image": { "title": "Image generation", "desc": "Entry point for models with image generation capability." }
+    }
+  },
   "speech": {
     "tts_title": "Text to speech",
     "tts_subtitle": "TTS providers narrate messages; ASR providers power real-time speech recognition in the input box.",
