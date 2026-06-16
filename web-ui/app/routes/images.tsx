@@ -4,6 +4,7 @@ import { ArrowLeft, ImagePlus, Loader2, Plus, Trash2, WandSparkles, X } from "lu
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { motion } from "motion/react";
 
 import { AIIcon } from "~/components/ui/ai-icon";
 import { Button } from "~/components/ui/button";
@@ -16,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
+import { Skeleton } from "~/components/ui/skeleton";
 import { Textarea } from "~/components/ui/textarea";
 import { normalizeImageForModelUpload } from "~/lib/image-normalize";
 import api from "~/services/api";
@@ -309,12 +311,12 @@ export default function ImagesPage() {
         </div>
         <ScrollArea className="flex-1">
           <div className="mx-auto max-w-6xl space-y-6 p-4 pb-8 md:pt-9">
-            <section className="rounded-lg border bg-card p-4">
+            <section className="rounded-xl border bg-card p-4 shadow-card">
               <Textarea
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
                 placeholder={t("image_page.prompt_placeholder")}
-                className="min-h-28 resize-y border-0 bg-transparent p-0 text-base shadow-none focus-visible:ring-0"
+                className="min-h-28 resize-y border-0 bg-transparent p-0 text-base shadow-none placeholder:text-muted-foreground/60 focus-visible:ring-0"
               />
               {referenceImages.length > 0 ? (
                 <div className="mt-4 flex flex-wrap gap-3">
@@ -395,13 +397,41 @@ export default function ImagesPage() {
             </section>
 
             <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {images.map((image) => (
-                <article key={image.id} className="overflow-hidden rounded-lg border bg-card">
-                  <a href={image.url} target="_blank" rel="noreferrer" className="block bg-muted">
+              {generating &&
+                Array.from({ length: Number(numberOfImages) }).map((_, index) => (
+                  <article
+                    key={`skeleton-${index}`}
+                    className="overflow-hidden rounded-xl border bg-card shadow-sm"
+                  >
+                    <Skeleton className="aspect-square w-full rounded-none" />
+                    <div className="space-y-2 p-3">
+                      <Skeleton className="h-4 w-3/4" />
+                      <Skeleton className="h-3 w-1/2" />
+                    </div>
+                  </article>
+                ))}
+              {images.map((image, index) => (
+                <motion.article
+                  key={image.id}
+                  initial={{ opacity: 0, scale: 0.96, y: 8 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  transition={{
+                    duration: 0.3,
+                    delay: index * 0.05,
+                    ease: [0.16, 1, 0.3, 1],
+                  }}
+                  className="group overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-card"
+                >
+                  <a
+                    href={image.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="relative block bg-muted"
+                  >
                     <img
                       src={image.url}
                       alt={image.prompt}
-                      className="aspect-square w-full object-contain"
+                      className="aspect-square w-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
                     />
                   </a>
                   <div className="space-y-3 p-3">
@@ -429,7 +459,7 @@ export default function ImagesPage() {
                       </Button>
                     </div>
                   </div>
-                </article>
+                </motion.article>
               ))}
             </section>
             {images.length === 0 ? (

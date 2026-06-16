@@ -695,15 +695,22 @@ export default function SettingsPage() {
               <button
                 key={item.id}
                 type="button"
-                className={[
-                  "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition",
+                className={cn(
+                  "relative flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-all duration-200",
                   active
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "hover:bg-sidebar-accent/70",
-                ].join(" ")}
+                    ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent/70",
+                  active &&
+                    "before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-r-full before:bg-sidebar-primary",
+                )}
                 onClick={() => setSection(item.id)}
               >
-                <Icon className="size-4" />
+                <Icon
+                  className={cn(
+                    "size-4 transition-colors",
+                    active ? "text-sidebar-primary" : "text-muted-foreground",
+                  )}
+                />
                 {t(item.labelKey)}
               </button>
             );
@@ -712,7 +719,7 @@ export default function SettingsPage() {
       </aside>
       <main className="min-w-0 flex-1">
         <ScrollArea className="h-svh">
-          <div className="mx-auto w-full max-w-5xl px-6 pb-6 pt-9">
+          <div className="mx-auto w-full max-w-4xl px-6 pb-6 pt-9">
             {/* pt-9 与左侧 aside 顶部对齐,让出沉浸式透明标题栏高度,避免各板块内容贴顶。 */}
             {section === "general" && (
               <GeneralSection settings={settings} onSettings={updateLocal} />
