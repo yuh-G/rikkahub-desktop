@@ -6012,18 +6012,19 @@ function AboutSection() {
 }
 
 function LogsSection({ logs }: { logs: RequestLog[] }) {
+  const { t } = useTranslation();
   const [openId, setOpenId] = React.useState<string | null>(null);
   const copyLogText = React.useCallback(async (event: React.MouseEvent, title: string, text: string) => {
     event.stopPropagation();
     if (!text) return;
     await navigator.clipboard.writeText(text);
-    toast.success(`${title} 已复制`);
-  }, []);
+    toast.success(t("settings:logs.copied", { title }));
+  }, [t]);
   return (
     <>
-      <SectionHeader icon={FileClock} title="请求日志" subtitle="记录每个 provider 请求的端点、状态码、耗时与错误摘要。" />
+      <SectionHeader icon={FileClock} title={t("settings:logs.title")} subtitle={t("settings:logs.subtitle")} />
       <div className="space-y-3">
-        {logs.length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">暂无请求日志</div> : null}
+        {logs.length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{t("settings:logs.empty")}</div> : null}
         {logs.map((log) => {
           const open = openId === log.id;
           const requestText = log.requestBody || log.requestPreview || "";
@@ -6053,16 +6054,16 @@ function LogsSection({ logs }: { logs: RequestLog[] }) {
                 <div>
                   <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
                     <span>Request</span>
-                    <button type="button" className="rounded px-1.5 py-0.5 hover:bg-muted" onClick={(event) => void copyLogText(event, "Request", requestText)}>复制</button>
+                    <button type="button" className="rounded px-1.5 py-0.5 hover:bg-muted" onClick={(event) => void copyLogText(event, "Request", requestText)}>{t("settings:logs.copy")}</button>
                   </div>
-                  <pre className="max-h-[520px] select-text overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">{requestText || "无请求体记录"}</pre>
+                  <pre className="max-h-[520px] select-text overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">{requestText || t("settings:logs.no_request_body")}</pre>
                 </div>
                 <div>
                   <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
                     <span>Response</span>
-                    <button type="button" className="rounded px-1.5 py-0.5 hover:bg-muted" onClick={(event) => void copyLogText(event, "Response", responseText)}>复制</button>
+                    <button type="button" className="rounded px-1.5 py-0.5 hover:bg-muted" onClick={(event) => void copyLogText(event, "Response", responseText)}>{t("settings:logs.copy")}</button>
                   </div>
-                  <pre className="max-h-[520px] select-text overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">{responseText || "无响应体记录"}</pre>
+                  <pre className="max-h-[520px] select-text overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">{responseText || t("settings:logs.no_response_body")}</pre>
                 </div>
               </div>
             ) : null}

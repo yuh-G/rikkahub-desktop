@@ -99,5 +99,14 @@
     "no_groups": "No request groups",
     "provider_requests": "Provider requests",
     "no_provider_requests": "No request records"
+  },
+  "logs": {
+    "title": "Request logs",
+    "subtitle": "Endpoint, status code, duration and error summary for every provider request.",
+    "empty": "No request logs yet",
+    "copy": "Copy",
+    "copied": "{{title}} copied",
+    "no_request_body": "No request body recorded",
+    "no_response_body": "No response body recorded"
   }
 }

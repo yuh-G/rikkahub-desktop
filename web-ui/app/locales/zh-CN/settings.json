@@ -99,5 +99,14 @@
     "no_groups": "暂无请求分类",
     "provider_requests": "供应商请求",
     "no_provider_requests": "暂无请求记录"
+  },
+  "logs": {
+    "title": "请求日志",
+    "subtitle": "记录每个 provider 请求的端点、状态码、耗时与错误摘要。",
+    "empty": "暂无请求日志",
+    "copy": "复制",
+    "copied": "{{title}} 已复制",
+    "no_request_body": "无请求体记录",
+    "no_response_body": "无响应体记录"
   }
 }
