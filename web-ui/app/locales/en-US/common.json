@@ -41,12 +41,14 @@
     "theme_system": "System",
     "color_default": "Default",
     "color_claude": "Claude",
-    "color_t3_chat": "T3 Chat",
     "color_mono": "Mono",
-    "color_bubblegum": "Bubblegum",
-    "color_custom": "Custom",
-    "edit_custom_css": "Edit custom CSS",
-    "custom_theme_saved": "Custom theme saved",
+    "user_themes": "My themes",
+    "new_custom_theme": "New custom theme",
+    "edit_theme": "Edit",
+    "delete_theme": "Delete",
+    "theme_created": "Theme created",
+    "theme_updated": "Theme updated",
+    "theme_deleted": "Theme deleted",
     "welcome_back": "Welcome back",
     "new_conversation": "New conversation",
     "conversations": "Conversations",
@@ -85,13 +87,18 @@
     "close_panel": "Close panel"
   },
   "custom_theme_dialog": {
-    "title": "Custom theme CSS",
-    "description": "Only CSS variable declarations are extracted and applied (for example, --primary: ...;), with both Light and Dark variants supported.",
+    "create_title": "New custom theme",
+    "edit_title": "Edit theme",
+    "description": "Only CSS variable declarations are extracted and applied (for example, --primary: ...;), with both Light and Dark variants supported. The theme is saved to your list — switch, edit, or delete it anytime.",
+    "name_label": "Theme name",
+    "name_placeholder": "Name this theme",
+    "name_required": "Please enter a theme name",
     "theme_variables": "Theme variables",
     "theme_placeholder": ":root {\n  --background: ...;\n  --primary: ...;\n}\n\n:root.dark {\n  --background: ...;\n  --primary: ...;\n}",
     "tip": "You can download more themes from",
     "cancel": "Cancel",
-    "save_and_apply": "Save and apply"
+    "create_and_apply": "Create and apply",
+    "save": "Save"
   },
   "infinite_scroll": {
     "load_more": "Loading more..."

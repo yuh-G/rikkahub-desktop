@@ -73,6 +73,7 @@ import {
   type ColorTheme,
   type CustomThemeCss,
   type Theme,
+  type UserTheme,
 } from "~/components/theme-provider";
 import { ConversationSearchButton } from "~/components/conversation-search-button";
 import { CustomThemeDialog } from "~/components/custom-theme-dialog";
@@ -118,20 +119,8 @@ const COLOR_THEME_OPTIONS: Array<{
     labelKey: "color_claude",
   },
   {
-    value: "t3-chat",
-    labelKey: "color_t3_chat",
-  },
-  {
     value: "mono",
     labelKey: "color_mono",
-  },
-  {
-    value: "bubblegum",
-    labelKey: "color_bubblegum",
-  },
-  {
-    value: "custom",
-    labelKey: "color_custom",
   },
 ];
 
@@ -576,11 +565,24 @@ export const ConversationSidebar = React.memo(({
   webAuthEnabled = false,
 }: ConversationSidebarProps) => {
   const { t, i18n } = useTranslation();
-  const { theme, setTheme, colorTheme, setColorTheme, customThemeCss, setCustomThemeCss } =
-    useTheme();
+  const {
+    theme,
+    setTheme,
+    colorTheme,
+    setColorTheme,
+    userThemes,
+    addUserTheme,
+    updateUserTheme,
+    deleteUserTheme,
+  } = useTheme();
 
   const [pickerOpen, setPickerOpen] = React.useState(false);
-  const [customThemeOpen, setCustomThemeOpen] = React.useState(false);
+  const [themeMenuOpen, setThemeMenuOpen] = React.useState(false);
+  const [themeEditor, setThemeEditor] = React.useState<{
+    open: boolean;
+    mode: "create" | "edit";
+    editing: UserTheme | null;
+  }>({ open: false, mode: "create", editing: null });
   const [selectedTagIds, setSelectedTagIds] = React.useState<string[]>([]);
   const [switchingAssistantId, setSwitchingAssistantId] = React.useState<string | null>(null);
   const [switchError, setSwitchError] = React.useState<string | null>(null);
@@ -604,16 +606,42 @@ export const ConversationSidebar = React.memo(({
   const currentThemeOption =
     THEME_OPTIONS.find((option) => option.value === currentTheme) ?? THEME_OPTIONS[2];
   const CurrentThemeIcon = currentThemeOption.icon;
-  const currentColorThemeOption =
-    COLOR_THEME_OPTIONS.find((option) => option.value === colorTheme) ?? COLOR_THEME_OPTIONS[0];
+  const currentColorThemeOption = COLOR_THEME_OPTIONS.find(
+    (option) => option.value === colorTheme,
+  );
+  const currentColorLabel = currentColorThemeOption
+    ? t(`conversation_sidebar.${currentColorThemeOption.labelKey}`)
+    : userThemes.find((ut) => ut.id === colorTheme)?.name ??
+      t("conversation_sidebar.color_default");
 
-  const handleCustomThemeSave = React.useCallback(
-    (themeCss: CustomThemeCss) => {
-      setCustomThemeCss(themeCss);
-      setColorTheme("custom");
-      toast.success(t("conversation_sidebar.custom_theme_saved"));
+  const handleThemeEditorSave = React.useCallback(
+    ({ name, css }: { name: string; css: CustomThemeCss }) => {
+      if (themeEditor.mode === "edit" && themeEditor.editing) {
+        updateUserTheme(themeEditor.editing.id, { name, css });
+        toast.success(t("conversation_sidebar.theme_updated"));
+      } else {
+        const created = addUserTheme({ name, css });
+        setColorTheme(created.id);
+        toast.success(t("conversation_sidebar.theme_created"));
+      }
     },
-    [setColorTheme, setCustomThemeCss, t],
+    [addUserTheme, setColorTheme, themeEditor.editing, themeEditor.mode, updateUserTheme, t],
+  );
+
+  const openCreateTheme = React.useCallback(() => {
+    setThemeEditor({ open: true, mode: "create", editing: null });
+  }, []);
+
+  const openEditTheme = React.useCallback((userTheme: UserTheme) => {
+    setThemeEditor({ open: true, mode: "edit", editing: userTheme });
+  }, []);
+
+  const handleDeleteTheme = React.useCallback(
+    (id: string) => {
+      deleteUserTheme(id);
+      toast.success(t("conversation_sidebar.theme_deleted"));
+    },
+    [deleteUserTheme, t],
   );
 
   const currentAssistant = React.useMemo(
@@ -1061,10 +1089,11 @@ export const ConversationSidebar = React.memo(({
         </Dialog>
 
         <CustomThemeDialog
-          open={customThemeOpen}
-          onOpenChange={setCustomThemeOpen}
-          initialCss={customThemeCss}
-          onSave={handleCustomThemeSave}
+          open={themeEditor.open}
+          onOpenChange={(open) => setThemeEditor((prev) => ({ ...prev, open }))}
+          mode={themeEditor.mode}
+          editing={themeEditor.editing}
+          onSave={handleThemeEditorSave}
         />
 
         <div className="flex flex-wrap items-center gap-2">
@@ -1112,7 +1141,7 @@ export const ConversationSidebar = React.memo(({
 
           <LanguageSwitcher />
 
-          <DropdownMenu>
+          <DropdownMenu open={themeMenuOpen} onOpenChange={setThemeMenuOpen}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="outline"
@@ -1120,16 +1149,16 @@ export const ConversationSidebar = React.memo(({
                 className="text-foreground"
                 type="button"
                 aria-label={t("conversation_sidebar.theme_color_label", {
-                  label: t(`conversation_sidebar.${currentColorThemeOption.labelKey}`),
+                  label: currentColorLabel,
                 })}
                 title={t("conversation_sidebar.theme_color_label", {
-                  label: t(`conversation_sidebar.${currentColorThemeOption.labelKey}`),
+                  label: currentColorLabel,
                 })}
               >
                 <Palette className="size-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-44" side="top" align="end">
+            <DropdownMenuContent className="w-52" side="top" align="end">
               <DropdownMenuLabel>{t("conversation_sidebar.theme_color")}</DropdownMenuLabel>
               {COLOR_THEME_OPTIONS.map((option) => {
                 const selected = option.value === colorTheme;
@@ -1145,13 +1174,61 @@ export const ConversationSidebar = React.memo(({
                   </DropdownMenuItem>
                 );
               })}
+
+              {userThemes.length > 0 ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel>{t("conversation_sidebar.user_themes")}</DropdownMenuLabel>
+                  {userThemes.map((ut) => {
+                    const selected = ut.id === colorTheme;
+                    return (
+                      <div
+                        key={ut.id}
+                        role="menuitem"
+                        tabIndex={-1}
+                        className="group relative flex cursor-pointer items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent"
+                        onClick={() => {
+                          setColorTheme(ut.id);
+                        }}
+                      >
+                        <span className="flex-1 truncate">{ut.name}</span>
+                        <Check className={selected ? "size-4" : "size-4 opacity-0"} />
+                        <span className="absolute right-1 flex items-center gap-0.5 rounded-sm bg-popover/80 px-1 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
+                          <button
+                            type="button"
+                            className="rounded p-1 text-muted-foreground hover:text-foreground"
+                            title={t("conversation_sidebar.edit_theme")}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setThemeMenuOpen(false);
+                              openEditTheme(ut);
+                            }}
+                          >
+                            <Pencil className="size-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded p-1 text-muted-foreground hover:text-destructive"
+                            title={t("conversation_sidebar.delete_theme")}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setThemeMenuOpen(false);
+                              handleDeleteTheme(ut.id);
+                            }}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </>
+              ) : null}
+
               <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => {
-                  setCustomThemeOpen(true);
-                }}
-              >
-                <span className="flex-1">{t("conversation_sidebar.edit_custom_css")}</span>
+              <DropdownMenuItem onClick={openCreateTheme}>
+                <Plus className="size-4" />
+                <span>{t("conversation_sidebar.new_custom_theme")}</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

@@ -10,8 +10,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "~/components/ui/dialog";
+import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
-import type { CustomThemeCss } from "~/components/theme-provider";
+import type { CustomThemeCss, UserTheme } from "~/components/theme-provider";
 
 const CUSTOM_THEME_EDITOR_ROWS = 14;
 
@@ -26,38 +27,83 @@ function mergeThemeCss(light: string, dark: string): string {
 type CustomThemeDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  initialCss: CustomThemeCss;
-  onSave: (css: CustomThemeCss) => void;
+  mode: "create" | "edit";
+  editing?: UserTheme | null;
+  onSave: (data: { name: string; css: CustomThemeCss }) => void;
 };
 
 export function CustomThemeDialog({
   open,
   onOpenChange,
-  initialCss,
+  mode,
+  editing,
   onSave,
 }: CustomThemeDialogProps) {
   const { t } = useTranslation();
-  const [cssDraft, setCssDraft] = React.useState(() =>
-    mergeThemeCss(initialCss.light, initialCss.dark),
-  );
+  const [nameDraft, setNameDraft] = React.useState("");
+  const [cssDraft, setCssDraft] = React.useState("");
+  const [nameError, setNameError] = React.useState(false);
 
   React.useEffect(() => {
     if (!open) {
       return;
     }
 
-    setCssDraft(mergeThemeCss(initialCss.light, initialCss.dark));
-  }, [initialCss.light, initialCss.dark, open]);
+    setNameDraft(editing?.name ?? "");
+    setCssDraft(editing ? mergeThemeCss(editing.css.light, editing.css.dark) : "");
+    setNameError(false);
+  }, [editing, open]);
+
+  const handleSave = () => {
+    const name = nameDraft.trim();
+    if (!name) {
+      setNameError(true);
+      return;
+    }
+
+    let lightCss = cssDraft.match(/:root\s*\{[\s\S]*?\}/)?.[0]?.trim() ?? "";
+    let darkCss =
+      cssDraft.match(/(?:\.dark|:root\.dark)\s*\{[\s\S]*?\}/)?.[0]?.trim() ?? "";
+
+    if (!lightCss && !darkCss && cssDraft.trim()) {
+      lightCss = cssDraft.trim();
+    }
+
+    onSave({ name, css: { light: lightCss, dark: darkCss } });
+    onOpenChange(false);
+  };
+
+  const isCreate = mode === "create";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85svh] max-w-3xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{t("custom_theme_dialog.title")}</DialogTitle>
+          <DialogTitle>
+            {t(`custom_theme_dialog.${isCreate ? "create_title" : "edit_title"}`)}
+          </DialogTitle>
           <DialogDescription>{t("custom_theme_dialog.description")}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
+          <div className="space-y-2">
+            <div className="text-sm font-medium">{t("custom_theme_dialog.name_label")}</div>
+            <Input
+              value={nameDraft}
+              onChange={(event) => {
+                setNameDraft(event.target.value);
+                if (nameError) {
+                  setNameError(false);
+                }
+              }}
+              placeholder={t("custom_theme_dialog.name_placeholder")}
+              aria-invalid={nameError}
+            />
+            {nameError ? (
+              <p className="text-xs text-destructive">{t("custom_theme_dialog.name_required")}</p>
+            ) : null}
+          </div>
+
           <div className="space-y-2">
             <div className="text-sm font-medium">{t("custom_theme_dialog.theme_variables")}</div>
             <Textarea
@@ -94,25 +140,8 @@ export function CustomThemeDialog({
           >
             {t("custom_theme_dialog.cancel")}
           </Button>
-          <Button
-            type="button"
-            onClick={() => {
-              let lightCss = cssDraft.match(/:root\s*\{[\s\S]*?\}/)?.[0]?.trim() ?? "";
-              let darkCss =
-                cssDraft.match(/(?:\.dark|:root\.dark)\s*\{[\s\S]*?\}/)?.[0]?.trim() ?? "";
-
-              if (!lightCss && !darkCss && cssDraft.trim()) {
-                lightCss = cssDraft.trim();
-              }
-
-              onSave({
-                light: lightCss,
-                dark: darkCss,
-              });
-              onOpenChange(false);
-            }}
-          >
-            {t("custom_theme_dialog.save_and_apply")}
+          <Button type="button" onClick={handleSave}>
+            {t(`custom_theme_dialog.${isCreate ? "create_and_apply" : "save"}`)}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -41,12 +41,14 @@
     "theme_system": "跟随系统",
     "color_default": "默认",
     "color_claude": "Claude",
-    "color_t3_chat": "T3 Chat",
     "color_mono": "Mono",
-    "color_bubblegum": "Bubblegum",
-    "color_custom": "自定义",
-    "edit_custom_css": "编辑自定义 CSS",
-    "custom_theme_saved": "自定义主题已保存",
+    "user_themes": "我的主题",
+    "new_custom_theme": "新建自定义主题",
+    "edit_theme": "编辑",
+    "delete_theme": "删除",
+    "theme_created": "主题已创建",
+    "theme_updated": "主题已更新",
+    "theme_deleted": "主题已删除",
     "welcome_back": "欢迎回来",
     "new_conversation": "新建对话",
     "conversations": "会话",
@@ -85,13 +87,18 @@
     "close_panel": "关闭面板"
   },
   "custom_theme_dialog": {
-    "title": "自定义主题 CSS",
-    "description": "仅提取并应用 CSS 变量声明（例如 --primary: ...;），支持 Light 和 Dark 两套。",
+    "create_title": "新建自定义主题",
+    "edit_title": "编辑主题",
+    "description": "仅提取并应用 CSS 变量声明（例如 --primary: ...;），支持 Light 和 Dark 两套。主题会保存到列表,可随时切换、编辑或删除。",
+    "name_label": "主题名称",
+    "name_placeholder": "给这个主题起个名字",
+    "name_required": "请输入主题名称",
     "theme_variables": "主题变量",
     "theme_placeholder": ":root {\n  --background: ...;\n  --primary: ...;\n}\n\n:root.dark {\n  --background: ...;\n  --primary: ...;\n}",
     "tip": "您可以在 tweakcn.com 下载更多主题：",
     "cancel": "取消",
-    "save_and_apply": "保存并应用"
+    "create_and_apply": "创建并应用",
+    "save": "保存"
   },
   "infinite_scroll": {
     "load_more": "加载更多..."
