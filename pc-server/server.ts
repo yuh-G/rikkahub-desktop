@@ -332,6 +332,9 @@ interface State {
   nextMemoryId: number;
   nextGeneratedImageId: number;
   launchCount: number;
+  // 一次性迁移记录。每个已应用的迁移 id 存一次,防止启动时反复执行会覆盖用户后续
+  // 手动调整的迁移(如供应商顺序重排)。老 state 没有该字段,视为空数组。
+  appliedMigrations?: string[];
 }
 
 type SearchService = Record<string, JsonValue>;
@@ -794,6 +797,32 @@ const NA_API_PRESET_MODELS = [
   "deepseek-ai/DeepSeek-V4-Pro",
 ];
 
+// 1.1.1 预置供应商期望顺序(按 id)。老用户也按此重排——内置(builtIn)供应商排到
+// 对应位置,用户新增的自定义供应商不受影响,统一保留在内置供应商之后(保持其相对顺序)。
+// 排序是幂等的:重复执行结果一致,不会反复改动已排好的 state。
+const BUILTIN_PROVIDER_ORDER: readonly string[] = [
+  "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce", // RikkaHub
+  "1eeea727-9ee5-4cae-93e6-6fb01a4d051e", // OpenAI
+  "b2c7e1a4-9f3d-4a6e-8c1b-5d7f9e2a3b14", // Anthropic
+  "6ab18148-c138-4394-a46f-1cd8c8ceaa6d", // Gemini
+  "ff3cde7e-0f65-43d7-8fb2-6475c99f5990", // xAI
+  "f099ad5b-ef03-446d-8e78-7e36787f780b", // DeepSeek
+  "f76cae46-069a-4334-ab8e-224e4979e58c", // 阿里云百炼
+  "3dfd6f9b-f9d9-417f-80c1-ff8d77184191", // 火山引擎
+  "ef5d149b-8e34-404b-818c-6ec242e5c3c5", // 腾讯混元
+  "3bc40dc1-b11a-46fa-863b-6306971223be", // 智谱AI开放平台
+  "d6c4d8c6-3f62-4ca9-a6f3-7ade6b15ecc3", // 月之暗面
+  "f4f8870e-82d3-495b-9b64-d58e508b3b2c", // 阶跃星辰
+  "e7a2b5c3-8f4d-4e6a-9b1c-3d5f7e8a2c04", // 钠API
+  "d5734028-d39b-4d41-9841-fd648d65440e", // OpenRouter
+  "386e0f29-8228-4512-affe-8fd8add82d88", // Vercel AI Gateway
+  "56a94d29-c88b-41c5-8e09-38a7612d6cf8", // 硅基流动
+];
+function builtinProviderRank(providerItem: Provider): number {
+  const idx = BUILTIN_PROVIDER_ORDER.indexOf(providerItem.id);
+  return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+}
+
 function defaultProviders(): Provider[] {
   return [
     provider({
@@ -1166,6 +1195,18 @@ function normalizeState(input: Partial<State>): State {
     }
     return providerItem;
   });
+  // 1.1.1:按预置顺序重排内置供应商(老用户也生效)。用户新增的自定义供应商不在
+  // BUILTIN_PROVIDER_ORDER 里,rank 都是 MAX_SAFE_INTEGER,稳定排序后仍按原相对顺序
+  // 排在内置供应商之后,不会被重排打乱。这是一次性迁移——记录在 appliedMigrations,
+  // 升级后用户的后续手动排序不会再被覆盖。
+  const PROVIDER_REORDER_MIGRATION = "provider-reorder-1.1.1";
+  const appliedMigrations = Array.isArray(normalized.appliedMigrations) ? normalized.appliedMigrations : [];
+  if (!appliedMigrations.includes(PROVIDER_REORDER_MIGRATION)) {
+    normalized.settings.providers = [...normalized.settings.providers].sort(
+      (a, b) => builtinProviderRank(a) - builtinProviderRank(b),
+    );
+    normalized.appliedMigrations = [...appliedMigrations, PROVIDER_REORDER_MIGRATION];
+  }
   normalized.settings.searchServices = normalized.settings.searchServices?.length
     ? normalized.settings.searchServices
     : defaults.searchServices;
