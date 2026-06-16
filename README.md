@@ -67,20 +67,15 @@ else needed.
 
 These organizations sponsor Rikkahub's ongoing development. Please pay them a visit.
 
-<table>
-  <tr>
-    <td width="120" align="center">
-      <a href="https://naapi.cc">
-        <img src="icons/naapi.jpg" width="100" alt="钠API" />
-      </a>
-    </td>
-    <td>
-      <a href="https://naapi.cc"><b>钠API</b></a><br/>
-      One-stop access to 100+ top global models — ChatGPT, Claude, Gemini and more —
-      with competitive pricing and superior stability.
-    </td>
-  </tr>
-</table>
+<div align="center">
+  <a href="https://naapi.cc">
+    <img src="icons/naapi.jpg" width="120" alt="钠API" />
+  </a>
+  <br/>
+  <a href="https://naapi.cc"><b>钠API</b></a>
+  <br/>
+  <sub>One-stop access to 100+ top global models — ChatGPT, Claude, Gemini and more — with competitive pricing and superior stability.</sub>
+</div>
 
 ## 🏗️ Build from source
 
