@@ -186,10 +186,11 @@ function TitleBarButton({
       aria-label={ariaLabel}
       onClick={onClick}
       className={cn(
-        "flex h-full w-11 items-center justify-center text-muted-foreground transition-colors",
-        variant === "default" && "hover:bg-muted hover:text-foreground active:bg-muted/70",
+        "flex h-full w-11 items-center justify-center rounded-none text-muted-foreground transition-all duration-150 active:scale-95",
+        variant === "default" &&
+          "hover:rounded-md hover:bg-muted hover:text-foreground active:bg-muted/70",
         variant === "danger" &&
-          "hover:bg-destructive hover:text-destructive-foreground active:bg-destructive/80",
+          "hover:rounded-md hover:bg-destructive hover:text-destructive-foreground active:bg-destructive/80",
       )}
     >
       {children}

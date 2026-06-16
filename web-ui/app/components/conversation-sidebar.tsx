@@ -547,9 +547,9 @@ function LanguageSwitcher() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
-          variant="outline"
+          variant="ghost"
           size="icon-sm"
-          className="text-foreground"
+          className="text-muted-foreground hover:text-foreground"
           type="button"
           aria-label={`Language: ${currentOption.label}`}
           title={`Language: ${currentOption.label}`}
@@ -919,9 +919,9 @@ export const ConversationSidebar = React.memo(
           <SidebarGroup>
             <div className="space-y-1">
               <Button
-                variant="ghost"
+                variant="default"
                 size="sm"
-                className="w-full justify-start"
+                className="w-full justify-start gap-2 shadow-sm"
                 onClick={onCreateConversation}
               >
                 <Plus className="size-4" />
@@ -1173,9 +1173,9 @@ export const ConversationSidebar = React.memo(
           <div className="flex flex-wrap items-center gap-2">
             {webAuthEnabled && (
               <Button
-                variant="outline"
+                variant="ghost"
                 size="icon-sm"
-                className="text-foreground"
+                className="text-muted-foreground hover:text-foreground"
                 type="button"
                 onClick={handleWebLogout}
                 aria-label="Clear web session"
@@ -1187,9 +1187,9 @@ export const ConversationSidebar = React.memo(
 
             <Button
               asChild
-              variant="outline"
+              variant="ghost"
               size="icon-sm"
-              className="text-foreground"
+              className="text-muted-foreground hover:text-foreground"
               type="button"
               aria-label={t("conversation_sidebar.settings", "Settings")}
               title={t("conversation_sidebar.settings", "Settings")}
@@ -1201,9 +1201,9 @@ export const ConversationSidebar = React.memo(
 
             <Button
               asChild
-              variant="outline"
+              variant="ghost"
               size="icon-sm"
-              className="text-foreground"
+              className="text-muted-foreground hover:text-foreground"
               type="button"
               aria-label={t("conversation_sidebar.image_generation")}
               title={t("conversation_sidebar.image_generation")}
@@ -1218,9 +1218,9 @@ export const ConversationSidebar = React.memo(
             <DropdownMenu open={themeMenuOpen} onOpenChange={setThemeMenuOpen}>
               <DropdownMenuTrigger asChild>
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="icon-sm"
-                  className="text-foreground"
+                  className="text-muted-foreground hover:text-foreground"
                   type="button"
                   aria-label={t("conversation_sidebar.theme_color_label", {
                     label: currentColorLabel,
