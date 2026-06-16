@@ -74,5 +74,30 @@
     "port_restart_note": "Port changes take effect after restarting. The running instance still uses the old port.",
     "active_from_system": "{{url}} (from system proxy)",
     "not_active": "Not enabled (direct connection)"
+  },
+  "stats": {
+    "loading": "Loading stats",
+    "title": "Statistics",
+    "subtitle": "Usage stats and an activity heatmap based on local chats, request logs and model usage.",
+    "t_conversations": "Conversations",
+    "t_messages": "Messages",
+    "t_input_tokens": "Input tokens",
+    "t_output_tokens": "Output tokens",
+    "t_launches": "App launches",
+    "heatmap": "Message heatmap",
+    "less": "Less",
+    "more": "More",
+    "day_mon": "Mon",
+    "day_wed": "Wed",
+    "day_fri": "Fri",
+    "day_count": "{{date}}: {{count}} messages",
+    "heatmap_empty": "No chat data yet. The heatmap appears once you start chatting.",
+    "model_usage": "Model usage",
+    "no_models": "No model usage yet",
+    "request_groups": "Request groups",
+    "ok_failed": "{{ok}} ok / {{failed}} failed",
+    "no_groups": "No request groups",
+    "provider_requests": "Provider requests",
+    "no_provider_requests": "No request records"
   }
 }

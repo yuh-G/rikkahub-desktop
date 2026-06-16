@@ -5541,11 +5541,12 @@ function DataSection({ settings, onSettings }: { settings: Settings; onSettings:
 }
 
 function StatsSection({ stats }: { stats: StatsPayload | null }) {
+  const { t } = useTranslation();
   if (!stats) {
     return (
       <div className="flex h-64 items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
-        加载统计
+        {t("settings:stats.loading")}
       </div>
     );
   }
@@ -5586,14 +5587,14 @@ function StatsSection({ stats }: { stats: StatsPayload | null }) {
   };
   return (
     <>
-      <SectionHeader icon={Database} title="统计" subtitle="基于本地聊天、请求日志和模型使用情况生成的用量统计与活动热力图。" />
+      <SectionHeader icon={Database} title={t("settings:stats.title")} subtitle={t("settings:stats.subtitle")} />
       <div className="grid gap-4 md:grid-cols-5">
         {[
-          ["总对话数", stats.totals.conversations],
-          ["总消息数", stats.totals.messages],
-          ["输入 Token", stats.totals.inputTokens],
-          ["输出 Token", stats.totals.outputTokens],
-          ["应用启动次数", stats.totals.launchCount],
+          [t("settings:stats.t_conversations"), stats.totals.conversations],
+          [t("settings:stats.t_messages"), stats.totals.messages],
+          [t("settings:stats.t_input_tokens"), stats.totals.inputTokens],
+          [t("settings:stats.t_output_tokens"), stats.totals.outputTokens],
+          [t("settings:stats.t_launches"), stats.totals.launchCount],
         ].map(([label, value]) => (
           <div key={String(label)} className="rounded-lg border bg-card p-4">
             <div className="text-xs text-muted-foreground">{label}</div>
@@ -5602,7 +5603,7 @@ function StatsSection({ stats }: { stats: StatsPayload | null }) {
         ))}
       </div>
       <div className="mt-6 rounded-lg border bg-card p-4">
-        <div className="mb-3 text-sm font-medium">消息热力图</div>
+        <div className="mb-3 text-sm font-medium">{t("settings:stats.heatmap")}</div>
         <div className="pb-1">
           <div className="grid w-full grid-cols-[24px_minmax(0,1fr)] gap-x-2 overflow-hidden">
             <div />
@@ -5612,7 +5613,7 @@ function StatsSection({ stats }: { stats: StatsPayload | null }) {
               ))}
             </div>
             <div className="grid gap-[2px] pt-[2px]" style={{ gridTemplateRows: "repeat(7, 12px)" }}>
-              {["", "一", "", "三", "", "五", ""].map((label, index) => (
+              {["", t("settings:stats.day_mon"), "", t("settings:stats.day_wed"), "", t("settings:stats.day_fri"), ""].map((label, index) => (
                 <div key={`${label}-${index}`} className="flex h-3 items-center justify-end text-[11px] text-muted-foreground">{label}</div>
               ))}
             </div>
@@ -5622,7 +5623,7 @@ function StatsSection({ stats }: { stats: StatsPayload | null }) {
                   {week.map((day) => (
                     <div
                       key={day.key}
-                      title={`${day.key}: ${day.count} messages`}
+                      title={t("settings:stats.day_count", { date: day.key, count: day.count })}
                       className={`size-3 rounded-[3px] sm:size-3.5 ${heatmapClass(day.level)}`}
                     />
                   ))}
@@ -5632,15 +5633,15 @@ function StatsSection({ stats }: { stats: StatsPayload | null }) {
           </div>
         </div>
         <div className="mt-3 flex items-center justify-end gap-1 text-[11px] text-muted-foreground">
-          <span>少</span>
+          <span>{t("settings:stats.less")}</span>
           {[0, 1, 2, 3, 4].map((level) => <span key={level} className={`size-[12px] rounded-[4px] ${heatmapClass(level)}`} />)}
-          <span>多</span>
+          <span>{t("settings:stats.more")}</span>
         </div>
-        {stats.daily.length === 0 ? <div className="mt-3 text-xs text-muted-foreground">暂无聊天统计，开始对话后这里会自动出现热力图。</div> : null}
+        {stats.daily.length === 0 ? <div className="mt-3 text-xs text-muted-foreground">{t("settings:stats.heatmap_empty")}</div> : null}
       </div>
       <div className="mt-6 grid gap-4 md:grid-cols-2">
         <div className="rounded-lg border bg-card p-4">
-          <div className="mb-3 text-sm font-medium">模型使用</div>
+          <div className="mb-3 text-sm font-medium">{t("settings:stats.model_usage")}</div>
           <div className="space-y-2">
             {stats.models.slice(0, 8).map((item) => (
               <div key={item.id} className="flex items-center justify-between gap-3 text-sm">
@@ -5648,21 +5649,21 @@ function StatsSection({ stats }: { stats: StatsPayload | null }) {
                 <span className="text-muted-foreground">{item.count}</span>
               </div>
             ))}
-            {stats.models.length === 0 ? <div className="text-sm text-muted-foreground">暂无模型使用记录</div> : null}
+            {stats.models.length === 0 ? <div className="text-sm text-muted-foreground">{t("settings:stats.no_models")}</div> : null}
           </div>
         </div>
         <div className="rounded-lg border bg-card p-4">
-          <div className="mb-3 text-sm font-medium">请求分类</div>
+          <div className="mb-3 text-sm font-medium">{t("settings:stats.request_groups")}</div>
           <div className="mb-4 space-y-2">
             {(stats.requestGroups ?? []).map((item) => (
               <div key={item.name} className="flex items-center justify-between gap-3 text-sm">
                 <span className="truncate">{item.name}</span>
-                <span className="text-muted-foreground">成功 {item.ok} / 失败 {item.failed}</span>
+                <span className="text-muted-foreground">{t("settings:stats.ok_failed", { ok: item.ok, failed: item.failed })}</span>
               </div>
             ))}
-            {(stats.requestGroups ?? []).length === 0 ? <div className="text-sm text-muted-foreground">暂无请求分类</div> : null}
+            {(stats.requestGroups ?? []).length === 0 ? <div className="text-sm text-muted-foreground">{t("settings:stats.no_groups")}</div> : null}
           </div>
-          <div className="mb-3 text-sm font-medium">供应商请求</div>
+          <div className="mb-3 text-sm font-medium">{t("settings:stats.provider_requests")}</div>
           <div className="space-y-2">
             {stats.providers.slice(0, 8).map((item) => (
               <div key={item.name} className="flex items-center justify-between gap-3 text-sm">
@@ -5670,7 +5671,7 @@ function StatsSection({ stats }: { stats: StatsPayload | null }) {
                 <span className="text-muted-foreground">{item.ok} / {item.failed}</span>
               </div>
             ))}
-            {stats.providers.length === 0 ? <div className="text-sm text-muted-foreground">暂无请求记录</div> : null}
+            {stats.providers.length === 0 ? <div className="text-sm text-muted-foreground">{t("settings:stats.no_provider_requests")}</div> : null}
           </div>
         </div>
       </div>

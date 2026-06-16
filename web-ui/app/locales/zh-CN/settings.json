@@ -74,5 +74,30 @@
     "port_restart_note": "修改端口后需要重启应用才能生效。当前运行中的实例仍使用原端口。",
     "active_from_system": "{{url}}（来自系统代理）",
     "not_active": "未启用（所有请求直连）"
+  },
+  "stats": {
+    "loading": "加载统计",
+    "title": "统计",
+    "subtitle": "基于本地聊天、请求日志和模型使用情况生成的用量统计与活动热力图。",
+    "t_conversations": "总对话数",
+    "t_messages": "总消息数",
+    "t_input_tokens": "输入 Token",
+    "t_output_tokens": "输出 Token",
+    "t_launches": "应用启动次数",
+    "heatmap": "消息热力图",
+    "less": "少",
+    "more": "多",
+    "day_mon": "一",
+    "day_wed": "三",
+    "day_fri": "五",
+    "day_count": "{{date}}: {{count}} 条消息",
+    "heatmap_empty": "暂无聊天统计，开始对话后这里会自动出现热力图。",
+    "model_usage": "模型使用",
+    "no_models": "暂无模型使用记录",
+    "request_groups": "请求分类",
+    "ok_failed": "成功 {{ok}} / 失败 {{failed}}",
+    "no_groups": "暂无请求分类",
+    "provider_requests": "供应商请求",
+    "no_provider_requests": "暂无请求记录"
   }
 }
