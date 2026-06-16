@@ -5,8 +5,10 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLocation,
 } from "react-router";
 import * as React from "react";
+import { AnimatePresence, motion } from "motion/react";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Route } from "./+types/root";
@@ -61,17 +63,13 @@ function SilentUpdateChecker() {
       .catch(() => {
         /* network error — silently ignore */
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (!update) return null;
-  return (
-    <UpdateDialog
-      info={update}
-      open={true}
-      onClose={() => setUpdate(null)}
-    />
-  );
+  return <UpdateDialog info={update} open={true} onClose={() => setUpdate(null)} />;
 }
 
 // 把中文字体插入英文字体 family 链:插在主字体之后、其余 fallback 之前。
@@ -89,6 +87,35 @@ function mergeCjkIntoFamily(enFamily: string, cjkFamily: string): string {
   return idx < 0 ? `${en}, ${cjkFamily}` : `${en.slice(0, idx)}, ${cjkFamily}${en.slice(idx)}`;
 }
 
+// 仅在不同顶层页面之间播放过渡动画；在同一大页内切换（如 /c/123 -> /c/456）
+// 保持连续，避免聊天界面闪烁。
+function getTopLevelPageKey(pathname: string): string {
+  if (pathname === "/" || pathname.startsWith("/c/")) return "chat";
+  if (pathname.startsWith("/settings")) return "settings";
+  if (pathname.startsWith("/images")) return "images";
+  return pathname;
+}
+
+function PageTransition({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const pageKey = getTopLevelPageKey(location.pathname);
+
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={pageKey}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -4 }}
+        transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+        className="contents"
+      >
+        {children}
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
 function AppContent() {
   useSettingsSubscription();
   const displaySetting = useSettingsStore((state) => state.settings?.displaySetting);
@@ -97,18 +124,26 @@ function AppContent() {
     // 中英文分别设置(Word 式):把中文字体插到英文字体 family 链的"主字体之后、兜底之前"。
     // 效果:英文字形用英文字体,中文字形英文字体没有 → 落到中文字体,再落到兜底。
     // 没设中文字体时 cjkInsert 为空,拼接退化为纯英文链,行为同前(向后兼容)。
-    const uiEn = String(displaySetting?.uiFontFamilyCss ?? displaySetting?.uiFontFamily ?? "").trim();
-    const chatEn = String(displaySetting?.chatFontFamilyCss ?? displaySetting?.chatFontFamily ?? "").trim();
+    const uiEn = String(
+      displaySetting?.uiFontFamilyCss ?? displaySetting?.uiFontFamily ?? "",
+    ).trim();
+    const chatEn = String(
+      displaySetting?.chatFontFamilyCss ?? displaySetting?.chatFontFamily ?? "",
+    ).trim();
     const uiCjk = String(displaySetting?.uiFontFamilyCjkCss ?? "").trim();
     const chatCjk = String(displaySetting?.chatFontFamilyCjkCss ?? "").trim();
-    const uiFont = mergeCjkIntoFamily(uiEn, uiCjk) || "\"Noto Sans SC\", \"Microsoft YaHei\", var(--font-sans)";
+    const uiFont =
+      mergeCjkIntoFamily(uiEn, uiCjk) || '"Noto Sans SC", "Microsoft YaHei", var(--font-sans)';
     const chatFont = mergeCjkIntoFamily(chatEn, chatCjk) || "inherit";
     document.body.style.setProperty("--rikkahub-ui-font", uiFont);
     document.body.style.setProperty("--rikkahub-chat-font", chatFont);
   }, [
-    displaySetting?.chatFontFamily, displaySetting?.chatFontFamilyCss,
-    displaySetting?.uiFontFamily, displaySetting?.uiFontFamilyCss,
-    displaySetting?.uiFontFamilyCjkCss, displaySetting?.chatFontFamilyCjkCss,
+    displaySetting?.chatFontFamily,
+    displaySetting?.chatFontFamilyCss,
+    displaySetting?.uiFontFamily,
+    displaySetting?.uiFontFamilyCss,
+    displaySetting?.uiFontFamilyCjkCss,
+    displaySetting?.chatFontFamilyCjkCss,
   ]);
 
   // Tauri's WebView2 swallows `window.open` and ignores `<a target="_blank">` by default —
@@ -119,7 +154,14 @@ function AppContent() {
   React.useEffect(() => {
     if (typeof document === "undefined") return;
     const handler = (event: MouseEvent) => {
-      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
         return;
       }
       const anchor = (event.target as Element | null)?.closest?.("a");
@@ -136,10 +178,12 @@ function AppContent() {
   return (
     <ThemeProvider defaultTheme="light">
       <TitleBar />
-      <Outlet />
+      <PageTransition>
+        <Outlet />
+      </PageTransition>
       <WebAuthGate />
       <FontFaceInjector />
-      <Toaster position="top-center"/>
+      <Toaster position="top-center" />
       <SilentUpdateChecker />
     </ThemeProvider>
   );
