@@ -1811,48 +1811,48 @@ function ProvidersSection({
               ) : null}
             </div>
           </div>
-          <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
-            <div className="min-w-0 flex-1 space-y-1">
+          <div className="space-y-2 rounded-md border px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
               <span className="text-xs font-medium text-muted-foreground">测试模型</span>
-              <Select value={effectiveTestModelId} onValueChange={setTestModelId}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="先获取模型列表或选择已启用模型" />
-                </SelectTrigger>
-                <SelectContent>
-                  {mergedTestModels.map((model) => (
-                    <SelectItem key={model.id ?? model.modelId} value={model.modelId}>
-                      {model.displayName || model.modelId}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" onClick={test} disabled={testing}>
+                  {testing ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Database className="size-4" />
+                  )}
+                  测试
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    if (!window.confirm(`删除供应商「${draft.name}」？`)) return;
+                    await api.delete(`settings/provider/${encodeURIComponent(draft.id)}`);
+                    const providers = settings.providers.filter((item) => item.id !== draft.id);
+                    onSettings({ ...settings, providers });
+                    setSelectedId(providers[0]?.id ?? "");
+                    toast.success("供应商已删除");
+                  }}
+                  disabled={settings.providers.length <= 1}
+                >
+                  <Trash2 className="size-4" />
+                  删除
+                </Button>
+                <span className="px-2 text-xs text-muted-foreground">已自动保存</span>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={test} disabled={testing}>
-                {testing ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <Database className="size-4" />
-                )}
-                测试
-              </Button>
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  if (!window.confirm(`删除供应商「${draft.name}」？`)) return;
-                  await api.delete(`settings/provider/${encodeURIComponent(draft.id)}`);
-                  const providers = settings.providers.filter((item) => item.id !== draft.id);
-                  onSettings({ ...settings, providers });
-                  setSelectedId(providers[0]?.id ?? "");
-                  toast.success("供应商已删除");
-                }}
-                disabled={settings.providers.length <= 1}
-              >
-                <Trash2 className="size-4" />
-                删除
-              </Button>
-              <div className="flex items-center px-2 text-xs text-muted-foreground">已自动保存</div>
-            </div>
+            <Select value={effectiveTestModelId} onValueChange={setTestModelId}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="先获取模型列表或选择已启用模型" />
+              </SelectTrigger>
+              <SelectContent>
+                {mergedTestModels.map((model) => (
+                  <SelectItem key={model.id ?? model.modelId} value={model.modelId}>
+                    {model.displayName || model.modelId}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-3 rounded-md border p-3">
             <div className="flex items-end justify-between gap-3">
