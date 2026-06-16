@@ -67,6 +67,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { UIAvatar } from "~/components/ui/ui-avatar";
 import { cn } from "~/lib/utils";
 import { openExternal } from "~/lib/external-link";
+import { getSystemInfo } from "~/lib/system-info";
 import api, { appendWebAuthQuery } from "~/services/api";
 import { useSettingsStore } from "~/stores/app-store";
 import type { AsrProviderProfile, AsrProviderType, AssistantAvatar, AssistantProfile, ProviderModel, ProviderProfile, SearchServiceOption, Settings, TtsProviderProfile, TtsProviderType } from "~/types";
@@ -1065,6 +1066,10 @@ function ProvidersSection({ settings, onSettings }: { settings: Settings; onSett
     }
   };
   const fetchModels = async () => {
+    if (!textValue(draft.apiKey).trim()) {
+      toast.error("请先填写 API Key 再获取模型列表");
+      return;
+    }
     setFetchingModels(true);
     try {
       await api.post("settings/provider", draft);
@@ -1090,6 +1095,10 @@ function ProvidersSection({ settings, onSettings }: { settings: Settings; onSett
       return;
     }
     // 空列表：先持久化当前配置（让服务端拿到最新 baseUrl / apiKey），再拉取上游模型
+    if (!textValue(draft.apiKey).trim()) {
+      toast.error("请先填写 API Key 再启用并获取模型列表");
+      return;
+    }
     setFetchingModels(true);
     try {
       await api.post("settings/provider", draft);
@@ -5901,6 +5910,12 @@ function AboutSection() {
 
   const [checking, setChecking] = React.useState(false);
   const [updateInfo, setUpdateInfo] = React.useState<UpdateInfo | null>(null);
+  // 真实系统版本(走 Tauri OS 插件),异步加载。
+  const [systemSummary, setSystemSummary] = React.useState("");
+
+  React.useEffect(() => {
+    void getSystemInfo().then((info) => setSystemSummary(info.summary));
+  }, []);
 
   const checkForUpdate = async () => {
     setChecking(true);
@@ -5916,7 +5931,7 @@ function AboutSection() {
 
   const aboutRows = [
     { label: "版本", value: APP_VERSION, icon: Settings2, onClick: undefined, action: "update" as const },
-    { label: "系统", value: typeof navigator === "undefined" ? "Web" : navigator.userAgent, icon: Smartphone, onClick: undefined, action: undefined },
+    { label: "系统", value: systemSummary || "—", icon: Smartphone, onClick: undefined, action: undefined },
     { label: "官网", value: "https://rikkahub-desktop.pages.dev", icon: Globe, onClick: () => void openExternal("https://rikkahub-desktop.pages.dev/"), action: undefined },
     { label: "GitHub", value: "https://github.com/yuh-G/rikkahub-desktop", icon: Github, onClick: () => void openExternal("https://github.com/yuh-G/rikkahub-desktop"), action: undefined },
     { label: "License", value: "https://github.com/yuh-G/rikkahub-desktop/blob/master/LICENSE", icon: FileClock, onClick: () => void openExternal("https://github.com/yuh-G/rikkahub-desktop/blob/master/LICENSE"), action: undefined },
