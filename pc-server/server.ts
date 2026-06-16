@@ -783,6 +783,17 @@ const SUNSET_TTS_PROVIDER_IDS = new Set<string>([
   "e36b22ef-ca82-40ab-9e70-60cad861911c", // AiHubMix (TTS)
 ]);
 
+// 1.1.1 供应商迁移用的固定 id。改名/补模型走 id 匹配,确保老用户 state 也生效。
+const TENCENT_PROVIDER_ID = "ef5d149b-8e34-404b-818c-6ec242e5c3c5";
+const NA_API_PROVIDER_ID = "e7a2b5c3-8f4d-4e6a-9b1c-3d5f7e8a2c04";
+// 钠API 预置模型。仅当老用户从未配置过钠API(其 models 为空)时补上,已自定义的不覆盖。
+const NA_API_PRESET_MODELS = [
+  "claude-opus-4-6",
+  "gpt-5.5",
+  "deepseek-ai/DeepSeek-V4-Flash",
+  "deepseek-ai/DeepSeek-V4-Pro",
+];
+
 function defaultProviders(): Provider[] {
   return [
     provider({
@@ -808,6 +819,14 @@ function defaultProviders(): Provider[] {
       models: [model("gpt-4.1"), model("gpt-4.1-mini"), model("gpt-4o-mini")],
     }),
     provider({
+      id: "b2c7e1a4-9f3d-4a6e-8c1b-5d7f9e2a3b14",
+      type: "claude",
+      name: "Anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      shortDescription: "Anthropic Claude 原生 API",
+      models: [model("claude-opus-4-6"), model("claude-sonnet-4-6"), model("claude-haiku-4-5-20251001")],
+    }),
+    provider({
       id: "6ab18148-c138-4394-a46f-1cd8c8ceaa6d",
       type: "google",
       name: "Gemini",
@@ -816,19 +835,38 @@ function defaultProviders(): Provider[] {
       shortDescription: "Google Gemini API",
       models: [model("gemini-2.5-flash"), model("gemini-2.5-pro")],
     }),
-    provider({
-      id: "56a94d29-c88b-41c5-8e09-38a7612d6cf8",
-      name: "硅基流动",
-      baseUrl: "https://api.siliconflow.cn/v1",
-      shortDescription: "SiliconFlow OpenAI-compatible API",
-      balanceOption: { enabled: true, apiPath: "/user/info", resultPath: "data.totalBalance" },
-    }),
+    provider({ id: "ff3cde7e-0f65-43d7-8fb2-6475c99f5990", name: "xAI", baseUrl: "https://api.x.ai/v1", useResponseApi: true }),
     provider({
       id: "f099ad5b-ef03-446d-8e78-7e36787f780b",
       name: "DeepSeek",
       baseUrl: "https://api.deepseek.com/v1",
       shortDescription: "DeepSeek official API",
       balanceOption: { enabled: true, apiPath: "/user/balance", resultPath: "balance_infos[0].total_balance" },
+    }),
+    provider({ id: "f76cae46-069a-4334-ab8e-224e4979e58c", name: "阿里云百炼", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" }),
+    provider({ id: "3dfd6f9b-f9d9-417f-80c1-ff8d77184191", name: "火山引擎", baseUrl: "https://ark.cn-beijing.volces.com/api/v3" }),
+    provider({ id: "ef5d149b-8e34-404b-818c-6ec242e5c3c5", name: "腾讯混元", baseUrl: "https://api.hunyuan.cloud.tencent.com/v1" }),
+    provider({ id: "3bc40dc1-b11a-46fa-863b-6306971223be", name: "智谱AI开放平台", baseUrl: "https://open.bigmodel.cn/api/paas/v4" }),
+    provider({
+      id: "d6c4d8c6-3f62-4ca9-a6f3-7ade6b15ecc3",
+      name: "月之暗面",
+      baseUrl: "https://api.moonshot.cn/v1",
+      balanceOption: { enabled: true, apiPath: "/users/me/balance", resultPath: "data.available_balance" },
+    }),
+    provider({ id: "f4f8870e-82d3-495b-9b64-d58e508b3b2c", name: "阶跃星辰", baseUrl: "https://api.stepfun.com/v1" }),
+    provider({
+      id: "e7a2b5c3-8f4d-4e6a-9b1c-3d5f7e8a2c04",
+      name: "钠API",
+      baseUrl: "https://naapi.cc/v1",
+      shortDescription: "钠 API 提供 ChatGPT、Claude、Gemini 等 100+ 全球顶级模型接口",
+      description: "钠 API 提供 ChatGPT、Claude、Gemini 等 100+ 全球顶级模型接口,Focusing on competitive pricing and superior stability.",
+      balanceOption: { enabled: true, apiPath: "/credits", resultPath: "data.total_credits" },
+      models: [
+        model("claude-opus-4-6"),
+        model("gpt-5.5"),
+        model("deepseek-ai/DeepSeek-V4-Flash"),
+        model("deepseek-ai/DeepSeek-V4-Pro"),
+      ],
     }),
     provider({
       id: "d5734028-d39b-4d41-9841-fd648d65440e",
@@ -844,25 +882,12 @@ function defaultProviders(): Provider[] {
       shortDescription: "Vercel AI Gateway",
       balanceOption: { enabled: true, apiPath: "/credits", resultPath: "balance" },
     }),
-    provider({ id: "f76cae46-069a-4334-ab8e-224e4979e58c", name: "阿里云百炼", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" }),
-    provider({ id: "3dfd6f9b-f9d9-417f-80c1-ff8d77184191", name: "火山引擎", baseUrl: "https://ark.cn-beijing.volces.com/api/v3" }),
     provider({
-      id: "d6c4d8c6-3f62-4ca9-a6f3-7ade6b15ecc3",
-      name: "月之暗面",
-      baseUrl: "https://api.moonshot.cn/v1",
-      balanceOption: { enabled: true, apiPath: "/users/me/balance", resultPath: "data.available_balance" },
-    }),
-    provider({ id: "3bc40dc1-b11a-46fa-863b-6306971223be", name: "智谱AI开放平台", baseUrl: "https://open.bigmodel.cn/api/paas/v4" }),
-    provider({ id: "f4f8870e-82d3-495b-9b64-d58e508b3b2c", name: "阶跃星辰", baseUrl: "https://api.stepfun.com/v1" }),
-    provider({ id: "ef5d149b-8e34-404b-818c-6ec242e5c3c5", name: "腾讯Hunyuan", baseUrl: "https://api.hunyuan.cloud.tencent.com/v1" }),
-    provider({ id: "ff3cde7e-0f65-43d7-8fb2-6475c99f5990", name: "xAI", baseUrl: "https://api.x.ai/v1", useResponseApi: true }),
-    provider({
-      id: "e7a2b5c3-8f4d-4e6a-9b1c-3d5f7e8a2c04",
-      name: "钠API",
-      baseUrl: "https://naapi.cc/v1",
-      shortDescription: "钠 API 提供 ChatGPT、Claude、Gemini 等 100+ 全球顶级模型接口",
-      description: "钠 API 提供 ChatGPT、Claude、Gemini 等 100+ 全球顶级模型接口,Focusing on competitive pricing and superior stability.",
-      balanceOption: { enabled: true, apiPath: "/credits", resultPath: "data.total_credits" },
+      id: "56a94d29-c88b-41c5-8e09-38a7612d6cf8",
+      name: "硅基流动",
+      baseUrl: "https://api.siliconflow.cn/v1",
+      shortDescription: "SiliconFlow OpenAI-compatible API",
+      balanceOption: { enabled: true, apiPath: "/user/info", resultPath: "data.totalBalance" },
     }),
   ];
 }
@@ -1129,6 +1154,18 @@ function normalizeState(input: Partial<State>): State {
   normalized.settings.providers = normalized.settings.providers.filter(
     (providerItem) => !SUNSET_PROVIDER_IDS.has(providerItem.id) || String(providerItem.apiKey ?? "").trim() !== "",
   );
+  // 1.1.1 供应商迁移:
+  // (a) 腾讯 Hunyuan 改名为"腾讯混元"(mergeById 保留老 name,这里强制按 id 改名,配置不变)。
+  // (b) 钠API 给从未配置过的老用户(models 为空)补上预置模型;已自定义 models 的不覆盖。
+  normalized.settings.providers = normalized.settings.providers.map((providerItem) => {
+    if (providerItem.id === TENCENT_PROVIDER_ID) {
+      return { ...providerItem, name: "腾讯混元" };
+    }
+    if (providerItem.id === NA_API_PROVIDER_ID && (providerItem.models ?? []).length === 0) {
+      return { ...providerItem, models: NA_API_PRESET_MODELS.map((mid) => model(mid)) };
+    }
+    return providerItem;
+  });
   normalized.settings.searchServices = normalized.settings.searchServices?.length
     ? normalized.settings.searchServices
     : defaults.searchServices;
@@ -8929,7 +8966,7 @@ const iconRules: Array<[RegExp, string]> = [
   [/zhipu|智谱|glm/i, "zhipu-color.svg"],
   [/mistral/i, "mistral-color.svg"],
   [/meta\b|(?<!o)llama/i, "meta-color.svg"],
-  [/hunyuan|tencent/i, "hunyuan-color.svg"],
+  [/hunyuan|tencent|腾讯混元/i, "hunyuan-color.svg"],
   [/gemma/i, "gemma-color.svg"],
   [/perplexity/i, "perplexity-color.svg"],
   [/aliyun|阿里云|百炼/i, "alibabacloud-color.svg"],
