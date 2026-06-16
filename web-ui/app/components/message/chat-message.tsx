@@ -1022,7 +1022,7 @@ export const ChatMessage = React.memo(
               className={cn(
                 "flex flex-col gap-2 text-sm leading-6 transition-all duration-200",
                 isUser
-                  ? "max-w-[85%] rounded-2xl rounded-tr-md bg-card px-4 py-3 text-foreground shadow-card hover:-translate-x-0.5 hover:shadow-elevated"
+                  ? "max-w-[85%] rounded-2xl rounded-tr-md border border-border/30 bg-card px-4 py-3 text-foreground shadow-card hover:-translate-x-0.5 hover:shadow-elevated"
                   : showAssistantBubble
                     ? "w-fit max-w-[92%] rounded-2xl border border-border/40 bg-muted/40 px-3 py-2 shadow-sm hover:bg-muted/60"
                     : "w-full hover:bg-muted/20",
