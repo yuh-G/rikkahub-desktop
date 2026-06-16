@@ -2269,6 +2269,7 @@ function SearchSection({ settings, onSettings }: { settings: Settings; onSetting
   const [testing, setTesting] = React.useState(false);
   const [testResult, setTestResult] = React.useState("");
   const dirtyRef = React.useRef(false);
+  const { t } = useTranslation();
 
   React.useEffect(() => {
     const next = (settings.searchServices.find((item) => String(item.id) === selectedId) ?? settings.searchServices[0]) as Record<string, unknown> | undefined;
@@ -2304,7 +2305,7 @@ function SearchSection({ settings, onSettings }: { settings: Settings; onSetting
       : [...settings.searchServices, savedService];
     onSettings({ ...settings, searchServices, searchServiceSelected: searchServices.findIndex((item) => String(item.id) === String(savedService.id)) });
     setSelectedId(String(savedService.id));
-    toast.success("搜索服务已保存");
+    toast.success(t("settings:search.saved"));
   };
   React.useEffect(() => {
     if (!dirtyRef.current) return;
@@ -2319,7 +2320,7 @@ function SearchSection({ settings, onSettings }: { settings: Settings; onSetting
             : [...settings.searchServices, savedService];
           onSettings({ ...settings, searchServices });
         })
-        .catch((error: Error) => toast.error(error.message || "自动保存搜索服务失败"));
+        .catch((error: Error) => toast.error(error.message || t("settings:search.autosave_failed")));
     }, 700);
     return () => window.clearTimeout(timer);
   }, [draft, onSettings, settings]);
@@ -2333,22 +2334,22 @@ function SearchSection({ settings, onSettings }: { settings: Settings; onSetting
         setDraft(savedService as unknown as Record<string, unknown>);
         setSelectedId(String(savedService.id));
         setTestResult("");
-        toast.success("搜索服务已添加");
+        toast.success(t("settings:search.added"));
       })
-      .catch((error: Error) => toast.error(error.message || "添加搜索服务失败"));
+      .catch((error: Error) => toast.error(error.message || t("settings:search.add_failed")));
   };
   const test = async () => {
     setTesting(true);
-    setTestResult("正在保存配置并发起搜索服务测试...");
+    setTestResult(t("settings:search.testing_start"));
     try {
       await save();
       const result = await api.post<{ endpoint: string; preview: string }>("settings/search/service/test", draft);
-      setTestResult(`测试成功\n端点: ${result.endpoint}\n\n${result.preview}`);
-      toast.success("搜索服务测试成功");
+      setTestResult(t("settings:search.test_success", { endpoint: result.endpoint, preview: result.preview }));
+      toast.success(t("settings:search.test_ok"));
       // Refresh settings so the "已通过测试" badge updates (server marks testPassed on success).
       onSettings(await api.get<Settings>("settings"));
     } catch (error) {
-      const message = error instanceof Error ? error.message : "测试失败";
+      const message = error instanceof Error ? error.message : t("settings:search.test_failed");
       setTestResult(message);
       toast.error(message);
     } finally {
@@ -2356,22 +2357,22 @@ function SearchSection({ settings, onSettings }: { settings: Settings; onSetting
     }
   };
   const remove = async () => {
-    if (!window.confirm(`删除搜索服务「${textValue(draft.name) || textValue(draft.type)}」？`)) return;
+    if (!window.confirm(t("settings:search.delete_confirm", { name: textValue(draft.name) || textValue(draft.type) }))) return;
     await api.delete(`settings/search/service/${encodeURIComponent(String(draft.id))}`);
     const searchServices = settings.searchServices.filter((item) => String(item.id) !== String(draft.id));
     onSettings({ ...settings, searchServices, searchServiceSelected: 0 });
     setSelectedId(String(searchServices[0]?.id ?? ""));
-    toast.success("搜索服务已删除");
+    toast.success(t("settings:search.deleted"));
   };
 
   return (
     <>
-      <SectionHeader icon={Search} title="搜索服务" subtitle="默认包含 Bing 和 RikkaHub，并保留 Tavily、Exa、智谱等模板。" />
+      <SectionHeader icon={Search} title={t("settings:search.title")} subtitle={t("settings:search.subtitle")} />
       <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
         <div className="space-y-2 rounded-lg border bg-card p-2">
           <Button className="w-full justify-start" variant="outline" onClick={addService}>
             <Plus className="size-4" />
-            添加搜索服务
+            {t("settings:search.add")}
           </Button>
           {settings.searchServices.map((service, index) => (
             <SortableRow
@@ -2394,7 +2395,7 @@ function SearchSection({ settings, onSettings }: { settings: Settings; onSetting
                         <span
                           aria-hidden
                           className={cn("size-2 shrink-0 rounded-full", passed ? "bg-emerald-500" : "bg-muted-foreground/40")}
-                          title={passed ? (isPreset ? "预置可用" : "已通过测试") : "未通过测试"}
+                          title={passed ? (isPreset ? t("settings:search.preset_ok") : t("settings:search.passed")) : t("settings:search.not_passed")}
                         />
                       );
                     })()}
@@ -2402,7 +2403,7 @@ function SearchSection({ settings, onSettings }: { settings: Settings; onSetting
                   </span>
                   <span className="block truncate text-xs text-muted-foreground">{textValue(service.type) || JSON.stringify(service)}</span>
                 </span>
-                {index === settings.searchServiceSelected ? <span className="shrink-0 text-xs text-primary">当前</span> : null}
+                {index === settings.searchServiceSelected ? <span className="shrink-0 text-xs text-primary">{t("settings:search.current")}</span> : null}
               </span>
             </SortableRow>
           ))}
@@ -2411,17 +2412,17 @@ function SearchSection({ settings, onSettings }: { settings: Settings; onSetting
           <div className="flex items-center gap-3">
             <AIIcon name={searchServiceLabelForType(textValue(draft.type))} size={40} />
             <div>
-              <div className="text-lg font-medium">{textValue(draft.name) || searchServiceLabelForType(textValue(draft.type)) || "搜索服务"}</div>
+              <div className="text-lg font-medium">{textValue(draft.name) || searchServiceLabelForType(textValue(draft.type)) || t("settings:search.service_default")}</div>
               <div className="text-xs text-muted-foreground">{textValue(draft.type) || "custom"}</div>
             </div>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-2">
-              <span className="text-sm font-medium">名称</span>
+              <span className="text-sm font-medium">{t("settings:search.name")}</span>
               <Input value={textValue(draft.name)} onChange={(event) => patchDraft({ name: event.target.value })} />
             </label>
             <label className="space-y-2">
-              <span className="text-sm font-medium">类型</span>
+              <span className="text-sm font-medium">{t("settings:search.type")}</span>
               <Select
                 value={textValue(draft.type) || "tavily"}
                 onValueChange={(type) => {
@@ -2507,7 +2508,7 @@ function SearchSection({ settings, onSettings }: { settings: Settings; onSetting
               </>
             ) : null}
             <label className="space-y-2">
-              <span className="text-sm font-medium">深度</span>
+              <span className="text-sm font-medium">{t("settings:search.depth")}</span>
               <Select value={textValue(draft.depth) || "standard"} onValueChange={(depth) => patchDraft({ depth })}>
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -2520,7 +2521,7 @@ function SearchSection({ settings, onSettings }: { settings: Settings; onSetting
               </Select>
             </label>
             <label className="space-y-2">
-              <span className="text-sm font-medium">结果数量</span>
+              <span className="text-sm font-medium">{t("settings:search.result_count")}</span>
               <Input
                 value={numberText(draft.resultSize ?? ((settings.searchCommonOptions as Record<string, unknown> | undefined)?.resultSize))}
                 onChange={(event) => patchDraft({ resultSize: Number(event.target.value) || 10 })}
@@ -2530,13 +2531,13 @@ function SearchSection({ settings, onSettings }: { settings: Settings; onSetting
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={test} disabled={testing}>
               {testing ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
-              测试
+              {t("settings:search.test")}
             </Button>
             <Button variant="outline" onClick={remove} disabled={!settings.searchServices.some((item) => String(item.id) === String(draft.id))}>
               <Trash2 className="size-4" />
-              删除
+              {t("settings:search.delete")}
             </Button>
-            <div className="flex items-center px-2 text-xs text-muted-foreground">已自动保存</div>
+            <div className="flex items-center px-2 text-xs text-muted-foreground">{t("settings:search.autosaved")}</div>
           </div>
           {testResult ? <pre className="max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">{testResult}</pre> : null}
         </div>
