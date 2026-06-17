@@ -80,7 +80,7 @@ const dashboardHtml = `<!DOCTYPE html>
   .seg button:hover { color: var(--text); }
   .seg button.active { background: var(--indigo-dim); color: var(--indigo); }
   .filterbar select { background: rgba(255,255,255,0.03); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 6px 28px 6px 11px; font-family: inherit; font-size: 12px; cursor: pointer; appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); background-repeat: no-repeat; background-position: right 9px center; }
-  .filter-summary { margin-left: auto; font-size: 11.5px; color: var(--text-dim); font-family: 'JetBrains Mono',monospace; }
+  .filter-summary { margin-left: auto; font-size: 11.5px; color: var(--text-dim); font-family: 'JetBrains Mono',monospace; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* Section nav */
   .section-nav { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 22px; }
