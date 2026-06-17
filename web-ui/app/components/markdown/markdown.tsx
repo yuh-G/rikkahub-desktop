@@ -124,100 +124,118 @@ export default function Markdown({
     [allowCodePreview, t, workbench],
   );
 
+  // Streamdown 的 custom components 提到 useMemo:流式输出时 Markdown 每个 token delta 都会
+  // re-render,内联的 components 对象每次都是新引用,Streamdown 内部 memo 失效、重建自定义
+  // 组件实例。稳定引用后只在实际依赖(displaySetting/workbench/citation 等)变化时才重建。
+  // 返回类型从 Streamdown 自身推断,避免函数参数失去上下文变成隐式 any。
+  const components = React.useMemo<
+    NonNullable<Parameters<typeof Streamdown>[0]["components"]>
+  >(
+    () => ({
+      pre: ({ children }) => <>{children}</>,
+      code: ({ className, children, ...props }) => {
+        const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
+        const code = String(children).replace(/\n$/, "");
+        const isBlock = code.includes("\n");
+
+        if (match || isBlock) {
+          const language = match?.[1] || "";
+          return (
+            <CodeBlock
+              language={language}
+              code={code}
+              showLineNumbers={displaySetting?.showLineNumbers ?? false}
+              wrapLines={displaySetting?.codeBlockAutoWrap ?? false}
+              onPreview={
+                allowCodePreview && workbench
+                  ? () => {
+                      handlePreviewCode(language, code);
+                    }
+                  : undefined
+              }
+            />
+          );
+        }
+
+        return (
+          <code className="inline-code" {...props}>
+            {children}
+          </code>
+        );
+      },
+      a: ({ href, children, ...props }) => {
+        const childText = getNodeText(children).trim();
+
+        // Citation format: [citation,domain](id)
+        if (childText.startsWith("citation,")) {
+          const domain = childText.substring("citation,".length);
+          const id = (href || "").trim().replace(/^s/i, "");
+          // Prefer the ordinal (1-based position) from the message's annotation/tool-output
+          // list — that's the user-facing "[1]" / "[2]" label they expect. Falls back to
+          // the raw id (e.g. Android's 6-char hex `8905cd`) if no mapping is available.
+          const ordinal = citationOrdinalMap?.get(id);
+          const displayId = ordinal !== undefined ? String(ordinal) : id.replace(/^s/i, "");
+
+          if (id && onClickCitation) {
+            return (
+              <button
+                type="button"
+                className="citation-badge"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onClickCitation?.(id);
+                }}
+                title={domain}
+              >
+                {displayId || domain.replace(/^s/i, "")}
+              </button>
+            );
+          }
+
+          if (href) {
+            return (
+              <a
+                className="citation-badge"
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={domain}
+                {...props}
+              >
+                {displayId || domain}
+              </a>
+            );
+          }
+        }
+
+        return (
+          <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+            {children}
+          </a>
+        );
+      },
+    }),
+    [
+      displaySetting,
+      workbench,
+      allowCodePreview,
+      handlePreviewCode,
+      citationOrdinalMap,
+      onClickCitation,
+    ],
+  );
+
   return (
     <div className={cn("markdown", className)}>
       <Streamdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex, rehypeRaw]}
         plugins={{ cjk: cjk }}
-        animated={{ animation: "fadeIn", sep: "word", duration: 150 }}
+        animated={false}
         isAnimating={isAnimating}
         controls={{ code: false, mermaid: false }}
-        components={{
-          pre: ({ children }) => <>{children}</>,
-          code: ({ className, children, ...props }) => {
-            const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
-            const code = String(children).replace(/\n$/, "");
-            const isBlock = code.includes("\n");
-
-            if (match || isBlock) {
-              const language = match?.[1] || "";
-              return (
-                <CodeBlock
-                  language={language}
-                  code={code}
-                  showLineNumbers={displaySetting?.showLineNumbers ?? false}
-                  wrapLines={displaySetting?.codeBlockAutoWrap ?? false}
-                  onPreview={
-                    allowCodePreview && workbench
-                      ? () => {
-                          handlePreviewCode(language, code);
-                        }
-                      : undefined
-                  }
-                />
-              );
-            }
-
-            return (
-              <code className="inline-code" {...props}>
-                {children}
-              </code>
-            );
-          },
-          a: ({ href, children, ...props }) => {
-            const childText = getNodeText(children).trim();
-
-            // Citation format: [citation,domain](id)
-            if (childText.startsWith("citation,")) {
-              const domain = childText.substring("citation,".length);
-              const id = (href || "").trim().replace(/^s/i, "");
-              // Prefer the ordinal (1-based position) from the message's annotation/tool-output
-              // list — that's the user-facing "[1]" / "[2]" label they expect. Falls back to
-              // the raw id (e.g. Android's 6-char hex `8905cd`) if no mapping is available.
-              const ordinal = citationOrdinalMap?.get(id);
-              const displayId = ordinal !== undefined ? String(ordinal) : id.replace(/^s/i, "");
-
-              if (id && onClickCitation) {
-                return (
-                  <button
-                    type="button"
-                    className="citation-badge"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      onClickCitation?.(id);
-                    }}
-                    title={domain}
-                  >
-                    {displayId || domain.replace(/^s/i, "")}
-                  </button>
-                );
-              }
-
-              if (href) {
-                return (
-                  <a
-                    className="citation-badge"
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title={domain}
-                    {...props}
-                  >
-                    {displayId || domain}
-                  </a>
-                );
-              }
-            }
-
-            return (
-              <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                {children}
-              </a>
-            );
-          },
-        }}
+        components={components}
       >
         {processedContent}
       </Streamdown>

@@ -103,9 +103,11 @@ export function ReasoningStepPart({
   React.useEffect(() => {
     setDuration(formatDuration(reasoning.createdAt, reasoning.finishedAt));
     if (!loading) return;
+    // 500ms 刷新足够(显示精度 0.1s,肉眼无差);原 100ms(10fps)会让推理消息持续
+    // 高频重渲染 + Markdown 重解析,是思考过程卡顿的放大器。
     const id = setInterval(() => {
       setDuration(formatDuration(reasoning.createdAt, reasoning.finishedAt));
-    }, 100);
+    }, 500);
     return () => clearInterval(id);
   }, [loading, reasoning.createdAt, reasoning.finishedAt]);
 
