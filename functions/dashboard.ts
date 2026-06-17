@@ -79,7 +79,8 @@ const dashboardHtml = `<!DOCTYPE html>
   .seg button { background: transparent; border: 0; color: var(--text-muted); font-family: inherit; font-size: 12px; font-weight: 500; padding: 5px 11px; border-radius: 5px; cursor: pointer; transition: all 0.15s ease; white-space: nowrap; }
   .seg button:hover { color: var(--text); }
   .seg button.active { background: var(--indigo-dim); color: var(--indigo); }
-  .filterbar select { background: rgba(255,255,255,0.03); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 6px 28px 6px 11px; font-family: inherit; font-size: 12px; cursor: pointer; appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); background-repeat: no-repeat; background-position: right 9px center; }
+  .filterbar select { background: rgba(255,255,255,0.03); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 6px 28px 6px 11px; font-family: inherit; font-size: 12px; cursor: pointer; appearance: none; -webkit-appearance: none; color-scheme: dark; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); background-repeat: no-repeat; background-position: right 9px center; }
+  .filterbar select option { background: #1a1a28; color: var(--text); }
   .filter-summary { margin-left: auto; font-size: 11.5px; color: var(--text-dim); font-family: 'JetBrains Mono',monospace; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* Section nav */
@@ -202,6 +203,7 @@ const dashboardHtml = `<!DOCTYPE html>
       <div class="updated"><span class="live-dot"></span><span id="updated">--:--</span></div>
       <button class="icon-btn" id="refresh-btn" title="刷新"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></button>
       <div class="range" id="range">
+        <button data-d="1">今日</button>
         <button data-d="7">7 天</button>
         <button data-d="14">14 天</button>
         <button data-d="30" class="active">30 天</button>
@@ -352,28 +354,24 @@ function card(title, desc, legend, body, actions) {
 function renderOverview(d) {
   const t = d.trends || [];
   const today = t[t.length-1] || {};
-  const pop = d.pop || {};
   const ar = d.avgRetention || {};
   const pct = d.percentiles || {};
   const churn = d.churn || {};
 
-  // 本期汇总(从日趋势求和)
-  const sumNew = t.reduce((s,x)=>s+(x.new_users||0),0);
-  const sumMsgs = t.reduce((s,x)=>s+(x.total_msgs||0),0);
-  const sumDau = t.reduce((s,x)=>s+(x.dau||0),0);
-  const avgDau = t.length ? sumDau/t.length : 0;
+  // 本期净增(累计用户卡的副文案)
   const netAdd = (d.growth && d.growth.length) ? ((d.growth[d.growth.length-1].total||0) - (d.growth[Math.max(0,d.growth.length-t.length)].total||0)) : 0;
 
   let html = '<div class="section' + (activeSection==='overview'?' on':'') + '" id="sec-overview">';
 
-  // KPI 卡(带 sparkline + 环比)
+  // KPI 卡:当日快照(最新一天)+ sparkline + 较昨日
   const dauArr = t.map(x=>x.dau);
   const newArr = t.map(x=>x.new_users);
-  const msgArr = t.map(x=>x.total_msgs);
+  const yDau = (t[t.length-2]||{}).dau;
+  const yNew = (t[t.length-2]||{}).new_users;
   html += '<div class="kpis">';
-  html += kpi('日均 DAU', fmt(Math.round(avgDau)), '本期 ' + t.length + ' 天均值' + info('日均活跃设备数(去重)。环比 = 本期均值 ÷ 等长上期均值。'), sparkline(dauArr,'#818cf8'), pctDelta(avgDau, (pop.prevUserDays||0)/Math.max(1,t.length)));
-  html += kpi('新增用户', fmt(sumNew), '本期首次出现设备' + info('周期内 first_seen 设备总数。环比 = 本期 ÷ 等长上期。'), sparkline(newArr,'#f472b6'), pctDelta(sumNew, pop.prevNew||0));
-  html += kpi('月活 MAU', fmt(d.mau), '近 30 天去重 · DAU/MAU ' + fmtPct(d.stickinessMau) + info('月活=最近 30 天出现过的去重设备;DAU/MAU 即"粘性比",越高说明月内回访越频繁。'), '', '');
+  html += kpi('当日日活', fmt(today.dau), '较昨日' + info('最新一天的活跃设备数(去重)。卡片始终是"最新日"快照,图表则展示所选范围的逐日趋势。'), sparkline(dauArr,'#818cf8'), pctDelta(today.dau||0, yDau));
+  html += kpi('当日新增', fmt(today.new_users), '较昨日' + info('最新一天首次出现的设备数。'), sparkline(newArr,'#f472b6'), pctDelta(today.new_users||0, yNew));
+  html += kpi('周活 / 月活', fmt(d.wau) + ' <span style="font-weight:400;color:var(--text-dim);font-size:18px"> / </span>' + fmt(d.mau), 'DAU/WAU ' + fmtPct(d.stickinessWau) + ' · DAU/MAU ' + fmtPct(d.stickinessMau) + info('周活=近 7 天、月活=近 30 天出现过的去重设备;DAU/MAU 即"粘性比",越高月内回访越频繁。'), '', '');
   html += kpi('累计用户', fmt(d.totalUsers), (currentSegment==='all' ? '本期净增 ' + fmt(netAdd) : '所选用户群设备数') + info('历史出现过的不重复设备总数。用户群筛选下变为该群的设备数。'), '', '');
   html += '</div>';
 
@@ -406,13 +404,25 @@ function renderOverview(d) {
     null, (d.growth&&d.growth.length)?'<div class="chart-wrap"><canvas id="growth-chart"></canvas></div>':emptyState('无数据'));
   html += '</div>';
 
-  // 参与度(中位/P90/均值)+ 消息总量
+  // 日均消息(人均) + 每日消息总量
   html += '<div class="grid two">';
-  html += card('参与度分布', '近 ' + t.length + ' 天活跃用户当日消息数' + info('中位数=典型用户强度;均值被重度用户拉高;P90 反映头部。'),
-    null, pct.count ? '<div class="chart-wrap"><canvas id="pct-chart"></canvas></div>' : emptyState('无活跃样本'),
-    '<button class="csv-btn" id="csv-pct">'+CSV_ICON+'分位</button>');
+  html += card('活跃用户日均消息', '当日消息总数 ÷ 有效日活' + info('每个发过消息的用户当天平均发多少条;反映单用户参与强度,比"全员均值"更准。'),
+    null, '<div class="chart-wrap"><canvas id="avg-chart"></canvas></div>');
   html += card('每日消息总量', '所有活跃用户当日累计',
     null, '<div class="chart-wrap"><canvas id="msg-chart"></canvas></div>');
+  html += '</div>';
+
+  // 消息数分布(近 7 天分桶,全宽)+ 参与度分位
+  html += '<div class="grid two">';
+  html += card('消息数分布(近 7 天)', '按当日发送消息数给活跃设备分桶' + info('看用户里"仅启动/轻度/常规/重度"各占多少,判断整体参与质量。中位数/P90 在「用户」章节。'),
+    null, depthTotal>0 ? '<div class="chart-wrap short"><canvas id="ov-depth-chart"></canvas></div>' : emptyState('近 7 天无数据'),
+    '<button class="csv-btn" id="csv-depth">'+CSV_ICON+'导出</button>');
+  html += card('参与度强度', '近 ' + t.length + ' 天活跃用户当日消息数' + info('中位数=典型用户强度;均值被重度用户拉高;P90=前 10% 重度用户。'),
+    null, pct.count ?
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;padding:6px 0;text-align:center">'+
+      big('中位数', fmt(pct.median),'var(--indigo)')+big('均值', fmt(pct.mean),'var(--violet)')+big('P90', fmt(pct.p90),'var(--amber)')+
+    '</div><div style="font-size:11px;color:var(--text-dim);margin-top:8px">样本 '+fmt(pct.count)+' 条/日记录</div>' :
+    emptyState('无活跃样本'));
   html += '</div>';
 
   html += '</div>';
@@ -633,10 +643,16 @@ function drawCharts(d) {
       const step = Math.max(1, Math.ceil(g.length/12));
       new Chart(growC, { type:'line', data:{ labels:g.map(p=>p.date.slice(5).replace('-','/')), datasets:[{ label:'累计', data:g.map(p=>p.total), borderColor:'#a78bfa', backgroundColor:grad, fill:true, tension:0.3, pointRadius:0, pointHoverRadius:4, borderWidth:2 }] }, options:{ ...base, scales:{ ...base.scales, x:{ ...base.scales.x, ticks:{ ...base.scales.x.ticks, callback:function(v,i){ return i%step===0?this.getLabelForValue(v):''; } } } } } });
     }
-    const pctC = document.getElementById('pct-chart');
-    if (pctC && d.percentiles && d.percentiles.count) {
-      const depth = d.depth || {};
-      new Chart(pctC, { type:'bar', data:{ labels:['0 条(仅启动)','1–5(轻度)','6–20(常规)','20+(重度)'], datasets:[{ data:[depth.b0||0,depth.b1_5||0,depth.b6_20||0,depth.b20p||0], backgroundColor:['rgba(113,113,122,0.6)','rgba(251,191,36,0.7)','rgba(52,211,153,0.7)','rgba(129,140,248,0.85)'], borderRadius:4, barPercentage:0.7 }] }, options:{ ...base, indexAxis:'y', scales:{ x: base.scales.y, y:{ ticks:{ color:'#a1a1aa', font:{ family:fam, size:11 }, padding:8 }, grid:{ display:false }, border:{ display:false } } } } });
+    const depthC = document.getElementById('ov-depth-chart');
+    if (depthC && d.depth) {
+      const depth = d.depth;
+      new Chart(depthC, { type:'bar', data:{ labels:['0 条(仅启动)','1–5 条(轻度)','6–20 条(常规)','20+ 条(重度)'], datasets:[{ data:[depth.b0||0,depth.b1_5||0,depth.b6_20||0,depth.b20p||0], backgroundColor:['rgba(113,113,122,0.6)','rgba(251,191,36,0.7)','rgba(52,211,153,0.7)','rgba(129,140,248,0.85)'], borderRadius:4, barPercentage:0.7 }] }, options:{ ...base, indexAxis:'y', scales:{ x: base.scales.y, y:{ ticks:{ color:'#a1a1aa', font:{ family:fam, size:11 }, padding:8 }, grid:{ display:false }, border:{ display:false } } } } });
+    }
+    const avgC = document.getElementById('avg-chart');
+    if (avgC) {
+      const ctx = avgC.getContext('2d'); const grad = ctx.createLinearGradient(0,0,0,280); grad.addColorStop(0,'rgba(167,139,250,0.25)'); grad.addColorStop(1,'rgba(167,139,250,0)');
+      const avgPerDay = t.map(x => { const eff = x.eff_dau||0; return eff>0 ? Math.round((x.total_msgs||0)/eff*10)/10 : 0; });
+      new Chart(avgC, { type:'line', data:{ labels, datasets:[{ label:'人均消息', data: avgPerDay, borderColor:'#a78bfa', backgroundColor:grad, fill:true, tension:0.35, pointRadius:0, pointHoverRadius:5, borderWidth:2 }] }, options: base });
     }
     const msgC = document.getElementById('msg-chart');
     if (msgC) new Chart(msgC, { type:'bar', data:{ labels, datasets:[{ label:'消息', data:t.map(x=>x.total_msgs), backgroundColor:'rgba(56,189,248,0.7)', borderRadius:4, barPercentage:0.7, categoryPercentage:0.75 }] }, options: base });
@@ -697,8 +713,8 @@ function bindDynamic() {
   if (ma) ma.addEventListener('change', e => { showMA = e.target.checked; writeHash(); if (lastData) render(lastData); });
   const search = document.getElementById('user-search');
   if (search) search.addEventListener('input', e => { const q = e.target.value.trim().toLowerCase(); document.querySelectorAll('#users-table tbody tr').forEach(tr => { tr.style.display = (!q || tr.dataset.key.indexOf(q)>=0) ? '' : 'none'; }); });
-  const cp = document.getElementById('csv-pct');
-  if (cp) cp.addEventListener('click', () => { const dd = lastData.depth||{}; exportCSV('engagement.csv', [['分桶','数量'],['0条',dd.b0||0],['1-5',dd.b1_5||0],['6-20',dd.b6_20||0],['20+',dd.b20p||0]]); });
+  const cp = document.getElementById('csv-depth');
+  if (cp) cp.addEventListener('click', () => { const dd = lastData.depth||{}; exportCSV('message-distribution.csv', [['分桶','数量'],['0 条(仅启动)',dd.b0||0],['1-5 条(轻度)',dd.b1_5||0],['6-20 条(常规)',dd.b6_20||0],['20+ 条(重度)',dd.b20p||0]]); });
   const cu = document.getElementById('csv-users');
   if (cu) cu.addEventListener('click', () => { const rows = [['设备ID','系统','版本','首次出现','最近活跃','活跃天数','累计消息']]; (lastData.recentUsers||[]).forEach(u => rows.push([u.device_id,u.os,u.version,u.first_date,u.last_date,u.active_days,u.total_msgs])); exportCSV('users.csv', rows); });
 }
