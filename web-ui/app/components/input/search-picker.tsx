@@ -132,7 +132,7 @@ function getServiceLabel(service: SearchServiceOption, t: TFunction): string {
   return SEARCH_SERVICE_LABELS[type] ?? type;
 }
 
-export function SearchPickerButton({ disabled = false, className }: SearchPickerButtonProps) {
+export function SearchPickerButtonImpl({ disabled = false, className }: SearchPickerButtonProps) {
   const { t } = useTranslation("input");
   const { settings, currentAssistant } = useCurrentAssistant();
   const { currentModel } = useCurrentModel();
@@ -388,3 +388,7 @@ export function SearchPickerButton({ disabled = false, className }: SearchPicker
     </Popover>
   );
 }
+
+// memo:props 只有 disabled(布尔)+ className(常量字符串),输入框打字时不会变,
+// 因此本组件能跳过重渲染,不随 ChatInput 的 value 变化一起重跑。
+export const SearchPickerButton = React.memo(SearchPickerButtonImpl);

@@ -171,7 +171,7 @@ function ModelOptionRow({
   );
 }
 
-export function ModelList({ disabled = false, className, onChanged }: ModelListProps) {
+export function ModelListImpl({ disabled = false, className, onChanged }: ModelListProps) {
   const { t } = useTranslation("input");
   const { settings, currentAssistant } = useCurrentAssistant();
 
@@ -582,3 +582,6 @@ export function ModelList({ disabled = false, className, onChanged }: ModelListP
     </Popover>
   );
 }
+
+// memo:disabled/className/onChanged 在打字时不变,跳过重渲染。
+export const ModelList = React.memo(ModelListImpl);

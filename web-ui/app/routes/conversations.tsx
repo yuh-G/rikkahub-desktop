@@ -618,42 +618,13 @@ function useDraftInputController({
   refreshList: () => void;
 }) {
   const draftKey = activeId ?? (isHomeRoute ? homeDraftId : null);
-  const draft = useChatInputStore(
-    React.useCallback((state) => (draftKey ? state.drafts[draftKey] : undefined), [draftKey]),
-  );
-
+  // 刻意不在这里订阅 drafts[draftKey] 的内容:本 hook 由 ConversationsPageInner 调用,
+  // 一旦订阅草稿,每次打字都会让整个巨型组件(侧边栏/对话框/面板组)一起重渲染,造成
+  // 输入卡顿。草稿内容订阅下沉到 ChatInputArea——只有输入区随打字重渲染。
   const setDraftText = useChatInputStore((state) => state.setText);
   const addDraftParts = useChatInputStore((state) => state.addParts);
-  const removeDraftPart = useChatInputStore((state) => state.removePartAt);
   const getSubmitParts = useChatInputStore((state) => state.getSubmitParts);
   const clearDraft = useChatInputStore((state) => state.clearDraft);
-
-  const inputText = draft?.text ?? "";
-  const inputAttachments = draft?.parts ?? EMPTY_INPUT_ATTACHMENTS;
-
-  const handleInputTextChange = React.useCallback(
-    (text: string) => {
-      if (!draftKey) return;
-      setDraftText(draftKey, text);
-    },
-    [draftKey, setDraftText],
-  );
-
-  const handleAddInputParts = React.useCallback(
-    (parts: UIMessagePart[]) => {
-      if (!draftKey || parts.length === 0) return;
-      addDraftParts(draftKey, parts);
-    },
-    [addDraftParts, draftKey],
-  );
-
-  const handleRemoveInputPart = React.useCallback(
-    (index: number) => {
-      if (!draftKey) return;
-      removeDraftPart(draftKey, index);
-    },
-    [draftKey, removeDraftPart],
-  );
 
   const handleSubmit = React.useCallback(async () => {
     if (!draftKey) return;
@@ -712,17 +683,103 @@ function useDraftInputController({
 
   return {
     draftKey,
-    inputText,
-    inputAttachments,
-    handleInputTextChange,
-    handleAddInputParts,
-    handleRemoveInputPart,
+    setDraftText,
     handleSubmit,
     replaceDraft,
     clearCurrentDraft,
     getCurrentSubmitParts,
   };
 }
+
+// 输入区渲染边界:把"草稿内容订阅"隔离在这里,这样打字时只有本组件重渲染,
+// 而 ConversationsPageInner(侧边栏 / 顶栏 / 对话框 / 面板组 / 消息列表)全部不动。
+// 父级传入的都是稳定引用(handlers / useCallback / 原始值),React.memo 让本组件在
+// 父级因无关原因(如 SSE 推送)重渲染时也能跳过,只在草稿内容或真正变化的 prop 变化时重渲染。
+interface ChatInputAreaProps {
+  draftKey: string | null;
+  isGenerating: boolean;
+  disabled: boolean;
+  isEditing: boolean;
+  suggestions: string[];
+  onSuggestionClick: (suggestion: string) => void;
+  onCancelEdit?: () => void;
+  shouldDeleteFileOnRemove?: (part: UIMessagePart) => boolean;
+  onSend: () => Promise<void> | void;
+  onStop?: () => Promise<void> | void;
+  onExportConversation?: (includeReasoning: boolean) => void;
+  onCompressConversation?: () => void;
+  getOptimizeContext?: () => string;
+}
+
+const ChatInputArea = React.memo(function ChatInputArea({
+  draftKey,
+  isGenerating,
+  disabled,
+  isEditing,
+  suggestions,
+  onSuggestionClick,
+  onCancelEdit,
+  shouldDeleteFileOnRemove,
+  onSend,
+  onStop,
+  onExportConversation,
+  onCompressConversation,
+  getOptimizeContext,
+}: ChatInputAreaProps) {
+  const setText = useChatInputStore((state) => state.setText);
+  const addParts = useChatInputStore((state) => state.addParts);
+  const removePartAt = useChatInputStore((state) => state.removePartAt);
+  const draft = useChatInputStore(
+    React.useCallback((state) => (draftKey ? state.drafts[draftKey] : undefined), [draftKey]),
+  );
+  const inputText = draft?.text ?? "";
+  const inputAttachments = draft?.parts ?? EMPTY_INPUT_ATTACHMENTS;
+
+  const handleValueChange = React.useCallback(
+    (text: string) => {
+      if (!draftKey) return;
+      setText(draftKey, text);
+    },
+    [draftKey, setText],
+  );
+  const handleAddParts = React.useCallback(
+    (parts: UIMessagePart[]) => {
+      if (!draftKey || parts.length === 0) return;
+      addParts(draftKey, parts);
+    },
+    [addParts, draftKey],
+  );
+  const handleRemovePart = React.useCallback(
+    (index: number) => {
+      if (!draftKey) return;
+      removePartAt(draftKey, index);
+    },
+    [draftKey, removePartAt],
+  );
+
+  return (
+    <ChatInput
+      value={inputText}
+      attachments={inputAttachments}
+      ready={draftKey !== null}
+      isGenerating={isGenerating}
+      disabled={disabled}
+      isEditing={isEditing}
+      onValueChange={handleValueChange}
+      onAddParts={handleAddParts}
+      suggestions={suggestions}
+      onSuggestionClick={onSuggestionClick}
+      onCancelEdit={onCancelEdit}
+      shouldDeleteFileOnRemove={shouldDeleteFileOnRemove}
+      onRemovePart={handleRemovePart}
+      onSend={onSend}
+      onStop={onStop}
+      onExportConversation={onExportConversation}
+      onCompressConversation={onCompressConversation}
+      getOptimizeContext={getOptimizeContext}
+    />
+  );
+});
 
 const ConversationTimeline = React.memo(
   ({
@@ -977,11 +1034,7 @@ function ConversationsPageInner() {
 
   const {
     draftKey,
-    inputText,
-    inputAttachments,
-    handleInputTextChange,
-    handleAddInputParts,
-    handleRemoveInputPart,
+    setDraftText,
     handleSubmit,
     replaceDraft,
     clearCurrentDraft,
@@ -1176,9 +1229,9 @@ function ConversationsPageInner() {
       if (editingSession) {
         setEditingSession(null);
       }
-      handleInputTextChange(suggestion);
+      if (draftKey) setDraftText(draftKey, suggestion);
     },
-    [editingSession, handleInputTextChange],
+    [draftKey, editingSession, setDraftText],
   );
 
   const handleSend = React.useCallback(async () => {
@@ -1470,20 +1523,15 @@ function ConversationsPageInner() {
         {/* Floating chunked-TTS play bar — pops in only while a message is being read out
             via the per-chunk pipeline (TtsController), shows the dual ring + transport. */}
         <TtsPlayBar />
-        <ChatInput
-          value={inputText}
-          attachments={inputAttachments}
-          ready={draftKey !== null}
+        <ChatInputArea
+          draftKey={draftKey}
           isGenerating={detail?.isGenerating ?? false}
           disabled={detailLoading || Boolean(detailError)}
-          onValueChange={handleInputTextChange}
-          onAddParts={handleAddInputParts}
+          isEditing={Boolean(editingSession)}
           suggestions={displaySuggestions}
           onSuggestionClick={handleClickSuggestion}
-          isEditing={Boolean(editingSession)}
           onCancelEdit={editingSession ? handleCancelEdit : undefined}
           shouldDeleteFileOnRemove={shouldDeleteAttachmentFileOnRemove}
-          onRemovePart={handleRemoveInputPart}
           onSend={handleSend}
           onStop={activeId ? handleStop : undefined}
           onExportConversation={

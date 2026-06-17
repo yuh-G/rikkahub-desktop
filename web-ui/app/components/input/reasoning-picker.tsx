@@ -75,7 +75,7 @@ function ReasoningIcon({ level, className }: { level: ReasoningLevel; className?
   }
 }
 
-export function ReasoningPickerButton({ disabled = false, className }: ReasoningPickerButtonProps) {
+export function ReasoningPickerButtonImpl({ disabled = false, className }: ReasoningPickerButtonProps) {
   const { t } = useTranslation("input");
   const { settings, currentAssistant } = useCurrentAssistant();
   const { currentModel } = useCurrentModel();
@@ -269,3 +269,6 @@ export function ReasoningPickerButton({ disabled = false, className }: Reasoning
     </Popover>
   );
 }
+
+// memo:disabled/className 在打字时不变,跳过重渲染(同 SearchPickerButton)。
+export const ReasoningPickerButton = React.memo(ReasoningPickerButtonImpl);

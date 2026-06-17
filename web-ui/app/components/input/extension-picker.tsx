@@ -82,7 +82,7 @@ interface SkillProfile {
   description?: string;
 }
 
-export function ExtensionPickerButton({ disabled = false, className }: ExtensionPickerButtonProps) {
+export function ExtensionPickerButtonImpl({ disabled = false, className }: ExtensionPickerButtonProps) {
   const { t } = useTranslation("input");
   const { settings, currentAssistant } = useCurrentAssistant();
 
@@ -611,3 +611,6 @@ export function ExtensionPickerButton({ disabled = false, className }: Extension
     </Popover>
   );
 }
+
+// memo:disabled/className 在打字时不变,跳过重渲染。
+export const ExtensionPickerButton = React.memo(ExtensionPickerButtonImpl);

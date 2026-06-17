@@ -45,7 +45,7 @@ function getEnabledToolsCount(tools: McpToolOption[] | undefined): {
   return { enabled, total };
 }
 
-export function McpPickerButton({ disabled = false, className }: McpPickerButtonProps) {
+export function McpPickerButtonImpl({ disabled = false, className }: McpPickerButtonProps) {
   const { t } = useTranslation("input");
   const { settings, currentAssistant } = useCurrentAssistant();
 
@@ -383,3 +383,6 @@ export function McpPickerButton({ disabled = false, className }: McpPickerButton
     </Popover>
   );
 }
+
+// memo:disabled/className 在打字时不变,跳过重渲染。
+export const McpPickerButton = React.memo(McpPickerButtonImpl);
