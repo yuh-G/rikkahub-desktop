@@ -17,14 +17,27 @@ export const onRequest = async (context) => {
 
   try {
     const DB = context.env.DB;
+
+    // first_seen 只能对该设备"历史上第一次出现"为真。早期实现把 INSERT 的 first_seen
+    // 恒为 TRUE、且 ON CONFLICT 不纠正它——由于主键是 (device_id, date),设备每跨入一个
+    // 新日期都会再 INSERT 一行 first_seen=TRUE,于是每个活跃设备每天的行都是"首次出现",
+    // SUM(first_seen) 退化成 DAU,"新增用户"恒等于日活,留存 cohort 也全错。
+    // 这里先查该设备是否已有任意历史行(含今天之外),没有才是真正的新设备。
+    // 极小竞态:同设备首次上报并发两次时两条都判定为新、一条 INSERT 另一条走 UPDATE,
+    // UPDATE 不碰 first_seen,最终仍是 TRUE,数量不会翻倍。
+    const prior = await DB.prepare(
+      `SELECT 1 FROM pings WHERE device_id = ? LIMIT 1`
+    ).bind(id).first();
+    const isNew = !prior;
+
     await DB.prepare(
       `INSERT INTO pings (device_id, date, version, os, msg_count, first_seen)
-       VALUES (?, ?, ?, ?, ?, TRUE)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(device_id, date) DO UPDATE SET
          version   = excluded.version,
          os        = excluded.os,
          msg_count = MAX(msg_count, excluded.msg_count)`
-    ).bind(id, date, version, os, clampedMc).run();
+    ).bind(id, date, version, os, clampedMc, isNew ? 1 : 0).run();
 
     await refreshDay(DB, date);
 

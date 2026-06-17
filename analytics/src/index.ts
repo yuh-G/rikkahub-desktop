@@ -1,4 +1,4 @@
-import { handlePing, refreshDailySummary } from "./ping";
+import { handlePing, refreshDailySummary, rebuildAll } from "./ping";
 import { dashboardHtml } from "../dashboard/template";
 import { getStats } from "./stats";
 
@@ -41,6 +41,16 @@ export default {
       }
       const result = await refreshDailySummary(env);
       return new Response(JSON.stringify(result), { headers });
+    }
+
+    // ── Internal: one-time rebuild of first_seen + aggregates ───────
+    if (path === "/internal/rebuild" && request.method === "POST") {
+      const auth = url.searchParams.get("token");
+      if (auth !== env.AUTH_TOKEN) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const result = await rebuildAll(env);
+      return new Response(JSON.stringify({ ok: true, ...result }), { headers });
     }
 
     // ── Stats JSON API ─────────────────────────────────────────────
