@@ -74,40 +74,50 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
     setDownloadedBytes(0);
     setTotalBytes(0);
     try {
-      const result = await new Promise<{ status: string; path: string; size: number }>(
-        (resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open("POST", appendWebAuthQuery("/api/update/download"));
-          xhr.setRequestHeader("Content-Type", "application/json");
-          xhr.responseType = "json";
-          xhr.timeout = 0;
-          xhr.onprogress = (event) => {
-            if (event.lengthComputable && event.total > 0) {
-              setTotalBytes(event.total);
-              setDownloadedBytes(event.loaded);
-              setDownloadProgress(Math.round((event.loaded / event.total) * 100));
-            } else {
-              setDownloadedBytes(event.loaded);
-            }
-          };
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
-              resolve(xhr.response as { status: string; path: string; size: number });
-            } else {
-              reject(
-                new Error(
-                  typeof xhr.response?.error === "string"
-                    ? xhr.response.error
-                    : `HTTP ${xhr.status}`,
-                ),
-              );
-            }
-          };
-          xhr.onerror = () => reject(new Error("网络错误，无法连接后端"));
-          xhr.ontimeout = () => reject(new Error("下载超时"));
-          xhr.send(JSON.stringify({ url: info.downloadUrl, fileName: info.fileName }));
-        },
-      );
+      // 后端用 text/event-stream 流式推 {type:"progress"|"done"|"error"}。fetch + ReadableStream
+      // 解析每个事件实时更新进度条——之前 XHR 监听响应进度,但后端 arrayBuffer 下完才返回,
+      // 下载期间一个字节都不吐,进度条自然不动。
+      const res = await fetch(appendWebAuthQuery("/api/update/download"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: info.downloadUrl, fileName: info.fileName }),
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const result = { path: "", size: 0, done: false };
+      const handleLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data: ")) return;
+        let evt: { type?: string; loaded?: number; total?: number; percent?: number; path?: string; size?: number; message?: string };
+        try {
+          evt = JSON.parse(trimmed.slice(6));
+        } catch {
+          return;
+        }
+        if (evt.type === "progress") {
+          setTotalBytes(Number(evt.total) || 0);
+          setDownloadedBytes(Number(evt.loaded) || 0);
+          setDownloadProgress(Number(evt.percent) || 0);
+        } else if (evt.type === "done") {
+          result.path = String(evt.path ?? "");
+          result.size = Number(evt.size) || 0;
+          result.done = true;
+        } else if (evt.type === "error") {
+          throw new Error(String(evt.message || "下载失败"));
+        }
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) handleLine(line);
+      }
+      if (buffer.trim()) handleLine(buffer);
+      if (!result.done) throw new Error("下载未完成");
       setInstallerPath(result.path);
       setInstallerCached(false);
       setDownloadProgress(100);

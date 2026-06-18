@@ -486,6 +486,14 @@ const skillsDir = join(dataDir, "skills");
 const customFontsDir = join(dataDir, "fonts");
 const statePath = join(dataDir, "state.json");
 const skipVersionPath = join(dataDir, "skip-version.txt");
+// 已下载更新包的缓存目录。放在持久的 dataDir 下(而非系统 tempDir)——系统临时目录会被
+// OS/磁盘清理/重启清掉,会导致"下次进更新界面又得重下"。Windows 存 .exe 安装器,Linux
+// 存 tar.gz 及其解压产物。probeCachedInstaller / update/download / update/apply 共用。
+const updatesCacheDir = join(dataDir, "updates");
+// 应用内更新下载源:Cloudflare R2 镜像,与官网(rikkahub-desktop.pages.dev)同源,国内/全球
+// 访问都快(GitHub Release 在国内常需代理)。Windows 走 R2(Rikkahub_<tag>_x64-setup.exe);
+// Linux R2 无预编译包,仍走 GitHub Release 直链。
+const UPDATE_R2_BASE = "https://pub-d26eee7d911c4bab937ebe1729a4cefe.r2.dev";
 
 function readSkippedVersion(): string {
   try { return readFileSync(skipVersionPath, "utf-8").trim(); } catch { return ""; }
@@ -622,7 +630,7 @@ async function fetchLatestReleaseFromHtmlRedirect(repo: string): Promise<{ tag: 
 function probeCachedInstaller(fileName: string, tag: string, isNewer: boolean): string | null {
   if (!isNewer || !fileName) return null;
   try {
-    const tmpDir = join(tempDir(), "rikkahub-updates");
+    const tmpDir = updatesCacheDir;
     if (!existsSync(tmpDir)) return null;
     const canonical = join(tmpDir, fileName);
     if (existsSync(canonical) && statSync(canonical).size > 0) {
@@ -14985,6 +14993,11 @@ async function routeApi(request: Request, url: URL) {
       if (!RUNNING_IN_CONTAINER && RUNTIME_PLATFORM === "win") {
         fields.cachedInstallerPath = probeCachedInstaller(String(fields.fileName ?? ""), latest, isNewer && !fields.isSkipped);
       }
+      // Windows 下载源改走 R2 镜像(国内/全球都快,与官网同源);fileName 即 R2 对象名。
+      // Linux R2 无预编译包,保留 GitHub Release 直链。
+      if (!RUNNING_IN_CONTAINER && RUNTIME_PLATFORM === "win" && String(fields.fileName ?? "")) {
+        fields.downloadUrl = `${UPDATE_R2_BASE}/${fields.fileName}`;
+      }
       return json(fields);
     };
 
@@ -15064,65 +15077,101 @@ async function routeApi(request: Request, url: URL) {
   // Linux: the UI calls update/apply to swap the running binary. The user explicitly confirms
   // the restart so we don't race a process that's about to be replaced.
   if (path === "update/download" && request.method === "POST") {
+    // 流式下载:响应是 text/event-stream,边下载边写盘边推 progress 事件,完成推 done(含
+    // 本地路径)/error。前端用 fetch + ReadableStream 解析——之前用 arrayBuffer 一次性下完
+    // 才返回,前端 XHR onprogress 下载期间收不到任何字节,进度条纹丝不动。
+    let body: { url?: string; fileName?: string };
     try {
-      const body = await readJson<{ url?: string; fileName?: string }>(request);
-      const url = String(body.url ?? "").trim();
-      if (!/^https:\/\//i.test(url)) return error("Invalid download URL", 400);
-      // Allow only GitHub-served hosts to limit blast radius if the URL ever came from elsewhere.
-      const host = (() => {
-        try {
-          return new URL(url).host.toLowerCase();
-        } catch {
-          return "";
-        }
-      })();
-      if (!/^(github\.com|.*\.githubusercontent\.com|objects\.githubusercontent\.com)$/i.test(host)) {
-        return error(`Refusing to download from non-GitHub host: ${host}`, 400);
-      }
-      const sanitized = String(body.fileName ?? "").replace(/[^A-Za-z0-9._\-]/g, "") || "rikkahub-update";
-      // Windows: the Tauri shell's launch_installer refuses anything that doesn't end in .exe
-      // (lib.rs path check), so force the suffix. Linux: the asset is a tar.gz — keep the
-      // sanitized name as-is (the sanitize regex keeps dots, so the .tar.gz suffix survives).
-      const fileName = RUNTIME_PLATFORM === "win"
-        ? (/\.exe$/i.test(sanitized) ? sanitized : `${sanitized}.exe`)
-        : sanitized;
-      const tmpDir = join(tempDir(), "rikkahub-updates");
-      mkdirSync(tmpDir, { recursive: true });
-      const targetPath = join(tmpDir, fileName);
-      const res = await fetch(url, {
-        redirect: "follow",
-        headers: { "User-Agent": "RikkaHub-PC" },
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        return error(`Download failed: ${res.status} ${text.slice(0, 200)}`, 502);
-      }
-      const buffer = Buffer.from(await res.arrayBuffer());
-      writeFileSync(targetPath, buffer);
-      // Windows: targetPath 指向 .exe 安装器,前端直接交给 Tauri launch_installer。
-      // Linux: 下载的是 tar.gz(二进制 + 前端资源),解压后返回内部二进制路径,
-      //        update/apply 据此连同同目录的 web-ui 一起替换。
-      if (RUNTIME_PLATFORM === "win") {
-        return json({ status: "ok", path: targetPath, size: buffer.length });
-      }
-      const extractBase = fileName.replace(/\.tar\.gz$/i, "") || "rikkahub-pc";
-      const extractDir = join(tmpDir, `extracted-${extractBase}`);
-      try { rmSync(extractDir, { recursive: true, force: true }); } catch { /* 清理上一次解压残留 */ }
-      mkdirSync(extractDir, { recursive: true });
-      const tar = Bun.spawnSync(["tar", "xzf", targetPath, "-C", extractDir]);
-      if (tar.exitCode !== 0) {
-        return error(`解压更新包失败：${tar.stderr?.toString().trim() || `tar exited ${tar.exitCode}`}`, 500);
-      }
-      // 解压后约定结构:extractDir/rikkahub-pc/rikkahub-pc (+ extractDir/rikkahub-pc/web-ui/)
-      const innerExe = join(extractDir, "rikkahub-pc", "rikkahub-pc");
-      if (!existsSync(innerExe) || statSync(innerExe).size === 0) {
-        return error("解压后未找到可执行文件（更新包结构异常）", 500);
-      }
-      try { chmodSync(innerExe, 0o755); } catch { /* best-effort */ }
-      return json({ status: "ok", path: innerExe, size: buffer.length });
-    } catch (err) {
-      return error(err instanceof Error ? err.message : "Download failed", 502);
+      body = await readJson<{ url?: string; fileName?: string }>(request);
+    } catch {
+      return error("Invalid request body", 400);
     }
+    const url = String(body.url ?? "").trim();
+    if (!/^https:\/\//i.test(url)) return error("Invalid download URL", 400);
+    // 只放行 GitHub 与自建 R2 镜像,缩小 URL 被篡改时的攻击面。
+    const host = (() => {
+      try {
+        return new URL(url).host.toLowerCase();
+      } catch {
+        return "";
+      }
+    })();
+    if (!/^(github\.com|.*\.githubusercontent\.com|objects\.githubusercontent\.com|pub-[a-f0-9]+\.r2\.dev)$/i.test(host)) {
+      return error(`Refusing to download from untrusted host: ${host}`, 400);
+    }
+    const sanitized = String(body.fileName ?? "").replace(/[^A-Za-z0-9._\-]/g, "") || "rikkahub-update";
+    // Windows: launch_installer 只认 .exe(lib.rs 路径检查);Linux: asset 是 tar.gz,保留原名。
+    const fileName = RUNTIME_PLATFORM === "win"
+      ? (/\.exe$/i.test(sanitized) ? sanitized : `${sanitized}.exe`)
+      : sanitized;
+    mkdirSync(updatesCacheDir, { recursive: true });
+    const targetPath = join(updatesCacheDir, fileName);
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        const send = (obj: Record<string, unknown>) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+        };
+        try {
+          const res = await fetch(url, { redirect: "follow", headers: { "User-Agent": "RikkaHub-PC" } });
+          if (!res.ok || !res.body) {
+            const text = res.ok ? "no response body" : await res.text().catch(() => "");
+            send({ type: "error", message: `Download failed: ${res.status} ${String(text).slice(0, 200)}` });
+            return;
+          }
+          const total = Number(res.headers.get("content-length") || 0);
+          const reader = res.body.getReader();
+          const writer = Bun.file(targetPath).writer();
+          let received = 0;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            await writer.write(value);
+            received += value.length;
+            const percent = total > 0 ? Math.round((received / total) * 100) : 0;
+            send({ type: "progress", loaded: received, total, percent });
+          }
+          await writer.end();
+
+          if (RUNTIME_PLATFORM === "win") {
+            // targetPath 指向 .exe 安装器,前端交给 Tauri launch_installer。
+            send({ type: "done", path: targetPath, size: received });
+            return;
+          }
+          // Linux: 下载的是 tar.gz(二进制 + 前端资源),解压后返回内部二进制路径,
+          // update/apply 据此连同同目录的 web-ui 一起替换。
+          const extractBase = fileName.replace(/\.tar\.gz$/i, "") || "rikkahub-pc";
+          const extractDir = join(updatesCacheDir, `extracted-${extractBase}`);
+          try { rmSync(extractDir, { recursive: true, force: true }); } catch { /* 清理上一次解压残留 */ }
+          mkdirSync(extractDir, { recursive: true });
+          const tar = Bun.spawnSync(["tar", "xzf", targetPath, "-C", extractDir]);
+          if (tar.exitCode !== 0) {
+            send({ type: "error", message: `解压更新包失败：${tar.stderr?.toString().trim() || `tar exited ${tar.exitCode}`}` });
+            return;
+          }
+          // 解压后约定结构:extractDir/rikkahub-pc/rikkahub-pc (+ extractDir/rikkahub-pc/web-ui/)
+          const innerExe = join(extractDir, "rikkahub-pc", "rikkahub-pc");
+          if (!existsSync(innerExe) || statSync(innerExe).size === 0) {
+            send({ type: "error", message: "解压后未找到可执行文件（更新包结构异常）" });
+            return;
+          }
+          try { chmodSync(innerExe, 0o755); } catch { /* best-effort */ }
+          send({ type: "done", path: innerExe, size: received });
+        } catch (err) {
+          send({ type: "error", message: err instanceof Error ? err.message : String(err) });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-store",
+        Connection: "keep-alive",
+      },
+    });
   }
   // Linux only: 把刚下载并解压的新版本(二进制 + 前端资源)原地替换到当前应用目录。
   // download 已把 tar.gz 解压到 <tmp>/rikkahub-updates/extracted-*/rikkahub-pc/,其中含新
@@ -15144,9 +15193,9 @@ async function routeApi(request: Request, url: URL) {
       if (!existsSync(resolvedSrcExe)) return error("更新文件不存在", 404);
       if (statSync(resolvedSrcExe).size === 0) return error("更新文件为空", 400);
 
-      // Security: srcExe 必须在我们的临时更新目录树内(download 解压到这里),
-      // 否则一个构造的请求可能让我们把任意文件拷到可执行路径上。
-      const updatesDir = resolve(join(tempDir(), "rikkahub-updates"));
+      // Security: srcExe 必须在我们的受信任更新目录树内(download 解压到这里),否则一个构造
+      // 的请求可能让我们把任意文件拷到可执行路径上。
+      const updatesDir = resolve(updatesCacheDir);
       const rel = relative(updatesDir, resolvedSrcExe);
       if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
         return error("更新文件路径不在受信任目录内", 400);

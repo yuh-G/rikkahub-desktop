@@ -24,6 +24,9 @@
     "fs:default",
     "os:allow-platform",
     "os:allow-version",
-    "process:allow-restart"
+    "process:allow-restart",
+    "allow-get-data-dir",
+    "allow-set-data-dir",
+    "allow-launch-installer"
   ]
 }
