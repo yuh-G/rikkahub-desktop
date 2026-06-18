@@ -2841,7 +2841,7 @@ dependencies = [
 
 [[package]]
 name = "rikkahub"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "serde",
  "serde_json",
