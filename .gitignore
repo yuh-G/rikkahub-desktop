@@ -12,6 +12,7 @@
 /web-ui/node_modules/
 /web-ui/src-tauri/binaries/*.exe
 /web-ui/src-tauri/gen/
+/web-ui/src-tauri/permissions/
 /web-ui/src-tauri/target/
 
 # External Cargo build dir (we point CARGO_TARGET_DIR here to avoid the project's
