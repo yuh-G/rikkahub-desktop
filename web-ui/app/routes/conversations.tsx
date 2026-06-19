@@ -865,29 +865,45 @@ const ConversationTimeline = React.memo(
     const [searchParams] = useSearchParams();
     const focusMessageId = searchParams.get("msg");
 
-    // 进入会话(或切换会话):首次数据就绪时定位。Virtuoso 默认初始在顶部;
-    // 流式新消息的自动跟底由 followOutput 处理,这里只负责"进入会话定位"。
     React.useEffect(() => {
       if (!activeId || detailLoading || detailError || selectedNodeMessages.length === 0) {
         return;
       }
-      // activeId + focusMessageId 组合作为"已定位"标记:换会话或换聚焦消息都重新定位;
-      // 同会话无聚焦消息时只定位一次(避免流式新消息的 effect 重跑打断用户手动滚动)。
-      const scrollKey = `${activeId}:${focusMessageId ?? ""}`;
-      if (didInitialScrollRef.current === scrollKey) return;
-      didInitialScrollRef.current = scrollKey;
-      const frame = window.requestAnimationFrame(() => {
-        if (focusMessageId) {
-          const idx = selectedNodeMessages.findIndex((m) => m.message.id === focusMessageId);
-          if (idx >= 0) {
-            virtuosoRef.current?.scrollToIndex({ index: idx, behavior: "auto", align: "center" });
-            return;
-          }
-        }
+      if (!focusMessageId) {
+        // 无聚焦消息:进入/切换会话时滚底部一次。流式新消息的跟底交给 followOutput。
+        const bottomKey = `${activeId}:bottom`;
+        if (didInitialScrollRef.current === bottomKey) return;
+        didInitialScrollRef.current = bottomKey;
         const lastIndex = selectedNodeMessages.length - 1;
-        virtuosoRef.current?.scrollToIndex({ index: lastIndex, behavior: "auto", align: "end" });
-      });
-      return () => window.cancelAnimationFrame(frame);
+        const frame = window.requestAnimationFrame(() => {
+          virtuosoRef.current?.scrollToIndex({ index: lastIndex, behavior: "auto", align: "end" });
+        });
+        return () => window.cancelAnimationFrame(frame);
+      }
+      // 有聚焦消息(搜索命中):定位到它所在 node。后端 search 索引每个 node 的全部分支,命中可能
+      // 是 selectIndex 之外的消息;只看渲染链会找不到,所以遍历所有分支定位到该消息所在轮次(对齐安卓)。
+      // 配合下方 followOutput 读 focusMessageId:定位期间(URL 带 msg)不自动跟底,避免 Virtuoso 首次
+      // data 填充时被 followOutput 拉到底部、覆盖 scrollToIndex 的居中定位。
+      const nodeIdx = selectedNodeMessages.findIndex((item) =>
+        item.node.messages.some((m) => m.id === focusMessageId),
+      );
+      if (nodeIdx < 0) return; // snapshot 是全量,极少走到;真发生则等下一次 effect 重试
+      const focusKey = `${activeId}:focus:${focusMessageId}`;
+      if (didInitialScrollRef.current === focusKey) return;
+      didInitialScrollRef.current = focusKey;
+      // Virtuoso 刚 mount / 数据刚填充时高度未稳定,立即 scrollToIndex 会被后续布局调整覆盖
+      // (实测 rAF 连调多次无效,但布局稳定后手动调用有效)。改用递增延迟重试,跨过稳定窗口。
+      let cancelled = false;
+      const timers = [100, 300, 600].map((d) =>
+        window.setTimeout(() => {
+          if (cancelled) return;
+          virtuosoRef.current?.scrollToIndex({ index: nodeIdx, behavior: "auto", align: "start" });
+        }, d),
+      );
+      return () => {
+        cancelled = true;
+        timers.forEach((t) => window.clearTimeout(t));
+      };
     }, [activeId, detailError, detailLoading, focusMessageId, selectedNodeMessages]);
 
     return (
@@ -927,7 +943,7 @@ const ConversationTimeline = React.memo(
             className="h-full"
             data={selectedNodeMessages}
             computeItemKey={(_, item) => item.message.id}
-            followOutput={(atBottom) => (atBottom ? "smooth" : false)}
+            followOutput={(atBottom) => (focusMessageId ? false : atBottom ? "smooth" : false)}
             atBottomStateChange={setIsAtBottom}
             atTopStateChange={setIsAtTop}
             rangeChanged={({ startIndex, endIndex }) => {
