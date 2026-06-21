@@ -84,6 +84,7 @@ import type {
   TtsProviderType,
 } from "~/types";
 import { ModelEditDialog } from "~/components/model-edit-dialog";
+import { ModelPickerDialog } from "~/components/model-picker-dialog";
 import Markdown from "~/components/markdown/markdown";
 import { playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
 import { UpdateDialog, type UpdateInfo } from "~/components/update-dialog";
@@ -1286,27 +1287,6 @@ function ProvidersSection({
       setTesting(false);
     }
   };
-  const fetchModels = async () => {
-    if (!textValue(draft.apiKey).trim()) {
-      toast.error(t("settings:providers.key_required_fetch"));
-      return;
-    }
-    setFetchingModels(true);
-    try {
-      await api.post("settings/provider", draft);
-      const result = await api.post<{ endpoint: string; models: ProviderModel[] }>(
-        "settings/provider/models",
-        { providerId: draft.id },
-      );
-      setFetchedModels(result.models);
-      setTestModelId(result.models.find((model) => model.modelId !== "auto")?.modelId ?? "");
-      toast.success(t("settings:providers.fetched_models", { count: result.models.length }));
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("settings:providers.fetch_failed"));
-    } finally {
-      setFetchingModels(false);
-    }
-  };
   const handleToggleEnabled = async (enabled: boolean) => {
     // 关闭：直接关
     if (!enabled) {
@@ -1396,8 +1376,69 @@ function ProvidersSection({
     modelIdLocked: boolean;
   };
   const [modelDialog, setModelDialog] = React.useState<ModelDialogState | null>(null);
+  const [pickerOpen, setPickerOpen] = React.useState(false);
 
-  const openAddModelDialog = () => {
+  // Open the model picker — auto-fetch if needed, then show the selection dialog.
+  const openModelPicker = async () => {
+    if (!draft) return;
+    if (!textValue(draft.apiKey).trim()) {
+      toast.error(t("settings:providers.key_required_fetch"));
+      return;
+    }
+    // If we don't have fetched models yet, fetch them first.
+    if (fetchedModels.length === 0) {
+      setFetchingModels(true);
+      try {
+        await api.post("settings/provider", draft);
+        const result = await api.post<{ endpoint: string; models: ProviderModel[] }>(
+          "settings/provider/models",
+          { providerId: draft.id },
+        );
+        setFetchedModels(result.models);
+        setTestModelId(
+          result.models.find((model) => model.modelId !== "auto")?.modelId ?? "",
+        );
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : t("settings:providers.fetch_failed"),
+        );
+        return;
+      } finally {
+        setFetchingModels(false);
+      }
+    }
+    setPickerOpen(true);
+  };
+
+  const handleModelPickerConfirm = (selected: ProviderModel[]) => {
+    if (!draft) return;
+    // Build the new models list: keep manually-added models (manuallyAdded === true)
+    // that are not in fetchedModels, then add the user's selection.
+    const fetchedIds = new Set(fetchedModels.map((model) => model.modelId));
+    const manualModels = (draft.models ?? []).filter(
+      (model) => model.manuallyAdded === true && !fetchedIds.has(model.modelId),
+    );
+    // Merge selected models with persisted customizations (the user may have edited
+    // a previously-enabled model row and we shouldn't lose those edits).
+    const persistedMap = new Map(
+      (draft.models ?? []).map((item) => [item.modelId, item]),
+    );
+    const mergedSelection = selected.map((model) => {
+      const existing = persistedMap.get(model.modelId);
+      return existing ? { ...model, ...existing, id: existing.id, modelId: model.modelId } : applyAutoModelType(model);
+    });
+    const models = [...manualModels, ...mergedSelection];
+    patchDraft({ models });
+    const addedCount =
+      mergedSelection.filter((model) => !selectedModelIds.has(model.modelId)).length;
+    if (addedCount > 0) {
+      toast.success(
+        t("settings:providers.models_added", { count: addedCount }),
+      );
+    }
+  };
+
+  const openManualAddDialog = () => {
     if (!draft) return;
     const uuid =
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -1700,40 +1741,17 @@ function ProvidersSection({
                   {t("settings:providers.models_desc", { count: draft.models?.length ?? 0 })}
                 </div>
               </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={openAddModelDialog}
-                  title={t("settings:providers.add_model_title")}
-                >
-                  <Plus className="size-4" />
-                  {t("settings:providers.add_model")}
-                </Button>
-                <Button variant="outline" onClick={fetchModels} disabled={fetchingModels}>
-                  {fetchingModels ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="size-4" />
-                  )}
-                  {t("settings:providers.fetch_models")}
-                </Button>
-              </div>
+              <Button
+                variant="outline"
+                onClick={openModelPicker}
+                title={t("settings:providers.pick_model_title")}
+              >
+                <Plus className="size-4" />
+                {t("settings:providers.add_model")}
+              </Button>
             </div>
             <div className="max-h-72 space-y-2 overflow-auto">
-              {(() => {
-                // Display source: merge fetchedModels with draft.models, deduping by modelId.
-                // Without the merge, manually-added models would be invisible right after the
-                // user fetched the upstream list (because fetched.length > 0 made the old code
-                // skip draft entries). Fetched entries win on overlap because they're the
-                // canonical upstream-facing view; persisted customizations are still applied
-                // per-row via the `persisted` lookup below.
-                const fetched = fetchedModels;
-                const drafts = draft.models ?? [];
-                if (fetched.length === 0) return drafts;
-                const fetchedIds = new Set(fetched.map((m) => m.modelId));
-                const extras = drafts.filter((m) => !fetchedIds.has(m.modelId));
-                return [...fetched, ...extras];
-              })().map((model) => {
+              {(draft.models ?? []).map((model) => {
                 const focused =
                   focusedModelId &&
                   (model.modelId === focusedModelId || model.id === focusedModelId);
@@ -1823,7 +1841,7 @@ function ProvidersSection({
                   </div>
                 );
               })}
-              {!fetchedModels.length && !(draft.models ?? []).length ? (
+              {!(draft.models ?? []).length ? (
                 <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                   {t("settings:providers.no_models")}
                 </div>
@@ -2040,6 +2058,15 @@ function ProvidersSection({
           onDelete={modelDialog.mode === "edit" ? handleModelDialogDelete : undefined}
         />
       ) : null}
+      <ModelPickerDialog
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        fetchedModels={fetchedModels}
+        enabledModelIds={selectedModelIds}
+        onConfirm={handleModelPickerConfirm}
+        onManualAdd={openManualAddDialog}
+        loading={fetchingModels}
+      />
     </>
   );
 }
