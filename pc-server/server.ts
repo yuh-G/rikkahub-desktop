@@ -16499,6 +16499,14 @@ startAnalytics();
 
 function shutdown() {
   server.stop(true);
+  // 1.2.6:关停前刷活库残余脏标记 + WAL checkpoint(TRUNCATE 把 -wal 并入主库并截断),
+  // 确保活库数据完整落盘、下次启动读到最新。
+  try {
+    flushConvDirtyNow();
+    conversationsDb?.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  } catch (err) {
+    console.warn("[conv-db] 关停刷库失败", err);
+  }
   process.exit(0);
 }
 
