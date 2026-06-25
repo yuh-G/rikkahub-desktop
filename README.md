@@ -47,7 +47,7 @@ lag behind the latest release — for packaging issues please report upstream to
 |---|---|---|
 | Debian / Ubuntu / Mint | `.deb` from the [Releases](https://github.com/yuh-G/rikkahub-desktop/releases) page or [Cloud drive](https://1842911757.share.123865.com/123pan/oW0UTd-Ielxh) → `sudo apt install ./rikkahub-pc_*_amd64.deb` | [@Noah0932](https://github.com/Noah0932) |
 | Arch / Manjaro | `.pkg.tar.zst` from the [Releases](https://github.com/yuh-G/rikkahub-desktop/releases) page or [Cloud drive](https://1842911757.share.123865.com/123pan/oW0UTd-Ielxh) → `sudo pacman -U rikkahub-pc-*-x86_64.pkg.tar.zst` | [@Noah0932](https://github.com/Noah0932) |
-| NixOS / Nix | `nur.repos.af-nur.rikkahub-desktop-bin` (via the maintainer's NUR) | [@AstralFlare-owo](https://github.com/AstralFlare-owo) |
+| NixOS / Nix | `nur.repos.af-nur.rikkahub-desktop` (Built from source, recommended to use the binary cache `af-nur.cachix.org`)<br/>`nur.repos.af-nur.rikkahub-desktop-bin` (Synchronized with binary builds from [Releases](https://github.com/yuh-G/rikkahub-desktop/releases)) | [@AstralFlare-owo](https://github.com/AstralFlare-owo) |
 
 Many thanks to both for covering these distributions.
 
