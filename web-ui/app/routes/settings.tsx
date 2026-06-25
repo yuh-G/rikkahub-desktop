@@ -8758,6 +8758,7 @@ function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: () => voi
 
 function LogDetailDialog({ log, onClose }: { log: RequestLog | null; onClose: () => void }) {
   const { t } = useTranslation();
+  const [reveal, setReveal] = React.useState(false);
   const requestText = log?.requestBody || log?.requestPreview || "";
   const responseText = log?.responseBody || log?.responsePreview || log?.error || "";
   const requestJson = React.useMemo(() => tryParseJson(requestText), [requestText]);
@@ -8791,14 +8792,20 @@ function LogDetailDialog({ log, onClose }: { log: RequestLog | null; onClose: ()
               <DetailField label={t("settings:logs.field_provider")} value={log.providerName} />
               <DetailField label={t("settings:logs.field_kind")} value={log.kind ?? "-"} />
             </div>
+            <div className="flex justify-end">
+              <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={() => setReveal((v) => !v)}>
+                {reveal ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                {reveal ? t("settings:logs.hide_sensitive") : t("settings:logs.show_sensitive")}
+              </Button>
+            </div>
             {log.error ? (
               <pre className="overflow-auto rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-xs whitespace-pre-wrap text-destructive">
                 {log.error}
               </pre>
             ) : null}
-            <HeaderList title={t("settings:logs.request_headers")} headers={log.requestHeaders} />
+            <HeaderList title={t("settings:logs.request_headers")} headers={log.requestHeaders} reveal={reveal} />
             <BodySection title={t("settings:logs.request_body")} text={requestText} json={requestJson} onCopy={copy} emptyText={t("settings:logs.no_request_body")} />
-            <HeaderList title={t("settings:logs.response_headers")} headers={log.responseHeaders} />
+            <HeaderList title={t("settings:logs.response_headers")} headers={log.responseHeaders} reveal={reveal} />
             <BodySection title={t("settings:logs.response_body")} text={responseText} json={responseJson} onCopy={copy} emptyText={t("settings:logs.no_response_body")} />
           </div>
         ) : null}
@@ -8818,18 +8825,37 @@ function DetailField({ label, value, valueClass }: { label: string; value: strin
   );
 }
 
-function HeaderList({ title, headers }: { title: string; headers?: Record<string, string> }) {
+// 敏感请求头默认打码,避免在日志详情里直接暴露 API Key / Token。
+const SENSITIVE_HEADER_PATTERN = /(authorization|api[-_]?key|secret|token|password|cookie)/i;
+
+function isSensitiveHeader(key: string): boolean {
+  return SENSITIVE_HEADER_PATTERN.test(key);
+}
+
+function maskHeaderValue(value: string): string {
+  if (!value) return value;
+  const scheme = value.match(/^(Bearer|Basic|Token|ApiKey)\s+(.+)$/i);
+  if (scheme) return `${scheme[1]} ${"•".repeat(Math.min(scheme[2].length, 16))}`;
+  if (value.length <= 8) return "••••••";
+  return `${value.slice(0, 4)}••••••`;
+}
+
+function HeaderList({ title, headers, reveal }: { title: string; headers?: Record<string, string>; reveal?: boolean }) {
   if (!headers || Object.keys(headers).length === 0) return null;
   return (
     <div>
       <div className="mb-1 text-xs font-medium text-muted-foreground">{title}</div>
       <div className="divide-y rounded-lg border bg-muted/30">
-        {Object.entries(headers).map(([key, value]) => (
-          <div key={key} className="flex gap-2 px-2 py-1 text-xs">
-            <span className="shrink-0 font-mono text-primary">{key}:</span>
-            <span className="min-w-0 break-all font-mono">{value}</span>
-          </div>
-        ))}
+        {Object.entries(headers).map(([key, value]) => {
+          const sensitive = isSensitiveHeader(key);
+          const display = sensitive && !reveal ? maskHeaderValue(value) : value;
+          return (
+            <div key={key} className="flex gap-2 px-2 py-1 text-xs">
+              <span className="shrink-0 font-mono text-primary">{key}:</span>
+              <span className={cn("min-w-0 break-all font-mono", sensitive && !reveal && "text-muted-foreground")}>{display}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -319,6 +319,8 @@
     "field_kind": "类型",
     "request_headers": "请求头",
     "response_headers": "响应头",
+    "show_sensitive": "显示敏感信息",
+    "hide_sensitive": "隐藏敏感信息",
     "request_body": "请求体",
     "response_body": "响应体"
   },

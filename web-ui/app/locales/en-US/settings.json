@@ -325,6 +325,8 @@
     "field_kind": "Kind",
     "request_headers": "Request headers",
     "response_headers": "Response headers",
+    "show_sensitive": "Show sensitive",
+    "hide_sensitive": "Hide sensitive",
     "request_body": "Request body",
     "response_body": "Response body"
   },
