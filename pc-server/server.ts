@@ -282,10 +282,13 @@ interface RequestLog {
   error?: string;
   kind?: string;
   durationMs?: number;
+  method?: string;
+  requestHeaders?: Record<string, string>;
   requestPreview?: string;
   responsePreview?: string;
   requestBody?: string;
   responseBody?: string;
+  responseHeaders?: Record<string, string>;
   toolName?: string;
 }
 
@@ -2585,13 +2588,17 @@ function validateKnownJsonIds(items: unknown, ids: unknown, fieldName: string) {
   return requested;
 }
 
-function jsonPreview(value: unknown, limit = LOG_PREVIEW_LIMIT) {
+// 对齐移动端:日志存完整请求/响应体(供前端 JsonTree 展开),默认不再字符级截断。
+// 可选 limit 仅保留给少数需要硬截断的场景(如错误摘要)。
+function jsonPreview(value: unknown, limit?: number): string {
   const text = JSON.stringify(value, null, 2);
-  return text.length > limit ? `${text.slice(0, limit)}\n\n... [truncated ${text.length - limit} chars]` : text;
+  if (limit !== undefined && text.length > limit) return `${text.slice(0, limit)}\n\n... [truncated ${text.length - limit} chars]`;
+  return text;
 }
 
-function textPreview(value: string, limit = LOG_PREVIEW_LIMIT) {
-  return value.length > limit ? `${value.slice(0, limit)}\n\n... [truncated ${value.length - limit} chars]` : value;
+function textPreview(value: string, limit?: number): string {
+  if (limit !== undefined && value.length > limit) return `${value.slice(0, limit)}\n\n... [truncated ${value.length - limit} chars]`;
+  return value;
 }
 
 function getByPath(value: unknown, path: string): unknown {
