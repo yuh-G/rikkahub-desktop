@@ -1963,8 +1963,8 @@ async function runImageGenerationSmoke() {
   const stateAfter = JSON.parse(readFileSync(join(tempDir, "state.json"), "utf8"));
   assert(stateAfter.generatedImages.some((item: AnyRecord) => item.type === "image_generation" && item.prompt === "smoke generated image"), "generated image was not persisted");
   assert(stateAfter.generatedImages.some((item: AnyRecord) => item.type === "image_edit" && item.sourceFileIds?.[0] === referenceId), "edited image reference was not persisted");
-  assert(stateAfter.logs.some((log: AnyRecord) => log.kind === "provider:image:generation" && log.requestBody?.includes("smoke generated image")), "image generation log missing full request body");
-  assert(stateAfter.logs.some((log: AnyRecord) => log.kind === "provider:image:edit" && log.requestBody?.includes("reference.png")), "image edit log missing multipart reference preview");
+  assert(stateAfter.logs.some((log: AnyRecord) => log.kind === "provider:image:generation" && log.requestPreview?.includes("smoke generated image")), "image generation log missing request preview");
+  assert(stateAfter.logs.some((log: AnyRecord) => log.kind === "provider:image:edit" && log.requestPreview?.includes("reference.png")), "image edit log missing multipart reference preview");
   return { generated: generated.images.length, edited: edited.images.length, referenceId };
 }
 
@@ -2040,7 +2040,7 @@ async function runEpubStatsLogsSmoke() {
   assert(groupNames.includes("模型请求"), "stats missing model request group");
   assert(stats.totals?.requests > 0, "stats missing request totals");
   const logs = await api("/api/logs");
-  assert(logs.some((log: AnyRecord) => log.kind === "provider:aux:stream" && log.requestBody && log.responseBody), "logs missing full auxiliary request/response bodies");
+  assert(logs.some((log: AnyRecord) => log.kind === "provider:aux:stream" && log.requestPreview && log.responsePreview), "logs missing auxiliary request/response previews");
   return { epubTextLength: uploaded.extractedTextLength, requestGroups: groupNames, logCount: logs.length };
 }
 

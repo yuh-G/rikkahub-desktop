@@ -307,7 +307,10 @@
     "copy": "复制",
     "copied": "{{title}} 已复制",
     "no_request_body": "无请求体记录",
-    "no_response_body": "无响应体记录"
+    "no_response_body": "无响应体记录",
+    "clear": "清空日志",
+    "clear_confirm": "确定清空所有请求日志?此操作不可撤销。",
+    "cleared": "已清空所有请求日志"
   },
   "search": {
     "title": "搜索服务",

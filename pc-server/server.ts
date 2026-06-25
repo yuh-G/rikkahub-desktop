@@ -1267,6 +1267,13 @@ function normalizeState(input: Partial<State>): State {
     ...normalized.generatedImages.map((image) => Number(image.id) + 1).filter((value) => Number.isFinite(value)),
     1,
   );
+  // 旧版 addLog 会把 requestPreview 的内容复制到 requestBody(response 同理),每条日志存两份
+  // 相同内容,是 state.json 膨胀的主因。这里丢弃与 preview 完全相同的冗余 body 字段,下次
+  // saveState 即写出瘦身版。仅删"完全相等"的,保留语义不同的 body(理论上不存在,但保险)。
+  for (const log of normalized.logs ?? []) {
+    if (log.requestPreview && log.requestBody === log.requestPreview) delete log.requestBody;
+    if (log.responsePreview && log.responseBody === log.responsePreview) delete log.responseBody;
+  }
   return normalized;
 }
 
@@ -1783,8 +1790,8 @@ function addLog(input: Omit<RequestLog, "id" | "at">) {
     id: id(),
     at: Date.now(),
     ...input,
-    ...(requestPreview ? { requestPreview, requestBody: input.requestBody ?? requestPreview } : {}),
-    ...(responsePreview ? { responsePreview, responseBody: input.responseBody ?? responsePreview } : {}),
+    ...(requestPreview ? { requestPreview } : {}),
+    ...(responsePreview ? { responsePreview } : {}),
   });
   state.logs = state.logs.slice(0, 500);
   saveState();
@@ -14648,6 +14655,11 @@ async function routeApi(request: Request, url: URL) {
   }
 
   if (path === "logs" && request.method === "GET") return json(state.logs);
+  if (path === "logs" && request.method === "DELETE") {
+    state.logs = [];
+    saveState();
+    return json({ ok: true });
+  }
   if (path === "stats" && request.method === "GET") return json(computeStats());
   if (path === "data/webdav/config" && request.method === "POST") {
     const body = await readJson<Partial<WebDavConfig>>(request);

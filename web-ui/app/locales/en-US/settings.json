@@ -313,7 +313,10 @@
     "copy": "Copy",
     "copied": "{{title}} copied",
     "no_request_body": "No request body recorded",
-    "no_response_body": "No response body recorded"
+    "no_response_body": "No response body recorded",
+    "clear": "Clear logs",
+    "clear_confirm": "Clear all request logs? This cannot be undone.",
+    "cleared": "All request logs cleared"
   },
   "search": {
     "title": "Search services",

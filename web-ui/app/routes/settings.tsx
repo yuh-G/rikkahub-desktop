@@ -681,6 +681,17 @@ export default function SettingsPage() {
       .catch((error: Error) => toast.error(error.message));
   }, [section]);
 
+  const clearLogs = React.useCallback(async () => {
+    if (!window.confirm(t("settings:logs.clear_confirm"))) return;
+    try {
+      await api.delete("logs");
+      setLogs([]);
+      toast.success(t("settings:logs.cleared"));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  }, [t]);
+
   React.useEffect(() => {
     if (section !== "stats") return;
     api
@@ -772,7 +783,7 @@ export default function SettingsPage() {
             {section === "speech" && <SpeechSection settings={settings} onSettings={updateLocal} />}
             {section === "data" && <DataSection settings={settings} onSettings={updateLocal} />}
             {section === "stats" && <StatsSection stats={stats} />}
-            {section === "logs" && <LogsSection logs={logs} />}
+            {section === "logs" && <LogsSection logs={logs} onClear={clearLogs} />}
             {section === "proxy" && <ProxySection settings={settings} onSettings={updateLocal} />}
             {section === "about" && <AboutSection />}
           </div>
@@ -8686,7 +8697,7 @@ function AboutSection() {
   );
 }
 
-function LogsSection({ logs }: { logs: RequestLog[] }) {
+function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: () => void }) {
   const { t } = useTranslation();
   const [openId, setOpenId] = React.useState<string | null>(null);
   const copyLogText = React.useCallback(
@@ -8705,6 +8716,18 @@ function LogsSection({ logs }: { logs: RequestLog[] }) {
         title={t("settings:logs.title")}
         subtitle={t("settings:logs.subtitle")}
       />
+      {logs.length > 0 ? (
+        <div className="-mt-4 mb-2 flex justify-end">
+          <button
+            type="button"
+            onClick={onClear}
+            className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-destructive transition hover:bg-destructive/10"
+          >
+            <Trash2 className="size-3.5" />
+            {t("settings:logs.clear")}
+          </button>
+        </div>
+      ) : null}
       <div className="space-y-3">
         {logs.length === 0 ? (
           <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
