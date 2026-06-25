@@ -1116,7 +1116,18 @@ function ProvidersSection({
     const danglingManual = cachedManual
       ? Array.from(cachedManual.values()).filter((m) => !baseIds.has(m.modelId))
       : [];
-    return danglingManual.length > 0 ? [...base, ...danglingManual] : base;
+    const merged = danglingManual.length > 0 ? [...base, ...danglingManual] : base;
+    // Manual models float to the top — they're user-authored (no upstream source) and tend to
+    // be the ones the user cares about most; newly-added ones already sit at the head of
+    // draft.models, so this surfaces them immediately instead of burying them under the
+    // fetched list. Stable order preserved within each group.
+    if (merged.length <= 1) return merged;
+    const manual: ProviderModel[] = [];
+    const rest: ProviderModel[] = [];
+    for (const model of merged) {
+      (model.manuallyAdded === true ? manual : rest).push(model);
+    }
+    return manual.length > 0 ? [...manual, ...rest] : rest;
   })();
   // Free-text filter (name or id). Applied on top of displayModels for the list view.
   const visibleModels = (() => {
@@ -1542,7 +1553,7 @@ function ProvidersSection({
         toast.error(t("settings:providers.model_id_exists", { id: model.modelId }));
         return;
       }
-      models = [...(draft.models ?? []), model];
+      models = [model, ...(draft.models ?? [])];
     } else {
       // Edit dialog opened on a fetched-but-not-yet-enabled row → save auto-enables.
       // Dedup by modelId in case the user toggled the checkbox in parallel.
