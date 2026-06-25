@@ -9098,6 +9098,76 @@ async function testSearchService(service: SearchService) {
     if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
     return { status: "ok", name, endpoint, preview: textPreview(text) };
   }
+  // 以下 6 个分支(perplexity/bocha/linkup/metaso/ollama/jina)此前缺失,导致这些类型在
+  // 设置页点「测试」全部落到末尾 throw "not supported"。请求体对齐 runSearchService 里
+  // 各自的实现,仅改成最小测试请求(query=RikkaHub、count/size=1)以验证 API Key 可用。
+  if (type === "perplexity") {
+    const endpoint = "https://api.perplexity.ai/search";
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "RikkaHub", max_results: 1 }),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
+    return { status: "ok", name, endpoint, preview: textPreview(text) };
+  }
+  if (type === "bocha") {
+    const endpoint = "https://api.bochaai.com/v1/web-search";
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "RikkaHub", summary: false, count: 1 }),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
+    return { status: "ok", name, endpoint, preview: textPreview(text) };
+  }
+  if (type === "linkup") {
+    const endpoint = "https://api.linkup.so/v1/search";
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ q: "RikkaHub", depth: "standard", outputType: "sourcedAnswer", includeImages: "false" }),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
+    return { status: "ok", name, endpoint, preview: textPreview(text) };
+  }
+  if (type === "metaso") {
+    const endpoint = "https://metaso.cn/api/v1/search";
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ q: "RikkaHub", scope: "webpage", size: 1, includeSummary: false }),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
+    return { status: "ok", name, endpoint, preview: textPreview(text) };
+  }
+  if (type === "ollama") {
+    const endpoint = "https://ollama.com/api/web_search";
+    // runSearchService 把 max_results clamp 到 [5,10],这里取下界 5 避免被上游拒绝。
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "RikkaHub", max_results: 5 }),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
+    return { status: "ok", name, endpoint, preview: textPreview(text) };
+  }
+  if (type === "jina") {
+    const searchUrl = String(service.searchUrl ?? "").trim() || "https://s.jina.ai/";
+    const response = await fetch(searchUrl, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ q: "RikkaHub" }),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
+    return { status: "ok", name, endpoint: searchUrl, preview: textPreview(text) };
+  }
   throw new Error(`${name} search type '${type}' is not supported`);
 }
 
