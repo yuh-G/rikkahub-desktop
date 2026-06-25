@@ -39,8 +39,7 @@
 |---|---|---|
 | Debian / Ubuntu / Mint | 從 [Releases](https://github.com/yuh-G/rikkahub-desktop/releases) 頁或[網盤](https://1842911757.share.123865.com/123pan/oW0UTd-Ielxh)下載 `.deb` → `sudo apt install ./rikkahub-pc_*_amd64.deb` | [@Noah0932](https://github.com/Noah0932) |
 | Arch / Manjaro | 從 [Releases](https://github.com/yuh-G/rikkahub-desktop/releases) 頁[網盤](https://1842911757.share.123865.com/123pan/oW0UTd-Ielxh)下載 `.pkg.tar.zst` → `sudo pacman -U rikkahub-pc-*-x86_64.pkg.tar.zst` | [@Noah0932](https://github.com/Noah0932) |
-| NixOS / Nix | `nur.repos.af-nur.rikkahub-desktop-bin`(透過維護者的 NUR 倉庫) | [@AstralFlare-owo](https://github.com/AstralFlare-owo) |
-
+| NixOS / Nix | `nur.repos.af-nur.rikkahub-desktop`(從原始碼建置的版本，建議使用二進位快取 `af-nur.cachix.org`)<br/>`nur.repos.af-nur.rikkahub-desktop-bin`(同步 [Releases](https://github.com/yuh-G/rikkahub-desktop/releases) 中的二進位建置) | [@AstralFlare-owo](https://github.com/AstralFlare-owo) |
 感謝兩位補上了這些發行版的空缺。
 
 ## ✨ 功能特色
