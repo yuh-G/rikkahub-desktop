@@ -2007,6 +2007,13 @@ function abortConversationGeneration(conversationId: string) {
   // since broadcastNodeUpdateNow no longer calls broadcastList on every chunk we
   // have to refresh the list explicitly here.
   if (wasGenerating) broadcastList();
+  // 1.2.6:用户中止也要 reconcile 活库——abort 提前 delete 了 generating,后续
+  // completeConversationGeneration 的 if 会失败而跳过 reconcile,所以这里补一次全量
+  // persistConversation。流式中删会话(deleteConversationsById 先调本函数)时
+  // getConversation 仍返回会话(filter 删除在后),persist 后由 deletePcConversations 清掉,幂等无害。
+  flushConvDirtyNow();
+  const conv = getConversation(conversationId);
+  if (conv) persistConversation(conv);
 }
 
 function deleteConversationsById(ids: Set<string>) {
@@ -10247,7 +10254,12 @@ type StreamHooks = {
 function touchStream(hooks?: StreamHooks) {
   if (!hooks?.conversation || !hooks.node) return;
   hooks.conversation.updateAt = Date.now();
-  scheduleThrottledSaveState();
+  // 1.2.6:流式增量写活库——只标脏当前在长的会话行(updateAt)+ 节点,200ms 合并 upsert
+  // 进 SQLite。不再全量重写 state.json(会话已迁出 state.json)。N 路流式并发时各自标脏,
+  // flush 时逐行 upsert,SQLite WAL 串行化。流式结束(complete/abort)再全量 reconcile。
+  markConversationRowDirty(hooks.conversation.id);
+  markMessageNodeDirty(hooks.conversation.id, hooks.node.id);
+  scheduleThrottledConvFlush();
   scheduleNodeBroadcast(hooks.conversation, hooks.node);
 }
 
@@ -13618,17 +13630,23 @@ function cloneConversation(conversation: Conversation): Conversation {
 }
 
 function completeConversationGeneration(conversationId: string, controller: AbortController) {
-  if (generating.get(conversationId) === controller) {
-    generating.delete(conversationId);
-    // The generating Map drives the sidebar's per-conversation streaming indicator
-    // (rendered via the conversations-list SSE). Now that broadcastNodeUpdateNow no
-    // longer pings the list on every chunk (see comment at server.ts:1495), we have
-    // to explicitly refresh on the false→true and true→false transitions so the
-    // indicator turns on/off. Caller `generateAnswer` calls broadcastConversation
-    // at start which already touches broadcastList, and we cover the end transition
-    // right here.
-    broadcastList();
-  }
+  if (generating.get(conversationId) !== controller) return;
+  generating.delete(conversationId);
+  // The generating Map drives the sidebar's per-conversation streaming indicator
+  // (rendered via the conversations-list SSE). Now that broadcastNodeUpdateNow no
+  // longer pings the list on every chunk (see comment at server.ts:1495), we have
+  // to explicitly refresh on the false→true and true→false transitions so the
+  // indicator turns on/off. Caller `generateAnswer` calls broadcastConversation
+  // at start which already touches broadcastList, and we cover the end transition
+  // right here.
+  broadcastList();
+  // 1.2.6:流式结束,全量 reconcile 活库——刷残余脏标记 + persistConversation,把流式
+  // 期间增量 upsert 的节点和任何新增/删除的节点统一对齐(清孤立节点行)。幂等
+  // (INSERT OR REPLACE 会话行 + 删旧节点 + 重插)。会话已被并发删除时跳过;flushConvDirty
+  // 也会跳过已删会话的脏标记。
+  flushConvDirtyNow();
+  const conv = getConversation(conversationId);
+  if (conv) persistConversation(conv);
 }
 
 function conversationStillExists(conversationId: string) {
