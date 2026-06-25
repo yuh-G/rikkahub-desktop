@@ -53,6 +53,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "~/components/ui/dialog";
+import { JsonTree, tryParseJson } from "~/components/ui/json-tree";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
@@ -134,10 +135,13 @@ interface RequestLog {
   error?: string;
   kind?: string;
   durationMs?: number;
+  method?: string;
+  requestHeaders?: Record<string, string>;
   requestPreview?: string;
   responsePreview?: string;
   requestBody?: string;
   responseBody?: string;
+  responseHeaders?: Record<string, string>;
   toolName?: string;
 }
 
@@ -8699,23 +8703,10 @@ function AboutSection() {
 
 function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: () => void }) {
   const { t } = useTranslation();
-  const [openId, setOpenId] = React.useState<string | null>(null);
-  const copyLogText = React.useCallback(
-    async (event: React.MouseEvent, title: string, text: string) => {
-      event.stopPropagation();
-      if (!text) return;
-      await navigator.clipboard.writeText(text);
-      toast.success(t("settings:logs.copied", { title }));
-    },
-    [t],
-  );
+  const [active, setActive] = React.useState<RequestLog | null>(null);
   return (
     <>
-      <SectionHeader
-        icon={FileClock}
-        title={t("settings:logs.title")}
-        subtitle={t("settings:logs.subtitle")}
-      />
+      <SectionHeader icon={FileClock} title={t("settings:logs.title")} subtitle={t("settings:logs.subtitle")} />
       {logs.length > 0 ? (
         <div className="-mt-4 mb-2 flex justify-end">
           <button
@@ -8728,83 +8719,155 @@ function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: () => voi
           </button>
         </div>
       ) : null}
-      <div className="space-y-3">
+      <div className="space-y-2">
         {logs.length === 0 ? (
           <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
             {t("settings:logs.empty")}
           </div>
         ) : null}
-        {logs.map((log) => {
-          const open = openId === log.id;
-          const requestText = log.requestBody || log.requestPreview || "";
-          const responseText = log.responseBody || log.responsePreview || log.error || "";
-          return (
-            <div
-              key={log.id}
-              role="button"
-              tabIndex={0}
-              className="block w-full select-text rounded-lg border bg-card p-4 text-left transition hover:shadow-sm"
-              onClick={() => setOpenId(open ? null : log.id)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                setOpenId(open ? null : log.id);
-              }}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="font-medium">{log.providerName}</div>
-                <span className={log.ok ? "text-xs text-emerald-600" : "text-xs text-destructive"}>
-                  {log.status}
-                </span>
-              </div>
-              <div className="mt-1 truncate text-xs text-muted-foreground">{log.url}</div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {new Date(log.at).toLocaleString()} · {log.kind ?? "request"} ·{" "}
-                {log.durationMs ?? 0}ms
-              </div>
-              {log.error ? (
-                <pre className="mt-2 max-h-32 select-text overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">
-                  {log.error}
-                </pre>
-              ) : null}
-              {open ? (
-                <div className="mt-3 grid gap-3 md:grid-cols-2">
-                  <div>
-                    <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
-                      <span>Request</span>
-                      <button
-                        type="button"
-                        className="rounded px-1.5 py-0.5 hover:bg-muted"
-                        onClick={(event) => void copyLogText(event, "Request", requestText)}
-                      >
-                        {t("settings:logs.copy")}
-                      </button>
-                    </div>
-                    <pre className="max-h-[520px] select-text overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">
-                      {requestText || t("settings:logs.no_request_body")}
-                    </pre>
-                  </div>
-                  <div>
-                    <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
-                      <span>Response</span>
-                      <button
-                        type="button"
-                        className="rounded px-1.5 py-0.5 hover:bg-muted"
-                        onClick={(event) => void copyLogText(event, "Response", responseText)}
-                      >
-                        {t("settings:logs.copy")}
-                      </button>
-                    </div>
-                    <pre className="max-h-[520px] select-text overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">
-                      {responseText || t("settings:logs.no_response_body")}
-                    </pre>
-                  </div>
-                </div>
-              ) : null}
+        {logs.map((log) => (
+          <button
+            key={log.id}
+            type="button"
+            onClick={() => setActive(log)}
+            className="block w-full rounded-lg border bg-card p-3 text-left transition hover:shadow-sm"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-primary">{log.method ?? "POST"}</span>
+              <span className={cn("text-xs font-medium", log.ok ? "text-emerald-600" : "text-destructive")}>
+                {log.status}
+              </span>
             </div>
-          );
-        })}
+            <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{log.url}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+              <span>{new Date(log.at).toLocaleString()}</span>
+              <span>{log.durationMs ?? 0}ms</span>
+              <span className="truncate">
+                {log.providerName}
+                {log.kind ? ` · ${log.kind}` : ""}
+              </span>
+            </div>
+            {log.error ? <div className="mt-1 truncate text-xs text-destructive">{log.error}</div> : null}
+          </button>
+        ))}
       </div>
+      <LogDetailDialog log={active} onClose={() => setActive(null)} />
     </>
+  );
+}
+
+function LogDetailDialog({ log, onClose }: { log: RequestLog | null; onClose: () => void }) {
+  const { t } = useTranslation();
+  const requestText = log?.requestBody || log?.requestPreview || "";
+  const responseText = log?.responseBody || log?.responsePreview || log?.error || "";
+  const requestJson = React.useMemo(() => tryParseJson(requestText), [requestText]);
+  const responseJson = React.useMemo(() => tryParseJson(responseText), [responseText]);
+  const copy = React.useCallback(
+    async (text: string) => {
+      if (!text) return;
+      await navigator.clipboard.writeText(text);
+      toast.success(t("settings:logs.copied", { title: "" }));
+    },
+    [t],
+  );
+  return (
+    <Dialog
+      open={log !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="truncate font-mono text-sm">{log?.url ?? ""}</DialogTitle>
+        </DialogHeader>
+        {log ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3">
+              <DetailField label={t("settings:logs.field_time")} value={new Date(log.at).toLocaleString()} />
+              <DetailField label={t("settings:logs.field_method")} value={log.method ?? "-"} />
+              <DetailField label={t("settings:logs.field_status")} value={String(log.status)} valueClass={log.ok ? "text-emerald-600" : "text-destructive"} />
+              <DetailField label={t("settings:logs.field_duration")} value={`${log.durationMs ?? 0}ms`} />
+              <DetailField label={t("settings:logs.field_provider")} value={log.providerName} />
+              <DetailField label={t("settings:logs.field_kind")} value={log.kind ?? "-"} />
+            </div>
+            {log.error ? (
+              <pre className="overflow-auto rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-xs whitespace-pre-wrap text-destructive">
+                {log.error}
+              </pre>
+            ) : null}
+            <HeaderList title={t("settings:logs.request_headers")} headers={log.requestHeaders} />
+            <BodySection title={t("settings:logs.request_body")} text={requestText} json={requestJson} onCopy={copy} emptyText={t("settings:logs.no_request_body")} />
+            <HeaderList title={t("settings:logs.response_headers")} headers={log.responseHeaders} />
+            <BodySection title={t("settings:logs.response_body")} text={responseText} json={responseJson} onCopy={copy} emptyText={t("settings:logs.no_response_body")} />
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DetailField({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-muted-foreground">{label}</div>
+      <div className={cn("truncate font-medium", valueClass)} title={value}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function HeaderList({ title, headers }: { title: string; headers?: Record<string, string> }) {
+  if (!headers || Object.keys(headers).length === 0) return null;
+  return (
+    <div>
+      <div className="mb-1 text-xs font-medium text-muted-foreground">{title}</div>
+      <div className="divide-y rounded-lg border bg-muted/30">
+        {Object.entries(headers).map(([key, value]) => (
+          <div key={key} className="flex gap-2 px-2 py-1 text-xs">
+            <span className="shrink-0 font-mono text-primary">{key}:</span>
+            <span className="min-w-0 break-all font-mono">{value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BodySection({
+  title,
+  text,
+  json,
+  onCopy,
+  emptyText,
+}: {
+  title: string;
+  text: string;
+  json: unknown;
+  onCopy: (text: string) => void;
+  emptyText: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
+        <span>{title}</span>
+        {text ? (
+          <button type="button" className="rounded px-1.5 py-0.5 hover:bg-muted" onClick={() => void onCopy(text)}>
+            {t("settings:logs.copy")}
+          </button>
+        ) : null}
+      </div>
+      {!text ? (
+        <div className="text-xs text-muted-foreground">{emptyText}</div>
+      ) : json !== undefined ? (
+        <JsonTree data={json} className="rounded-lg border bg-muted/30 p-2" zoomTitle={title} />
+      ) : (
+        <pre className="max-h-[400px] overflow-auto rounded-lg border bg-muted/30 p-2 text-xs whitespace-pre-wrap">
+          {text}
+        </pre>
+      )}
+    </div>
   );
 }

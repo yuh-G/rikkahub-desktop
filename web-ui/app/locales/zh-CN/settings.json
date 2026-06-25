@@ -310,7 +310,17 @@
     "no_response_body": "无响应体记录",
     "clear": "清空日志",
     "clear_confirm": "确定清空所有请求日志?此操作不可撤销。",
-    "cleared": "已清空所有请求日志"
+    "cleared": "已清空所有请求日志",
+    "field_time": "时间",
+    "field_method": "方法",
+    "field_status": "状态",
+    "field_duration": "耗时",
+    "field_provider": "服务商",
+    "field_kind": "类型",
+    "request_headers": "请求头",
+    "response_headers": "响应头",
+    "request_body": "请求体",
+    "response_body": "响应体"
   },
   "search": {
     "title": "搜索服务",

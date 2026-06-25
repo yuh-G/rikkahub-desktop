@@ -316,7 +316,17 @@
     "no_response_body": "No response body recorded",
     "clear": "Clear logs",
     "clear_confirm": "Clear all request logs? This cannot be undone.",
-    "cleared": "All request logs cleared"
+    "cleared": "All request logs cleared",
+    "field_time": "Time",
+    "field_method": "Method",
+    "field_status": "Status",
+    "field_duration": "Duration",
+    "field_provider": "Provider",
+    "field_kind": "Kind",
+    "request_headers": "Request headers",
+    "response_headers": "Response headers",
+    "request_body": "Request body",
+    "response_body": "Response body"
   },
   "search": {
     "title": "Search services",
