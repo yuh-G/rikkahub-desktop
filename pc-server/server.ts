@@ -1474,15 +1474,53 @@ function normalizeTtsProviders(value: unknown): TtsProvider[] {
   return mergeById(normalized, defaults);
 }
 
+// 1.2.6 会话迁移标记。写入 state.json.appliedMigrations 后,conversations 不再落进
+// state.json(瘦身),活库成为会话唯一来源。
+// ⚠️ 这两个声明必须在 `let state = loadState()`(下方)之前——loadState 会赋值
+// conversationsDb、读 CONVERSATIONS_SQLITE_MIGRATION。let/const 不提升(有 TDZ),
+// 放在 loadState 调用之后会触发 ReferenceError: Cannot access ... before initialization。
+const CONVERSATIONS_SQLITE_MIGRATION = "conversations-sqlite-1.2.6";
+let conversationsDb: InstanceType<typeof Database> | null = null;
+
 function loadState(): State {
   mkdirSync(filesDir, { recursive: true });
   mkdirSync(skillsDir, { recursive: true });
+  // 1.2.6:会话从 state.json 迁入 SQLite 活库(rikka_hub.db)。state.json 瘦身后只保留
+  // settings/files/images/memories/stats 等非会话状态;conversations 启动时从活库读。
+  conversationsDb = openConversationsDb();
+
+  // 读 state.json(旧版含 conversations / 新版瘦身 / 不存在)
+  let parsed: Partial<State>;
   if (!existsSync(statePath)) {
-    const fresh = defaultState();
-    writeFileSync(statePath, JSON.stringify(fresh, null, 2));
-    return fresh;
+    parsed = defaultState();
+  } else {
+    try {
+      parsed = JSON.parse(readFileSync(statePath, "utf8")) as Partial<State>;
+    } catch (err) {
+      // state.json 损坏:尝试 pre-sqlite 备份;都没有则默认状态。
+      console.error("[loadState] state.json 解析失败,尝试 pre-sqlite.bak", err);
+      const bakPath = join(dataDir, "state.json.pre-sqlite.bak");
+      try {
+        parsed = existsSync(bakPath)
+          ? (JSON.parse(readFileSync(bakPath, "utf8")) as Partial<State>)
+          : defaultState();
+      } catch (err2) {
+        console.error("[loadState] pre-sqlite.bak 也失败,用默认状态", err2);
+        parsed = defaultState();
+      }
+    }
   }
-  return normalizeState(JSON.parse(readFileSync(statePath, "utf8")) as Partial<State>);
+
+  // 迁移 + 瘦身(首次升级)。返回 true=从活库读;false=迁移失败,本次用 parsed.conversations。
+  const migrated = migrateConversationsIfNeeded(parsed);
+
+  const conversations = migrated
+    ? loadConversationsFromDbWithFallback()
+    : (Array.isArray(parsed.conversations) ? parsed.conversations : []);
+
+  const state = normalizeState(parsed);
+  state.conversations = conversations;
+  return state;
 }
 
 function mergeById<T extends { id: string }>(current: T[], defaults: T[]): T[] {
@@ -1725,7 +1763,10 @@ async function performStateSave(): Promise<void> {
   // (post-import), the indentation alone can double serialize CPU cost.
   // logs 是内存态运行时缓冲(对齐移动端,重启清空),不写入 state.json。
   // JSON.stringify 对值为 undefined 的属性会省略键,故 logs 不会落盘。
-  const content = JSON.stringify({ ...state, logs: undefined });
+  // logs 是内存态(不落盘);1.2.6 起 conversations 也排除——会话已迁入 SQLite 活库,
+  // state.json 瘦身。若不排除,启动后第一次 saveState() 会把内存 state.conversations 又
+  // 写回 state.json,破坏瘦身。JSON.stringify 对 undefined 值省略键,两者都不会落盘。
+  const content = JSON.stringify({ ...state, logs: undefined, conversations: undefined });
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const tempPath = `${statePath}.${process.pid}.${Date.now()}.${attempt}.tmp`;
@@ -3512,14 +3553,6 @@ function generateRikkaHubDb(dbPath: string): boolean {
 // 备份始终从内存 state.conversations 现场生成,代码不动。详见设计文档。
 // ============================================================================
 
-// 1.2.6 会话迁移标记。写入 state.json.appliedMigrations 后,conversations 不再落进
-// state.json(瘦身),活库成为会话唯一来源。
-const CONVERSATIONS_SQLITE_MIGRATION = "conversations-sqlite-1.2.6";
-
-// 单一长连接:启动时打开(P1 接入 loadState),全程复用。每次开关库会丢 WAL/连接池,
-// 反而更慢更脆。P0 阶段不接线,保持 null。
-let conversationsDb: InstanceType<typeof Database> | null = null;
-
 // 活库行类型(SELECT 结果)。is_pinned 存 0/1;system_prompt 空 string 对应 null。
 interface PcConversationRow {
   id: string;
@@ -3783,6 +3816,128 @@ function flushConvDirtyNow(): void {
     pendingConvFlush = null;
   }
   flushConvDirty();
+}
+
+// ----- 1.2.6 迁移:state.json conversations → 活库(一次性,P1)-----
+//
+// 触发条件:state.json 仍含 conversations 数组 且 appliedMigrations 不含
+// "conversations-sqlite-1.2.6"。流程(崩溃安全):
+//   ① 备份 state.json → state.json.pre-sqlite.bak(降级安全网,已存在不覆盖)
+//   ② 灌库(单事务,INSERT OR REPLACE 幂等)
+//   ③ 写瘦 state.json(删 conversations + 加迁移标记,temp+rename 原子)
+// 崩在 ①②:state.json 未变,重跑幂等;崩在 ③:temp 未 rename,重跑。无数据丢失。
+
+/**
+ * 批量灌库(单事务)。比逐个 persistConversation 快(1 个事务 vs N 个)。迁移用。
+ * INSERT OR REPLACE 幂等——中途失败重跑不重复/不冲突。
+ */
+function migrateConversationsIntoDb(db: InstanceType<typeof Database>, conversations: Conversation[]): void {
+  const upsertConv = db.prepare(
+    "INSERT OR REPLACE INTO pc_conversation (id, assistant_id, title, system_prompt, truncate_index, suggestions, is_pinned, create_at, update_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  );
+  const insertNode = db.prepare(
+    "INSERT OR REPLACE INTO pc_message_node (id, conversation_id, node_index, messages, select_index) VALUES (?, ?, ?, ?, ?)",
+  );
+  const txn = db.transaction(() => {
+    for (const conv of conversations) {
+      upsertConv.run(
+        conv.id,
+        conv.assistantId || DEFAULT_ASSISTANT_ID,
+        conv.title || "",
+        conv.systemPrompt ?? "",
+        typeof conv.truncateIndex === "number" ? conv.truncateIndex : -1,
+        JSON.stringify(conv.chatSuggestions ?? []),
+        conv.isPinned ? 1 : 0,
+        conv.createAt || Date.now(),
+        conv.updateAt || Date.now(),
+      );
+      for (let i = 0; i < (conv.messages ?? []).length; i += 1) {
+        const node = conv.messages[i];
+        if (!node?.id) continue;
+        insertNode.run(node.id, conv.id, i, JSON.stringify(node.messages ?? []), node.selectIndex ?? 0);
+      }
+    }
+  });
+  txn();
+}
+
+/**
+ * 首次升级到 SQLite 版:① 备份 .bak → ② 灌库 → ③ 写瘦 state.json。
+ * @returns true=已迁移/迁移成功(从活库读);false=灌库失败(本次用 parsed.conversations 兜底,
+ *          state.json 保持原样,下次启动重试)。
+ */
+function migrateConversationsIfNeeded(parsed: Partial<State>): boolean {
+  const appliedMigrations = Array.isArray(parsed.appliedMigrations) ? parsed.appliedMigrations : [];
+  if (appliedMigrations.includes(CONVERSATIONS_SQLITE_MIGRATION)) return true;
+
+  const conversationsToMigrate = Array.isArray(parsed.conversations) ? parsed.conversations : [];
+  const preSqliteBakPath = join(dataDir, "state.json.pre-sqlite.bak");
+
+  // ① 备份(只在有会话、state.json 存在、.bak 不存在时;防覆盖已有备份)
+  if (conversationsToMigrate.length > 0 && existsSync(statePath) && !existsSync(preSqliteBakPath)) {
+    try {
+      copyFileSync(statePath, preSqliteBakPath);
+    } catch (err) {
+      console.warn("[conv-db] pre-sqlite 备份失败(继续迁移)", err);
+    }
+  }
+
+  // ② 灌库(单事务,幂等)。巨量会话卡几秒——这是一次性的。
+  if (conversationsToMigrate.length > 0) {
+    console.log(`[conv-db] 首次升级:迁移 ${conversationsToMigrate.length} 条会话进 SQLite 活库...`);
+    try {
+      migrateConversationsIntoDb(conversationsDb!, conversationsToMigrate);
+      console.log("[conv-db] 会话迁移完成");
+    } catch (err) {
+      console.error("[conv-db] 会话迁移失败,保留 state.json 原样,下次启动重试", err);
+      return false;
+    }
+  }
+
+  // ③ 写瘦 state.json(删 conversations + 加迁移标记)
+  parsed.appliedMigrations = [...appliedMigrations, CONVERSATIONS_SQLITE_MIGRATION];
+  delete (parsed as { conversations?: Conversation[] }).conversations;
+  try {
+    writeSlimStateJsonSync(parsed);
+  } catch (err) {
+    console.warn("[conv-db] 写瘦 state.json 失败(活库已迁移,内存继续)", err);
+  }
+  return true;
+}
+
+/** 同步 temp+rename 写瘦 state.json。loadState 启动阶段用(不能异步)。 */
+function writeSlimStateJsonSync(data: Partial<State>): void {
+  const slimContent = JSON.stringify({ ...data, logs: undefined, conversations: undefined });
+  const tempPath = `${statePath}.migrate.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tempPath, slimContent);
+  try {
+    renameSync(tempPath, statePath);
+  } catch (err) {
+    try { unlinkSync(tempPath); } catch { /* cleanup best-effort */ }
+    throw err;
+  }
+}
+
+/** 从 state.json.pre-sqlite.bak 读 conversations(活库损坏时的最后兜底)。 */
+function recoverConversationsFromBak(): Conversation[] {
+  const bakPath = join(dataDir, "state.json.pre-sqlite.bak");
+  try {
+    if (!existsSync(bakPath)) return [];
+    const bakParsed = JSON.parse(readFileSync(bakPath, "utf8")) as Partial<State>;
+    return Array.isArray(bakParsed.conversations) ? bakParsed.conversations : [];
+  } catch (err) {
+    console.error("[conv-db] pre-sqlite.bak 恢复失败", err);
+    return [];
+  }
+}
+
+function loadConversationsFromDbWithFallback(): Conversation[] {
+  try {
+    return loadAllConversationsFromDb(conversationsDb!);
+  } catch (err) {
+    console.error("[conv-db] 活库读取失败,从 state.json.pre-sqlite.bak 恢复", err);
+    return recoverConversationsFromBak();
+  }
 }
 
 function insertConversationsIntoDb(db: InstanceType<typeof Database>) {
