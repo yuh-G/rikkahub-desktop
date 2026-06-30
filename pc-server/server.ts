@@ -2414,6 +2414,24 @@ function hasResumableToolParts(msg: Message) {
   );
 }
 
+// 是否为"正在生成"的空 ASSISTANT 占位:没有任何可发送内容(文本/思维链/工具/媒体),
+// 只有 loading 占位或完全为空。组装上下文时它不是历史消息,不应占用 contextMessageSize
+// 名额——否则 size=1 时 slice 只取到它(空内容随后被 appendAssistantApiMessages 过滤),
+// 把用户真正的输入挤出上下文,模型只收到 system prompt(issue #16)。
+// 注意:工具恢复场景下尾部 ASSISTANT 已带 tool 部分与结果(模型续轮必须看到),故必须靠
+// "有无内容"判定,而不是 finishedAt——恢复消息 finishedAt 同样为 null 但不能剔除。
+function isEmptyAssistantPlaceholder(msg: Message | undefined): boolean {
+  if (!msg || msg.role !== "ASSISTANT") return false;
+  return !msg.parts.some((part) => {
+    if (!isRecord(part)) return false;
+    const t = part.type;
+    if (t === "tool" || t === "image" || t === "document" || t === "audio" || t === "video") return true;
+    if (t === "text") return String(part.text ?? "").trim().length > 0;
+    if (t === "reasoning") return String(part.reasoning ?? "").trim().length > 0;
+    return false;
+  });
+}
+
 // 把上一条 ASSISTANT 消息里所有处于 pending 状态的工具（典型场景：ask_user
 // 没等用户点选项，用户直接发了下一条消息或要求重生成）标记为"用户已取消"，
 // 让本轮生成能干净地接续——对齐安卓 commit 05c12488 的 finishInterruptedPendingTools。
@@ -8751,7 +8769,14 @@ function appendAssistantApiMessages(items: ApiMessage[], message: Message, inclu
 
 function conversationTransformedMessages(conversation: Conversation, assistant: Assistant) {
   const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
-  const rawMessages = conversation.messages.slice(assistant.contextMessageSize > 0 ? -assistant.contextMessageSize : undefined);
+  // 剔除尾部"正在生成"的空 ASSISTANT 占位后再按 contextMessageSize 切片,见
+  // isEmptyAssistantPlaceholder 的说明(issue #16 + 工具恢复兼容)。
+  const contextNodes = conversation.messages.filter((node, index) => {
+    if (index !== conversation.messages.length - 1) return true;
+    const selected = node.messages[node.selectIndex] ?? node.messages[0];
+    return !isEmptyAssistantPlaceholder(selected);
+  });
+  const rawMessages = contextNodes.slice(assistant.contextMessageSize > 0 ? -assistant.contextMessageSize : undefined);
   const selectedMessages = rawMessages
     .map((node) => node.messages[node.selectIndex] ?? node.messages[0])
     .filter(Boolean);
