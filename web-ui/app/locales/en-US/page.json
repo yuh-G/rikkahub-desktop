@@ -28,6 +28,11 @@
       "no_message_description": "This conversation does not have any messages yet"
     },
     "welcome_prompt": "How can I help you?",
+    "share": {
+      "cancel": "Cancel selection",
+      "select_all": "Select all / none",
+      "confirm": "Export selected"
+    },
     "user": {
       "default_name": "User"
     },

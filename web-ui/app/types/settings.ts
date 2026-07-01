@@ -267,6 +267,26 @@ export interface TtsProviderProfile {
 }
 
 /**
+ * 应用内快捷键的 action 标识。和后端 defaultSettings().keybindings 的 key 一一对应,
+ * 改动需同步后端 + 前端默认表(DEFAULT_KEYBINDINGS in lib/hotkeys.ts)。
+ */
+export type KeybindingAction =
+  | "newConversation"
+  | "prevConversation"
+  | "nextConversation"
+  | "renameConversation"
+  | "searchConversations"
+  | "openSettings"
+  | "openImageGeneration"
+  | "zoomInOut";
+
+/** 单条快捷键绑定。keys 为 token 数组(如 ["Ctrl","N"]);zoomInOut 例外无 keys(滚轮固定)。 */
+export interface KeybindingEntry {
+  keys?: string[];
+  enabled: boolean;
+}
+
+/**
  * Global app settings. The backend pushes the full object via SSE on `/api/settings/stream`
  * whenever any field changes, and the SPA mirrors it into the Zustand settings slice.
  */
@@ -309,5 +329,7 @@ export interface Settings {
   searchServiceSelected: number;
   /** Preferred local server port (null = auto, default 8080). PC-only; restart required. */
   preferredPort?: number | null;
+  /** 应用内快捷键绑定。PC-only(备份导出时后端剥离,Android 不可见)。 */
+  keybindings?: Partial<Record<KeybindingAction, KeybindingEntry>>;
   [key: string]: unknown;
 }

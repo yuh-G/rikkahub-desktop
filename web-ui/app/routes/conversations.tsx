@@ -13,6 +13,7 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatInput } from "~/components/input/chat-input";
 import { GlobalDropZone } from "~/components/global-drop-zone";
 import { ChatMessage } from "~/components/message/chat-message";
+import { ShareExportDialog } from "~/components/message/share-export-dialog";
 import { Button } from "~/components/ui/button";
 import {
   Dialog,
@@ -37,6 +38,7 @@ import {
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "~/components/ui/sidebar";
 import { useIsMobile } from "~/hooks/use-mobile";
 import { toConversationSummaryUpdate, useConversationList } from "~/hooks/use-conversation-list";
+import { onHotkeyAction, type HotkeyBusAction } from "~/lib/hotkey-events";
 import { useCurrentAssistant } from "~/hooks/use-current-assistant";
 import { useCurrentModel } from "~/hooks/use-current-model";
 import { getAssistantDisplayName, getModelDisplayName } from "~/lib/display";
@@ -66,7 +68,7 @@ import {
   type Settings,
   type UIMessagePart,
 } from "~/types";
-import { ArrowDown, Loader2, MessageSquare, Moon, Pencil, Sun } from "lucide-react";
+import { ArrowDown, Check, ListChecks, Loader2, MessageSquare, Moon, Pencil, Sun, X } from "lucide-react";
 import Logo from "~/components/logo";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { useTranslation } from "react-i18next";
@@ -772,6 +774,7 @@ const ConversationTimeline = React.memo(
     isGenerating,
     settings,
     conversationAssistantId,
+    conversationTitle,
     contentClassName,
     onEdit,
     onDelete,
@@ -789,6 +792,7 @@ const ConversationTimeline = React.memo(
     isGenerating: boolean;
     settings: Settings | null;
     conversationAssistantId: string | null;
+    conversationTitle?: string;
     contentClassName?: string;
     onEdit: (message: MessageDto) => void | Promise<void>;
     onDelete: (messageId: string) => Promise<void>;
@@ -861,6 +865,67 @@ const ConversationTimeline = React.memo(
     const [topVisibleIndex, setTopVisibleIndex] = React.useState(0);
     const [topEndIndex, setTopEndIndex] = React.useState(0);
     const didInitialScrollRef = React.useRef<string | null>(null);
+
+    // 会话内分享: 点消息"分享"进入选择模式, 默认选中该消息及之前所有(对齐 APP).
+    // 确认后弹出导出格式选择 (Markdown / 图片). 切换会话时清理, 避免残留选中态.
+    const [shareSelecting, setShareSelecting] = React.useState(false);
+    const [shareSelectedIds, setShareSelectedIds] = React.useState<Set<string>>(
+      () => new Set(),
+    );
+    const [shareDialogOpen, setShareDialogOpen] = React.useState(false);
+
+    const handleShare = React.useCallback(
+      (messageId: string) => {
+        const idx = selectedNodeMessages.findIndex((item) => item.message.id === messageId);
+        if (idx < 0) return;
+        const ids = new Set<string>();
+        for (let i = 0; i <= idx; i++) {
+          ids.add(selectedNodeMessages[i].message.id);
+        }
+        setShareSelectedIds(ids);
+        setShareSelecting(true);
+      },
+      [selectedNodeMessages],
+    );
+
+    const handleToggleSelect = React.useCallback((messageId: string) => {
+      setShareSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(messageId)) {
+          next.delete(messageId);
+        } else {
+          next.add(messageId);
+        }
+        return next;
+      });
+    }, []);
+
+    const handleCancelShare = React.useCallback(() => {
+      setShareSelecting(false);
+      setShareSelectedIds(new Set());
+    }, []);
+
+    const handleSelectAllToggle = React.useCallback(() => {
+      setShareSelectedIds((prev) => {
+        if (prev.size >= selectedNodeMessages.length) return new Set();
+        return new Set(selectedNodeMessages.map((item) => item.message.id));
+      });
+    }, [selectedNodeMessages]);
+
+    const handleConfirmShare = React.useCallback(() => {
+      if (shareSelectedIds.size === 0) {
+        setShareSelecting(false);
+        return;
+      }
+      setShareSelecting(false);
+      setShareDialogOpen(true);
+    }, [shareSelectedIds.size]);
+
+    React.useEffect(() => {
+      setShareSelecting(false);
+      setShareSelectedIds(new Set());
+      setShareDialogOpen(false);
+    }, [activeId]);
 
     // 搜索命中跳转时 URL 带 ?msg=<messageId>,用它定位到命中那条消息(对齐安卓)。
     const [searchParams] = useSearchParams();
@@ -983,6 +1048,10 @@ const ConversationTimeline = React.memo(
                     onSelectBranch={onSelectBranch}
                     onTranslate={onTranslate}
                     onToolApproval={onToolApproval}
+                    selecting={shareSelecting}
+                    selected={shareSelectedIds.has(message.id)}
+                    onToggleSelect={handleToggleSelect}
+                    onShare={handleShare}
                   />
                 </div>
               );
@@ -992,6 +1061,38 @@ const ConversationTimeline = React.memo(
 
         {!detailLoading && !detailError && activeId && selectedNodeMessages.length > 0 ? (
           <>
+            {shareSelecting ? (
+              <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full border bg-background/95 p-1 shadow-lg backdrop-blur">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleCancelShare}
+                  title={t("conversations.share.cancel", "取消选择")}
+                >
+                  <X className="size-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="px-2"
+                  onClick={handleSelectAllToggle}
+                  title={t("conversations.share.select_all", "全选 / 取消全选")}
+                >
+                  <ListChecks className="size-4" />
+                  <span className="ml-1 text-xs tabular-nums">{shareSelectedIds.size}</span>
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="px-2"
+                  disabled={shareSelectedIds.size === 0}
+                  onClick={handleConfirmShare}
+                  title={t("conversations.share.confirm", "导出选中消息")}
+                >
+                  <Check className="size-4" />
+                </Button>
+              </div>
+            ) : null}
             {!isAtBottom ? (
               <Button
                 aria-label={t("conversations.scroll_to_bottom", "滚动到底部")}
@@ -1031,6 +1132,14 @@ const ConversationTimeline = React.memo(
             ) : null}
           </>
         ) : null}
+        <ShareExportDialog
+          open={shareDialogOpen}
+          onOpenChange={setShareDialogOpen}
+          messages={selectedNodeMessages
+            .filter((item) => shareSelectedIds.has(item.message.id))
+            .map((item) => item.message)}
+          title={conversationTitle ?? ""}
+        />
       </div>
     );
   },
@@ -1485,6 +1594,61 @@ function ConversationsPageInner() {
     }
   }, [closePanel, navigate, resetDetail, routeId, setActiveId]);
 
+  // 切换到上/下个会话(按侧边栏列表顺序:置顶优先,然后按更新时间降序,与展示一致)。
+  const switchConversation = (direction: -1 | 1) => {
+    if (!activeId || conversations.length === 0) return;
+    const index = conversations.findIndex((c) => c.id === activeId);
+    if (index === -1) return;
+    const target = conversations[index + direction];
+    if (!target) return;
+    setActiveId(target.id);
+    navigate(`/c/${target.id}`);
+  };
+
+  // 重命名当前会话,复用侧边栏重命名的 window.prompt 方式(WebView2 需开启 prompt,行为同现有菜单)。
+  const renameActiveConversation = () => {
+    if (!activeId) return;
+    const current = conversations.find((c) => c.id === activeId);
+    if (!current) return;
+    const nextTitle = window
+      .prompt(t("common:conversation_sidebar.edit_title_prompt"), current.title)
+      ?.trim();
+    if (nextTitle == null) return;
+    void handleUpdateConversationTitle(activeId, nextTitle);
+  };
+
+  // 快捷键事件接入:ref 每次 render 更新最新闭包,useEffect 只挂一次监听,避免重建与陈旧。
+  const hotkeyHandlerRef = React.useRef<(action: HotkeyBusAction) => void>(() => {});
+  hotkeyHandlerRef.current = (action: HotkeyBusAction) => {
+    switch (action) {
+      case "newConversation":
+        handleCreateConversation();
+        break;
+      case "prevConversation":
+        switchConversation(-1);
+        break;
+      case "nextConversation":
+        switchConversation(1);
+        break;
+      case "renameConversation":
+        renameActiveConversation();
+        break;
+      case "searchConversations":
+        break;
+    }
+  };
+
+  React.useEffect(() => {
+    const actions: HotkeyBusAction[] = [
+      "newConversation",
+      "prevConversation",
+      "nextConversation",
+      "renameConversation",
+    ];
+    const offs = actions.map((action) => onHotkeyAction(action, () => hotkeyHandlerRef.current(action)));
+    return () => offs.forEach((off) => off());
+  }, []);
+
   const handleStop = React.useCallback(async () => {
     if (!activeId) return;
     await api.post<{ status: string }>(`conversations/${activeId}/stop`);
@@ -1565,6 +1729,7 @@ function ConversationsPageInner() {
               isGenerating={detail?.isGenerating ?? false}
               settings={settings}
               conversationAssistantId={detail?.assistantId ?? null}
+              conversationTitle={detail?.title ?? ""}
               onEdit={handleStartEdit}
               onDelete={handleDeleteMessage}
               onFork={handleForkMessage}

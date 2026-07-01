@@ -30,14 +30,20 @@
     "create_fork": "创建分叉",
     "delete": "删除",
     "export_markdown": "导出为 Markdown",
-    "export_markdown_with_reasoning": "导出为 Markdown（含推理过程）",
     "share": "分享",
     "translation_failed": "翻译失败",
     "prompt_tokens_with_cache": "{{promptTokens}} tokens ({{cachedTokens}} cached)",
     "prompt_tokens": "{{promptTokens}} tokens",
     "completion_tokens": "{{completionTokens}} tokens",
     "tokens_per_second": "{{value}} tok/s",
-    "duration_seconds": "{{value}}s"
+    "duration_seconds": "{{value}}s",
+    "share_dialog_title": "分享对话",
+    "share_dialog_desc": "选择导出格式，共 {{count}} 条消息",
+    "export_image": "导出为图片",
+    "expand_reasoning": "展开思考",
+    "export_image_btn": "导出图片",
+    "exporting_image": "正在生成图片…",
+    "export_image_failed": "导出图片失败"
   },
   "tool_part": {
     "memory_create": "创建记忆",

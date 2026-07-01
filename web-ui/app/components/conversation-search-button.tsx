@@ -8,6 +8,7 @@ import { Button } from "~/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "~/components/ui/dialog";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import api from "~/services/api";
+import { onHotkeyAction } from "~/lib/hotkey-events";
 import type { MessageSearchResultDto } from "~/types";
 
 export interface ConversationSearchButtonProps {
@@ -61,6 +62,10 @@ function formatRelativeTime(updateAt: number, t: (key: string) => string): strin
 export function ConversationSearchButton({ onSelect }: ConversationSearchButtonProps) {
   const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
+  // 响应 Ctrl+Shift+F 快捷键(useHotkeys 匹配后派发事件)。仅在按钮渲染(会话侧边栏挂载)时生效。
+  React.useEffect(() => {
+    return onHotkeyAction("searchConversations", () => setOpen(true));
+  }, []);
   const [query, setQuery] = React.useState("");
   const [searching, setSearching] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);

@@ -11,7 +11,6 @@ import {
   Clock3,
   Copy,
   Ellipsis,
-  FileDown,
   Gauge,
   GitFork,
   Languages,
@@ -23,8 +22,6 @@ import {
   Trash2,
   Zap,
 } from "lucide-react";
-import { toast } from "sonner";
-
 import { useSettingsStore } from "~/stores";
 import type {
   AssistantProfile,
@@ -38,7 +35,6 @@ import type {
 } from "~/types";
 
 import { copyTextToClipboard } from "~/lib/clipboard";
-import { convertMessageToMarkdown, downloadMarkdown } from "~/lib/export-markdown";
 import { openExternal } from "~/lib/external-link";
 import { cn } from "~/lib/utils";
 import {
@@ -82,6 +78,10 @@ interface ChatMessageProps {
     reason: string,
     answer?: string,
   ) => void | Promise<void>;
+  onShare?: (messageId: string) => void;
+  selecting?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (messageId: string) => void;
 }
 
 function hasRenderablePart(part: UIMessagePart): boolean {
@@ -550,6 +550,7 @@ const ChatMessageActionsRow = React.memo(
     onDelete,
     onFork,
     onTranslate,
+    onShare,
   }: {
     node: MessageNodeDto;
     message: MessageDto;
@@ -561,6 +562,7 @@ const ChatMessageActionsRow = React.memo(
     onDelete?: (messageId: string) => void | Promise<void>;
     onFork?: (messageId: string) => void | Promise<void>;
     onTranslate?: (messageId: string) => void | Promise<void>;
+    onShare?: (messageId: string) => void;
   }) => {
     const { t } = useTranslation("message");
     const [regenerating, setRegenerating] = React.useState(false);
@@ -861,24 +863,12 @@ const ChatMessageActionsRow = React.memo(
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align={alignRight ? "end" : "start"}>
-            <DropdownMenuItem
-              onSelect={() => {
-                const content = convertMessageToMarkdown(message, false);
-                downloadMarkdown(content, `message-${message.id}.md`);
-              }}
-            >
-              <FileDown className="size-3.5" />
-              {t("chat_message.export_markdown")}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => {
-                const content = convertMessageToMarkdown(message, true);
-                downloadMarkdown(content, `message-${message.id}.md`);
-              }}
-            >
-              <FileDown className="size-3.5" />
-              {t("chat_message.export_markdown_with_reasoning")}
-            </DropdownMenuItem>
+            {onShare && (
+              <DropdownMenuItem onSelect={() => onShare(message.id)}>
+                <Share2 className="size-3.5" />
+                {t("chat_message.share")}
+              </DropdownMenuItem>
+            )}
             {onFork && (
               <DropdownMenuItem
                 disabled={actionDisabled}
@@ -890,25 +880,6 @@ const ChatMessageActionsRow = React.memo(
                 {t("chat_message.create_fork")}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem
-              onSelect={() => {
-                const text = buildCopyText(message.parts, t);
-                void copyTextToClipboard(text)
-                  .then(() =>
-                    toast.success(t("chat_message.share_copied", "已复制，可粘贴到微信或其他应用")),
-                  )
-                  .catch((error) =>
-                    toast.error(
-                      error instanceof Error
-                        ? error.message
-                        : t("chat_message.copy_failed", "复制失败"),
-                    ),
-                  );
-              }}
-            >
-              <Share2 className="size-3.5" />
-              {t("chat_message.share")}
-            </DropdownMenuItem>
             {onDelete && (
               <DropdownMenuItem
                 variant="destructive"
@@ -997,6 +968,10 @@ export const ChatMessage = React.memo(
     onFork,
     onTranslate,
     onToolApproval,
+    onShare,
+    selecting = false,
+    selected = false,
+    onToggleSelect,
   }: ChatMessageProps) => {
     const isUser = message.role === "USER";
     const providers = useSettingsStore((state) => state.settings?.providers);
@@ -1008,7 +983,7 @@ export const ChatMessage = React.memo(
     const modelSettingsHref = modelProviderId
       ? `/settings?section=providers&providerId=${encodeURIComponent(modelProviderId)}${providerModelId ? `&modelId=${encodeURIComponent(providerModelId)}` : ""}`
       : "/settings?section=providers";
-    const showActions = isLastMessage ? !loading : hasMessageContent;
+    const showActions = selecting ? false : isLastMessage ? !loading : hasMessageContent;
     const showAssistantBubble = !isUser && displaySetting?.showAssistantBubble === true;
     const citationUrlMap = React.useMemo(
       () => buildCitationUrlMap(message.parts, message.annotations),
@@ -1033,10 +1008,31 @@ export const ChatMessage = React.memo(
 
     return (
       <div
-        className={cn("group/message flex flex-col gap-4", isUser ? "items-end" : "items-start")}
+        className={cn(
+          "group/message relative flex flex-col gap-4",
+          isUser ? "items-end" : "items-start",
+          selecting && "cursor-pointer rounded-2xl transition-colors",
+          selecting && selected && "ring-2 ring-primary/50",
+        )}
         data-message-role={message.role.toLowerCase()}
         data-message-loading={loading || undefined}
+        onClick={
+          selecting && onToggleSelect ? () => onToggleSelect(message.id) : undefined
+        }
       >
+        {selecting ? (
+          <div
+            data-export-ignore="true"
+            className={cn(
+              "absolute -left-9 top-0 flex size-6 items-center justify-center rounded-full border-2 transition-colors",
+              selected
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-background",
+            )}
+          >
+            {selected ? <Check className="size-4" /> : null}
+          </div>
+        ) : null}
         <div className="flex w-full flex-col gap-2">
           <ChatMessageAvatarRow
             message={message}
@@ -1087,6 +1083,7 @@ export const ChatMessage = React.memo(
               onDelete={onDelete}
               onFork={onFork}
               onTranslate={onTranslate}
+              onShare={onShare}
             />
           </div>
         )}

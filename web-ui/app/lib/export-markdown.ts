@@ -25,6 +25,37 @@ export function convertMessageToMarkdown(message: MessageDto, includeReasoning: 
   return lines.join("\n").trim();
 }
 
+export function convertMessagesToMarkdown(
+  messages: MessageDto[],
+  includeReasoning: boolean,
+  title?: string,
+): string {
+  const lines: string[] = [];
+  const header = title?.trim() ?? "";
+  if (header) {
+    lines.push(`# ${header}`);
+    lines.push("");
+  }
+  for (const message of messages) {
+    const roleLabel =
+      message.role === "USER"
+        ? "## 用户"
+        : message.role === "ASSISTANT"
+          ? "## 助手"
+          : `## ${message.role}`;
+    lines.push(roleLabel);
+    lines.push("");
+    const body = convertMessageToMarkdown(message, includeReasoning);
+    if (body) {
+      lines.push(body);
+      lines.push("");
+    }
+    lines.push("---");
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
 export function convertConversationToMarkdown(
   detail: ConversationDto,
   includeReasoning: boolean,

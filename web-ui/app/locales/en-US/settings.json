@@ -355,6 +355,7 @@
     "type": "Type",
     "depth": "Depth",
     "result_count": "Result count",
+    "api_key_hint": "Multiple keys supported (separate with spaces or commas); auto-switches to the next key on failure",
     "test": "Test",
     "delete": "Delete",
     "current": "Current",
@@ -368,6 +369,16 @@
     "test_success": "Test succeeded\nEndpoint: {{endpoint}}\n\n{{preview}}",
     "test_ok": "Search service test succeeded",
     "test_failed": "Test failed",
+    "test_all_ok": "Test passed: all {{count}} keys are available\nEndpoint: {{endpoint}}\n\n{{preview}}",
+    "test_partial": "{{ok}}/{{total}} keys available; {{failed}} invalid (auto-skipped in chat)\nEndpoint: {{endpoint}}\n\n{{preview}}",
+    "test_all_failed": "Test failed: none of the {{count}} keys are available",
+    "key_status_title": "Per-key status",
+    "key_ok": "Available",
+    "key_fail_auth_invalid": "Invalid or expired key",
+    "key_fail_quota_exhausted": "Quota exhausted or rate limited",
+    "key_fail_key_error": "Key unavailable",
+    "key_fail_network": "Network error or service unavailable",
+    "key_fail_other": "Test failed",
     "delete_confirm": "Delete the search service \"{{name}}\"?",
     "deleted": "Search service deleted",
     "preset_ok": "Preset available",
@@ -700,5 +711,24 @@
     "s3_desc": "Standard AWS S3 and compatible endpoints (MinIO/R2/Tencent COS/Alibaba OSS, etc.). Backup contents match WebDAV.",
     "endpoint_label": "Endpoint (blank = official AWS)",
     "prefix_path": "Prefix path"
+  },
+  "hotkeys": {
+    "title": "Shortcuts",
+    "reset_all": "Reset all to defaults",
+    "reset": "Reset to default",
+    "press_keys": "Press a key combination…",
+    "click_to_set": "Click to set",
+    "ctrl_wheel": "Ctrl + Wheel",
+    "conflict_with": "Conflicts with \"{{name}}\" — pick another combination",
+    "actions": {
+      "newConversation": "New conversation",
+      "prevConversation": "Previous conversation",
+      "nextConversation": "Next conversation",
+      "renameConversation": "Rename current conversation",
+      "searchConversations": "Search conversations",
+      "openSettings": "Open settings",
+      "openImageGeneration": "Image generation",
+      "zoomInOut": "Zoom in / out"
+    }
   }
 }

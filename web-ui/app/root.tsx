@@ -13,6 +13,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Route } from "./+types/root";
 import { useSettingsStore, useSettingsSubscription } from "~/stores";
+import { useHotkeys } from "~/hooks/use-hotkeys";
 import "./app.css";
 import "./i18n";
 import { Toaster } from "./components/ui/sonner";
@@ -118,6 +119,7 @@ function PageTransition({ children }: { children: React.ReactNode }) {
 
 function AppContent() {
   useSettingsSubscription();
+  useHotkeys();
   const displaySetting = useSettingsStore((state) => state.settings?.displaySetting);
   React.useEffect(() => {
     if (typeof document === "undefined") return;

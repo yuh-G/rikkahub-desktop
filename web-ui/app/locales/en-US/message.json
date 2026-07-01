@@ -30,14 +30,20 @@
     "create_fork": "Create fork",
     "delete": "Delete",
     "export_markdown": "Export as Markdown",
-    "export_markdown_with_reasoning": "Export as Markdown (with reasoning)",
     "share": "Share",
     "translation_failed": "Translation failed",
     "prompt_tokens_with_cache": "{{promptTokens}} tokens ({{cachedTokens}} cached)",
     "prompt_tokens": "{{promptTokens}} tokens",
     "completion_tokens": "{{completionTokens}} tokens",
     "tokens_per_second": "{{value}} tok/s",
-    "duration_seconds": "{{value}}s"
+    "duration_seconds": "{{value}}s",
+    "share_dialog_title": "Share Conversation",
+    "share_dialog_desc": "Choose an export format · {{count}} message(s)",
+    "export_image": "Export as image",
+    "expand_reasoning": "Expand thinking",
+    "export_image_btn": "Export image",
+    "exporting_image": "Generating image…",
+    "export_image_failed": "Failed to export image"
   },
   "tool_part": {
     "memory_create": "Create memory",

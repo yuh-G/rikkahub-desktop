@@ -28,6 +28,11 @@
       "no_message_description": "当前会话还没有消息"
     },
     "welcome_prompt": "有什么可以帮助你的？",
+    "share": {
+      "cancel": "取消选择",
+      "select_all": "全选 / 取消全选",
+      "confirm": "导出选中消息"
+    },
     "user": {
       "default_name": "用户"
     },

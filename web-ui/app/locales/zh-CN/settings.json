@@ -349,6 +349,7 @@
     "type": "类型",
     "depth": "深度",
     "result_count": "结果数量",
+    "api_key_hint": "支持填入多个 Key(空白或逗号分隔),某个 Key 失效时自动切换下一个",
     "test": "测试",
     "delete": "删除",
     "current": "当前",
@@ -362,6 +363,16 @@
     "test_success": "测试成功\n端点: {{endpoint}}\n\n{{preview}}",
     "test_ok": "搜索服务测试成功",
     "test_failed": "测试失败",
+    "test_all_ok": "测试通过:全部 {{count}} 个 Key 均可用\n端点: {{endpoint}}\n\n{{preview}}",
+    "test_partial": "{{ok}}/{{total}} 个 Key 可用,{{failed}} 个已失效(对话中将自动跳过)\n端点: {{endpoint}}\n\n{{preview}}",
+    "test_all_failed": "测试失败:全部 {{count}} 个 Key 均不可用",
+    "key_status_title": "各 Key 状态",
+    "key_ok": "可用",
+    "key_fail_auth_invalid": "密钥无效或已过期",
+    "key_fail_quota_exhausted": "额度已用尽或请求频繁",
+    "key_fail_key_error": "密钥不可用",
+    "key_fail_network": "网络异常或服务暂不可用",
+    "key_fail_other": "测试失败",
     "delete_confirm": "删除搜索服务「{{name}}」？",
     "deleted": "搜索服务已删除",
     "preset_ok": "预置可用",
@@ -673,5 +684,24 @@
     "s3_desc": "支持标准 AWS S3 与兼容 endpoint（MinIO/R2/腾讯云 COS/阿里云 OSS 等）。备份内容与 WebDAV 一致。",
     "endpoint_label": "Endpoint（留空使用 AWS 官方）",
     "prefix_path": "前缀路径"
+  },
+  "hotkeys": {
+    "title": "快捷键",
+    "reset_all": "全部恢复默认",
+    "reset": "恢复默认",
+    "press_keys": "按下快捷键组合…",
+    "click_to_set": "点击设置",
+    "ctrl_wheel": "Ctrl + 滚轮",
+    "conflict_with": "与「{{name}}」冲突,请换一组组合",
+    "actions": {
+      "newConversation": "新建会话",
+      "prevConversation": "上一个会话",
+      "nextConversation": "下一个会话",
+      "renameConversation": "重命名当前会话",
+      "searchConversations": "搜索对话",
+      "openSettings": "打开设置",
+      "openImageGeneration": "图像生成",
+      "zoomInOut": "放大 / 缩小界面"
+    }
   }
 }

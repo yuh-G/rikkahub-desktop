@@ -37,6 +37,7 @@ import {
   Sparkles,
   WandSparkles,
   X,
+  XCircle,
 } from "lucide-react";
 import { Link } from "react-router";
 import { toast } from "sonner";
@@ -67,6 +68,7 @@ import {
 import { Separator } from "~/components/ui/separator";
 import { Slider } from "~/components/ui/slider";
 import { Switch } from "~/components/ui/switch";
+import { KeybindingSettings } from "~/components/keybinding-settings";
 import { Textarea } from "~/components/ui/textarea";
 import { UIAvatar } from "~/components/ui/ui-avatar";
 import { cn } from "~/lib/utils";
@@ -1040,6 +1042,9 @@ function GeneralSection({
               {t("settings:general.ui_font_size_hint")}
             </p>
           </label>
+          <div className="rounded-md border px-3 py-3">
+            <KeybindingSettings />
+          </div>
           <div className="grid gap-3 md:grid-cols-2">
             {[
               ["showUserAvatar", "settings:general.opt.show_user_avatar"],
@@ -1136,9 +1141,15 @@ function ProvidersSection({
     setSelectedId(urlProviderId);
   }, [urlProviderId, selectedId, settings.providers]);
 
+  // providersRef lets this realignment effect read the freshest providers list without
+  // depending on settings.providers — otherwise every autosave → onSettings round-trip
+  // re-fires the effect and overwrites mid-flight keystrokes. Same class of bug as
+  // McpServerEditor; see there for the full rationale.
+  const providersRef = React.useRef(settings.providers);
+  providersRef.current = settings.providers;
   React.useEffect(() => {
     const next =
-      settings.providers.find((provider) => provider.id === selectedId) ?? settings.providers[0];
+      providersRef.current.find((provider) => provider.id === selectedId) ?? providersRef.current[0];
     const selectedChanged = lastSelectedRef.current !== selectedId;
     lastSelectedRef.current = selectedId;
     setDraft(next ? clone(next) : null);
@@ -1153,7 +1164,7 @@ function ProvidersSection({
       setImageTestResult(null);
       setTestModelId(next?.models?.find((model) => model.modelId !== "auto")?.modelId ?? "");
     }
-  }, [selectedId, settings.providers]);
+  }, [selectedId]);
 
   if (!draft) return null;
   const balanceOption = balanceOptionOf(draft);
@@ -3257,16 +3268,23 @@ function SearchSection({
   );
   const [testing, setTesting] = React.useState(false);
   const [testResult, setTestResult] = React.useState("");
+  const [keyTestEntries, setKeyTestEntries] = React.useState<
+    Array<{ key: string; status: "ok" | "fail"; failCode?: string }>
+  >([]);
   const dirtyRef = React.useRef(false);
   const { t } = useTranslation();
 
+  // searchServicesRef: avoid re-running this effect after every autosave → onSettings
+  // round-trip (would overwrite mid-flight keystrokes). See McpServerEditor for rationale.
+  const searchServicesRef = React.useRef(settings.searchServices);
+  searchServicesRef.current = settings.searchServices;
   React.useEffect(() => {
-    const next = (settings.searchServices.find((item) => String(item.id) === selectedId) ??
-      settings.searchServices[0]) as Record<string, unknown> | undefined;
+    const next = (searchServicesRef.current.find((item) => String(item.id) === selectedId) ??
+      searchServicesRef.current[0]) as Record<string, unknown> | undefined;
     if (next) setDraft(clone(next));
     dirtyRef.current = false;
     setTestResult("");
-  }, [selectedId, settings.searchServices]);
+  }, [selectedId]);
 
   const patchDraft = (patch: Record<string, unknown>) => {
     dirtyRef.current = true;
@@ -3362,21 +3380,64 @@ function SearchSection({
   const test = async () => {
     setTesting(true);
     setTestResult(t("settings:search.testing_start"));
+    setKeyTestEntries([]);
     try {
       await save();
-      const result = await api.post<{ endpoint: string; preview: string }>(
-        "settings/search/service/test",
-        draft,
-      );
-      setTestResult(
-        t("settings:search.test_success", { endpoint: result.endpoint, preview: result.preview }),
-      );
-      toast.success(t("settings:search.test_ok"));
-      // Refresh settings so the "已通过测试" badge updates (server marks testPassed on success).
-      onSettings(await api.get<Settings>("settings"));
+      const result = await api.post<{
+        status: "ok" | "fail";
+        endpoint: string;
+        preview: string;
+        keys?: Array<{ key: string; status: "ok" | "fail"; failCode?: string }>;
+      }>("settings/search/service/test", draft);
+      const keys = Array.isArray(result.keys) ? result.keys : [];
+      const okCount = keys.filter((k) => k.status === "ok").length;
+      if (result.status === "ok") {
+        if (keys.length > 1 && okCount < keys.length) {
+          setTestResult(
+            t("settings:search.test_partial", {
+              endpoint: result.endpoint,
+              ok: okCount,
+              total: keys.length,
+              failed: keys.length - okCount,
+              preview: result.preview,
+            }),
+          );
+        } else if (keys.length > 1) {
+          setTestResult(
+            t("settings:search.test_all_ok", {
+              endpoint: result.endpoint,
+              count: keys.length,
+              preview: result.preview,
+            }),
+          );
+        } else {
+          setTestResult(
+            t("settings:search.test_success", { endpoint: result.endpoint, preview: result.preview }),
+          );
+        }
+        toast.success(t("settings:search.test_ok"));
+        // Refresh settings so the "已通过测试" badge updates (server marks testPassed on success).
+        onSettings(await api.get<Settings>("settings"));
+      } else {
+        // 多 key 全部失败:展示汇总 + 每个 key 的失败明细;单 key 失败:直接给出友好原因
+        // (如"密钥无效或已过期"),比原来的 "401: {body}" 更易懂。
+        const singleFailReason =
+          keys.length === 1
+            ? t(`settings:search.key_fail_${keys[0]?.failCode ?? "other"}`)
+            : null;
+        setTestResult(
+          keys.length > 1
+            ? t("settings:search.test_all_failed", { count: keys.length })
+            : singleFailReason ?? t("settings:search.test_failed"),
+        );
+        toast.error(singleFailReason ?? t("settings:search.test_failed"));
+      }
+      setKeyTestEntries(keys);
     } catch (error) {
+      // 无 key 服务(searxng/custom_js)失败、网络异常等仍以非 2xx 抛出,走这里。
       const message = error instanceof Error ? error.message : t("settings:search.test_failed");
       setTestResult(message);
+      setKeyTestEntries([]);
       toast.error(message);
     } finally {
       setTesting(false);
@@ -3563,6 +3624,7 @@ function SearchSection({
                   value={textValue(draft.apiKey)}
                   onChange={(apiKey) => patchDraft({ apiKey })}
                 />
+                <span className="text-xs text-muted-foreground">{t("settings:search.api_key_hint")}</span>
               </label>
             ) : null}
             {textValue(draft.type) === "searxng" ? (
@@ -3688,6 +3750,33 @@ function SearchSection({
             <pre className="max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
               {testResult}
             </pre>
+          ) : null}
+          {keyTestEntries.length > 1 ? (
+            <div className="space-y-1.5 rounded-md border bg-card p-3">
+              <div className="text-xs font-medium text-muted-foreground">
+                {t("settings:search.key_status_title")}
+              </div>
+              {keyTestEntries.map((entry, index) => (
+                <div key={index} className="flex items-center gap-2 text-xs">
+                  {entry.status === "ok" ? (
+                    <CheckCircle2 className="size-3.5 shrink-0 text-emerald-500" />
+                  ) : (
+                    <XCircle className="size-3.5 shrink-0 text-destructive" />
+                  )}
+                  <code className="font-mono">{entry.key}</code>
+                  <span
+                    className={cn(
+                      "text-muted-foreground",
+                      entry.status === "fail" && "text-destructive",
+                    )}
+                  >
+                    {entry.status === "ok"
+                      ? t("settings:search.key_ok")
+                      : t(`settings:search.key_fail_${entry.failCode ?? "other"}`)}
+                  </span>
+                </div>
+              ))}
+            </div>
           ) : null}
         </div>
       </div>
@@ -5242,20 +5331,38 @@ function McpServerEditor({
     prettyJson((selected.commonOptions as Record<string, unknown> | undefined)?.tools ?? []),
   );
   const [busy, setBusy] = React.useState(false);
+  // dirtyRef drives the debounce autosave (set on every edit, cleared on save completion).
   const dirtyRef = React.useRef(false);
+  // Race-condition tracking for in-flight saves. A keystroke landing between "save starts"
+  // and "save resolves" used to have its dirtyRef=true overwritten by the post-save reset,
+  // so the next debounce cycle skipped and the keystroke was never persisted — it lingered
+  // in draft only until the realignment effect below clobbered it with the just-saved
+  // (older) snapshot. savingRef lets every edit during the save window flag
+  // editedDuringSaveRef; on completion we keep dirtyRef true when it's set, so the next
+  // debounce re-saves instead of dropping the keystroke.
+  const savingRef = React.useRef(false);
+  const editedDuringSaveRef = React.useRef(false);
+  // serversRef lets the realignment effect read the freshest servers list WITHOUT taking
+  // settings.mcpServers as a dependency. If settings.mcpServers were a dep, the effect
+  // would re-fire after every save → pullSettings round-trip and overwrite in-flight
+  // keystrokes — the original "URL input eats characters" bug. The old dirtyRef guard
+  // tried to defend this but was undone by save() clearing dirtyRef on completion (the
+  // keystroke-while-saving window).
+  const serversRef = React.useRef(servers);
+  serversRef.current = servers;
+
+  const markDirty = () => {
+    dirtyRef.current = true;
+    if (savingRef.current) editedDuringSaveRef.current = true;
+  };
 
   React.useEffect(() => {
-    // Race-condition guard: if the user has unsaved edits in the form (a tool toggle they
-    // just flipped, a header they're mid-typing), do NOT clobber them when settings.mcpServers
-    // gets refreshed from elsewhere (SSE settings broadcast, sibling-component pullSettings,
-    // a save completing for a *different* server, etc.). The user-flipped MCP-tool enable
-    // switch was visibly snapping back to its old value because every save round-tripped
-    // through pullSettings → settings.mcpServers changed → this effect reset the draft to
-    // whatever the server returned *before* the user's most recent edits had landed.
-    if (dirtyRef.current) return;
-    const next = servers.find((item) => String(item.id) === selectedId) ?? servers[0];
+    // Re-load the form only when the user switches server (selectedId). settings.mcpServers
+    // is intentionally NOT a dep — see serversRef above.
+    const all = serversRef.current;
+    const next = all.find((item) => String(item.id) === selectedId) ?? all[0];
     if (!next) return;
-    setSelectedId(String(next.id));
+    if (String(next.id) !== selectedId) setSelectedId(String(next.id));
     setDraft(clone(next));
     setHeadersText(
       prettyJson((next.commonOptions as Record<string, unknown> | undefined)?.headers ?? []),
@@ -5264,7 +5371,8 @@ function McpServerEditor({
       prettyJson((next.commonOptions as Record<string, unknown> | undefined)?.tools ?? []),
     );
     dirtyRef.current = false;
-  }, [selectedId, settings.mcpServers]);
+    editedDuringSaveRef.current = false;
+  }, [selectedId]);
 
   const common =
     draft.commonOptions && typeof draft.commonOptions === "object"
@@ -5279,7 +5387,7 @@ function McpServerEditor({
   // Tracked by tool name (server-unique) so re-renders don't lose the open card.
   const [expandedToolName, setExpandedToolName] = React.useState<string | null>(null);
   const patchDraft = (nextDraft: Record<string, unknown>) => {
-    dirtyRef.current = true;
+    markDirty();
     setDraft(nextDraft);
   };
   // Update one tool's fields (enable / needsApproval) without losing other tools' edits.
@@ -5290,6 +5398,35 @@ function McpServerEditor({
     const nextCommon = { ...common, tools: nextTools };
     patchDraft({ ...draft, commonOptions: nextCommon });
     setToolsText(prettyJson(nextTools));
+  };
+  // Merge the server's authoritative fields (fetched tools, sync status, Transition 1/2
+  // enable flips) into the current draft WITHOUT touching user-edited fields (url / name /
+  // headers text). Functional setState reads the freshest draft, so keystrokes that landed
+  // during the save's network round-trip survive the merge.
+  const applyServerResult = (serverData: Record<string, unknown>) => {
+    const serverCommon =
+      serverData.commonOptions && typeof serverData.commonOptions === "object"
+        ? (serverData.commonOptions as Record<string, unknown>)
+        : {};
+    setDraft((prev) => {
+      const prevCommon =
+        prev.commonOptions && typeof prev.commonOptions === "object"
+          ? (prev.commonOptions as Record<string, unknown>)
+          : {};
+      return {
+        ...prev,
+        commonOptions: {
+          ...prevCommon,
+          tools: serverCommon.tools ?? prevCommon.tools ?? [],
+          lastSyncAt: serverCommon.lastSyncAt ?? prevCommon.lastSyncAt,
+          lastSyncError: serverCommon.lastSyncError ?? prevCommon.lastSyncError,
+          connected: serverCommon.connected ?? prevCommon.connected,
+          enable:
+            serverCommon.enable !== undefined ? serverCommon.enable : prevCommon.enable,
+        },
+      };
+    });
+    setToolsText(prettyJson(serverCommon.tools ?? []));
   };
   const patchCommon = (patch: Record<string, unknown>) => {
     let parsedHeaders: unknown[];
@@ -5303,6 +5440,8 @@ function McpServerEditor({
     }
     const nextDraft = { ...draft, commonOptions: { ...common, ...patch } };
     setDraft(nextDraft);
+    savingRef.current = true;
+    editedDuringSaveRef.current = false;
     void api
       .post<{ server: Record<string, unknown> }>("settings/mcp-server/detail", {
         ...nextDraft,
@@ -5314,16 +5453,23 @@ function McpServerEditor({
       })
       .then((result: { server: Record<string, unknown> }) => {
         setSelectedId(String(result.server.id));
-        dirtyRef.current = false;
+        savingRef.current = false;
+        // Keep dirty if the user typed during the round-trip; otherwise mark clean.
+        dirtyRef.current = editedDuringSaveRef.current;
+        applyServerResult(result.server);
         return pullSettings(onSettings);
       })
       .catch((error) => {
+        savingRef.current = false;
+        dirtyRef.current = true; // retry on next debounce
         toast.error(error instanceof Error ? error.message : t("settings:mcp.save_failed"));
       });
   };
   const save = async (announce = true) => {
     if (!announce && !dirtyRef.current) return;
     setBusy(true);
+    savingRef.current = true;
+    editedDuringSaveRef.current = false;
     try {
       const payload = {
         ...draft,
@@ -5338,10 +5484,15 @@ function McpServerEditor({
         payload,
       );
       setSelectedId(String(result.server.id));
-      dirtyRef.current = false;
+      savingRef.current = false;
+      // Keep dirty if the user typed during the round-trip; otherwise mark clean.
+      dirtyRef.current = editedDuringSaveRef.current;
+      applyServerResult(result.server);
       await pullSettings(onSettings);
       if (announce) toast.success(t("settings:mcp.server.saved"));
     } catch (error) {
+      savingRef.current = false;
+      dirtyRef.current = true; // retry on next debounce
       if (announce) toast.error(error instanceof Error ? error.message : t("settings:mcp.save_failed"));
       else console.warn("MCP auto-save failed", error);
     } finally {
@@ -5469,7 +5620,7 @@ function McpServerEditor({
           <Textarea
             value={headersText}
             onChange={(event) => {
-              dirtyRef.current = true;
+              markDirty();
               setHeadersText(event.target.value);
             }}
             className="min-h-24 font-mono text-xs"
@@ -5484,7 +5635,7 @@ function McpServerEditor({
           <Textarea
             value={toolsText}
             onChange={(event) => {
-              dirtyRef.current = true;
+              markDirty();
               setToolsText(event.target.value);
             }}
             className="h-44 max-h-44 font-mono text-xs"
@@ -5637,13 +5788,17 @@ function ModeInjectionEditor({
   const selected =
     items.find((item) => String(item.id) === selectedId) ?? items[0] ?? createModeInjection();
   const [draft, setDraft] = React.useState<Record<string, unknown>>(clone(selected));
+  // itemsRef: avoid re-running this effect after every autosave → pullSettings round-trip
+  // (would overwrite mid-flight keystrokes). See McpServerEditor for rationale.
+  const itemsRef = React.useRef(items);
+  itemsRef.current = items;
   React.useEffect(() => {
-    const next = items.find((item) => String(item.id) === selectedId) ?? items[0];
+    const next = itemsRef.current.find((item) => String(item.id) === selectedId) ?? itemsRef.current[0];
     if (next) {
       setSelectedId(String(next.id));
       setDraft(clone(next));
     }
-  }, [selectedId, settings.modeInjections]);
+  }, [selectedId]);
   return (
     <PromptItemEditor
       settings={settings}
@@ -5976,13 +6131,17 @@ function LorebookEditor({
     items.find((item) => String(item.id) === selectedId) ?? items[0] ?? createLorebook();
   const [draft, setDraft] = React.useState<Record<string, unknown>>(clone(selected));
   const dirtyRef = React.useRef(false);
+  // itemsRef: avoid re-running this effect after every autosave → pullSettings round-trip
+  // (would overwrite mid-flight keystrokes). See McpServerEditor for rationale.
+  const itemsRef = React.useRef(items);
+  itemsRef.current = items;
   React.useEffect(() => {
-    const next = items.find((item) => String(item.id) === selectedId) ?? items[0];
+    const next = itemsRef.current.find((item) => String(item.id) === selectedId) ?? itemsRef.current[0];
     if (!next) return;
     setSelectedId(String(next.id));
     setDraft(clone(next));
     dirtyRef.current = false;
-  }, [selectedId, settings.lorebooks]);
+  }, [selectedId]);
   const entries = Array.isArray(draft.entries)
     ? (draft.entries as Array<Record<string, unknown>>)
     : [];
@@ -6185,14 +6344,18 @@ function QuickMessageEditor({
     items[0] ?? { id: crypto.randomUUID(), title: "", content: "" };
   const [draft, setDraft] = React.useState<Record<string, unknown>>(clone(selected));
   const dirtyRef = React.useRef(false);
+  // itemsRef: avoid re-running this effect after every autosave → pullSettings round-trip
+  // (would overwrite mid-flight keystrokes). See McpServerEditor for rationale.
+  const itemsRef = React.useRef(items);
+  itemsRef.current = items;
   React.useEffect(() => {
-    const next = items.find((item) => String(item.id) === selectedId) ?? items[0];
+    const next = itemsRef.current.find((item) => String(item.id) === selectedId) ?? itemsRef.current[0];
     if (next) {
       setSelectedId(String(next.id));
       setDraft(clone(next));
       dirtyRef.current = false;
     }
-  }, [selectedId, settings.quickMessages]);
+  }, [selectedId]);
   const patchDraft = (patch: Record<string, unknown>) => {
     dirtyRef.current = true;
     setDraft({ ...draft, ...patch });
