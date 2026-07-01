@@ -195,6 +195,9 @@ interface Settings {
   // Preferred local port for the embedded HTTP server. null = auto (8080, walking up on
   // conflict). Only read at startup, so changing it requires a restart to take effect.
   preferredPort: number | null;
+  // 应用内快捷键绑定。PC-only(备份导出时剥离,Android 不可见)。每个 action 映射到
+  // { keys: string[]; enabled: boolean };zoomInOut 例外,只有 enabled(滚轮固定不可录制)。
+  keybindings: Record<string, JsonValue>;
 }
 
 interface AsrProvider {
@@ -1107,6 +1110,17 @@ function defaultSettings(): Settings {
     },
     webServerJwtEnabled: false,
     preferredPort: null,
+    keybindings: {
+      newConversation: { keys: ["Ctrl", "N"], enabled: true },
+      prevConversation: { keys: ["Alt", "Up"], enabled: true },
+      nextConversation: { keys: ["Alt", "Down"], enabled: true },
+      renameConversation: { keys: ["F2"], enabled: true },
+      searchConversations: { keys: ["Ctrl", "Shift", "F"], enabled: true },
+      openSettings: { keys: ["Ctrl", ","], enabled: true },
+      openImageGeneration: { keys: ["Ctrl", "I"], enabled: true },
+      // 滚轮缩放:binding 固定为 Ctrl+Wheel,无法录制,只有 enabled 开关。
+      zoomInOut: { enabled: true },
+    },
   };
 }
 
@@ -1184,6 +1198,17 @@ function normalizeState(input: Partial<State>): State {
       : {},
   }));
   normalized.settings.displaySetting = { ...defaults.displaySetting, ...(normalized.settings.displaySetting ?? {}) };
+  // Backfill keybindings:以默认表为基底,逐 action 用用户保存的条目覆盖。保证新增 action 自动补
+  // 默认、过滤未知 action、且每条 entry 字段完整(即使用户手改 state.json 造成残缺,默认值兜底)。
+  const keybindingDefaults = defaults.keybindings as Record<string, JsonValue>;
+  const userKeybindings = (normalized.settings.keybindings ?? {}) as Record<string, JsonValue>;
+  const mergedKeybindings: Record<string, JsonValue> = {};
+  for (const action of Object.keys(keybindingDefaults)) {
+    const def = isRecord(keybindingDefaults[action]) ? keybindingDefaults[action] : {};
+    const user = isRecord(userKeybindings[action]) ? userKeybindings[action] : {};
+    mergedKeybindings[action] = { ...def, ...user };
+  }
+  normalized.settings.keybindings = mergedKeybindings;
   if (!String(normalized.settings.displaySetting.uiFontFamily ?? "").trim()) {
     normalized.settings.displaySetting.uiFontFamily = defaults.displaySetting.uiFontFamily;
     normalized.settings.displaySetting.uiFontFamilyCss = defaults.displaySetting.uiFontFamilyCss;
@@ -3265,6 +3290,8 @@ function applyAndroidZipBackupFromPath(zipPath: string): { settingsImported: boo
         preferredPort: pc.preferredPort,
         promptOptimizeModelId: pc.promptOptimizeModelId,
         promptOptimizePrompt: pc.promptOptimizePrompt,
+        // keybindings 是 PC-only 字段(APP 无对应),导入时必须保 PC 自定义,否则被 normalizeState 重置为默认。
+        keybindings: pc.keybindings,
       } as State["settings"];
       const adjusted = rewriteAvatarsInSettings(merged, ANDROID_AVATAR_TYPE_TO_PC, "to-pc");
       state = normalizeState({ ...state, settings: adjusted as State["settings"] });
@@ -3714,6 +3741,7 @@ function rewriteAvatarsInSettings(settings: any, mapping: Record<string, string>
     // Strip PC-only top-level fields
     delete copy.proxyConfig;
     delete copy.preferredPort;
+    delete copy.keybindings;
     // Fix empty-string UUID fields — Android's Uuid deserializer rejects ""
     const uuidFields = ["chatModelId", "titleModelId", "translateModeId", "suggestionModelId", "imageGenerationModelId", "ocrModelId", "compressModelId", "assistantId", "selectedTTSProviderId", "selectedASRProviderId"];
     for (const field of uuidFields) {
@@ -5510,6 +5538,143 @@ async function runCustomJsFunction(service: Record<string, JsonValue>, script: s
   return await fn(userFetch, args);
 }
 
+// === 搜索服务多 key 故障转移(PC 独占)===
+// apiKey 字段可填多个 key(空白/逗号分隔),请求遇 401/403/429 自动换下一个 key 重试。
+// 分隔符 /[\s,]+/ 必须与 APP 端 KeyRoulette.splitKey 的 [\\s,]+ 一字一致——否则 PC 写入的多 key
+// 配置导出到 APP 后无法被拆分。字段结构不变,备份完全兼容 APP。
+
+/** 拆分多 key:空白/逗号分隔,去重保序。与 APP KeyRoulette 一致,切勿改分隔符。 */
+function splitSearchApiKeys(raw: string): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const part of raw.split(/[\s,]+/)) {
+    const key = part.trim();
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      result.push(key);
+    }
+  }
+  return result;
+}
+
+/** 状态码是否属于"换 key 可能解决"的故障:鉴权失败(401/403)或限流/额度耗尽(429)。 */
+function isSearchKeyError(status: number): boolean {
+  return status === 401 || status === 403 || status === 429;
+}
+
+/** 可重试的 key 类错误。withSearchKeyFailover 只对它换 key,其它错误透传不重试。 */
+class SearchKeyError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "SearchKeyError";
+    this.status = status;
+  }
+}
+
+/** 响应失败时按状态码抛 SearchKeyError(可换 key)或普通 Error(直接放弃)。 */
+function throwSearchStatus(status: number, detail: string): never {
+  if (isSearchKeyError(status)) throw new SearchKeyError(status, detail);
+  throw new Error(detail);
+}
+
+/**
+ * 多 key 故障转移:逐个 key 执行 fn;fn 抛 SearchKeyError 且后面还有 key 则换下一个重试;
+ * 其它错误(网络/解析/5xx)或最后一个 key 仍失败则直接抛。单 key 时等价于直接执行 fn。
+ */
+async function withSearchKeyFailover<T>(
+  rawKey: string,
+  fn: (apiKey: string) => Promise<T>,
+): Promise<T> {
+  const keys = splitSearchApiKeys(rawKey);
+  if (keys.length === 0) throw new SearchKeyError(0, "API Key is empty");
+  for (let i = 0; i < keys.length; i++) {
+    try {
+      return await fn(keys[i]);
+    } catch (e) {
+      if (i === keys.length - 1 || !(e instanceof SearchKeyError)) throw e;
+    }
+  }
+  throw new Error("withSearchKeyFailover: unreachable");
+}
+
+/** 脱敏 API Key 用于测试结果展示:保留首尾少量字符,中间以 *** 替代。短 key 仅留首位便于区分。 */
+function maskSearchKey(key: string): string {
+  const k = key.trim();
+  if (k.length === 0) return "";
+  if (k.length <= 4) return `${k[0]}***`;
+  if (k.length <= 8) return `${k.slice(0, 2)}***${k.slice(-2)}`;
+  return `${k.slice(0, 3)}***${k.slice(-3)}`;
+}
+
+/** 把测试单个 key 时抛出的错误归一为前端可翻译的失败码(便于 i18n)。 */
+function searchKeyFailCode(e: unknown): string {
+  if (e instanceof SearchKeyError) {
+    if (e.status === 401 || e.status === 403) return "auth_invalid";
+    if (e.status === 429) return "quota_exhausted";
+    return "key_error";
+  }
+  // 非 SearchKeyError:网络断开 / DNS / 5xx / 响应解析失败等——换 key 解决不了,
+  // 但测试模式仍逐 key 记录,让用户看到具体哪个 key 受影响。
+  return "network";
+}
+
+/**
+ * 多 key 测试模式:对每个 key 独立执行 exec,收集每个 key 的脱敏标识与成败,不提前退出。
+ * 与 withSearchKeyFailover(生产故障转移,成功即返回)的区别——本函数用于测试,目的是让用户
+ * 在设置页看到每个 key 的健康度,而非尽早拿到一个可用结果。exec 内部仍用 throwSearchStatus
+ * 区分可换 key 错误(401/403/429)与其它错误,前者映射为更具体的失败码。
+ */
+async function testAllSearchKeys(
+  rawKey: string,
+  exec: (apiKey: string) => Promise<void>,
+): Promise<Array<{ key: string; status: "ok" | "fail"; failCode?: string }>> {
+  const keys = splitSearchApiKeys(rawKey);
+  if (keys.length === 0) throw new SearchKeyError(0, "API Key is empty");
+  const entries: Array<{ key: string; status: "ok" | "fail"; failCode?: string }> = [];
+  for (const key of keys) {
+    try {
+      await exec(key);
+      entries.push({ key: maskSearchKey(key), status: "ok" });
+    } catch (e) {
+      entries.push({ key: maskSearchKey(key), status: "fail", failCode: searchKeyFailCode(e) });
+    }
+  }
+  return entries;
+}
+
+/**
+ * 包装单个搜索服务的多 key 测试:逐 key 跑 exec(返回成功响应文本,用于 preview),收集状态,
+ * 组装前端测试结果对象。任一 key 成功即整体 status=ok(搜索服务可用)。exec 抛错由
+ * testAllSearchKeys 归类记录,不会中断后续 key 的测试。
+ */
+async function runSearchKeyTestResult(
+  name: string,
+  endpoint: string,
+  rawKey: string,
+  exec: (apiKey: string) => Promise<string>,
+): Promise<{
+  status: "ok" | "fail";
+  name: string;
+  endpoint: string;
+  preview: string;
+  keys: Array<{ key: string; status: "ok" | "fail"; failCode?: string }>;
+}> {
+  let successPreview = "";
+  const keys = await testAllSearchKeys(rawKey, async (k) => {
+    const text = await exec(k);
+    if (!successPreview) successPreview = text;
+  });
+  const anyOk = keys.some((e) => e.status === "ok");
+  return {
+    status: anyOk ? "ok" : "fail",
+    name,
+    endpoint,
+    preview: successPreview ? textBody(successPreview) : "",
+    keys,
+  };
+}
+
 async function runCustomJsSearch(service: Record<string, JsonValue>, query: string, maxResults: number) {
   const script = String(service.searchScript ?? "").trim();
   if (!script) throw new Error("Custom JS search script is empty");
@@ -5552,184 +5717,187 @@ async function runSearchWeb(params: Record<string, JsonValue>) {
   const maxResults = Math.max(1, Number(searchResultSize(service)));
 
   if (type === "tavily") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Tavily API Key is empty");
-    const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
-    const response = await fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify({ query, max_results: maxResults, search_depth: service.depth ?? "basic" }),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+      const response = await fetch("https://api.tavily.com/search", {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify({ query, max_results: maxResults, search_depth: service.depth ?? "basic" }),
+      });
+      const raw = await response.json();
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: "https://api.tavily.com/search",
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:search_web",
+        toolName: "search_web",
+        durationMs: Date.now() - started,
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody({ query, maxResults }),
+        responseBody: jsonBody(raw),
+        error: response.ok ? undefined : jsonBody(raw),
+      });
+      if (!response.ok) throwSearchStatus(response.status, JSON.stringify(raw).slice(0, 500));
+      return {
+        query,
+        service: "Tavily",
+        items: (raw.results ?? []).slice(0, maxResults).map((item: any, index: number) =>
+          searchResult(index, { title: item.title, url: item.url, text: item.content ?? item.raw_content }),
+        ),
+      };
     });
-    const raw = await response.json();
-    addLog({
-      providerId: String(service.id ?? "search"),
-      providerName: nameOfSearchService(service),
-      url: "https://api.tavily.com/search",
-      ok: response.ok,
-      status: response.status,
-      kind: "tool:search_web",
-      toolName: "search_web",
-      durationMs: Date.now() - started,
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      requestBody: jsonBody({ query, maxResults }),
-      responseBody: jsonBody(raw),
-      error: response.ok ? undefined : jsonBody(raw),
-    });
-    if (!response.ok) throw new Error(JSON.stringify(raw).slice(0, 500));
-    return {
-      query,
-      service: "Tavily",
-      items: (raw.results ?? []).slice(0, maxResults).map((item: any, index: number) =>
-        searchResult(index, { title: item.title, url: item.url, text: item.content ?? item.raw_content }),
-      ),
-    };
   }
 
   if (type === "rikkahub") {
-    const apiKey = String(service.apiKey ?? "");
-    const endpoint = "https://api.rikka-ai.com/v1/search";
-    const requestBody = { q: query, depth: service.depth ?? "standard", outputType: "sourcedAnswer", includeImages: false };
-    const requestHeaders = { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) };
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(requestBody),
-    });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"),
-      providerName: nameOfSearchService(service),
-      url: endpoint,
-      ok: response.ok,
-      status: response.status,
-      kind: "tool:search_web",
-      toolName: "search_web",
-      durationMs: Date.now() - started,
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      requestBody: jsonBody(requestBody),
-      responseBody: textBody(text),
-      error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`RikkaHub search failed with code ${response.status}: ${text.slice(0, 500)}`);
-    return {
-      query,
-      service: "RikkaHub",
-      answer: raw.answer,
-      items: (raw.sources ?? []).slice(0, maxResults).map((item: any, index: number) =>
-        searchResult(index, { title: item.name, url: item.url, text: item.snippet }),
-      ),
+    const exec = async (apiKey: string) => {
+      const endpoint = "https://api.rikka-ai.com/v1/search";
+      const requestBody = { q: query, depth: service.depth ?? "standard", outputType: "sourcedAnswer", includeImages: false };
+      const requestHeaders = { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: endpoint,
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:search_web",
+        toolName: "search_web",
+        durationMs: Date.now() - started,
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody(requestBody),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `RikkaHub search failed with code ${response.status}: ${text.slice(0, 500)}`);
+      return {
+        query,
+        service: "RikkaHub",
+        answer: raw.answer,
+        items: (raw.sources ?? []).slice(0, maxResults).map((item: any, index: number) =>
+          searchResult(index, { title: item.name, url: item.url, text: item.snippet }),
+        ),
+      };
     };
+    const rawKey = String(service.apiKey ?? "");
+    return rawKey.trim() ? withSearchKeyFailover(rawKey, exec) : exec("");
   }
 
   if (type === "exa") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Exa API Key is empty");
-    const requestHeaders = { "Content-Type": "application/json", "x-api-key": apiKey };
-    const response = await fetch("https://api.exa.ai/search", {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify({ query, numResults: maxResults }),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const requestHeaders = { "Content-Type": "application/json", "x-api-key": apiKey };
+      const response = await fetch("https://api.exa.ai/search", {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify({ query, numResults: maxResults }),
+      });
+      const raw = await response.json();
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: "https://api.exa.ai/search",
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:search_web",
+        toolName: "search_web",
+        durationMs: Date.now() - started,
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody({ query, maxResults }),
+        responseBody: jsonBody(raw),
+        error: response.ok ? undefined : jsonBody(raw),
+      });
+      if (!response.ok) throwSearchStatus(response.status, JSON.stringify(raw).slice(0, 500));
+      return {
+        query,
+        service: "Exa",
+        items: (raw.results ?? []).slice(0, maxResults).map((item: any, index: number) =>
+          searchResult(index, { title: item.title, url: item.url, text: item.text ?? item.summary }),
+        ),
+      };
     });
-    const raw = await response.json();
-    addLog({
-      providerId: String(service.id ?? "search"),
-      providerName: nameOfSearchService(service),
-      url: "https://api.exa.ai/search",
-      ok: response.ok,
-      status: response.status,
-      kind: "tool:search_web",
-      toolName: "search_web",
-      durationMs: Date.now() - started,
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      requestBody: jsonBody({ query, maxResults }),
-      responseBody: jsonBody(raw),
-      error: response.ok ? undefined : jsonBody(raw),
-    });
-    if (!response.ok) throw new Error(JSON.stringify(raw).slice(0, 500));
-    return {
-      query,
-      service: "Exa",
-      items: (raw.results ?? []).slice(0, maxResults).map((item: any, index: number) =>
-        searchResult(index, { title: item.title, url: item.url, text: item.text ?? item.summary }),
-      ),
-    };
   }
 
   if (type === "zhipu") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Zhipu API Key is empty");
-    const endpoint = "https://open.bigmodel.cn/api/paas/v4/web_search";
-    const requestBody = { search_query: query, search_engine: "search_std", count: maxResults };
-    const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(requestBody),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = "https://open.bigmodel.cn/api/paas/v4/web_search";
+      const requestBody = { search_query: query, search_engine: "search_std", count: maxResults };
+      const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: endpoint,
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:search_web",
+        toolName: "search_web",
+        durationMs: Date.now() - started,
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody(requestBody),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Zhipu search failed with code ${response.status}: ${text.slice(0, 500)}`);
+      return {
+        query,
+        service: "Zhipu",
+        items: (raw.search_result ?? raw.searchResult ?? []).slice(0, maxResults).map((item: any, index: number) =>
+          searchResult(index, { title: item.title, url: item.link, text: item.content }),
+        ),
+      };
     });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"),
-      providerName: nameOfSearchService(service),
-      url: endpoint,
-      ok: response.ok,
-      status: response.status,
-      kind: "tool:search_web",
-      toolName: "search_web",
-      durationMs: Date.now() - started,
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      requestBody: jsonBody(requestBody),
-      responseBody: textBody(text),
-      error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`Zhipu search failed with code ${response.status}: ${text.slice(0, 500)}`);
-    return {
-      query,
-      service: "Zhipu",
-      items: (raw.search_result ?? raw.searchResult ?? []).slice(0, maxResults).map((item: any, index: number) =>
-        searchResult(index, { title: item.title, url: item.link, text: item.content }),
-      ),
-    };
   }
 
   if (type === "brave") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Brave API Key is empty");
-    const endpoint = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`;
-    const requestHeaders = { Accept: "application/json", "X-Subscription-Token": apiKey };
-    const response = await fetch(endpoint, { headers: requestHeaders });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"),
-      providerName: nameOfSearchService(service),
-      url: endpoint,
-      ok: response.ok,
-      status: response.status,
-      kind: "tool:search_web",
-      toolName: "search_web",
-      durationMs: Date.now() - started,
-      method: "GET",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      requestBody: jsonBody({ query, maxResults }),
-      responseBody: textBody(text),
-      error: response.ok ? undefined : textBody(text),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`;
+      const requestHeaders = { Accept: "application/json", "X-Subscription-Token": apiKey };
+      const response = await fetch(endpoint, { headers: requestHeaders });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: endpoint,
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:search_web",
+        toolName: "search_web",
+        durationMs: Date.now() - started,
+        method: "GET",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody({ query, maxResults }),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Brave search failed with code ${response.status}: ${text.slice(0, 500)}`);
+      return {
+        query,
+        service: "Brave",
+        items: (raw.web?.results ?? []).slice(0, maxResults).map((item: any, index: number) =>
+          searchResult(index, { title: item.title, url: item.url, text: item.description }),
+        ),
+      };
     });
-    if (!response.ok) throw new Error(`Brave search failed with code ${response.status}: ${text.slice(0, 500)}`);
-    return {
-      query,
-      service: "Brave",
-      items: (raw.web?.results ?? []).slice(0, maxResults).map((item: any, index: number) =>
-        searchResult(index, { title: item.title, url: item.url, text: item.description }),
-      ),
-    };
   }
 
   if (type === "searxng") {
@@ -5775,327 +5943,327 @@ async function runSearchWeb(params: Record<string, JsonValue>) {
   }
 
   if (type === "tinyfish") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Tinyfish API Key is empty");
-    const endpoint = `https://api.search.tinyfish.ai?query=${encodeURIComponent(query)}`;
-    const requestHeaders = { "X-API-Key": apiKey };
-    const response = await fetch(endpoint, {
-      headers: requestHeaders,
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = `https://api.search.tinyfish.ai?query=${encodeURIComponent(query)}`;
+      const requestHeaders = { "X-API-Key": apiKey };
+      const response = await fetch(endpoint, {
+        headers: requestHeaders,
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: endpoint,
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:search_web",
+        toolName: "search_web",
+        durationMs: Date.now() - started,
+        method: "GET",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody({ query, maxResults }),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Tinyfish search failed with code ${response.status}: ${text.slice(0, 500)}`);
+      return {
+        query,
+        service: "Tinyfish",
+        items: (raw.results ?? []).slice(0, maxResults).map((item: any, index: number) =>
+          searchResult(index, { title: item.title, url: item.url, text: item.snippet }),
+        ),
+      };
     });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"),
-      providerName: nameOfSearchService(service),
-      url: endpoint,
-      ok: response.ok,
-      status: response.status,
-      kind: "tool:search_web",
-      toolName: "search_web",
-      durationMs: Date.now() - started,
-      method: "GET",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      requestBody: jsonBody({ query, maxResults }),
-      responseBody: textBody(text),
-      error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`Tinyfish search failed with code ${response.status}: ${text.slice(0, 500)}`);
-    return {
-      query,
-      service: "Tinyfish",
-      items: (raw.results ?? []).slice(0, maxResults).map((item: any, index: number) =>
-        searchResult(index, { title: item.title, url: item.url, text: item.snippet }),
-      ),
-    };
   }
 
   if (type === "perplexity") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Perplexity API Key is empty");
-    const endpoint = "https://api.perplexity.ai/search";
-    const body: Record<string, JsonValue> = { query, max_results: maxResults };
-    const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(body),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = "https://api.perplexity.ai/search";
+      const body: Record<string, JsonValue> = { query, max_results: maxResults };
+      const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(body),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
+        url: endpoint, ok: response.ok, status: response.status, kind: "search:perplexity",
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
+        toolName: "search_web", error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Perplexity search failed: ${response.status} ${text.slice(0, 300)}`);
+      const results = Array.isArray(raw.results) ? raw.results : [];
+      return {
+        answer: typeof raw.answer === "string" ? raw.answer : "",
+        items: results.filter((r: any) => r?.title && r?.url).slice(0, maxResults).map((r: any, index: number) =>
+          searchResult(index, { title: String(r.title ?? ""), url: String(r.url ?? ""), text: String(r.snippet ?? r.text ?? "") }),
+        ),
+      };
     });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
-      url: endpoint, ok: response.ok, status: response.status, kind: "search:perplexity",
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
-      toolName: "search_web", error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`Perplexity search failed: ${response.status} ${text.slice(0, 300)}`);
-    const results = Array.isArray(raw.results) ? raw.results : [];
-    return {
-      answer: typeof raw.answer === "string" ? raw.answer : "",
-      items: results.filter((r: any) => r?.title && r?.url).slice(0, maxResults).map((r: any, index: number) =>
-        searchResult(index, { title: String(r.title ?? ""), url: String(r.url ?? ""), text: String(r.snippet ?? r.text ?? "") }),
-      ),
-    };
   }
 
   if (type === "bocha") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Bocha API Key is empty");
-    const endpoint = "https://api.bochaai.com/v1/web-search";
-    const summary = service.summary !== false;
-    const body: Record<string, JsonValue> = { query, summary, count: maxResults };
-    const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(body),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = "https://api.bochaai.com/v1/web-search";
+      const summary = service.summary !== false;
+      const body: Record<string, JsonValue> = { query, summary, count: maxResults };
+      const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(body),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
+        url: endpoint, ok: response.ok, status: response.status, kind: "search:bocha",
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
+        toolName: "search_web", error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Bocha search failed: ${response.status} ${text.slice(0, 300)}`);
+      const pages = raw?.data?.webPages?.value ?? [];
+      return {
+        answer: "",
+        items: (Array.isArray(pages) ? pages : []).slice(0, maxResults).map((page: any, index: number) =>
+          searchResult(index, { title: String(page.name ?? ""), url: String(page.url ?? ""), text: String(page.summary ?? page.snippet ?? "") }),
+        ),
+      };
     });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
-      url: endpoint, ok: response.ok, status: response.status, kind: "search:bocha",
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
-      toolName: "search_web", error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`Bocha search failed: ${response.status} ${text.slice(0, 300)}`);
-    const pages = raw?.data?.webPages?.value ?? [];
-    return {
-      answer: "",
-      items: (Array.isArray(pages) ? pages : []).slice(0, maxResults).map((page: any, index: number) =>
-        searchResult(index, { title: String(page.name ?? ""), url: String(page.url ?? ""), text: String(page.summary ?? page.snippet ?? "") }),
-      ),
-    };
   }
 
   if (type === "linkup") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("LinkUp API Key is empty");
-    const endpoint = "https://api.linkup.so/v1/search";
-    const depth = String(service.depth ?? "standard");
-    const body: Record<string, JsonValue> = { q: query, depth, outputType: "sourcedAnswer", includeImages: "false" };
-    const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(body),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = "https://api.linkup.so/v1/search";
+      const depth = String(service.depth ?? "standard");
+      const body: Record<string, JsonValue> = { q: query, depth, outputType: "sourcedAnswer", includeImages: "false" };
+      const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(body),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
+        url: endpoint, ok: response.ok, status: response.status, kind: "search:linkup",
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
+        toolName: "search_web", error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `LinkUp search failed: ${response.status} ${text.slice(0, 300)}`);
+      const sources = Array.isArray(raw.sources) ? raw.sources : [];
+      return {
+        answer: typeof raw.answer === "string" ? raw.answer : "",
+        items: sources.slice(0, maxResults).map((s: any, index: number) =>
+          searchResult(index, { title: String(s.name ?? ""), url: String(s.url ?? ""), text: String(s.snippet ?? "") }),
+        ),
+      };
     });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
-      url: endpoint, ok: response.ok, status: response.status, kind: "search:linkup",
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
-      toolName: "search_web", error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`LinkUp search failed: ${response.status} ${text.slice(0, 300)}`);
-    const sources = Array.isArray(raw.sources) ? raw.sources : [];
-    return {
-      answer: typeof raw.answer === "string" ? raw.answer : "",
-      items: sources.slice(0, maxResults).map((s: any, index: number) =>
-        searchResult(index, { title: String(s.name ?? ""), url: String(s.url ?? ""), text: String(s.snippet ?? "") }),
-      ),
-    };
   }
 
   if (type === "metaso") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Metaso API Key is empty");
-    const endpoint = "https://metaso.cn/api/v1/search";
-    const body: Record<string, JsonValue> = { q: query, scope: "webpage", size: maxResults, includeSummary: false };
-    const requestHeaders = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" };
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(body),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = "https://metaso.cn/api/v1/search";
+      const body: Record<string, JsonValue> = { q: query, scope: "webpage", size: maxResults, includeSummary: false };
+      const requestHeaders = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(body),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
+        url: endpoint, ok: response.ok, status: response.status, kind: "search:metaso",
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
+        toolName: "search_web", error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Metaso search failed: ${response.status} ${text.slice(0, 300)}`);
+      const webpages = Array.isArray(raw.webpages) ? raw.webpages : [];
+      return {
+        answer: "",
+        items: webpages.slice(0, maxResults).map((w: any, index: number) =>
+          searchResult(index, { title: String(w.title ?? ""), url: String(w.link ?? ""), text: String(w.snippet ?? "") }),
+        ),
+      };
     });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
-      url: endpoint, ok: response.ok, status: response.status, kind: "search:metaso",
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
-      toolName: "search_web", error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`Metaso search failed: ${response.status} ${text.slice(0, 300)}`);
-    const webpages = Array.isArray(raw.webpages) ? raw.webpages : [];
-    return {
-      answer: "",
-      items: webpages.slice(0, maxResults).map((w: any, index: number) =>
-        searchResult(index, { title: String(w.title ?? ""), url: String(w.link ?? ""), text: String(w.snippet ?? "") }),
-      ),
-    };
   }
 
   if (type === "ollama") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Ollama API Key is empty");
-    const endpoint = "https://ollama.com/api/web_search";
-    const clamped = Math.max(5, Math.min(10, maxResults));
-    const body: Record<string, JsonValue> = { query, max_results: clamped };
-    const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(body),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = "https://ollama.com/api/web_search";
+      const clamped = Math.max(5, Math.min(10, maxResults));
+      const body: Record<string, JsonValue> = { query, max_results: clamped };
+      const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(body),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
+        url: endpoint, ok: response.ok, status: response.status, kind: "search:ollama",
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
+        toolName: "search_web", error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Ollama search failed: ${response.status} ${text.slice(0, 300)}`);
+      const results = Array.isArray(raw.results) ? raw.results : [];
+      return {
+        answer: "",
+        items: results.slice(0, maxResults).map((r: any, index: number) =>
+          searchResult(index, { title: String(r.title ?? ""), url: String(r.url ?? ""), text: String(r.content ?? "") }),
+        ),
+      };
     });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
-      url: endpoint, ok: response.ok, status: response.status, kind: "search:ollama",
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
-      toolName: "search_web", error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`Ollama search failed: ${response.status} ${text.slice(0, 300)}`);
-    const results = Array.isArray(raw.results) ? raw.results : [];
-    return {
-      answer: "",
-      items: results.slice(0, maxResults).map((r: any, index: number) =>
-        searchResult(index, { title: String(r.title ?? ""), url: String(r.url ?? ""), text: String(r.content ?? "") }),
-      ),
-    };
   }
 
   if (type === "jina") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Jina API Key is empty");
-    const searchUrl = String(service.searchUrl ?? "").trim() || "https://s.jina.ai/";
-    const body: Record<string, JsonValue> = { q: query };
-    const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" };
-    const response = await fetch(searchUrl, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(body),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const searchUrl = String(service.searchUrl ?? "").trim() || "https://s.jina.ai/";
+      const body: Record<string, JsonValue> = { q: query };
+      const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" };
+      const response = await fetch(searchUrl, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(body),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
+        url: searchUrl, ok: response.ok, status: response.status, kind: "search:jina",
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
+        toolName: "search_web", error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Jina search failed: ${response.status} ${text.slice(0, 300)}`);
+      const data = Array.isArray(raw.data) ? raw.data : [];
+      return {
+        answer: "",
+        items: data.slice(0, maxResults).map((r: any, index: number) =>
+          searchResult(index, { title: String(r.title ?? ""), url: String(r.url ?? ""), text: String(r.description ?? "") }),
+        ),
+      };
     });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
-      url: searchUrl, ok: response.ok, status: response.status, kind: "search:jina",
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
-      toolName: "search_web", error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`Jina search failed: ${response.status} ${text.slice(0, 300)}`);
-    const data = Array.isArray(raw.data) ? raw.data : [];
-    return {
-      answer: "",
-      items: data.slice(0, maxResults).map((r: any, index: number) =>
-        searchResult(index, { title: String(r.title ?? ""), url: String(r.url ?? ""), text: String(r.description ?? "") }),
-      ),
-    };
   }
 
   if (type === "firecrawl") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Firecrawl API Key is empty");
-    const endpoint = "https://api.firecrawl.dev/v2/search";
-    const body: Record<string, JsonValue> = { query, limit: maxResults };
-    const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(body),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = "https://api.firecrawl.dev/v2/search";
+      const body: Record<string, JsonValue> = { query, limit: maxResults };
+      const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(body),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
+        url: endpoint, ok: response.ok, status: response.status, kind: "search:firecrawl",
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
+        toolName: "search_web", error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Firecrawl search failed: ${response.status} ${text.slice(0, 300)}`);
+      const data = isRecord(raw.data) ? (raw.data as Record<string, JsonValue>) : {};
+      const web = Array.isArray(data.web) ? data.web : [];
+      const news = Array.isArray(data.news) ? data.news : [];
+      const items: ReturnType<typeof searchResult>[] = [];
+      for (const item of web) {
+        items.push(searchResult(items.length, {
+          title: String((item as Record<string, JsonValue>).title ?? ""),
+          url: String((item as Record<string, JsonValue>).url ?? ""),
+          text: String((item as Record<string, JsonValue>).description ?? ""),
+        }));
+      }
+      for (const item of news) {
+        const record = item as Record<string, JsonValue>;
+        items.push(searchResult(items.length, {
+          title: String(record.title ?? ""),
+          url: String(record.url ?? ""),
+          text: `${String(record.snippet ?? "")}\n${String(record.date ?? "")}`.trim(),
+        }));
+      }
+      return { answer: "", items: items.slice(0, maxResults) };
     });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
-      url: endpoint, ok: response.ok, status: response.status, kind: "search:firecrawl",
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
-      toolName: "search_web", error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`Firecrawl search failed: ${response.status} ${text.slice(0, 300)}`);
-    const data = isRecord(raw.data) ? (raw.data as Record<string, JsonValue>) : {};
-    const web = Array.isArray(data.web) ? data.web : [];
-    const news = Array.isArray(data.news) ? data.news : [];
-    const items: ReturnType<typeof searchResult>[] = [];
-    for (const item of web) {
-      items.push(searchResult(items.length, {
-        title: String((item as Record<string, JsonValue>).title ?? ""),
-        url: String((item as Record<string, JsonValue>).url ?? ""),
-        text: String((item as Record<string, JsonValue>).description ?? ""),
-      }));
-    }
-    for (const item of news) {
-      const record = item as Record<string, JsonValue>;
-      items.push(searchResult(items.length, {
-        title: String(record.title ?? ""),
-        url: String(record.url ?? ""),
-        text: `${String(record.snippet ?? "")}\n${String(record.date ?? "")}`.trim(),
-      }));
-    }
-    return { answer: "", items: items.slice(0, maxResults) };
   }
 
   if (type === "grok") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Grok API Key is empty");
-    const endpoint = String(service.customUrl ?? "").trim() || "https://api.x.ai/v1/responses";
-    const model = String(service.model ?? "").trim() || "grok-4-fast";
-    const systemPrompt = String(service.systemPrompt ?? "").trim()
-      || "You are a helpful assistant that searches the web for the user. Respond with a concise answer and cite sources via web_search/x_search tools.";
-    const body: Record<string, JsonValue> = {
-      model,
-      input: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: query },
-      ],
-      tools: [{ type: "web_search" }, { type: "x_search" }],
-      store: false,
-    };
-    const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(body),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = String(service.customUrl ?? "").trim() || "https://api.x.ai/v1/responses";
+      const model = String(service.model ?? "").trim() || "grok-4-fast";
+      const systemPrompt = String(service.systemPrompt ?? "").trim()
+        || "You are a helpful assistant that searches the web for the user. Respond with a concise answer and cite sources via web_search/x_search tools.";
+      const body: Record<string, JsonValue> = {
+        model,
+        input: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: query },
+        ],
+        tools: [{ type: "web_search" }, { type: "x_search" }],
+        store: false,
+      };
+      const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(body),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
+        url: endpoint, ok: response.ok, status: response.status, kind: "search:grok",
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
+        toolName: "search_web", error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Grok search failed: ${response.status} ${text.slice(0, 300)}`);
+      const output = Array.isArray(raw.output) ? raw.output : [];
+      const messageOutput = output.find((entry: any) => entry?.type === "message" && entry?.role === "assistant");
+      const contentArr = Array.isArray(messageOutput?.content) ? messageOutput.content : [];
+      const textContent = contentArr.find((entry: any) => entry?.type === "output_text");
+      const answer = textContent?.text ? String(textContent.text) : "";
+      const annotations = Array.isArray(textContent?.annotations) ? textContent.annotations : [];
+      const seen = new Set<string>();
+      const items: ReturnType<typeof searchResult>[] = [];
+      for (const annotation of annotations) {
+        if (!annotation || annotation.type !== "url_citation") continue;
+        const url = String(annotation.url ?? "");
+        if (!url || seen.has(url)) continue;
+        seen.add(url);
+        items.push(searchResult(items.length, {
+          title: String(annotation.title ?? url),
+          url,
+          text: "",
+        }));
+        if (items.length >= maxResults) break;
+      }
+      return { answer, items };
     });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"), providerName: nameOfSearchService(service),
-      url: endpoint, ok: response.ok, status: response.status, kind: "search:grok",
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      durationMs: Date.now() - started, requestBody: jsonBody(body), responseBody: textBody(text),
-      toolName: "search_web", error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`Grok search failed: ${response.status} ${text.slice(0, 300)}`);
-    const output = Array.isArray(raw.output) ? raw.output : [];
-    const messageOutput = output.find((entry: any) => entry?.type === "message" && entry?.role === "assistant");
-    const contentArr = Array.isArray(messageOutput?.content) ? messageOutput.content : [];
-    const textContent = contentArr.find((entry: any) => entry?.type === "output_text");
-    const answer = textContent?.text ? String(textContent.text) : "";
-    const annotations = Array.isArray(textContent?.annotations) ? textContent.annotations : [];
-    const seen = new Set<string>();
-    const items: ReturnType<typeof searchResult>[] = [];
-    for (const annotation of annotations) {
-      if (!annotation || annotation.type !== "url_citation") continue;
-      const url = String(annotation.url ?? "");
-      if (!url || seen.has(url)) continue;
-      seen.add(url);
-      items.push(searchResult(items.length, {
-        title: String(annotation.title ?? url),
-        url,
-        text: "",
-      }));
-      if (items.length >= maxResults) break;
-    }
-    return { answer, items };
   }
 
   if (type === "custom_js") {
@@ -6113,6 +6281,61 @@ async function runSearchWeb(params: Record<string, JsonValue>) {
       responseBody: jsonBody(result),
     });
     return result;
+  }
+
+  if (type === "searxng") {
+    const baseUrl = String(service.url ?? "").trim().replace(/\/+$/, "");
+    if (!baseUrl) throw new Error("SearXNG URL is empty");
+    const searchParams = new URLSearchParams({ q: query, format: "json" });
+    const engines = String(service.engines ?? "").trim();
+    if (engines) searchParams.set("engines", engines);
+    const language = String(service.language ?? "").trim();
+    if (language) searchParams.set("language", language);
+    const endpoint = `${baseUrl}/search?${searchParams.toString()}`;
+    const headers: Record<string, string> = { Accept: "application/json" };
+    const username = String(service.username ?? "");
+    const password = String(service.password ?? "");
+    if (username && password) {
+      headers.Authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+    }
+    const response = await fetch(endpoint, { headers });
+    const text = await response.text();
+    addLog({
+      providerId: String(service.id ?? "search"),
+      providerName: nameOfSearchService(service),
+      url: endpoint,
+      ok: response.ok,
+      status: response.status,
+      kind: "tool:search_web",
+      toolName: "search_web",
+      durationMs: Date.now() - started,
+      method: "GET",
+      requestHeaders: headers,
+      responseHeaders: Object.fromEntries(response.headers.entries()),
+      requestBody: jsonBody({ query, maxResults }),
+      responseBody: textBody(text),
+      error: response.ok ? undefined : textBody(text),
+    });
+    if (!response.ok) throw new Error(`SearXNG ${response.status}: ${text.slice(0, 500)}`);
+    let searxngRaw: { results?: any[] };
+    try {
+      searxngRaw = JSON.parse(text);
+    } catch {
+      throw new Error("SearXNG returned a non-JSON response — confirm the URL points to a SearXNG instance with format=json support");
+    }
+    return {
+      query,
+      service: "SearXNG",
+      items: (Array.isArray(searxngRaw.results) ? searxngRaw.results : [])
+        .slice(0, maxResults)
+        .map((item: any, index: number) =>
+          searchResult(index, {
+            title: item.title,
+            url: item.url,
+            text: item.content ?? item.snippet ?? item.description,
+          }),
+        ),
+    };
   }
 
   const requestHeaders = { "User-Agent": "Mozilla/5.0 RikkaHubPC/1.0" };
@@ -6175,44 +6398,44 @@ async function runScrapeWeb(params: Record<string, JsonValue>) {
     return result;
   }
   if (type === "tinyfish") {
-    const apiKey = String(service.apiKey ?? "");
-    if (!apiKey) throw new Error("Tinyfish API Key is empty");
-    const endpoint = "https://api.fetch.tinyfish.ai";
-    const requestBody = { urls: [target], format: "markdown" };
-    const requestHeaders = { "Content-Type": "application/json", "X-API-Key": apiKey };
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(requestBody),
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = "https://api.fetch.tinyfish.ai";
+      const requestBody = { urls: [target], format: "markdown" };
+      const requestHeaders = { "Content-Type": "application/json", "X-API-Key": apiKey };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: endpoint,
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:scrape_web",
+        toolName: "scrape_web",
+        durationMs: Date.now() - started,
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody(requestBody),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Tinyfish fetch failed with code ${response.status}: ${text.slice(0, 500)}`);
+      const item = Array.isArray(raw.results) ? raw.results[0] : null;
+      const fetchError = Array.isArray(raw.errors) ? raw.errors[0]?.error : "";
+      if (!item && fetchError) throw new Error(String(fetchError));
+      return {
+        url: String(item?.final_url ?? item?.url ?? target),
+        title: item?.title,
+        description: item?.description,
+        language: item?.language,
+        text: String(item?.text ?? "").slice(0, 12000),
+      };
     });
-    const { text, raw } = await parseJsonResponse(response);
-    addLog({
-      providerId: String(service.id ?? "search"),
-      providerName: nameOfSearchService(service),
-      url: endpoint,
-      ok: response.ok,
-      status: response.status,
-      kind: "tool:scrape_web",
-      toolName: "scrape_web",
-      durationMs: Date.now() - started,
-      method: "POST",
-      requestHeaders,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      requestBody: jsonBody(requestBody),
-      responseBody: textBody(text),
-      error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`Tinyfish fetch failed with code ${response.status}: ${text.slice(0, 500)}`);
-    const item = Array.isArray(raw.results) ? raw.results[0] : null;
-    const fetchError = Array.isArray(raw.errors) ? raw.errors[0]?.error : "";
-    if (!item && fetchError) throw new Error(String(fetchError));
-    return {
-      url: String(item?.final_url ?? item?.url ?? target),
-      title: item?.title,
-      description: item?.description,
-      language: item?.language,
-      text: String(item?.text ?? "").slice(0, 12000),
-    };
   }
   const requestHeaders = { "User-Agent": "Mozilla/5.0 RikkaHubPC/1.0" };
   const response = await fetch(target, { headers: requestHeaders });
@@ -9918,72 +10141,97 @@ async function testSearchService(service: SearchService) {
       return { status: "ok", name, endpoint: type, preview: "Built-in Bing local search is available without API key." };
     }
   }
-  if (type !== "searxng" && type !== "rikkahub" && !apiKey) throw new Error(`${name} API Key is empty`);
+  // custom_js 脚本自带鉴权(通过 fetch + args 执行,不读顶层 apiKey),searxng/rikkahub 同理免 key。
+  // 此处必须放行这三类,否则空 key 时抛 "Custom JS API Key is empty" 拦住测试。
+  if (type !== "searxng" && type !== "rikkahub" && type !== "custom_js" && splitSearchApiKeys(apiKey).length === 0) {
+    throw new Error(`${name} API Key is empty`);
+  }
   if (type === "rikkahub") {
     const endpoint = "https://api.rikka-ai.com/v1/search";
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
-      body: JSON.stringify({ q: "RikkaHub", depth: service.depth ?? "standard", outputType: "sourcedAnswer", includeImages: false }),
-    });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
+    const exec = async (k: string): Promise<string> => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(k ? { Authorization: `Bearer ${k}` } : {}) },
+        body: JSON.stringify({ q: "RikkaHub", depth: service.depth ?? "standard", outputType: "sourcedAnswer", includeImages: false }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
+    };
+    if (apiKey.trim()) return runSearchKeyTestResult(name, endpoint, apiKey, exec);
+    const text = await exec("");
     return { status: "ok", name, endpoint, preview: textBody(text) };
   }
   if (type === "tavily") {
     const endpoint = "https://api.tavily.com/search";
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ query: "RikkaHub", max_results: 1 }),
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${k}` },
+        body: JSON.stringify({ query: "RikkaHub", max_results: 1 }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint, preview: textBody(text) };
   }
   if (type === "exa") {
     const endpoint = "https://api.exa.ai/search";
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-      body: JSON.stringify({ query: "RikkaHub", numResults: 1 }),
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": k },
+        body: JSON.stringify({ query: "RikkaHub", numResults: 1 }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint, preview: textBody(text) };
   }
   if (type === "tinyfish") {
     const endpoint = "https://api.search.tinyfish.ai?query=RikkaHub";
-    const response = await fetch(endpoint, {
-      headers: { "X-API-Key": apiKey },
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetch(endpoint, {
+        headers: { "X-API-Key": k },
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `Tinyfish search failed with code ${response.status}: ${text.slice(0, 500)}`);
+      return text;
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`Tinyfish search failed with code ${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint, preview: textBody(text) };
   }
   if (type === "zhipu") {
     const endpoint = "https://open.bigmodel.cn/api/paas/v4/web_search";
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ search_query: "RikkaHub", search_engine: "search_std", count: 1 }),
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${k}` },
+        body: JSON.stringify({ search_query: "RikkaHub", search_engine: "search_std", count: 1 }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint, preview: textBody(text) };
   }
   if (type === "brave") {
     const endpoint = "https://api.search.brave.com/res/v1/web/search?q=RikkaHub&count=1";
-    const response = await fetch(endpoint, { headers: { Accept: "application/json", "X-Subscription-Token": apiKey } });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint, preview: textBody(text) };
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetch(endpoint, { headers: { Accept: "application/json", "X-Subscription-Token": k } });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
+    });
   }
   if (type === "searxng") {
     const baseUrl = String(service.url ?? "").trim().replace(/\/+$/, "");
     if (!baseUrl) throw new Error("SearXNG URL is empty");
-    const endpoint = `${baseUrl}/search?q=RikkaHub&format=json`;
-    const headers: Record<string, string> = {};
+    // 与 runSearchWeb 的 searxng 分支保持一致:带上 engines/language,让测试贴近真实搜索行为。
+    const searchParams = new URLSearchParams({ q: "RikkaHub", format: "json" });
+    const engines = String(service.engines ?? "").trim();
+    if (engines) searchParams.set("engines", engines);
+    const language = String(service.language ?? "").trim();
+    if (language) searchParams.set("language", language);
+    const endpoint = `${baseUrl}/search?${searchParams.toString()}`;
+    const headers: Record<string, string> = { Accept: "application/json" };
     const username = String(service.username ?? "");
     const password = String(service.password ?? "");
     if (username && password) headers.Authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
@@ -10000,104 +10248,119 @@ async function testSearchService(service: SearchService) {
   }
   if (type === "firecrawl") {
     const endpoint = "https://api.firecrawl.dev/v2/search";
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ query: "RikkaHub", limit: 1 }),
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${k}` },
+        body: JSON.stringify({ query: "RikkaHub", limit: 1 }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint, preview: textBody(text) };
   }
   if (type === "grok") {
     const endpoint = String(service.customUrl ?? "").trim() || "https://api.x.ai/v1/responses";
     const model = String(service.model ?? "").trim() || "grok-4-fast";
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        input: [
-          { role: "system", content: "You are a helpful search assistant." },
-          { role: "user", content: "RikkaHub" },
-        ],
-        tools: [{ type: "web_search" }, { type: "x_search" }],
-        store: false,
-      }),
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${k}` },
+        body: JSON.stringify({
+          model,
+          input: [
+            { role: "system", content: "You are a helpful search assistant." },
+            { role: "user", content: "RikkaHub" },
+          ],
+          tools: [{ type: "web_search" }, { type: "x_search" }],
+          store: false,
+        }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint, preview: textBody(text) };
   }
-  // 以下 6 个分支(perplexity/bocha/linkup/metaso/ollama/jina)此前缺失,导致这些类型在
-  // 设置页点「测试」全部落到末尾 throw "not supported"。请求体对齐 runSearchService 里
-  // 各自的实现,仅改成最小测试请求(query=RikkaHub、count/size=1)以验证 API Key 可用。
+  // perplexity/bocha/linkup/metaso/ollama/jina:最小测试请求(query=RikkaHub、count/size=1)验证 key 可用。
+  // 多 key 时 runSearchKeyTestResult 逐 key 测试并汇总状态。
   if (type === "perplexity") {
     const endpoint = "https://api.perplexity.ai/search";
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ query: "RikkaHub", max_results: 1 }),
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${k}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "RikkaHub", max_results: 1 }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint, preview: textBody(text) };
   }
   if (type === "bocha") {
     const endpoint = "https://api.bochaai.com/v1/web-search";
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ query: "RikkaHub", summary: false, count: 1 }),
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${k}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "RikkaHub", summary: false, count: 1 }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint, preview: textBody(text) };
   }
   if (type === "linkup") {
     const endpoint = "https://api.linkup.so/v1/search";
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ q: "RikkaHub", depth: "standard", outputType: "sourcedAnswer", includeImages: "false" }),
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${k}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ q: "RikkaHub", depth: "standard", outputType: "sourcedAnswer", includeImages: "false" }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint, preview: textBody(text) };
   }
   if (type === "metaso") {
     const endpoint = "https://metaso.cn/api/v1/search";
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify({ q: "RikkaHub", scope: "webpage", size: 1, includeSummary: false }),
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${k}`, Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ q: "RikkaHub", scope: "webpage", size: 1, includeSummary: false }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint, preview: textBody(text) };
   }
   if (type === "ollama") {
     const endpoint = "https://ollama.com/api/web_search";
     // runSearchService 把 max_results clamp 到 [5,10],这里取下界 5 避免被上游拒绝。
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ query: "RikkaHub", max_results: 5 }),
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${k}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "RikkaHub", max_results: 5 }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint, preview: textBody(text) };
   }
   if (type === "jina") {
     const searchUrl = String(service.searchUrl ?? "").trim() || "https://s.jina.ai/";
-    const response = await fetch(searchUrl, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ q: "RikkaHub" }),
+    return runSearchKeyTestResult(name, searchUrl, apiKey, async (k) => {
+      const response = await fetch(searchUrl, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${k}`, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ q: "RikkaHub" }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
-    return { status: "ok", name, endpoint: searchUrl, preview: textBody(text) };
   }
   throw new Error(`${name} search type '${type}' is not supported`);
 }
@@ -10743,7 +11006,9 @@ function fillContextLimit(msg: Message) {
 
 function appendUsageFromRaw(msg: Message | undefined, raw: any) {
   if (!msg) return;
-  const usage = raw?.usage;
+  // Chat Completions 的 usage 在 raw.usage;Responses API 的在 raw.response.usage
+  // (response.completed 事件嵌套一层 response)。
+  const usage = raw?.usage ?? raw?.response?.usage;
   if (!usage || typeof usage !== "object") return;
   // 流式过程中本函数会被多次调用(每个 usage delta),每次重设 msg.usage 对象会丢掉已填的
   // contextLimit,触发 fillContextLimit 重查 models.dev。保留前值避免重复查找。
@@ -10885,6 +11150,37 @@ function claudeTextFromContent(content: any[]) {
     .trim();
 }
 
+// Claude usage 合并:对齐安卓 ClaudeProvider.parseTokenUsage + Usage.merge。
+//
+// 两个坑:
+// 1) Claude 的 usage.input_tokens 只算 cache-miss 部分,真正发给模型的输入 token 还要加
+//    cache_read_input_tokens + cache_creation_input_tokens。多轮对话里历史几乎全命中缓存,
+//    input_tokens 会小到个位数(例:input=17 / cache_read=754 → 真实 prompt 771)。只取
+//    input_tokens 会让前端"当前上下文"不随轮次增长——下一轮的 cache 命中更多,input_tokens
+//    反而可能更小。
+// 2) message_delta 事件只带 output_tokens(无 input_tokens / cache_*),直接覆盖会让上一条
+//    message_start 写入的 promptTokens 归零。参照安卓 merge:新值 > 0 才采用,否则保留前值。
+function mergeClaudeUsage(
+  u: any,
+  prev: Message["usage"] | undefined,
+): Message["usage"] | undefined {
+  if (!u || typeof u !== "object") return prev;
+  const inputTokens = Number(u.input_tokens ?? 0);
+  const cacheRead = Number(u.cache_read_input_tokens ?? 0);
+  const cacheCreation = Number(u.cache_creation_input_tokens ?? 0);
+  const promptTokens = inputTokens + cacheRead + cacheCreation;
+  const completionTokens = Number(u.output_tokens ?? 0);
+  const mergedPrompt = promptTokens > 0 ? promptTokens : (prev?.promptTokens ?? 0);
+  const mergedCompletion =
+    completionTokens > 0 ? completionTokens : (prev?.completionTokens ?? 0);
+  return {
+    promptTokens: mergedPrompt,
+    completionTokens: mergedCompletion,
+    totalTokens: mergedPrompt + mergedCompletion,
+    cachedTokens: cacheRead > 0 ? cacheRead : (prev?.cachedTokens ?? 0),
+  };
+}
+
 async function streamClaudeChat(
   url: string,
   headers: Record<string, string>,
@@ -10919,16 +11215,7 @@ async function streamClaudeChat(
     if (text) addStreamText(hooks, text);
     if (raw && isRecord(raw) && (raw.usage || raw.message?.usage)) {
       const u: any = raw.usage ?? raw.message?.usage;
-      if (u) {
-        const promptTokens = Number(u.input_tokens ?? 0);
-        const completionTokens = Number(u.output_tokens ?? 0);
-        usage = {
-          promptTokens,
-          completionTokens,
-          totalTokens: promptTokens + completionTokens,
-          cachedTokens: Number(u.cache_read_input_tokens ?? 0),
-        };
-      }
+      usage = mergeClaudeUsage(u, usage);
     }
   }, signal);
   if (hooks.message && usage) hooks.message.usage = usage;
@@ -10984,15 +11271,7 @@ async function readClaudeStreamingRound(
   let stopReason: string | null = null;
   let usage: Message["usage"] | undefined;
   const setUsage = (u: any) => {
-    if (!u || typeof u !== "object") return;
-    const promptTokens = Number(u.input_tokens ?? 0);
-    const completionTokens = Number(u.output_tokens ?? 0);
-    usage = {
-      promptTokens,
-      completionTokens,
-      totalTokens: promptTokens + completionTokens,
-      cachedTokens: Number(u.cache_read_input_tokens ?? 0),
-    };
+    usage = mergeClaudeUsage(u, usage);
   };
   const handleEvent = (eventName: string, dataJson: any) => {
     if (!dataJson || typeof dataJson !== "object") return;
@@ -11974,8 +12253,12 @@ async function readOpenAiStream(
         try {
           const raw = JSON.parse(payload);
           const delta = raw.choices?.[0]?.delta ?? raw.choices?.[0]?.message ?? responseEventToDelta(raw) ?? {};
+          // 即使 delta 为空也要调 onDelta:OpenAI Chat Completions 流式的 final usage chunk
+          // (choices 为空数组 → delta 为空对象)和 Responses API 的 response.completed 事件
+          // (responseEventToDelta 返回 null → delta 为空)的 usage 只在这些"空 delta"包里出现,
+          // 跳过就永远捕获不到(非流式回放版 readOpenAiSseTextIntoMessage 有对应分支)。
+          const applied = onDelta(delta, raw);
           if (Object.keys(delta).length > 0) {
-            const applied = onDelta(delta, raw);
             full += applied?.content ?? deltaTextContent(delta);
           }
         } catch {
@@ -11989,8 +12272,8 @@ async function readOpenAiStream(
     try {
       const raw = JSON.parse(payload);
       const delta = raw.choices?.[0]?.delta ?? raw.choices?.[0]?.message ?? responseEventToDelta(raw) ?? {};
+      const applied = onDelta(delta, raw);
       if (Object.keys(delta).length > 0) {
-        const applied = onDelta(delta, raw);
         full += applied?.content ?? deltaTextContent(delta);
       }
     } catch {
@@ -14287,6 +14570,25 @@ async function routeApi(request: Request, url: URL) {
     updateSettings({ ...state.settings, displaySetting: { ...state.settings.displaySetting, ...body } });
     return json({ status: "ok" });
   }
+  // 更新单个 action 的快捷键(keys 录制结果)或 enabled 开关。仅接受默认 action 列表内的条目。
+  if (path === "settings/keybindings" && request.method === "POST") {
+    const body = await readJson<{ action: string; keys?: string[]; enabled?: boolean }>(request);
+    const defaults = defaultSettings().keybindings;
+    if (!(body.action in defaults)) return error("Unknown keybinding action", 400);
+    const current = { ...defaults, ...state.settings.keybindings } as Record<string, JsonValue>;
+    const existing = isRecord(current[body.action]) ? (current[body.action] as Record<string, JsonValue>) : {};
+    const next: Record<string, JsonValue> = { ...existing };
+    if (Array.isArray(body.keys)) next.keys = body.keys.filter((k) => typeof k === "string");
+    if (typeof body.enabled === "boolean") next.enabled = body.enabled;
+    current[body.action] = next;
+    updateSettings({ ...state.settings, keybindings: current });
+    return json({ status: "ok" });
+  }
+  // 重置全部快捷键到默认(设置页"恢复默认"按钮)。
+  if (path === "settings/keybindings/reset" && request.method === "POST") {
+    updateSettings({ ...state.settings, keybindings: defaultSettings().keybindings });
+    return json({ status: "ok" });
+  }
   if (path === "settings/assistant" && request.method === "POST") {
     const body = await readJson<{ assistantId: string }>(request);
     if (!state.settings.assistants.some((assistant) => assistant.id === body.assistantId)) return error("Assistant not found", 404);
@@ -14814,16 +15116,19 @@ async function routeApi(request: Request, url: URL) {
     const body = await readJson<SearchService>(request);
     try {
       const result = await testSearchService(body);
-      // Mark the persisted service as passing so the chat picker can include it.
-      const services = state.settings.searchServices as SearchService[];
-      const targetId = String(body.id ?? "");
-      if (targetId) {
-        updateSettings({
-          ...state.settings,
-          searchServices: services.map((item) =>
-            String(item.id) === targetId ? { ...item, testPassed: true, testPassedAt: Date.now() } : item,
-          ),
-        });
+      // 多 key 服务全量测试后始终返回结构化结果(含每个 key 的状态),不再用 502 表达"某个 key 失败"。
+      // 只有 status=ok(至少一个 key 可用,或无 key 服务直连成功)才标 testPassed,让搜索 picker 放行。
+      if (result.status === "ok") {
+        const services = state.settings.searchServices as SearchService[];
+        const targetId = String(body.id ?? "");
+        if (targetId) {
+          updateSettings({
+            ...state.settings,
+            searchServices: services.map((item) =>
+              String(item.id) === targetId ? { ...item, testPassed: true, testPassedAt: Date.now() } : item,
+            ),
+          });
+        }
       }
       return json(result);
     } catch (err) {
