@@ -11,6 +11,7 @@ import { useTheme } from "~/components/theme-provider";
 import { ConversationEmptyState } from "~/components/extended/conversation";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatInput } from "~/components/input/chat-input";
+import { GlobalDropZone } from "~/components/global-drop-zone";
 import { ChatMessage } from "~/components/message/chat-message";
 import { Button } from "~/components/ui/button";
 import {
@@ -1623,6 +1624,7 @@ function ConversationsPageInner() {
 
   return (
     <SidebarProvider defaultOpen className="h-svh overflow-hidden">
+      <GlobalDropZone draftKey={draftKey} disabled={detailLoading || Boolean(detailError)} />
       <ConversationSidebar
         conversations={conversations}
         activeId={activeId}

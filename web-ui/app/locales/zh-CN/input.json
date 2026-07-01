@@ -95,6 +95,7 @@
     "upload_failed": "上传失败",
     "send_failed": "发送失败",
     "drop_to_upload": "拖拽文件到这里上传",
+    "drop_anywhere_to_upload": "松开鼠标即可上传到当前对话",
     "editing_tip": "正在编辑消息，发送后会创建新分支",
     "cancel_edit": "取消编辑",
     "delete_attachment_failed": "删除附件失败",

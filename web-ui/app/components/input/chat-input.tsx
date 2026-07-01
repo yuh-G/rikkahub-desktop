@@ -1,6 +1,5 @@
 import * as React from "react";
 
-import { fileTypeFromBuffer } from "file-type";
 import {
   ArrowUp,
   File,
@@ -27,7 +26,7 @@ import { ReasoningPickerButton } from "~/components/input/reasoning-picker";
 import { SearchPickerButton } from "~/components/input/search-picker";
 import { McpPickerButton } from "~/components/input/mcp-picker";
 import { ExtensionPickerButton } from "~/components/input/extension-picker";
-import { useSettingsStore } from "~/stores";
+import { useChatInputStore, useSettingsStore } from "~/stores";
 import { Button } from "~/components/ui/button";
 import {
   DropdownMenu,
@@ -38,9 +37,10 @@ import {
 import { Textarea } from "~/components/ui/textarea";
 import { resolveFileUrl } from "~/lib/files";
 import { normalizeImageForModelUpload } from "~/lib/image-normalize";
+import { DOCUMENT_UPLOAD_ACCEPT, uploadFilesToDraft } from "~/lib/upload";
 import { cn } from "~/lib/utils";
 import api from "~/services/api";
-import type { UIMessagePart, UploadFilesResponseDto } from "~/types";
+import type { UIMessagePart } from "~/types";
 
 export interface ChatInputProps {
   value: string;
@@ -67,25 +67,6 @@ export interface ChatInputProps {
 }
 
 const IMAGE_UPLOAD_ACCEPT = "image/*";
-const DOCUMENT_UPLOAD_ACCEPT = [
-  ".txt",
-  ".md",
-  ".markdown",
-  ".csv",
-  ".tsv",
-  ".json",
-  ".yaml",
-  ".yml",
-  ".pdf",
-  ".doc",
-  ".docx",
-  ".xls",
-  ".xlsx",
-  ".ppt",
-  ".pptx",
-  ".epub",
-  "application/epub+zip",
-].join(",");
 
 const ASR_FRAME_SIZE = 4096;
 
@@ -122,99 +103,6 @@ function floatToPcm16(input: Float32Array) {
   return buffer;
 }
 
-const DOCUMENT_MIME_BY_EXTENSION: Record<string, string> = {
-  ".epub": "application/epub+zip",
-  ".md": "text/markdown",
-  ".markdown": "text/markdown",
-  ".txt": "text/plain",
-  ".csv": "text/csv",
-  ".tsv": "text/tab-separated-values",
-  ".json": "application/json",
-  ".yaml": "application/yaml",
-  ".yml": "application/yaml",
-};
-
-function extensionOf(name: string) {
-  const match = name.toLowerCase().match(/\.[^.]+$/);
-  return match?.[0] ?? "";
-}
-
-async function detectUploadFile(
-  file: globalThis.File,
-): Promise<{ allowed: boolean; mimeType: string }> {
-  const extension = extensionOf(file.name);
-  const buffer = await file.slice(0, 4100).arrayBuffer();
-  const detected = await fileTypeFromBuffer(buffer);
-
-  // 无法识别 magic bytes → 文本文件 → 允许，强制 text/plain 防止 OS MIME 映射污染（如 .ts → video/mp2t）
-  if (!detected)
-    return { allowed: true, mimeType: DOCUMENT_MIME_BY_EXTENSION[extension] ?? "text/plain" };
-
-  // 识别为图片 / 视频 / 音频 → 允许，使用 magic bytes 检测到的 MIME
-  if (
-    detected.mime.startsWith("image/") ||
-    detected.mime.startsWith("video/") ||
-    detected.mime.startsWith("audio/")
-  ) {
-    return { allowed: true, mimeType: detected.mime };
-  }
-
-  // 允许常见文档格式
-  const ALLOWED_DOCUMENT_MIMES = new Set([
-    "application/pdf",
-    "application/epub+zip",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  ]);
-  if (ALLOWED_DOCUMENT_MIMES.has(detected.mime)) {
-    return { allowed: true, mimeType: detected.mime };
-  }
-  if (detected.mime === "application/zip" && extension === ".epub") {
-    return { allowed: true, mimeType: "application/epub+zip" };
-  }
-
-  // 其他可识别的二进制格式（exe、zip 等）→ 拒绝
-  return { allowed: false, mimeType: detected.mime };
-}
-
-function toMessagePart(file: UploadFilesResponseDto["files"][number]): UIMessagePart {
-  if (file.mime.startsWith("image/")) {
-    return {
-      type: "image",
-      url: file.url,
-      metadata: { fileId: file.id },
-    };
-  }
-
-  if (file.mime.startsWith("video/")) {
-    return {
-      type: "video",
-      url: file.url,
-      metadata: { fileId: file.id },
-    };
-  }
-
-  if (file.mime.startsWith("audio/")) {
-    return {
-      type: "audio",
-      url: file.url,
-      metadata: { fileId: file.id },
-    };
-  }
-
-  return {
-    type: "document",
-    url: file.url,
-    fileName: file.fileName,
-    mime: file.mime,
-    metadata: { fileId: file.id },
-  };
-}
-
 function partLabel(part: UIMessagePart, t: (key: string) => string): string {
   switch (part.type) {
     case "document":
@@ -248,12 +136,6 @@ function partIcon(part: UIMessagePart) {
 function getPartFileId(part: UIMessagePart): number | null {
   const value = part.metadata?.fileId;
   return typeof value === "number" ? value : null;
-}
-
-function hasFilesInDataTransfer(dataTransfer: DataTransfer | null): boolean {
-  if (!dataTransfer) return false;
-  if (dataTransfer.files.length > 0) return true;
-  return Array.from(dataTransfer.items).some((item) => item.kind === "file");
 }
 
 function ChatInputInner({
@@ -356,10 +238,9 @@ function ChatInputInner({
   };
 
   const [submitting, setSubmitting] = React.useState(false);
-  const [uploading, setUploading] = React.useState(false);
+  const uploading = useChatInputStore((state) => state.uploading);
   const [uploadMenuOpen, setUploadMenuOpen] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [dragActive, setDragActive] = React.useState(false);
   const [asrListening, setAsrListening] = React.useState(false);
   const asrSocketRef = React.useRef<WebSocket | null>(null);
   const asrAudioContextRef = React.useRef<AudioContext | null>(null);
@@ -368,7 +249,6 @@ function ChatInputInner({
   const asrStreamRef = React.useRef<MediaStream | null>(null);
   const asrFrameRef = React.useRef<Int16Array[]>([]);
   const asrFrameSamplesRef = React.useRef(0);
-  const dragDepthRef = React.useRef(0);
   // 提示词优化:点击后把输入框原文发给"提示词优化模型",返回的优化版直接替换输入框。
   // 优化成功后在优化按钮旁显示常驻"撤销"按钮(不走 toast —— toast 几秒就消失,用户来不及点
   // 或事后想反悔就没机会了)。originalBeforeOptimize 保存原文,点撤销即恢复;重新优化 / 发送
@@ -382,7 +262,9 @@ function ChatInputInner({
 
   const canStop = ready && Boolean(onStop) && isGenerating && !disabled;
   const canSend = ready && !isGenerating && !disabled && !isEmpty;
-  const canUpload = ready && !disabled && !isGenerating && !uploading && !submitting;
+  // 生成中允许上传:用户常在模型输出时准备下一轮的 prompt 和附件,加文件到草稿和打字
+  // 一样都不打断当前生成。submitting(发送的一瞬间)和 uploading 仍保留互斥。
+  const canUpload = ready && !disabled && !uploading && !submitting;
   const canSwitchModel = ready && !disabled && !isGenerating && !uploading && !submitting;
   const canUseQuickMessage = ready && !disabled && !uploading && !submitting;
   const canUseAsr = ready && !disabled && !isGenerating && !uploading && !submitting;
@@ -404,82 +286,8 @@ function ChatInputInner({
   React.useEffect(() => {
     if (!canUpload) {
       setUploadMenuOpen(false);
-      setDragActive(false);
-      dragDepthRef.current = 0;
     }
   }, [canUpload]);
-
-  const uploadFiles = React.useCallback(
-    async (fileList: FileList | globalThis.File[] | null) => {
-      if (!ready || !fileList || fileList.length === 0) {
-        return;
-      }
-
-      const allFiles = Array.from(fileList);
-      // Set the busy state up front so the user gets immediate feedback even during the
-      // (potentially slow) detection + image-normalization phases. Previously these ran
-      // before setUploading(true) and outside the try/catch, so any throw in file-type
-      // detection or image decoding silently rejected the whole upload with no UI feedback
-      // — the "上传后没反应、文件没显示" symptom.
-      setUploading(true);
-      setError(null);
-      try {
-        const results = await Promise.all(
-          allFiles.map(async (f) => {
-            try {
-              return { file: f, ...(await detectUploadFile(f)) };
-            } catch {
-              // Detection failed (corrupt buffer, file-type lib error) — fall back to
-              // treating it as an allowed plain-text-ish upload rather than dropping it.
-              return { file: f, allowed: true, mimeType: f.type || "application/octet-stream" };
-            }
-          }),
-        );
-        const uploadableFiles = results.filter((r) => r.allowed);
-        const skippedFiles = results.filter((r) => !r.allowed);
-
-        if (skippedFiles.length > 0) {
-          toast.warning(t("chat.unsupported_file_skipped", { count: skippedFiles.length }));
-        }
-
-        if (uploadableFiles.length === 0) {
-          return;
-        }
-
-        const formData = new FormData();
-        const safeFiles = await Promise.all(
-          uploadableFiles.map(async ({ file, mimeType }) => {
-            // 用 magic bytes 检测结果覆盖浏览器的 file.type，修正跨平台 MIME 歧义
-            const safeFile =
-              file.type !== mimeType
-                ? new globalThis.File([file], file.name, { type: mimeType })
-                : file;
-            // Image normalization can throw on corrupt/unsupported images — never let that
-            // abort the whole upload; fall back to the original file.
-            try {
-              return await normalizeImageForModelUpload(safeFile);
-            } catch {
-              return safeFile;
-            }
-          }),
-        );
-        safeFiles.forEach((safeFile) => {
-          formData.append("files", safeFile, safeFile.name);
-        });
-
-        const response = await api.postMultipart<UploadFilesResponseDto>("files/upload", formData);
-        const parts = response.files.map(toMessagePart);
-        onAddParts(parts);
-      } catch (uploadError) {
-        const message =
-          uploadError instanceof Error ? uploadError.message : t("chat.upload_failed");
-        setError(message);
-      } finally {
-        setUploading(false);
-      }
-    },
-    [onAddParts, ready, t],
-  );
 
   const handlePrimaryAction = React.useCallback(async () => {
     if (actionDisabled) {
@@ -752,10 +560,11 @@ function ChatInputInner({
 
   const handleUploadInputChange = React.useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
-      await uploadFiles(event.target.files);
+      const result = await uploadFilesToDraft(event.target.files, onAddParts);
+      if (result.error) setError(result.error);
       event.currentTarget.value = "";
     },
-    [uploadFiles],
+    [onAddParts],
   );
 
   const handlePaste = React.useCallback(
@@ -771,7 +580,8 @@ function ChatInputInner({
             type: "text/plain",
           });
           toast.info(t("chat.long_text_as_file"));
-          void uploadFiles([file]);
+          const result = await uploadFilesToDraft([file], onAddParts);
+          if (result.error) setError(result.error);
           return;
         }
       }
@@ -786,55 +596,10 @@ function ChatInputInner({
       }
 
       event.preventDefault();
-      void uploadFiles(files);
+      const result = await uploadFilesToDraft(files, onAddParts);
+      if (result.error) setError(result.error);
     },
-    [canUpload, pasteLongTextAsFile, pasteLongTextThreshold, t, uploadFiles],
-  );
-
-  const handleDragEnter = React.useCallback(
-    (event: React.DragEvent<HTMLDivElement>) => {
-      if (!canUpload || !hasFilesInDataTransfer(event.dataTransfer)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      dragDepthRef.current += 1;
-      setDragActive(true);
-    },
-    [canUpload],
-  );
-
-  const handleDragOver = React.useCallback(
-    (event: React.DragEvent<HTMLDivElement>) => {
-      if (!canUpload || !hasFilesInDataTransfer(event.dataTransfer)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      event.dataTransfer.dropEffect = "copy";
-      if (!dragActive) {
-        setDragActive(true);
-      }
-    },
-    [canUpload, dragActive],
-  );
-
-  const handleDragLeave = React.useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-    if (dragDepthRef.current === 0) {
-      setDragActive(false);
-    }
-  }, []);
-
-  const handleDrop = React.useCallback(
-    async (event: React.DragEvent<HTMLDivElement>) => {
-      if (!hasFilesInDataTransfer(event.dataTransfer)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      dragDepthRef.current = 0;
-      setDragActive(false);
-      if (!canUpload) return;
-      await uploadFiles(event.dataTransfer.files);
-    },
-    [canUpload, uploadFiles],
+    [canUpload, onAddParts, pasteLongTextAsFile, pasteLongTextThreshold, t],
   );
 
   const sendHint = sendOnEnter ? t("chat.send_hint_enter") : t("chat.send_hint_newline");
@@ -861,23 +626,7 @@ function ChatInputInner({
         >
           <div className="h-1 w-10 rounded-full bg-border/70 transition-colors hover:bg-primary/50" />
         </div>
-        <div
-          className={cn(
-            "relative flex flex-col gap-2 rounded-2xl border bg-card p-3 shadow-lg transition-shadow focus-within:shadow-elevated focus-within:ring-1 focus-within:ring-ring",
-            dragActive && "border-primary/40 bg-primary/5 ring-2 ring-primary/30",
-          )}
-          onDragEnter={handleDragEnter}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={(event) => {
-            void handleDrop(event);
-          }}
-        >
-          {dragActive ? (
-            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/50 bg-background/80 px-4 text-center text-sm font-medium text-primary">
-              {t("chat.drop_to_upload")}
-            </div>
-          ) : null}
+        <div className="relative flex flex-col gap-2 rounded-2xl border bg-card p-3 shadow-lg transition-shadow focus-within:shadow-elevated focus-within:ring-1 focus-within:ring-ring">
           {isEditing ? (
             <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
               <span className="text-primary">{t("chat.editing_tip")}</span>
