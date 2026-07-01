@@ -4,7 +4,7 @@
   "description": "Main window capabilities — titlebar controls, data dir picker, OS info.",
   "windows": ["main"],
   "remote": {
-    "urls": ["http://localhost:8080/*", "http://127.0.0.1:8080/*"]
+    "urls": ["http://localhost:*/*", "http://127.0.0.1:*/*"]
   },
   "permissions": [
     "core:default",
@@ -25,6 +25,7 @@
     "os:allow-platform",
     "os:allow-version",
     "process:allow-restart",
+    "process:allow-exit",
     "allow-get-data-dir",
     "allow-set-data-dir",
     "allow-launch-installer"

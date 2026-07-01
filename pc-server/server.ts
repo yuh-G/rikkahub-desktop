@@ -591,7 +591,7 @@ function startAnalytics(): void {
 // MUST be kept in sync with web-ui/src-tauri/tauri.conf.json's `version` field. The update
 // checker compares this against the latest GitHub release tag and the version is also shown
 // verbatim in the About page. If you bump tauri.conf.json's version, bump this too.
-const APP_VERSION = "1.3.1";
+const APP_VERSION = "1.3.2";
 
 type GithubRelease = {
   tag_name?: string;

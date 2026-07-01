@@ -893,6 +893,15 @@ function GeneralSection({
   const [saving, setSaving] = React.useState(false);
   const profileDirtyRef = React.useRef(false);
 
+  // 界面字号滑块的本地镜像值。受控 Slider 的 value 若等 POST→SSE 往返才更新,松手时 thumb 会
+  // 被旧 value 弹回(用户体验为"拖过去又弹回来")。改用:onValueChange 只动本地(立即跟随),
+  // onValueCommit(松手)才提交后端。display 变化时(重置按钮 / SSE 推送)同步回本地。
+  const uiFontSizeValue = display.uiFontSize ?? 1;
+  const [uiFontSlider, setUiFontSlider] = React.useState(uiFontSizeValue);
+  React.useEffect(() => {
+    setUiFontSlider(uiFontSizeValue);
+  }, [uiFontSizeValue]);
+
   React.useEffect(() => {
     setName(textValue(display.userNickname));
     setAvatar(display.userAvatar ?? { type: "dummy" });
@@ -999,7 +1008,7 @@ function GeneralSection({
               <span className="text-sm font-medium">{t("settings:general.ui_font_size")}</span>
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground text-xs tabular-nums">
-                  {Math.round((display.uiFontSize ?? 1) * 100)}%
+                  {Math.round(uiFontSlider * 100)}%
                 </span>
                 <Button
                   type="button"
@@ -1014,11 +1023,12 @@ function GeneralSection({
               </div>
             </div>
             <Slider
-              value={[display.uiFontSize ?? 1]}
+              value={[uiFontSlider]}
               min={0.85}
               max={1.2}
               step={0.05}
-              onValueChange={(value) => {
+              onValueChange={(value) => setUiFontSlider(value[0])}
+              onValueCommit={(value) => {
                 const next = value[0];
                 // 1.00 视为"默认",存 null 以保持根字号完全等同于浏览器默认,
                 // 避免任何浮点误差引入的默认态视觉偏差。
@@ -8641,7 +8651,7 @@ function AboutSection() {
   // Hard-coded current version — must match pc-server/server.ts:APP_VERSION and
   // web-ui/src-tauri/tauri.conf.json:version. The update checker compares this against
   // the latest GitHub release.
-  const APP_VERSION = "1.3.1";
+  const APP_VERSION = "1.3.2";
 
   const [checking, setChecking] = React.useState(false);
   const [updateInfo, setUpdateInfo] = React.useState<UpdateInfo | null>(null);
