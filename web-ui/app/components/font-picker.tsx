@@ -177,7 +177,7 @@ export function FontPicker({
     if (!visible) return null;
     return (
       <div className="space-y-0.5">
-        <div className="px-1.5 pb-0.5 pt-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        <div className="px-1.5 pb-0.5 pt-2 text-[0.6875rem] font-medium tracking-wide text-muted-foreground uppercase">
           {title}
         </div>
         {children}
@@ -483,7 +483,7 @@ export function FontPickerPair({
       <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2">
         {previewRows.map((row) => (
           <div key={row.tag} className="flex items-baseline gap-2 text-sm">
-            <span className="w-8 shrink-0 text-[11px] text-muted-foreground">{row.tag}</span>
+            <span className="w-8 shrink-0 text-[0.6875rem] text-muted-foreground">{row.tag}</span>
             <span style={{ fontFamily: row.family }} className="min-w-0 truncate">
               {row.text}
             </span>

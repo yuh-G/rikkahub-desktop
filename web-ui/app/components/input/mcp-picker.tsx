@@ -190,7 +190,7 @@ export function McpPickerButtonImpl({ disabled = false, className }: McpPickerBu
             <Terminal className="size-3.5" />
           )}
           {selectedEnabledCount > 0 ? (
-            <span className="rounded-full bg-primary/10 px-1 py-0.5 text-[9px] text-primary">
+            <span className="rounded-full bg-primary/10 px-1 py-0.5 text-[0.5625rem] text-primary">
               {selectedEnabledCount}
             </span>
           ) : null}
@@ -200,7 +200,7 @@ export function McpPickerButtonImpl({ disabled = false, className }: McpPickerBu
       <PopoverContent align="end" className="w-[min(92vw,22rem)] gap-0 p-0">
         <PopoverHeader className="border-b px-3 py-2.5">
           <PopoverTitle className="text-sm">{t("mcp.title")}</PopoverTitle>
-          <PopoverDescription className="text-[11px]">{t("mcp.description")}</PopoverDescription>
+          <PopoverDescription className="text-[0.6875rem]">{t("mcp.description")}</PopoverDescription>
         </PopoverHeader>
 
         <div className="space-y-2 px-2.5 py-2.5">
@@ -257,10 +257,10 @@ export function McpPickerButtonImpl({ disabled = false, className }: McpPickerBu
                         </button>
 
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[11px] font-medium leading-tight">
+                          <div className="truncate text-[0.6875rem] font-medium leading-tight">
                             {getDisplayName(server.commonOptions?.name, t("mcp.unnamed_server"))}
                           </div>
-                          <div className="text-muted-foreground text-[10px] leading-tight">
+                          <div className="text-muted-foreground text-[0.625rem] leading-tight">
                             {t("mcp.tools_enabled", {
                               enabled: toolCount.enabled,
                               total: toolCount.total,
@@ -313,7 +313,7 @@ export function McpPickerButtonImpl({ disabled = false, className }: McpPickerBu
                               >
                                 <div className="min-w-0 flex-1">
                                   <div
-                                    className="truncate text-[11px] leading-tight"
+                                    className="truncate text-[0.6875rem] leading-tight"
                                     title={tool.name}
                                   >
                                     {tool.name}
@@ -322,7 +322,7 @@ export function McpPickerButtonImpl({ disabled = false, className }: McpPickerBu
                                 {isMutating ? (
                                   <LoaderCircle className="size-3 animate-spin text-muted-foreground" />
                                 ) : null}
-                                <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                <label className="flex items-center gap-1 text-[0.625rem] text-muted-foreground">
                                   <span>需要用户审核</span>
                                   <Switch
                                     size="sm"
@@ -344,7 +344,7 @@ export function McpPickerButtonImpl({ disabled = false, className }: McpPickerBu
                                     }}
                                   />
                                 </label>
-                                <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                <label className="flex items-center gap-1 text-[0.625rem] text-muted-foreground">
                                   <span>启用</span>
                                   <Switch
                                     size="sm"

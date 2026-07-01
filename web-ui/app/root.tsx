@@ -137,6 +137,15 @@ function AppContent() {
     const chatFont = mergeCjkIntoFamily(chatEn, chatCjk) || "inherit";
     document.body.style.setProperty("--rikkahub-ui-font", uiFont);
     document.body.style.setProperty("--rikkahub-chat-font", chatFont);
+    // 界面字号缩放:写到 <html>(documentElement)上,app.css 的 :root 规则会用它计算根字号。
+    // null/未配置 = 不写变量 = CSS fallback 为 1,根字号保持 16px 浏览器默认,视觉零差异。
+    const uiScale = Number(displaySetting?.uiFontSize);
+    if (Number.isFinite(uiScale) && uiScale > 0 && uiScale !== 1) {
+      document.documentElement.style.setProperty("--rikkahub-ui-scale", String(uiScale));
+    } else {
+      // 显式清掉,确保从"已缩放"回到"默认"时根字号恢复 16px。
+      document.documentElement.style.removeProperty("--rikkahub-ui-scale");
+    }
   }, [
     displaySetting?.chatFontFamily,
     displaySetting?.chatFontFamilyCss,
@@ -144,6 +153,7 @@ function AppContent() {
     displaySetting?.uiFontFamilyCss,
     displaySetting?.uiFontFamilyCjkCss,
     displaySetting?.chatFontFamilyCjkCss,
+    displaySetting?.uiFontSize,
   ]);
 
   // Tauri's WebView2 swallows `window.open` and ignores `<a target="_blank">` by default —

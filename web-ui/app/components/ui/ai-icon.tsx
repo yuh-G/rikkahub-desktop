@@ -50,7 +50,7 @@ export function AIIcon({
       title={normalizedName}
     >
       {loadFailed ? (
-        <span className="text-[10px] font-medium text-muted-foreground">{fallbackText}</span>
+        <span className="text-[0.625rem] font-medium text-muted-foreground">{fallbackText}</span>
       ) : (
         <img
           src={src}

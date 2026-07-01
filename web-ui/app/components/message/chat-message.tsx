@@ -826,7 +826,7 @@ const ChatMessageActionsRow = React.memo(
             >
               <ChevronLeft className="size-3.5" />
             </Button>
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-[0.6875rem] text-muted-foreground">
               {node.selectIndex + 1}/{node.messages.length}
             </span>
             <Button
@@ -962,7 +962,7 @@ const ChatMessageNerdLineRow = React.memo(
       return (
         <div
           className={cn(
-            "flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] text-muted-foreground/50",
+            "flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[0.6875rem] text-muted-foreground/50",
             alignRight ? "justify-end" : "justify-start",
           )}
         >
@@ -972,7 +972,7 @@ const ChatMessageNerdLineRow = React.memo(
     }
 
     return (
-      <div className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 px-1 text-[11px] text-muted-foreground/50">
+      <div className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 px-1 text-[0.6875rem] text-muted-foreground/50">
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           {items.map(renderStat)}
         </div>

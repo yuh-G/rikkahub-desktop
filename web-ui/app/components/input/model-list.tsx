@@ -136,15 +136,15 @@ function ModelOptionRow({
         <div className="truncate text-xs font-medium leading-tight">
           {getModelDisplayName(model.displayName, model.modelId)}
         </div>
-        <div className="text-muted-foreground truncate text-[11px] leading-tight">
+        <div className="text-muted-foreground truncate text-[0.6875rem] leading-tight">
           {model.modelId}
         </div>
         <div className="mt-0.5 flex flex-wrap gap-1">
-          <Badge variant="outline" className="px-1 py-0 text-[9px]">
+          <Badge variant="outline" className="px-1 py-0 text-[0.5625rem]">
             {formatModality(model)}
           </Badge>
           {abilities.map((ability) => (
-            <Badge key={ability} variant="secondary" className="px-1 py-0 text-[9px]">
+            <Badge key={ability} variant="secondary" className="px-1 py-0 text-[0.5625rem]">
               {getAbilityLabel(ability, t)}
             </Badge>
           ))}
@@ -476,7 +476,7 @@ export function ModelListImpl({ disabled = false, className, onChanged }: ModelL
           </div>
 
           {error ? (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive">
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[0.6875rem] text-destructive">
               {error}
             </div>
           ) : null}

@@ -151,7 +151,7 @@ export function ReasoningStepPart({
         >
           <Markdown
             content={reasoning.reasoning}
-            className="reasoning-markdown text-xs !leading-[16.5px] [&_*]:!leading-[16.5px] [&_li]:mt-1 [&_ol]:my-2 [&_p+p]:mt-2 [&_p]:my-1 [&_ul]:my-2"
+            className="reasoning-markdown text-xs !leading-[1.03125rem] [&_*]:!leading-[1.03125rem] [&_li]:mt-1 [&_ol]:my-2 [&_p+p]:mt-2 [&_p]:my-1 [&_ul]:my-2"
             isAnimating={loading}
           />
         </div>

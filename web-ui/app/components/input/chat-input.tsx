@@ -839,7 +839,7 @@ function ChatInputInner({
             <div className="relative flex items-center gap-1.5">
               {/* 优化较慢提示:浮在按钮组上方,绝对定位不挤占布局(原方案放底部会把整个输入区往下顶)。 */}
               {optimizeHint ? (
-                <span className="animate-pulse absolute -top-8 right-0 z-10 whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-[11px] text-muted-foreground shadow-sm">
+                <span className="animate-pulse absolute -top-8 right-0 z-10 whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-[0.6875rem] text-muted-foreground shadow-sm">
                   {optimizeHint}
                 </span>
               ) : null}

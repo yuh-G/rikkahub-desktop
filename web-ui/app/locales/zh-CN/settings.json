@@ -51,6 +51,9 @@
     "nickname": "昵称",
     "ui_font": "界面字体",
     "chat_font": "对话字体",
+    "ui_font_size": "界面字号",
+    "ui_font_size_hint": "调整整个应用的字号与间距比例,所有元素等比缩放,不会破坏布局。",
+    "reset": "恢复默认",
     "profile_saved": "用户资料已保存",
     "opt": {
       "show_user_avatar": "显示用户头像",

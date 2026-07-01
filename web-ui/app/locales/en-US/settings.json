@@ -51,6 +51,9 @@
     "nickname": "Nickname",
     "ui_font": "UI font",
     "chat_font": "Chat font",
+    "ui_font_size": "UI font size",
+    "ui_font_size_hint": "Scale the font size and spacing of the entire app. Everything scales proportionally without breaking the layout.",
+    "reset": "Reset",
     "profile_saved": "Profile saved",
     "opt": {
       "show_user_avatar": "Show user avatar",

@@ -261,7 +261,7 @@ export function ReasoningPickerButtonImpl({ disabled = false, className }: Reaso
                   <span
                     key={preset.key}
                     className={cn(
-                      "absolute top-0 -translate-x-1/2 text-[10px] leading-none whitespace-nowrap transition-colors",
+                      "absolute top-0 -translate-x-1/2 text-[0.625rem] leading-none whitespace-nowrap transition-colors",
                       i === localIndex ? "text-primary font-medium" : "text-muted-foreground",
                     )}
                     style={{ left: `calc((100% - 16px) * ${i / last} + 8px)` }}

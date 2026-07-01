@@ -994,6 +994,42 @@ function GeneralSection({
               }
             />
           </div>
+          <label className="block space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">{t("settings:general.ui_font_size")}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground text-xs tabular-nums">
+                  {Math.round((display.uiFontSize ?? 1) * 100)}%
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  disabled={(display.uiFontSize ?? null) === null}
+                  onClick={() => void patchDisplay({ uiFontSize: null })}
+                >
+                  {t("settings:general.reset")}
+                </Button>
+              </div>
+            </div>
+            <Slider
+              value={[display.uiFontSize ?? 1]}
+              min={0.85}
+              max={1.2}
+              step={0.05}
+              onValueChange={(value) => {
+                const next = value[0];
+                // 1.00 视为"默认",存 null 以保持根字号完全等同于浏览器默认,
+                // 避免任何浮点误差引入的默认态视觉偏差。
+                const normalized = Math.abs(next - 1) < 0.001 ? null : Number(next.toFixed(2));
+                void patchDisplay({ uiFontSize: normalized });
+              }}
+            />
+            <p className="text-muted-foreground text-xs">
+              {t("settings:general.ui_font_size_hint")}
+            </p>
+          </label>
           <div className="grid gap-3 md:grid-cols-2">
             {[
               ["showUserAvatar", "settings:general.opt.show_user_avatar"],
@@ -5533,7 +5569,7 @@ function McpServerEditor({
                               <span
                                 key={propName}
                                 className={cn(
-                                  "rounded-md px-2 py-0.5 font-mono text-[11px]",
+                                  "rounded-md px-2 py-0.5 font-mono text-[0.6875rem]",
                                   isRequired
                                     ? "bg-blue-500/10 text-blue-700 dark:text-blue-300"
                                     : "bg-background text-muted-foreground border",
@@ -7614,7 +7650,7 @@ function DataSection({
                 />
               </div>
               {exportTotalBytes === 0 ? (
-                <div className="text-[11px] text-muted-foreground">
+                <div className="text-[0.6875rem] text-muted-foreground">
                   {t("settings:data.pack_slow")}
                 </div>
               ) : null}
@@ -7640,7 +7676,7 @@ function DataSection({
                 />
               </div>
               {importPhase === "processing" ? (
-                <div className="text-[11px] text-muted-foreground">
+                <div className="text-[0.6875rem] text-muted-foreground">
                   {t("settings:data.extract_slow")}
                 </div>
               ) : null}
@@ -7669,7 +7705,7 @@ function DataSection({
               <div className="flex items-center gap-2 text-sm font-medium">
                 {t("settings:data.webdav_title")}
                 {!schemaStatus?.hasAndroidSchema && (
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700 dark:bg-amber-900 dark:text-amber-300">
+                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[0.625rem] text-amber-700 dark:bg-amber-900 dark:text-amber-300">
                     {t("settings:data.chat_unsyncable")}
                   </span>
                 )}
@@ -7872,7 +7908,7 @@ function DataSection({
               <div className="flex items-center gap-2 text-sm font-medium">
                 {t("settings:data.s3_title")}
                 {!schemaStatus?.hasAndroidSchema && (
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700 dark:bg-amber-900 dark:text-amber-300">
+                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[0.625rem] text-amber-700 dark:bg-amber-900 dark:text-amber-300">
                     {t("settings:data.chat_unsyncable")}
                   </span>
                 )}
@@ -8147,7 +8183,7 @@ function StatsSection({ stats }: { stats: StatsPayload | null }) {
               {monthLabels.map((label, index) => (
                 <div
                   key={`${label}-${index}`}
-                  className="h-5 overflow-visible whitespace-nowrap text-[11px] text-muted-foreground"
+                  className="h-5 overflow-visible whitespace-nowrap text-[0.6875rem] text-muted-foreground"
                 >
                   {label}
                 </div>
@@ -8168,7 +8204,7 @@ function StatsSection({ stats }: { stats: StatsPayload | null }) {
               ].map((label, index) => (
                 <div
                   key={`${label}-${index}`}
-                  className="flex h-3 items-center justify-end text-[11px] text-muted-foreground"
+                  className="flex h-3 items-center justify-end text-[0.6875rem] text-muted-foreground"
                 >
                   {label}
                 </div>
@@ -8196,7 +8232,7 @@ function StatsSection({ stats }: { stats: StatsPayload | null }) {
             </div>
           </div>
         </div>
-        <div className="mt-3 flex items-center justify-end gap-1 text-[11px] text-muted-foreground">
+        <div className="mt-3 flex items-center justify-end gap-1 text-[0.6875rem] text-muted-foreground">
           <span>{t("settings:stats.less")}</span>
           {[0, 1, 2, 3, 4].map((level) => (
             <span key={level} className={`size-[12px] rounded-[4px] ${heatmapClass(level)}`} />

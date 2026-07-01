@@ -134,7 +134,7 @@ export function ConversationQuickJump({ items, activeIndex, onItemClick }: Conve
                 </TooltipTrigger>
                 <TooltipContent side="left" sideOffset={8} className="max-w-64 text-left">
                   <div className="space-y-0.5">
-                    <div className="text-[11px] text-background/75">
+                    <div className="text-[0.6875rem] text-background/75">
                       {index + 1}/{items.length} · {roleLabel}
                     </div>
                     <div>{item.preview?.trim() || t("quick_jump.no_preview")}</div>
@@ -143,7 +143,7 @@ export function ConversationQuickJump({ items, activeIndex, onItemClick }: Conve
               </Tooltip>
             );
           })}
-          <div className="mt-1 w-5 text-center text-[10px] text-muted-foreground/80 tabular-nums">
+          <div className="mt-1 w-5 text-center text-[0.625rem] text-muted-foreground/80 tabular-nums">
             {safeActiveIndex + 1}/{items.length}
           </div>
         </div>

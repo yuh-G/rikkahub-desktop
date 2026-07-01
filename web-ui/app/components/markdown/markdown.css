@@ -229,5 +229,5 @@
 
 /* Citation Badge */
 .markdown .citation-badge {
-  @apply inline-flex items-center justify-center rounded-full bg-primary/15 px-1.5 py-1 text-[10px] leading-none font-mono text-primary no-underline cursor-pointer hover:bg-primary/25 transition-colors;
+  @apply inline-flex items-center justify-center rounded-full bg-primary/15 px-1.5 py-1 text-[0.625rem] leading-none font-mono text-primary no-underline cursor-pointer hover:bg-primary/25 transition-colors;
 }

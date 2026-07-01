@@ -1008,6 +1008,9 @@ function defaultSettings(): Settings {
       sendOnEnter: false,
       enableAutoScroll: true,
       fontSizeRatio: 1,
+      // 界面字号缩放(建议 0.85–1.20)。null = 不缩放,根字号保持浏览器默认 16px。PC-only,
+      // 已在 pcOnlyDisplayFields 清单里,导出备份时剥离,Android 不可见。
+      uiFontSize: null,
       pasteLongTextAsFile: false,
       pasteLongTextThreshold: 1000,
       // User-resizable chat input height in px (null = default min). Persisted across

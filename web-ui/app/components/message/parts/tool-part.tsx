@@ -168,7 +168,7 @@ function SearchFavicon({
         className,
       )}
     >
-      <span className="flex h-full w-full items-center justify-center text-[10px] font-semibold text-muted-foreground">
+      <span className="flex h-full w-full items-center justify-center text-[0.625rem] font-semibold text-muted-foreground">
         {(domain[0] ?? "?").toUpperCase()}
       </span>
     </span>
@@ -227,7 +227,7 @@ function SearchResultMiniList({ items }: { items: unknown[] }) {
             />
             <span className="min-w-0 flex-1 truncate text-xs text-foreground">{title}</span>
             {domain ? (
-              <span className="shrink-0 text-[10px] text-muted-foreground">{domain}</span>
+              <span className="shrink-0 text-[0.625rem] text-muted-foreground">{domain}</span>
             ) : null}
           </div>
         );
@@ -345,7 +345,7 @@ function SearchWebPreview({ args, content }: { args: unknown; content: unknown }
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
                     <span className="line-clamp-1 font-medium text-sm">{title || url}</span>
-                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[0.625rem] text-muted-foreground">
                       {domain}
                     </span>
                   </span>

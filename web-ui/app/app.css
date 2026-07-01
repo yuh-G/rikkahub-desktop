@@ -1129,6 +1129,12 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /* 界面字号缩放:改 <html> 根字号,所有 rem 单位(字号/间距/图标/圆角…)等比同步变化,
+     比例守恒 → 不可能撑破任何布局。变量 --rikkahub-ui-scale 由 root.tsx 从 displaySetting
+     写入,null/未设置时 fallback 为 1,默认根字号 16px 与浏览器默认一致,视觉零差异。 */
+  :root {
+    font-size: calc(16px * var(--rikkahub-ui-scale, 1));
+  }
   body {
     @apply bg-background text-foreground;
     font-family: var(--rikkahub-ui-font, var(--font-sans));
@@ -1235,7 +1241,7 @@
 .reasoning-markdown code:not(pre code) {
   font-family: inherit !important;
   font-size: inherit !important;
-  line-height: 16.5px !important;
+  line-height: 1.03125rem !important;
   font-weight: 500;
 }
 

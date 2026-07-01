@@ -17,6 +17,12 @@ export interface DisplaySetting {
   sendOnEnter: boolean;
   enableAutoScroll: boolean;
   fontSizeRatio: number;
+  /**
+   * 界面字号缩放比例(作用于 <html> 根字号,所有 rem 等比变化)。PC-only。
+   * null / 未设置 = 不缩放(根字号保持浏览器默认 16px)。范围建议 0.85–1.20。
+   * 已在 pc-server 的 pcOnlyDisplayFields 清单里,导出备份时会被剥离,Android 不可见。
+   */
+  uiFontSize?: number | null;
   uiFontFamily?: string;
   chatFontFamily?: string;
   uiFontFamilyCss?: string;
