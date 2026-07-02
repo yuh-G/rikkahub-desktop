@@ -1,6 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Brain, Trash2, Globe, Bot } from "lucide-react";
+import { Brain, Trash2, Globe, Bot, MessageSquare } from "lucide-react";
 
 import api from "~/services/api";
 import { useMemoryStore } from "~/stores";
@@ -25,6 +25,12 @@ function PendingCard({ entry, globalEnabled }: { entry: PendingEntry; globalEnab
       <div className="text-xs text-muted-foreground">
         {entry.assistantName} · {new Date(entry.proposedAt).toLocaleString()}
       </div>
+      {entry.conversationTitle && (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <MessageSquare className="size-3 shrink-0" />
+          <span className="min-w-0 truncate" title={entry.conversationTitle}>{entry.conversationTitle}</span>
+        </div>
+      )}
       <Textarea value={content} onChange={(e) => setContent(e.target.value)} rows={2} className="text-sm" />
       <div className="flex gap-1">
         <Button size="sm" variant="outline" disabled={!globalEnabled} onClick={() => void resolve("global")}>

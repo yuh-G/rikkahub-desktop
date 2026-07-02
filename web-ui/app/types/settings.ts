@@ -314,6 +314,7 @@ export interface AssistantMemoryGroup {
 export interface PendingEntry {
   pendingId: string;
   conversationId: string;
+  conversationTitle?: string;
   assistantId: string;
   assistantName: string;
   content: string;

@@ -1607,6 +1607,7 @@ interface AssistantMemoryFile {
 interface PendingEntry {
   pendingId: string;
   conversationId: string;
+  conversationTitle?: string;   // 来源会话标题快照(入队时取,与会话改名/删除解耦),前端确认面板展示
   assistantId: string;
   assistantName: string;
   content: string;
@@ -1998,7 +1999,7 @@ const memoryStore = {
   /** 入队一条待确认记忆。M7:与现有 pending content 完全相同(忽略首尾空白)则不重复入队
    *  (返回 null);超 PENDING_MAX 容量上限拒绝(返回 "overflow")。
    *  落盘 await 完成——pending 是用户尚未确认的数据,丢不得(区别于 addMemory 的 fire-and-forget)。 */
-  async enqueuePending(entry: { conversationId: string; assistantId: string; assistantName: string; content: string; messageNodeId?: string }): Promise<PendingEntry | "overflow" | null> {
+  async enqueuePending(entry: { conversationId: string; conversationTitle?: string; assistantId: string; assistantName: string; content: string; messageNodeId?: string }): Promise<PendingEntry | "overflow" | null> {
     const content = String(entry.content ?? "").trim();
     if (!content) throw new Error("content is required");
     if (this.pending.some((p) => p.content.trim() === content)) return null;       // M7 去重
@@ -2006,6 +2007,7 @@ const memoryStore = {
     const pendingEntry: PendingEntry = {
       pendingId: `p-${crypto.randomUUID()}`,
       conversationId: String(entry.conversationId ?? ""),
+      ...(entry.conversationTitle ? { conversationTitle: entry.conversationTitle } : {}),
       assistantId: String(entry.assistantId ?? ""),
       assistantName: String(entry.assistantName ?? ""),
       content,
@@ -6115,10 +6117,10 @@ function timeReminderContent(current: Message, previous?: Message) {
 
 function memoriesForAssistant(assistant: Assistant): MemoryEntry[] {
   // 叠加注入(1.3.2):助手层(assistant.enableMemory)+ 全局层(memorySettings.globalEnabled)。
+  // enableMemory 只控制助手层、globalEnabled 只控制全局层,两者独立叠加——助手关记忆时仍可见
+  // 全局层(§6.5 联动矩阵),模型侧完全不感知层级存在(产品决策核心:叠加对模型透明)。
   // 替代旧的 useGlobalMemory 二选一——useGlobalMemory 字段废弃,运行时不再读(老值保留兼容)。
-  // 模型侧完全不感知层级存在(产品决策核心:叠加对模型透明)。
-  if (!assistant.enableMemory) return [];
-  const assistantMems = memoryStore.getAssistantMemories(assistant.id);
+  const assistantMems = assistant.enableMemory ? memoryStore.getAssistantMemories(assistant.id) : [];
   const globalMems = state.settings.memorySettings.globalEnabled
     ? memoryStore.getGlobalMemories()
     : [];
@@ -6126,11 +6128,11 @@ function memoriesForAssistant(assistant: Assistant): MemoryEntry[] {
 }
 
 function buildMemoryPrompt(assistant: Assistant) {
-  if (!assistant.enableMemory) return "";
   const memories = memoriesForAssistant(assistant).map((memory) => ({ id: memory.id, content: memory.content }));
+  if (memories.length === 0) return "";
   return `
 **Memories**
-These are memories stored via the memory_tool that you can reference in future conversations.
+These are memories you can reference in future conversations.
 ${JSON.stringify(memories, null, 2)}
 `.trim();
 }
@@ -8093,7 +8095,11 @@ function runMemoryTool(assistant: Assistant, args: Record<string, JsonValue>) {
  *  - always_global + 全局层启用 → 直接存全局层
  *  - ask(默认)、或 always_* 但对应层未启用(M3 矛盾组合降级)→ 进待确认队列
  *  ★ 返回值不含 pending: true —— 生成不在此暂停(区别于 ask_user 的审批挂起机制,§6.2)。 */
-async function runSaveMemoryTool(assistant: Assistant, args: Record<string, JsonValue>): Promise<Record<string, JsonValue>> {
+async function runSaveMemoryTool(
+  assistant: Assistant,
+  args: Record<string, JsonValue>,
+  context?: { conversationId?: string; conversationTitle?: string; messageNodeId?: string },
+): Promise<Record<string, JsonValue>> {
   const content = String(args.content ?? "").trim();
   if (!content) throw new Error("content is required");
   const ms = state.settings.memorySettings;
@@ -8110,12 +8116,16 @@ async function runSaveMemoryTool(assistant: Assistant, args: Record<string, Json
     return { status: "saved", scope: "global", content: mem.content };
   }
 
-  // 进待确认队列。executeToolCall 无 conversation 上下文,conversationId 留空(仅调试/UI 定位用)。
+  // 进待确认队列。context 从 executeToolCall 透传(流式路径含当前会话 + 节点),用于前端确认
+  // 面板标注来源会话(标题快照)。非流式路径 context 缺失 → conversationId 留空(仅丧失来源追溯,
+  // 不影响核心入队/确认流程)。
   const result = await memoryStore.enqueuePending({
-    conversationId: "",
+    conversationId: context?.conversationId ?? "",
+    conversationTitle: context?.conversationTitle,
     assistantId: assistant.id,
     assistantName: assistant.name,
     content,
+    messageNodeId: context?.messageNodeId,
   });
   broadcastMemoryUpdate();
   if (result === null) return { status: "deduped" };       // M7:与现有 pending 完全相同,跳过
@@ -8123,7 +8133,11 @@ async function runSaveMemoryTool(assistant: Assistant, args: Record<string, Json
   return { status: "queued", pendingId: result.pendingId };
 }
 
-async function executeToolCall(toolCall: any, assistant: Assistant) {
+async function executeToolCall(
+  toolCall: any,
+  assistant: Assistant,
+  context?: { conversationId?: string; conversationTitle?: string; messageNodeId?: string },
+) {
   const name = String(toolCall.function?.name ?? "");
   let args: Record<string, JsonValue> = {};
   try {
@@ -8136,7 +8150,7 @@ async function executeToolCall(toolCall: any, assistant: Assistant) {
     throw new Error(`Invalid tool arguments JSON for ${name}: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (name === "memory_tool") return runMemoryTool(assistant, args);
-  if (name === "save_memory") return runSaveMemoryTool(assistant, args);
+  if (name === "save_memory") return runSaveMemoryTool(assistant, args, context);
   // 联网搜索是可关闭的工具(全局 enableWebSearch 开关)。关闭后,tools 数组里不再声明
   // search_web,但历史消息里残留的 search tool_call 仍会诱导模型再次调用——而本函数原本
   // 无条件执行真搜索,造成"关了搜索 AI 照样搜"的 bug。加守卫与 use_skill(6266) /
@@ -11632,6 +11646,19 @@ function touchStream(hooks?: StreamHooks) {
   scheduleNodeBroadcast(hooks.conversation, hooks.node);
 }
 
+/** 从 StreamHooks 抽取 save_memory 等工具需要的会话上下文(透传给 pending 队列做来源追溯)。
+ *  hooks 在非流式路径(如 executeApprovedToolPart)可能缺失 → 返回 undefined,runSaveMemoryTool
+ *  入队时降级为空 conversationId(仅丧失来源追溯,不影响核心流程)。
+ *  conversationTitle 取入队时快照(与会话后续改名/删除解耦),空标题不传。 */
+function toolCallContext(hooks?: StreamHooks): { conversationId?: string; conversationTitle?: string; messageNodeId?: string } | undefined {
+  if (!hooks?.conversation) return undefined;
+  return {
+    conversationId: hooks.conversation.id,
+    conversationTitle: hooks.conversation.title || undefined,
+    messageNodeId: hooks.node?.id,
+  };
+}
+
 // Tracks which assistant messages have already received their first real streaming chunk.
 // We use it to rewrite `createdAt` from "when the send button was pressed" to "when the
 // first content delta arrived" — matching the Android client, which only constructs the
@@ -12288,7 +12315,7 @@ async function streamClaudeChatWithTools(
       // The tool part was already created during the stream — find it and run the tool.
       let toolResult: unknown;
       try {
-        toolResult = await executeToolCall(toolCall, assistant);
+        toolResult = await executeToolCall(toolCall, assistant, toolCallContext(hooks));
       } catch (err) {
         toolResult = toolExecutionErrorPayload(err);
       }
@@ -12422,7 +12449,7 @@ async function fetchClaudeTextWithTools(
       }
       let toolResult: unknown;
       try {
-        toolResult = await executeToolCall(toolCall, assistant);
+        toolResult = await executeToolCall(toolCall, assistant, toolCallContext(hooks));
       } catch (err) {
         toolResult = toolExecutionErrorPayload(err);
       }
@@ -12670,7 +12697,7 @@ async function streamGoogleChatWithTools(
       };
       let toolResult: unknown;
       try {
-        toolResult = await executeToolCall(toolCall, assistant);
+        toolResult = await executeToolCall(toolCall, assistant, toolCallContext(hooks));
       } catch (err) {
         toolResult = toolExecutionErrorPayload(err);
       }
@@ -12776,7 +12803,7 @@ async function fetchOpenAiText(
       }
       let toolResult: unknown;
       try {
-        toolResult = await executeToolCall(toolCall, assistant);
+        toolResult = await executeToolCall(toolCall, assistant, toolCallContext(hooks));
       } catch (err) {
         toolResult = toolExecutionErrorPayload(err);
       }
@@ -13726,7 +13753,7 @@ async function fetchOpenAiTextStreaming(
       }
       let toolResult: unknown;
       try {
-        toolResult = await executeToolCall(toolCall, assistant);
+        toolResult = await executeToolCall(toolCall, assistant, toolCallContext(hooks));
       } catch (err) {
         toolResult = toolExecutionErrorPayload(err);
       }
