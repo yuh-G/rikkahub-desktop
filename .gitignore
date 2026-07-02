@@ -31,5 +31,6 @@ node_modules/
 # Logs
 *.log
 
-# Android source (separate repo, checked out locally)
+# Reference source trees (separate repos, checked out locally for study)
 Rikkahub-Android/
+cherry-studio/
