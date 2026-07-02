@@ -238,7 +238,7 @@ const mockServer = Bun.serve({
             "[DONE]",
           ]);
         }
-        if (body.tools?.some((tool: AnyRecord) => tool.function?.name === "memory_tool") && promptText.includes("记忆和 JS 工具")) {
+        if (body.tools?.some((tool: AnyRecord) => tool.function?.name === "save_memory") && promptText.includes("记忆和 JS 工具")) {
           return sse([
             { choices: [{ delta: { reasoning_content: "准备写入记忆并执行 JS。" } }] },
             {
@@ -248,7 +248,7 @@ const mockServer = Bun.serve({
                     index: 0,
                     id: "call_memory_1",
                     type: "function",
-                    function: { name: "memory_tool", arguments: "{\"action\":\"create\",\"content\":\"User likes smoke memory.\"}" },
+                    function: { name: "save_memory", arguments: "{\"content\":\"User likes smoke memory.\"}" },
                   }],
                 },
               }],
@@ -1360,6 +1360,12 @@ async function runLocalToolsMemorySmoke() {
     enableMemory: true,
     useGlobalMemory: false,
   });
+  // save_memory(1.3.2)默认 writeStrategy=ask 会进待确认队列,smoke 要验证记忆落盘 + 后续注入,
+  // 改用 always_assistant 让 save_memory 直接存助手层(对称旧 memory_tool create 的即写即落盘行为)。
+  await api("/api/settings/memory-settings", {
+    method: "POST",
+    body: JSON.stringify({ writeStrategy: "always_assistant" }),
+  });
   const beforeCount = requests.length;
   const conversationId = `smoke-local-tools-${Date.now()}`;
   await api(`/api/conversations/${conversationId}/messages`, {
@@ -1372,10 +1378,10 @@ async function runLocalToolsMemorySmoke() {
     "local tools conversation",
   );
   const assistantMessage = assistantMessages(conversation)[0];
-  assert(assistantMessage.parts.some((part: AnyRecord) => part.type === "tool" && part.toolName === "memory_tool" && JSON.stringify(part.output ?? []).includes("User likes smoke memory")), "memory_tool output was not persisted");
+  assert(assistantMessage.parts.some((part: AnyRecord) => part.type === "tool" && part.toolName === "save_memory" && JSON.stringify(part.output ?? []).includes("User likes smoke memory")), "save_memory output was not persisted");
   assert(assistantMessage.parts.some((part: AnyRecord) => part.type === "tool" && part.toolName === "eval_javascript" && JSON.stringify(part.output ?? []).includes("42")), "eval_javascript output was not persisted");
   const first = requests.slice(beforeCount).find((item) => item.path === "/v1/chat/completions" && item.body?.stream === true)?.body;
-  assert(first?.tools?.some((tool: AnyRecord) => tool.function?.name === "memory_tool"), "memory_tool was not exposed to provider request");
+  assert(first?.tools?.some((tool: AnyRecord) => tool.function?.name === "save_memory"), "save_memory was not exposed to provider request");
   assert(first?.tools?.some((tool: AnyRecord) => tool.function?.name === "eval_javascript"), "eval_javascript was not exposed to provider request");
 
   const followBefore = requests.length;

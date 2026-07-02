@@ -1628,6 +1628,20 @@ interface AddMemoryInput {
   updatedAt?: number;
 }
 
+// pending 队列容量上限(M7)。超限拒绝入队,工具返回 overflow,徽章变体高亮提醒用户处理积压。
+const PENDING_MAX = 100;
+
+// memory SSE 推送给前端的完整快照。globalEnabled/writeStrategy 冗余(从 settings 读),
+// 让前端少订阅一个 settings SSE 源——字段冗余但读起来方便(§10.3)。
+interface MemorySnapshot {
+  globalEnabled: boolean;
+  writeStrategy: WriteStrategy;
+  globalMemories: MemoryEntry[];
+  assistantMemories: AssistantMemoryGroup[];
+  pending: PendingEntry[];
+  pendingCount: number;
+}
+
 const memoryStore = {
   globalMemories: [] as MemoryEntry[],
   assistantGroups: [] as AssistantMemoryGroup[],
@@ -1977,6 +1991,77 @@ const memoryStore = {
     }
     this.recomputeNextId();
     void this.persistAll();
+  },
+
+  // ---------- 待确认队列(阶段 3)----------
+
+  /** 入队一条待确认记忆。M7:与现有 pending content 完全相同(忽略首尾空白)则不重复入队
+   *  (返回 null);超 PENDING_MAX 容量上限拒绝(返回 "overflow")。
+   *  落盘 await 完成——pending 是用户尚未确认的数据,丢不得(区别于 addMemory 的 fire-and-forget)。 */
+  async enqueuePending(entry: { conversationId: string; assistantId: string; assistantName: string; content: string; messageNodeId?: string }): Promise<PendingEntry | "overflow" | null> {
+    const content = String(entry.content ?? "").trim();
+    if (!content) throw new Error("content is required");
+    if (this.pending.some((p) => p.content.trim() === content)) return null;       // M7 去重
+    if (this.pending.length >= PENDING_MAX) return "overflow";                      // M7 容量
+    const pendingEntry: PendingEntry = {
+      pendingId: `p-${crypto.randomUUID()}`,
+      conversationId: String(entry.conversationId ?? ""),
+      assistantId: String(entry.assistantId ?? ""),
+      assistantName: String(entry.assistantName ?? ""),
+      content,
+      proposedAt: Date.now(),
+      ...(entry.messageNodeId ? { messageNodeId: entry.messageNodeId } : {}),
+    };
+    this.pending.push(pendingEntry);
+    await this.persistAll();
+    return pendingEntry;
+  },
+
+  /** 处理一条 pending。action: "global"|"assistant"|"discard"。contentOverride 可选(用户编辑后)。
+   *  无论何种 action,处理完立即从 pending 移除(保证干净)。source 规则(§4.1):用户编辑过→manual,
+   *  否则 ai(原样确认)。pendingId 不存在返回 { resolved: false }。 */
+  async resolvePending(pendingId: string, action: "global" | "assistant" | "discard", contentOverride?: string): Promise<{ resolved: boolean; memory?: MemoryEntry }> {
+    const idx = this.pending.findIndex((p) => p.pendingId === pendingId);
+    if (idx < 0) return { resolved: false };
+    const entry = this.pending[idx];
+    const content = String(contentOverride ?? entry.content).trim();
+    this.pending.splice(idx, 1);
+    let memory: MemoryEntry | undefined;
+    if (action === "global") {
+      memory = this.addMemory({ scope: "global", content, source: contentOverride ? "manual" : "ai" });
+    } else if (action === "assistant") {
+      memory = this.addMemory({
+        scope: "assistant",
+        assistantId: entry.assistantId,
+        content,
+        source: contentOverride ? "manual" : "ai",
+      });
+    }
+    // discard:不写记忆,仅移除 pending
+    await this.persistAll();
+    return { resolved: true, memory };
+  },
+
+  /** 批量处理 pending。逐条 resolve(事务粒度单条,不整体回滚)。返回每条结果。 */
+  async resolvePendingBatch(items: Array<{ pendingId: string; action: "global" | "assistant" | "discard"; content?: string }>): Promise<Array<{ pendingId: string; resolved: boolean }>> {
+    const results: Array<{ pendingId: string; resolved: boolean }> = [];
+    for (const item of items) {
+      const r = await this.resolvePending(item.pendingId, item.action, item.content);
+      results.push({ pendingId: item.pendingId, resolved: r.resolved });
+    }
+    return results;
+  },
+
+  /** 推送给前端的完整快照。globalEnabled/writeStrategy 从 settings 读(冗余字段,前端少订阅一个源)。 */
+  getSnapshot(): MemorySnapshot {
+    return {
+      globalEnabled: state.settings.memorySettings.globalEnabled,
+      writeStrategy: state.settings.memorySettings.writeStrategy,
+      globalMemories: this.globalMemories,
+      assistantMemories: this.assistantGroups,
+      pending: this.pending,
+      pendingCount: this.pending.length,
+    };
   },
 };
 
@@ -2530,6 +2615,18 @@ function openSse(
 
 function broadcastSettings() {
   for (const client of settingsClients) client.enqueue(sseFrame("update", state.settings));
+}
+
+// memory SSE 通道(1.3.2):推送 MemorySnapshot 给前端记忆管理 UI + 待确认徽章。独立于
+// settings SSE——记忆运行时数据(pending 队列)不属于配置,混在一起会让每次记忆变化触发
+// 全量 settings 重渲染(§10.3)。触发时机:任何记忆增删改 / pending 入队/解决。
+const memoryClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
+
+function broadcastMemoryUpdate() {
+  const snapshot = memoryStore.getSnapshot();
+  for (const client of memoryClients) {
+    try { client.enqueue(sseFrame("update", snapshot)); } catch { /* client gone */ }
+  }
 }
 
 function broadcastList() {
@@ -7157,45 +7254,32 @@ function openAiSkillTools(assistant: Assistant) {
 function openAiLocalTools(assistant: Assistant) {
   const enabled = new Set((assistant.localTools ?? []).map((tool) => isRecord(tool) ? String(tool.type ?? "") : String(tool)));
   const tools = [];
-  if (assistant.enableMemory) {
+  // save_memory(1.3.2):模型只负责"提议"记忆,不感知层级(全局/助手对模型透明)。暴露条件:
+  //   (助手层 enableMemory 或 全局层 globalEnabled)至少一个开
+  //   且 writeStrategy !== "readonly"(只读模式不暴露,模型只看注入的已有记忆)
+  // 替代旧的 memory_tool(create/edit/delete)——v1 废弃模型 edit/delete,定位歧义从根本上绕开(N3)。
+  const canWriteMemory = (assistant.enableMemory || state.settings.memorySettings.globalEnabled)
+    && state.settings.memorySettings.writeStrategy !== "readonly";
+  if (canWriteMemory) {
     tools.push({
       type: "function",
       function: {
-        name: "memory_tool",
-        description: `The memory tool stores long-term information across conversations.
-Use \`action\` to control the operation: \`create\` (add), \`edit\` (update), \`delete\` (remove).
-- No relevant record: \`create\` + \`content\`
-- Existing relevant record: \`edit\` + \`id\` + \`content\`
-- Outdated/irrelevant record: \`delete\` + \`id\`
-Memories will automatically appear in the <memories> tag in later conversations.
-Do not store sensitive information (e.g., ethnicity, religion, sexual orientation, political views, sex life, criminal records).
-You may store: preferred name, preferences, plans, work-related notes, chat style preferences, first chat time, etc.
-Do not show memory content directly in the conversation unless the user explicitly asks.
+        name: "save_memory",
+        description: `Propose a memory to remember for future conversations.
+The user will later confirm whether and where to save it (you won't see this step).
+Use this when you notice durable facts worth remembering: preferred name, preferences,
+plans, work context, chat style, etc.
+Do NOT store sensitive info (ethnicity, religion, sexual orientation, political views,
+criminal records). Prefer checking the injected <memories> list first; if a similar one
+exists, propose the updated content anyway and the user will reconcile.
 Today is ${formatKeyLocal(new Date())}.
-Similar memories should be merged; prefer updating existing records.
-
-Examples:
-{"action":"create","content":"User prefers brief replies and is more active on weekends."}
-{"action":"edit","id":12,"content":"User's preferred name updated to A-Xing, prefers Chinese replies."}
-{"action":"delete","id":7}`,
+Do not mention to the user that you are saving a memory.`,
         parameters: {
           type: "object",
           properties: {
-            action: {
-              type: "string",
-              enum: ["create", "edit", "delete"],
-              description: "Operation to perform: create, edit, or delete",
-            },
-            id: {
-              type: "integer",
-              description: "The id of the memory record (required for edit/delete)",
-            },
-            content: {
-              type: "string",
-              description: "The content of the memory record (required for create/edit)",
-            },
+            content: { type: "string", description: "The memory content to propose" },
           },
-          required: ["action"],
+          required: ["content"],
         },
       },
     });
@@ -7951,6 +8035,41 @@ function runMemoryTool(assistant: Assistant, args: Record<string, JsonValue>) {
   throw new Error("unknown action: " + action + ", must be one of [create, edit, delete]");
 }
 
+/** save_memory 工具执行(1.3.2)。模型只提议 content,应用按 writeStrategy 决定落地方式:
+ *  - always_assistant + 助手层启用 → 直接存助手层
+ *  - always_global + 全局层启用 → 直接存全局层
+ *  - ask(默认)、或 always_* 但对应层未启用(M3 矛盾组合降级)→ 进待确认队列
+ *  ★ 返回值不含 pending: true —— 生成不在此暂停(区别于 ask_user 的审批挂起机制,§6.2)。 */
+async function runSaveMemoryTool(assistant: Assistant, args: Record<string, JsonValue>): Promise<Record<string, JsonValue>> {
+  const content = String(args.content ?? "").trim();
+  if (!content) throw new Error("content is required");
+  const ms = state.settings.memorySettings;
+  const strategy = ms.writeStrategy;
+
+  if (strategy === "always_assistant" && assistant.enableMemory) {
+    const mem = memoryStore.addMemory({ scope: "assistant", assistantId: assistant.id, content, source: "ai" });
+    broadcastMemoryUpdate();
+    return { status: "saved", scope: "assistant", content: mem.content };
+  }
+  if (strategy === "always_global" && ms.globalEnabled) {
+    const mem = memoryStore.addMemory({ scope: "global", content, source: "ai" });
+    broadcastMemoryUpdate();
+    return { status: "saved", scope: "global", content: mem.content };
+  }
+
+  // 进待确认队列。executeToolCall 无 conversation 上下文,conversationId 留空(仅调试/UI 定位用)。
+  const result = await memoryStore.enqueuePending({
+    conversationId: "",
+    assistantId: assistant.id,
+    assistantName: assistant.name,
+    content,
+  });
+  broadcastMemoryUpdate();
+  if (result === null) return { status: "deduped" };       // M7:与现有 pending 完全相同,跳过
+  if (result === "overflow") return { status: "overflow" }; // M7:队列已满,徽章变体高亮提醒
+  return { status: "queued", pendingId: result.pendingId };
+}
+
 async function executeToolCall(toolCall: any, assistant: Assistant) {
   const name = String(toolCall.function?.name ?? "");
   let args: Record<string, JsonValue> = {};
@@ -7964,6 +8083,7 @@ async function executeToolCall(toolCall: any, assistant: Assistant) {
     throw new Error(`Invalid tool arguments JSON for ${name}: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (name === "memory_tool") return runMemoryTool(assistant, args);
+  if (name === "save_memory") return runSaveMemoryTool(assistant, args);
   // 联网搜索是可关闭的工具(全局 enableWebSearch 开关)。关闭后,tools 数组里不再声明
   // search_web,但历史消息里残留的 search tool_call 仍会诱导模型再次调用——而本函数原本
   // 无条件执行真搜索,造成"关了搜索 AI 照样搜"的 bug。加守卫与 use_skill(6266) /
@@ -15155,6 +15275,61 @@ async function routeApi(request: Request, url: URL) {
         return () => settingsClients.delete(controller);
       },
     );
+  }
+  // ===== memory 路由(1.3.2)=====
+  if (path === "memory/stream") {
+    return openSse(
+      () => [["update", memoryStore.getSnapshot()]],
+      (controller) => {
+        memoryClients.add(controller);
+        return () => memoryClients.delete(controller);
+      },
+    );
+  }
+  if (path === "memory/pending" && request.method === "GET") {
+    return json({ pending: memoryStore.getPending() });
+  }
+  // batch 必须在 :pendingId regex 之前(否则 "batch" 会被当 pendingId 匹配)
+  if (path === "memory/pending/batch" && request.method === "POST") {
+    const body = await readJson<{ items?: Array<{ pendingId: string; action: "global" | "assistant" | "discard"; content?: string }> }>(request);
+    if (!Array.isArray(body?.items)) return error("items array is required", 400);
+    const results = await memoryStore.resolvePendingBatch(body.items);
+    broadcastMemoryUpdate();
+    return json({ status: "ok", results });
+  }
+  {
+    const pendingResolve = path.match(/^memory\/pending\/([^/]+)$/);
+    if (pendingResolve && request.method === "POST") {
+      const body = await readJson<{ action?: string; content?: string }>(request);
+      const pendingId = decodeURIComponent(pendingResolve[1]);
+      const action = String(body.action ?? "");
+      if (action !== "global" && action !== "assistant" && action !== "discard") {
+        return error("action must be one of global/assistant/discard", 400);
+      }
+      const result = await memoryStore.resolvePending(pendingId, action, body.content);
+      if (!result.resolved) return error(`Pending ${pendingId} not found`, 404);
+      broadcastMemoryUpdate();
+      return json({ status: "ok", memory: result.memory });
+    }
+  }
+  if (path === "settings/memory-settings" && request.method === "POST") {
+    const body = await readJson<{ globalEnabled?: boolean; writeStrategy?: string }>(request);
+    const ms = { ...state.settings.memorySettings };
+    if (typeof body.globalEnabled === "boolean") ms.globalEnabled = body.globalEnabled;
+    const ws = String(body.writeStrategy ?? "");
+    if (ws === "ask" || ws === "always_assistant" || ws === "always_global" || ws === "readonly") {
+      ms.writeStrategy = ws;
+    }
+    // M3 矛盾组合防御:globalEnabled=false 时 always_global 无意义 → 降级 ask(前端 UI 也 disable,
+    // 此处服务端兜底防绕过)
+    if (!ms.globalEnabled && ms.writeStrategy === "always_global") {
+      ms.writeStrategy = "ask";
+    }
+    updateSettings({ ...state.settings, memorySettings: ms });
+    saveState();
+    broadcastSettings();
+    broadcastMemoryUpdate();
+    return json({ status: "ok", memorySettings: ms });
   }
   if (path === "conversations/stream") {
     return openSse(
