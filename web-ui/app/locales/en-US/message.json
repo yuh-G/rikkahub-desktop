@@ -52,7 +52,8 @@
     "batch_global": "Save all as global",
     "batch_discard": "Discard all",
     "save_global": "Global",
-    "save_assistant": "Assistant"
+    "save_assistant": "Assistant",
+    "save_assistant_disabled": "This assistant has been deleted"
   },
   "tool_part": {
     "memory_create": "Create memory",

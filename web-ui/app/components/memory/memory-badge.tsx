@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Brain, Trash2, Globe, Bot, MessageSquare } from "lucide-react";
 
 import api from "~/services/api";
-import { useMemoryStore } from "~/stores";
+import { useMemoryStore, useSettingsStore } from "~/stores";
 import type { PendingEntry } from "~/types";
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
@@ -12,7 +12,12 @@ import { cn } from "~/lib/utils";
 
 // 单条 pending:可编辑 textarea + 三按钮(存全局/存助手/丢弃)。
 // "存为助手"显式依赖入队时的 assistantId 快照(可能不是当前会话助手),由后端按 pendingId 定位。
-function PendingCard({ entry, globalEnabled }: { entry: PendingEntry; globalEnabled: boolean }) {
+// 若该助手已被删除(I2),"存为助手"灰掉——避免存出挂在"未知助手"下的孤儿记忆。
+function PendingCard({ entry, globalEnabled, assistantExists }: {
+  entry: PendingEntry;
+  globalEnabled: boolean;
+  assistantExists: boolean;
+}) {
   const { t } = useTranslation();
   const [content, setContent] = React.useState(entry.content);
   React.useEffect(() => setContent(entry.content), [entry.content]);
@@ -34,10 +39,16 @@ function PendingCard({ entry, globalEnabled }: { entry: PendingEntry; globalEnab
       <Textarea value={content} onChange={(e) => setContent(e.target.value)} rows={2} className="text-sm" />
       <div className="flex gap-1">
         <Button size="sm" variant="outline" disabled={!globalEnabled} onClick={() => void resolve("global")}>
-          <Globe className="size-3" />{t("message:memory_save_global")}
+          <Globe className="size-3" />{t("message:memory.save_global")}
         </Button>
-        <Button size="sm" variant="outline" onClick={() => void resolve("assistant")}>
-          <Bot className="size-3" />{t("message:memory_save_assistant")}
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!assistantExists}
+          title={!assistantExists ? t("message:memory.save_assistant_disabled") : undefined}
+          onClick={() => void resolve("assistant")}
+        >
+          <Bot className="size-3" />{t("message:memory.save_assistant")}
         </Button>
         <Button size="sm" variant="ghost" onClick={() => void resolve("discard")}>
           <Trash2 className="size-3" />
@@ -55,6 +66,7 @@ function PendingCard({ entry, globalEnabled }: { entry: PendingEntry; globalEnab
 export function MemoryBadge() {
   const { t } = useTranslation();
   const snapshot = useMemoryStore((s) => s.snapshot);
+  const assistants = useSettingsStore((s) => s.settings?.assistants ?? []);
   const [open, setOpen] = React.useState(false);
   // U1:pendingCount 增加时短暂脉冲(~2s 后停),不持续打扰。仅追踪增加(减少 = 用户已处理)。
   const prevCount = React.useRef(snapshot?.pendingCount ?? 0);
@@ -72,6 +84,7 @@ export function MemoryBadge() {
 
   if (!snapshot || snapshot.pendingCount === 0) return null;
   const globalEnabled = snapshot.globalEnabled;
+  const assistantIds = new Set(assistants.map((a) => a.id));
 
   const batch = async (action: "global" | "assistant" | "discard") => {
     const items = snapshot.pending.map((p) => ({ pendingId: p.pendingId, action }));
@@ -87,7 +100,7 @@ export function MemoryBadge() {
             "relative inline-flex h-8 items-center rounded-md border bg-background px-2 text-foreground transition-colors hover:bg-accent",
             pulse && "animate-pulse ring-2 ring-primary ring-offset-1",
           )}
-          title={t("message:memory_pending_tooltip", { n: snapshot.pendingCount })}
+          title={t("message:memory.pending_tooltip", { n: snapshot.pendingCount })}
         >
           <Brain className="size-4 text-primary" />
           <span className="ml-1 text-xs font-medium">{snapshot.pendingCount}</span>
@@ -95,21 +108,26 @@ export function MemoryBadge() {
       </PopoverTrigger>
       <PopoverContent className="w-96" align="end">
         <div className="space-y-2">
-          <div className="text-sm font-medium">{t("message:memory_pending_title", { n: snapshot.pendingCount })}</div>
+          <div className="text-sm font-medium">{t("message:memory.pending_title", { n: snapshot.pendingCount })}</div>
           <div className="flex gap-1">
             <Button size="sm" variant="outline" className="flex-1" onClick={() => void batch("assistant")}>
-              {t("message:memory_batch_assistant")}
+              {t("message:memory.batch_assistant")}
             </Button>
             <Button size="sm" variant="outline" className="flex-1" disabled={!globalEnabled} onClick={() => void batch("global")}>
-              {t("message:memory_batch_global")}
+              {t("message:memory.batch_global")}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => void batch("discard")}>
-              {t("message:memory_batch_discard")}
+              {t("message:memory.batch_discard")}
             </Button>
           </div>
           <div className="max-h-96 space-y-2 overflow-auto">
             {snapshot.pending.map((p) => (
-              <PendingCard key={p.pendingId} entry={p} globalEnabled={globalEnabled} />
+              <PendingCard
+                key={p.pendingId}
+                entry={p}
+                globalEnabled={globalEnabled}
+                assistantExists={assistantIds.has(p.assistantId)}
+              />
             ))}
           </div>
         </div>

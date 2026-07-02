@@ -52,7 +52,8 @@
     "batch_global": "全部存为全局",
     "batch_discard": "全部丢弃",
     "save_global": "全局",
-    "save_assistant": "助手"
+    "save_assistant": "助手",
+    "save_assistant_disabled": "该助手已被删除"
   },
   "tool_part": {
     "memory_create": "创建记忆",

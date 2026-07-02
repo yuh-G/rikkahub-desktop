@@ -1393,9 +1393,13 @@ async function runLocalToolsMemorySmoke() {
   await waitForConversation(followConversationId, (item) => !item.isGenerating, "memory context conversation");
   const followFirst = requests.slice(followBefore).find((item) => item.path === "/v1/chat/completions" && item.body?.stream === true)?.body;
   assert(promptTextFromChatBody(followFirst).includes("User likes smoke memory"), "stored memory did not enter later provider request");
-  const stateAfter = await api("/api/settings/memories");
-  assert((stateAfter.memories ?? []).some((item: AnyRecord) => item.content === "User likes smoke memory."), "memory record was not persisted in settings memory API");
-  return { memoryCount: stateAfter.memories.length };
+  // 新端点(1.3.2):记忆由 memoryStore 管理,查 memory/assistant/:id。smoke 用 always_assistant,
+  // 记忆落在当前助手层。旧 GET /api/settings/memories 已随 memory_tool 旧链路一并废弃(I3 清理)。
+  const settingsNow = await api("/api/settings") as AnyRecord;
+  const memResp = await api(`/api/memory/assistant/${settingsNow.assistantId}`) as AnyRecord;
+  const memoriesNow = (memResp.memories ?? []) as AnyRecord[];
+  assert(memoriesNow.some((item: AnyRecord) => item.content === "User likes smoke memory."), "memory record was not persisted via memory API");
+  return { memoryCount: memoriesNow.length };
 }
 
 async function runInvalidToolArgumentsSmoke() {

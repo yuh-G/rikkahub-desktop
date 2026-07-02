@@ -1819,13 +1819,6 @@ const memoryStore = {
     return group ? group.memories : [];
   },
 
-  /** 按 assistantId 取记忆(注入用)。GLOBAL_MEMORY_ID → 全局层;其他 → 对应助手层。
-   *  阶段 1 仍服务于二选一注入(useGlobalMemory 决定传哪个 assistantId)。 */
-  getMemoriesByAssistantId(assistantId: string): MemoryEntry[] {
-    if (assistantId === GLOBAL_MEMORY_ID) return this.globalMemories;
-    return this.getAssistantMemories(assistantId);
-  },
-
   getAllAssistantGroups(): AssistantMemoryGroup[] { return this.assistantGroups; },
 
   getPending(): PendingEntry[] { return this.pending; },
@@ -1848,8 +1841,10 @@ const memoryStore = {
   // ---------- 写入(运行时;全局 state 已就绪) ----------
 
   /** 新增记忆。S1:内存层面先自增 nextMemoryId 再入队;persistAll 先写 global(计数器)
-   *  再写 assistant,保证计数器先于记忆持久化。返回新条目。 */
-  addMemory(input: AddMemoryInput): MemoryEntry {
+   *  再写 assistant,保证计数器先于记忆持久化。返回新条目。
+   *  persist=false 时只改内存不落盘——供 resolvePending 在批量改内存后统一一次 persistAll,
+   *  避免"addMemory 内部 fire-and-forget 一次 + resolvePending 末尾再 await 一次"的冗余 IO。 */
+  addMemory(input: AddMemoryInput, persist = true): MemoryEntry {
     const content = String(input.content ?? "").trim();
     if (!content) throw new Error("content is required");
     const now = Date.now();
@@ -1877,11 +1872,12 @@ const memoryStore = {
       }
       group.memories.push(entry);
     }
-    void this.persistAll();
+    if (persist) void this.persistAll();
     return entry;
   },
 
-  /** 全局唯一 id 定位 + 改内容。updatedAt 刷新。阶段 1 不改 source;阶段 3 加"编辑置 manual"。 */
+  /** 全局唯一 id 定位 + 改内容。updatedAt 刷新 + source 置 manual(M2:用户手动编辑过的记忆
+   *  不再挂 AI 来源标签——前端 MemoryItem 据此决定是否显示"AI 来源")。 */
   updateMemory(memoryId: number, content: string): MemoryEntry {
     const trimmed = String(content ?? "").trim();
     if (!trimmed) throw new Error("content is required");
@@ -1889,6 +1885,7 @@ const memoryStore = {
     if (!entry) throw new Error(`Memory record #${memoryId} not found`);
     entry.content = trimmed;
     entry.updatedAt = Date.now();
+    entry.source = "manual";
     void this.persistAll();
     return entry;
   },
@@ -1920,16 +1917,6 @@ const memoryStore = {
     this.assistantGroups.splice(idx, 1);
     if (count > 0) void this.persistAll();
     return count;
-  },
-
-  /** 按 (id AND assistantId) 双键定位——兼容旧 runMemoryTool / 旧 API 的二选一语义
-   *  (useGlobalMemory 决定 assistantId 是 GLOBAL_MEMORY_ID 还是助手自己的 id)。 */
-  findEntryByIdAndAssistant(memoryId: number, assistantId: string): MemoryEntry | undefined {
-    if (assistantId === GLOBAL_MEMORY_ID) {
-      return this.globalMemories.find((m) => m.id === memoryId);
-    }
-    const group = this.assistantGroups.find((g) => g.assistantId === assistantId);
-    return group?.memories.find((m) => m.id === memoryId);
   },
 
   findEntryById(memoryId: number): MemoryEntry | undefined {
@@ -2029,17 +2016,18 @@ const memoryStore = {
     const content = String(contentOverride ?? entry.content).trim();
     this.pending.splice(idx, 1);
     let memory: MemoryEntry | undefined;
+    // addMemory 传 persist=false:只改内存,由末尾统一一次 persistAll 落盘(pending 移除 + 新记忆)。
     if (action === "global") {
-      memory = this.addMemory({ scope: "global", content, source: contentOverride ? "manual" : "ai" });
+      memory = this.addMemory({ scope: "global", content, source: contentOverride ? "manual" : "ai" }, false);
     } else if (action === "assistant") {
       memory = this.addMemory({
         scope: "assistant",
         assistantId: entry.assistantId,
         content,
         source: contentOverride ? "manual" : "ai",
-      });
+      }, false);
     }
-    // discard:不写记忆,仅移除 pending
+    // discard:不写记忆,仅移除 pending。
     await this.persistAll();
     return { resolved: true, memory };
   },
@@ -2068,16 +2056,22 @@ const memoryStore = {
 
   // ---------- 批量编辑(高级用户直接编辑 JSON,§9.3)----------
   // 校验单条记忆结构,失败抛错(调用方 catch 返回 400,不落盘)。
+  // id 唯一性校验(I4):用户批量编辑时若手抖输入重复 id,会导致 findEntryById/updateMemory 只命中
+  // 第一条、第二条成改不动的幽灵——校验阶段直接拒绝,提示哪条重复。
   validateMemoryEntries(entries: unknown): MemoryEntry[] {
     if (!Array.isArray(entries)) throw new Error("memories must be an array");
     const now = Date.now();
+    const seenIds = new Set<number>();
     return entries.map((e, i) => {
       if (!isRecord(e)) throw new Error(`memory[${i}] must be an object`);
       const content = String(e.content ?? "").trim();
       if (!content) throw new Error(`memory[${i}].content is required`);
-      const id = Number(e.id);
+      const rawId = Number(e.id);
+      const finalId = Number.isFinite(rawId) && rawId > 0 ? rawId : i + 1;
+      if (seenIds.has(finalId)) throw new Error(`memory[${i}] has duplicate id ${finalId}`);
+      seenIds.add(finalId);
       return {
-        id: Number.isFinite(id) && id > 0 ? id : i + 1,
+        id: finalId,
         content,
         createdAt: Number(e.createdAt) || now,
         updatedAt: Number(e.updatedAt) || now,
@@ -2088,14 +2082,21 @@ const memoryStore = {
 
   validateAssistantGroups(groups: unknown): AssistantMemoryGroup[] {
     if (!Array.isArray(groups)) throw new Error("assistants must be an array");
+    // 跨组 id 也要唯一(id 是全局自增空间,组间重复同样会让 findEntryById 只命中第一条)。
+    const globalSeenIds = new Set<number>();
     return groups.map((g, i) => {
       if (!isRecord(g)) throw new Error(`assistant[${i}] must be an object`);
       const assistantId = String(g.assistantId ?? "").trim();
       if (!assistantId) throw new Error(`assistant[${i}].assistantId is required`);
+      const memories = this.validateMemoryEntries(g.memories);
+      for (const m of memories) {
+        if (globalSeenIds.has(m.id)) throw new Error(`assistant[${i}] has duplicate id ${m.id} across groups`);
+        globalSeenIds.add(m.id);
+      }
       return {
         assistantId,
         assistantName: String(g.assistantName ?? "未知助手"),
-        memories: this.validateMemoryEntries(g.memories),
+        memories,
       };
     });
   },
@@ -8053,43 +8054,6 @@ function cancelAllSystemTts() {
   activeSystemTtsProcs.clear();
 }
 
-function runMemoryTool(assistant: Assistant, args: Record<string, JsonValue>) {
-  if (!assistant.enableMemory) throw new Error("memory_tool is not enabled for this assistant");
-  const action = String(args.action ?? "").trim();
-  const assistantId = assistant.useGlobalMemory ? GLOBAL_MEMORY_ID : assistant.id;
-  if (action === "create") {
-    const content = String(args.content ?? "").trim();
-    if (!content) throw new Error("content is required");
-    const memory = memoryStore.addMemory({
-      scope: assistantId === GLOBAL_MEMORY_ID ? "global" : "assistant",
-      assistantId: assistantId === GLOBAL_MEMORY_ID ? undefined : assistantId,
-      content,
-      source: "ai",
-    });
-    return { id: memory.id, content: memory.content };
-  }
-  if (action === "edit") {
-    const memoryId = Number(args.id);
-    const content = String(args.content ?? "").trim();
-    if (!Number.isInteger(memoryId)) throw new Error("id is required");
-    if (!content) throw new Error("content is required");
-    // 双键定位(阶段 1 保留二选一语义):确认该记忆属于当前作用域,避免跨作用域误改。
-    const existing = memoryStore.findEntryByIdAndAssistant(memoryId, assistantId);
-    if (!existing) throw new Error(`Memory record #${memoryId} not found`);
-    const updated = memoryStore.updateMemory(memoryId, content);
-    return { id: updated.id, content: updated.content };
-  }
-  if (action === "delete") {
-    const memoryId = Number(args.id);
-    if (!Number.isInteger(memoryId)) throw new Error("id is required");
-    const existing = memoryStore.findEntryByIdAndAssistant(memoryId, assistantId);
-    if (!existing) throw new Error(`Memory record #${memoryId} not found`);
-    memoryStore.deleteMemory(memoryId);
-    return { success: true, id: memoryId };
-  }
-  throw new Error("unknown action: " + action + ", must be one of [create, edit, delete]");
-}
-
 /** save_memory 工具执行(1.3.2)。模型只提议 content,应用按 writeStrategy 决定落地方式:
  *  - always_assistant + 助手层启用 → 直接存助手层
  *  - always_global + 全局层启用 → 直接存全局层
@@ -8149,7 +8113,6 @@ async function executeToolCall(
   } catch (err) {
     throw new Error(`Invalid tool arguments JSON for ${name}: ${err instanceof Error ? err.message : String(err)}`);
   }
-  if (name === "memory_tool") return runMemoryTool(assistant, args);
   if (name === "save_memory") return runSaveMemoryTool(assistant, args, context);
   // 联网搜索是可关闭的工具(全局 enableWebSearch 开关)。关闭后,tools 数组里不再声明
   // search_web,但历史消息里残留的 search tool_call 仍会诱导模型再次调用——而本函数原本
@@ -15533,6 +15496,9 @@ async function routeApi(request: Request, url: URL) {
         ? state.settings.assistants.map((item) => (item.id === assistant.id ? assistant : item))
         : [...state.settings.assistants, assistant],
     });
+    // 助手改名后刷新 assistant_memory.json 里的 assistantName 快照(§12.4-22),推前端同步。
+    memoryStore.refreshAssistantNames(state.settings.assistants);
+    broadcastMemoryUpdate();
     return json({ status: "ok", assistant });
   }
   const assistantDelete = path.match(/^settings\/assistant\/([^/]+)$/);
@@ -15759,57 +15725,6 @@ async function routeApi(request: Request, url: URL) {
       ),
     });
     return json({ status: "ok" });
-  }
-  if (path === "settings/memories" && request.method === "GET") {
-    const assistantId = url.searchParams.get("assistantId") ?? state.settings.assistantId;
-    const assistant = findAssistant(assistantId);
-    const memoryAssistantId = assistant.useGlobalMemory ? GLOBAL_MEMORY_ID : assistant.id;
-    return json({
-      assistantId: memoryAssistantId,
-      memories: memoryStore
-        .getMemoriesByAssistantId(memoryAssistantId)
-        .map((m) => ({
-          id: m.id,
-          assistantId: memoryAssistantId,
-          content: m.content,
-          createdAt: m.createdAt,
-          updatedAt: m.updatedAt,
-        }))
-        .sort((a, b) => a.id - b.id),
-    });
-  }
-  if (path === "settings/memory/detail" && request.method === "POST") {
-    const body = await readJson<{ assistantId?: string; id?: number; content?: string }>(request);
-    const assistant = findAssistant(body.assistantId ?? state.settings.assistantId);
-    const memoryAssistantId = assistant.useGlobalMemory ? GLOBAL_MEMORY_ID : assistant.id;
-    const content = String(body.content ?? "").trim();
-    if (!content) return error("Memory content is required", 400);
-    let memory: MemoryEntry;
-    if (Number.isInteger(Number(body.id)) && Number(body.id) > 0) {
-      const memoryId = Number(body.id);
-      const existing = memoryStore.findEntryByIdAndAssistant(memoryId, memoryAssistantId);
-      if (!existing) return error(`Memory record #${memoryId} not found`, 404);
-      memory = memoryStore.updateMemory(memoryId, content);
-    } else {
-      memory = memoryStore.addMemory({
-        scope: memoryAssistantId === GLOBAL_MEMORY_ID ? "global" : "assistant",
-        assistantId: memoryAssistantId === GLOBAL_MEMORY_ID ? undefined : memoryAssistantId,
-        content,
-        source: "manual",
-      });
-    }
-    saveState();
-    broadcastSettings();
-    return json({ status: "ok", memory });
-  }
-  const memoryDelete = path.match(/^settings\/memory\/(\d+)$/);
-  if (memoryDelete && request.method === "DELETE") {
-    const memoryId = Number(memoryDelete[1]);
-    const deleted = memoryStore.deleteMemory(memoryId);
-    if (!deleted) return error(`Memory record #${memoryId} not found`, 404);
-    saveState();
-    broadcastSettings();
-    return json({ status: "deleted" });
   }
   if (path === "settings/mcp-server/detail" && request.method === "POST") {
     const body = await readJson<Record<string, JsonValue>>(request);
