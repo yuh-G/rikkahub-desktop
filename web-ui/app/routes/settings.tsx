@@ -2286,9 +2286,6 @@ function AssistantsSection({
   const [draft, setDraft] = React.useState<AssistantProfile | null>(
     assistant ? clone(assistant) : null,
   );
-  const [memories, setMemories] = React.useState<AssistantMemoryInfo[]>([]);
-  const [memoryContent, setMemoryContent] = React.useState("");
-  const [editingMemoryId, setEditingMemoryId] = React.useState<number | null>(null);
   const dirtyRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -2316,23 +2313,6 @@ function AssistantsSection({
     }, 700);
     return () => window.clearTimeout(timer);
   }, [draft, settings.assistants]);
-
-  const loadMemories = React.useCallback(async () => {
-    if (!draft) {
-      setMemories([]);
-      return;
-    }
-    const result = await api.get<{ memories: AssistantMemoryInfo[] }>(
-      `settings/memories?assistantId=${encodeURIComponent(draft.id)}`,
-    );
-    setMemories(result.memories);
-  }, [draft?.id]);
-
-  React.useEffect(() => {
-    void loadMemories().catch((error: Error) =>
-      toast.error(error.message || t("settings:assistants.load_memories_failed")),
-    );
-  }, [loadMemories, draft?.useGlobalMemory]);
 
   if (!draft) return null;
 
@@ -2367,15 +2347,22 @@ function AssistantsSection({
     await api.post("settings/assistants/reorder", { ids: assistants.map((item) => item.id) });
   };
   const removeAssistant = async () => {
-    if (
-      !window.confirm(
-        t("settings:assistants.delete_confirm", {
-          name: draft.name || t("settings:assistants.default_name"),
-        }),
-      )
-    )
-      return;
-    await api.delete(`settings/assistant/${encodeURIComponent(draft.id)}`);
+    const nameLabel = draft.name || t("settings:assistants.default_name");
+    // M4:先查该助手记忆数,有记忆则让用户选"同时删除 / 保留为孤儿"(默认保留,防误删助手连带丢记忆)
+    let memoryCount = 0;
+    try {
+      const result = await api.get<{ memories: unknown[] }>(`memory/assistant/${encodeURIComponent(draft.id)}`);
+      memoryCount = result.memories?.length ?? 0;
+    } catch { /* 记忆查询失败按 0 处理 */ }
+    let deleteMemories = false;
+    if (memoryCount > 0) {
+      if (!window.confirm(t("settings:assistants.delete_confirm_with_memories", { name: nameLabel, n: memoryCount }))) return;
+      // 第二步:确定=同时删记忆,取消=保留为孤儿(记忆板块可管理)
+      deleteMemories = window.confirm(t("settings:assistants.delete_memories_confirm", { n: memoryCount }));
+    } else {
+      if (!window.confirm(t("settings:assistants.delete_confirm", { name: nameLabel }))) return;
+    }
+    await api.delete(`settings/assistant/${encodeURIComponent(draft.id)}${deleteMemories ? "?deleteMemories=true" : ""}`);
     const assistants = settings.assistants.filter((item) => item.id !== draft.id);
     onSettings({
       ...settings,
@@ -2495,34 +2482,6 @@ function AssistantsSection({
       ),
     });
   };
-  const saveMemory = async () => {
-    const content = memoryContent.trim();
-    if (!content) return;
-    await api.post("settings/memory/detail", {
-      assistantId: draft.id,
-      id: editingMemoryId ?? undefined,
-      content,
-    });
-    setMemoryContent("");
-    setEditingMemoryId(null);
-    await loadMemories();
-    toast.success(
-      editingMemoryId
-        ? t("settings:assistants.memory_updated")
-        : t("settings:assistants.memory_added"),
-    );
-  };
-  const removeMemory = async (memoryId: number) => {
-    if (!window.confirm(t("settings:assistants.delete_memory_confirm", { id: memoryId }))) return;
-    await api.delete(`settings/memory/${memoryId}`);
-    if (editingMemoryId === memoryId) {
-      setEditingMemoryId(null);
-      setMemoryContent("");
-    }
-    await loadMemories();
-    toast.success(t("settings:assistants.memory_deleted"));
-  };
-
   return (
     <>
       <SectionHeader

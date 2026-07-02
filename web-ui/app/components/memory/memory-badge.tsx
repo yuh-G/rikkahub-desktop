@@ -8,6 +8,7 @@ import type { PendingEntry } from "~/types";
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "~/components/ui/popover";
+import { cn } from "~/lib/utils";
 
 // 单条 pending:可编辑 textarea + 三按钮(存全局/存助手/丢弃)。
 // "存为助手"显式依赖入队时的 assistantId 快照(可能不是当前会话助手),由后端按 pendingId 定位。
@@ -49,6 +50,19 @@ export function MemoryBadge() {
   const { t } = useTranslation();
   const snapshot = useMemoryStore((s) => s.snapshot);
   const [open, setOpen] = React.useState(false);
+  // U1:pendingCount 增加时短暂脉冲(~2s 后停),不持续打扰。仅追踪增加(减少 = 用户已处理)。
+  const prevCount = React.useRef(snapshot?.pendingCount ?? 0);
+  const [pulse, setPulse] = React.useState(false);
+  React.useEffect(() => {
+    const cur = snapshot?.pendingCount ?? 0;
+    if (cur > prevCount.current) {
+      setPulse(true);
+      const timer = setTimeout(() => setPulse(false), 2000);
+      prevCount.current = cur;
+      return () => clearTimeout(timer);
+    }
+    prevCount.current = cur;
+  }, [snapshot?.pendingCount]);
 
   if (!snapshot || snapshot.pendingCount === 0) return null;
   const globalEnabled = snapshot.globalEnabled;
@@ -63,7 +77,10 @@ export function MemoryBadge() {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="relative inline-flex h-8 items-center rounded-md border bg-background px-2 text-foreground transition-colors hover:bg-accent"
+          className={cn(
+            "relative inline-flex h-8 items-center rounded-md border bg-background px-2 text-foreground transition-colors hover:bg-accent",
+            pulse && "animate-pulse ring-2 ring-primary ring-offset-1",
+          )}
           title={t("message:memory_pending_tooltip", { n: snapshot.pendingCount })}
         >
           <Brain className="size-4 text-primary" />

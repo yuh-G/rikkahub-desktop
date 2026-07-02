@@ -10,6 +10,8 @@ import { Switch } from "~/components/ui/switch";
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import { Input } from "~/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "~/components/ui/dialog";
 
 // 单条记忆:展示 + 行内编辑/删除。变更后后端 broadcast memory SSE,store 自动刷新(无需回调)。
 function MemoryItem({ entry, scope, assistantId }: {
@@ -74,6 +76,7 @@ export function MemorySection({
   const ms = settings.memorySettings ?? { globalEnabled: false, writeStrategy: "ask" as WriteStrategy };
   const [newGlobal, setNewGlobal] = React.useState("");
   const [newByAssistant, setNewByAssistant] = React.useState<Record<string, string>>({});
+  const [assistantQuery, setAssistantQuery] = React.useState("");
 
   const updateMemorySettings = async (patch: Partial<{ globalEnabled: boolean; writeStrategy: WriteStrategy }>) => {
     const next = { ...ms, ...patch };
@@ -102,9 +105,44 @@ export function MemorySection({
     if (updated) await api.post("settings/assistant/detail", updated);
   };
 
+  // 批量编辑(高级用户直接编辑原始 JSON,§9.3)。实时 JSON.parse 校验;提交前二次确认;
+  // 后端带 schema 校验 + .bak 备份,失败可从 .bak 恢复。
+  const [batchTarget, setBatchTarget] = React.useState<"global" | "assistant" | null>(null);
+  const [batchText, setBatchText] = React.useState("");
+  const [batchError, setBatchError] = React.useState<string | null>(null);
+  const openBatch = (target: "global" | "assistant") => {
+    const data = target === "global" ? snapshot!.globalMemories : snapshot!.assistantMemories;
+    setBatchTarget(target);
+    setBatchText(JSON.stringify(data, null, 2));
+    setBatchError(null);
+  };
+  const saveBatch = async () => {
+    if (!batchTarget) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(batchText);
+    } catch (e) {
+      setBatchError(t("settings:memory.batch_json_error", { msg: e instanceof Error ? e.message : String(e) }));
+      return;
+    }
+    if (!window.confirm(t("settings:memory.batch_confirm"))) return;
+    const batchPath = batchTarget === "global" ? "memory/batch/global" : "memory/batch/assistant";
+    const body = batchTarget === "global" ? { memories: parsed } : { assistants: parsed };
+    try {
+      await api.post(batchPath, body);
+      setBatchTarget(null);
+    } catch (e) {
+      setBatchError(t("settings:memory.batch_save_error", { msg: e instanceof Error ? e.message : String(e) }));
+    }
+  };
+
   if (!snapshot) {
     return <div className="p-4 text-muted-foreground">{t("common:loading")}</div>;
   }
+  // U4:助手名搜索过滤(助手多时快速定位)
+  const filteredAssistants = settings.assistants.filter((a) =>
+    (a.name || "").toLowerCase().includes(assistantQuery.trim().toLowerCase()),
+  );
 
   return (
     <div className="space-y-4">
@@ -131,6 +169,7 @@ export function MemorySection({
         <CardHeader className="flex-row items-center justify-between">
           <CardTitle>{t("settings:memory.global_title")}</CardTitle>
           <div className="flex items-center gap-2">
+            <Button size="sm" variant="ghost" onClick={() => openBatch("global")}>{t("settings:memory.batch_edit")}</Button>
             <span className="text-sm text-muted-foreground">{t("settings:memory.enable_global")}</span>
             <Switch checked={ms.globalEnabled} onCheckedChange={(v) => void updateMemorySettings({ globalEnabled: v })} />
           </div>
@@ -150,9 +189,18 @@ export function MemorySection({
 
       {/* 卡片 2:助手记忆 */}
       <Card>
-        <CardHeader><CardTitle>{t("settings:memory.assistant_title")}</CardTitle></CardHeader>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle>{t("settings:memory.assistant_title")}</CardTitle>
+          <Button size="sm" variant="ghost" onClick={() => openBatch("assistant")}>{t("settings:memory.batch_edit")}</Button>
+        </CardHeader>
         <CardContent className="space-y-4">
-          {settings.assistants.map((a) => {
+          <Input
+            value={assistantQuery}
+            onChange={(e) => setAssistantQuery(e.target.value)}
+            placeholder={t("settings:memory.search_assistant")}
+            className="text-sm"
+          />
+          {filteredAssistants.map((a) => {
             const group = snapshot.assistantMemories.find((g) => g.assistantId === a.id);
             const mems = group?.memories ?? [];
             return (
@@ -183,8 +231,40 @@ export function MemorySection({
               </div>
             );
           })}
+          {/* 孤儿记忆:assistant_memory.json 里有但 settings.assistants 已删除的(M4 保留,可编辑/删除) */}
+          {snapshot.assistantMemories
+            .filter((g) => !settings.assistants.some((a) => a.id === g.assistantId))
+            .map((g) => (
+              <div key={g.assistantId} className="space-y-2 rounded-md border border-dashed p-2">
+                <div className="text-xs text-muted-foreground">
+                  {t("settings:memory.orphan_group", { name: g.assistantName, n: g.memories.length })}
+                </div>
+                {g.memories.map((m) => (
+                  <MemoryItem key={m.id} entry={m} scope="assistant" assistantId={g.assistantId} />
+                ))}
+              </div>
+            ))}
         </CardContent>
       </Card>
+
+      {/* 批量编辑对话框(高级用户直接编辑原始 JSON,实时校验 + 二次确认)*/}
+      <Dialog open={batchTarget !== null} onOpenChange={(o) => !o && setBatchTarget(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t("settings:memory.batch_edit_title")}</DialogTitle>
+          </DialogHeader>
+          <Textarea
+            value={batchText}
+            onChange={(e) => setBatchText(e.target.value)}
+            className="min-h-96 font-mono text-xs"
+          />
+          {batchError && <div className="text-sm text-destructive">{batchError}</div>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBatchTarget(null)}>{t("settings:memory.cancel")}</Button>
+            <Button onClick={() => void saveBatch()}>{t("settings:memory.save")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -2063,6 +2063,59 @@ const memoryStore = {
       pendingCount: this.pending.length,
     };
   },
+
+  // ---------- 批量编辑(高级用户直接编辑 JSON,§9.3)----------
+  // 校验单条记忆结构,失败抛错(调用方 catch 返回 400,不落盘)。
+  validateMemoryEntries(entries: unknown): MemoryEntry[] {
+    if (!Array.isArray(entries)) throw new Error("memories must be an array");
+    const now = Date.now();
+    return entries.map((e, i) => {
+      if (!isRecord(e)) throw new Error(`memory[${i}] must be an object`);
+      const content = String(e.content ?? "").trim();
+      if (!content) throw new Error(`memory[${i}].content is required`);
+      const id = Number(e.id);
+      return {
+        id: Number.isFinite(id) && id > 0 ? id : i + 1,
+        content,
+        createdAt: Number(e.createdAt) || now,
+        updatedAt: Number(e.updatedAt) || now,
+        source: e.source === "ai" ? "ai" : "manual",
+      };
+    });
+  },
+
+  validateAssistantGroups(groups: unknown): AssistantMemoryGroup[] {
+    if (!Array.isArray(groups)) throw new Error("assistants must be an array");
+    return groups.map((g, i) => {
+      if (!isRecord(g)) throw new Error(`assistant[${i}] must be an object`);
+      const assistantId = String(g.assistantId ?? "").trim();
+      if (!assistantId) throw new Error(`assistant[${i}].assistantId is required`);
+      return {
+        assistantId,
+        assistantName: String(g.assistantName ?? "未知助手"),
+        memories: this.validateMemoryEntries(g.memories),
+      };
+    });
+  },
+
+  /** 批量替换全局记忆。校验 + 备份 .bak + recompute(S1 兜底)。校验失败抛错(不落盘)。 */
+  replaceGlobalMemories(entries: unknown): void {
+    const validated = this.validateMemoryEntries(entries);
+    this.writeJsonSync(globalMemoryPath + ".bak", { version: 1, nextMemoryId: this.nextMemoryId, memories: this.globalMemories });
+    this.globalMemories = validated;
+    this.recomputeNextId();
+    void this.persistAll();
+  },
+
+  /** 批量替换助手记忆(整体)。校验 + 备份 + recompute + 刷新助手名快照。 */
+  replaceAssistantGroups(groups: unknown): void {
+    const validated = this.validateAssistantGroups(groups);
+    this.writeJsonSync(assistantMemoryPath + ".bak", { version: 1, assistants: this.assistantGroups });
+    this.assistantGroups = validated;
+    this.refreshAssistantNames(state.settings.assistants);
+    this.recomputeNextId();
+    void this.persistAll();
+  },
 };
 
 function loadState(): State {
@@ -15382,6 +15435,27 @@ async function routeApi(request: Request, url: URL) {
       return json({ status: "deleted" });
     }
   }
+  // 批量编辑(整体替换,带 schema 校验 + .bak 备份,§9.3)。校验失败返回 400,不落盘。
+  if (path === "memory/batch/global" && request.method === "POST") {
+    const body = await readJson<{ memories?: unknown }>(request);
+    try {
+      memoryStore.replaceGlobalMemories(body.memories);
+    } catch (err) {
+      return error(String(err instanceof Error ? err.message : String(err)), 400);
+    }
+    broadcastMemoryUpdate();
+    return json({ status: "ok" });
+  }
+  if (path === "memory/batch/assistant" && request.method === "POST") {
+    const body = await readJson<{ assistants?: unknown }>(request);
+    try {
+      memoryStore.replaceAssistantGroups(body.assistants);
+    } catch (err) {
+      return error(String(err instanceof Error ? err.message : String(err)), 400);
+    }
+    broadcastMemoryUpdate();
+    return json({ status: "ok" });
+  }
   if (path === "conversations/stream") {
     return openSse(
       () => [["invalidate", { type: "invalidate", assistantId: state.settings.assistantId, timestamp: Date.now() }]],
@@ -15438,8 +15512,13 @@ async function routeApi(request: Request, url: URL) {
   if (assistantDelete && request.method === "DELETE") {
     const idValue = decodeURIComponent(assistantDelete[1]);
     if (state.settings.assistants.length <= 1) return error("At least one assistant is required", 400);
+    const deleteMemories = url.searchParams.get("deleteMemories") === "true";
     const assistants = state.settings.assistants.filter((item) => item.id !== idValue);
-    memoryStore.deleteMemoriesByAssistant(idValue);
+    // M4:默认保留记忆为孤儿(防误删助手导致记忆连带丢失);仅 deleteMemories=true 时连带清。
+    if (deleteMemories) {
+      memoryStore.deleteMemoriesByAssistant(idValue);
+      broadcastMemoryUpdate();
+    }
     updateSettings({
       ...state.settings,
       assistants,
