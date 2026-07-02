@@ -15331,6 +15331,57 @@ async function routeApi(request: Request, url: URL) {
     broadcastMemoryUpdate();
     return json({ status: "ok", memorySettings: ms });
   }
+  // ===== 记忆 CRUD(阶段 4 UI 用)=====
+  // 全局记忆:GET 列表 / POST 新增或编辑{id,content} / DELETE :id
+  if (path === "memory/global" && request.method === "GET") {
+    return json({ memories: memoryStore.getGlobalMemories() });
+  }
+  if (path === "memory/global" && request.method === "POST") {
+    const body = await readJson<{ id?: number; content?: string }>(request);
+    const content = String(body.content ?? "").trim();
+    if (!content) return error("content is required", 400);
+    const memory = Number.isInteger(Number(body.id)) && Number(body.id) > 0
+      ? memoryStore.updateMemory(Number(body.id), content)
+      : memoryStore.addMemory({ scope: "global", content, source: "manual" });
+    broadcastMemoryUpdate();
+    return json({ status: "ok", memory });
+  }
+  {
+    const m = path.match(/^memory\/global\/(\d+)$/);
+    if (m && request.method === "DELETE") {
+      const memoryId = Number(m[1]);
+      if (!memoryStore.deleteMemory(memoryId)) return error(`Memory record #${memoryId} not found`, 404);
+      broadcastMemoryUpdate();
+      return json({ status: "deleted" });
+    }
+  }
+  // 助手记忆:GET :assistantId 列表 / POST :assistantId 新增或编辑 / DELETE :assistantId/:id
+  {
+    const m = path.match(/^memory\/assistant\/([^/]+)$/);
+    if (m && request.method === "GET") {
+      return json({ memories: memoryStore.getAssistantMemories(decodeURIComponent(m[1])) });
+    }
+    if (m && request.method === "POST") {
+      const assistantId = decodeURIComponent(m[1]);
+      const body = await readJson<{ id?: number; content?: string }>(request);
+      const content = String(body.content ?? "").trim();
+      if (!content) return error("content is required", 400);
+      const memory = Number.isInteger(Number(body.id)) && Number(body.id) > 0
+        ? memoryStore.updateMemory(Number(body.id), content)
+        : memoryStore.addMemory({ scope: "assistant", assistantId, content, source: "manual" });
+      broadcastMemoryUpdate();
+      return json({ status: "ok", memory });
+    }
+  }
+  {
+    const m = path.match(/^memory\/assistant\/([^/]+)\/(\d+)$/);
+    if (m && request.method === "DELETE") {
+      const memoryId = Number(m[2]);
+      if (!memoryStore.deleteMemory(memoryId)) return error(`Memory record #${memoryId} not found`, 404);
+      broadcastMemoryUpdate();
+      return json({ status: "deleted" });
+    }
+  }
   if (path === "conversations/stream") {
     return openSse(
       () => [["invalidate", { type: "invalidate", assistantId: state.settings.assistantId, timestamp: Date.now() }]],

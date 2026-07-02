@@ -45,6 +45,15 @@
     "exporting_image": "正在生成图片…",
     "export_image_failed": "导出图片失败"
   },
+  "memory": {
+    "pending_title": "待确认的记忆({{n}} 条)",
+    "pending_tooltip": "{{n}} 条记忆待确认",
+    "batch_assistant": "全部存为助手",
+    "batch_global": "全部存为全局",
+    "batch_discard": "全部丢弃",
+    "save_global": "全局",
+    "save_assistant": "助手"
+  },
   "tool_part": {
     "memory_create": "创建记忆",
     "memory_edit": "编辑记忆",

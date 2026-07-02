@@ -45,6 +45,15 @@
     "exporting_image": "Generating image…",
     "export_image_failed": "Failed to export image"
   },
+  "memory": {
+    "pending_title": "Memories to confirm ({{n}})",
+    "pending_tooltip": "{{n}} memories pending confirmation",
+    "batch_assistant": "Save all as assistant",
+    "batch_global": "Save all as global",
+    "batch_discard": "Discard all",
+    "save_global": "Global",
+    "save_assistant": "Assistant"
+  },
   "tool_part": {
     "memory_create": "Create memory",
     "memory_edit": "Edit memory",

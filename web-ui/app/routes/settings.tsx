@@ -36,10 +36,12 @@ import {
   Square,
   Sparkles,
   WandSparkles,
+  Brain,
   X,
   XCircle,
 } from "lucide-react";
 import { Link } from "react-router";
+import { MemorySection } from "~/components/memory/memory-section";
 import { toast } from "sonner";
 
 import { AvatarCropper } from "~/components/avatar-cropper";
@@ -101,6 +103,7 @@ type Section =
   | "search"
   | "mcp"
   | "speech"
+  | "memory"
   | "data"
   | "stats"
   | "logs"
@@ -232,6 +235,7 @@ const navItems: Array<{
   { id: "search", labelKey: "settings:nav.search", icon: Search },
   { id: "mcp", labelKey: "settings:nav.mcp", icon: CopyPlus },
   { id: "speech", labelKey: "settings:nav.speech", icon: Mic },
+  { id: "memory", labelKey: "settings:nav.memory", icon: Brain },
   { id: "data", labelKey: "settings:nav.data", icon: Database },
   { id: "stats", labelKey: "settings:nav.stats", icon: Database },
   { id: "logs", labelKey: "settings:nav.logs", icon: FileClock },
@@ -787,6 +791,7 @@ export default function SettingsPage() {
               <McpExtensionsSection settings={settings} onSettings={updateLocal} />
             )}
             {section === "speech" && <SpeechSection settings={settings} onSettings={updateLocal} />}
+            {section === "memory" && <MemorySection settings={settings} onSettings={updateLocal} />}
             {section === "data" && <DataSection settings={settings} onSettings={updateLocal} />}
             {section === "stats" && <StatsSection stats={stats} />}
             {section === "logs" && <LogsSection logs={logs} onClear={clearLogs} />}
@@ -2923,8 +2928,6 @@ function AssistantsSection({
           </label>
           <div className="grid gap-3 md:grid-cols-2">
             {[
-              ["enableMemory", t("settings:assistants.opt.enable_memory")],
-              ["useGlobalMemory", t("settings:assistants.opt.use_global_memory")],
               ["enableRecentChatsReference", t("settings:assistants.opt.recent_chats")],
               ["streamOutput", t("settings:assistants.opt.stream_output")],
               ["enableTimeReminder", t("settings:assistants.opt.time_reminder")],
@@ -2945,103 +2948,7 @@ function AssistantsSection({
               </label>
             ))}
           </div>
-          <div className="rounded-md border p-3">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-medium">{t("settings:assistants.memory_title")}</div>
-                <div className="mt-0.5 text-xs text-muted-foreground">
-                  {t("settings:assistants.memory_desc_pre")}
-                  <code className="rounded bg-muted px-1">memory_tool</code>
-                  {t("settings:assistants.memory_desc_post")}
-                </div>
-              </div>
-              <Button type="button" size="sm" variant="outline" onClick={() => void loadMemories()}>
-                <RefreshCw className="size-4" />
-                {t("settings:assistants.refresh")}
-              </Button>
-            </div>
-            <div className="grid gap-3 md:grid-cols-[1fr_220px]">
-              <Textarea
-                className="min-h-24"
-                value={memoryContent}
-                onChange={(event) => setMemoryContent(event.target.value)}
-                placeholder={t("settings:assistants.memory_ph")}
-              />
-              <div className="flex flex-col gap-2">
-                <Button
-                  type="button"
-                  onClick={() => void saveMemory()}
-                  disabled={!memoryContent.trim()}
-                >
-                  <Save className="size-4" />
-                  {editingMemoryId
-                    ? t("settings:assistants.update_memory", { id: editingMemoryId })
-                    : t("settings:assistants.add_memory")}
-                </Button>
-                {editingMemoryId ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setEditingMemoryId(null);
-                      setMemoryContent("");
-                    }}
-                  >
-                    {t("settings:assistants.cancel_edit")}
-                  </Button>
-                ) : null}
-                <div className="text-xs text-muted-foreground">
-                  {t("settings:assistants.memory_source", {
-                    source: draft.useGlobalMemory
-                      ? t("settings:assistants.source_global")
-                      : t("settings:assistants.source_current"),
-                    n: memories.length,
-                  })}
-                </div>
-              </div>
-            </div>
-            <div className="mt-3 max-h-64 space-y-2 overflow-auto">
-              {memories.length === 0 ? (
-                <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
-                  {t("settings:assistants.no_memory")}
-                </div>
-              ) : null}
-              {memories.map((memory) => (
-                <div
-                  key={memory.id}
-                  className="flex items-start gap-3 rounded-md border bg-muted/20 p-3"
-                >
-                  <div className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
-                    #{memory.id}
-                  </div>
-                  <div className="min-w-0 flex-1 whitespace-pre-wrap text-sm leading-relaxed">
-                    {memory.content}
-                  </div>
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    title={t("settings:assistants.edit_memory")}
-                    onClick={() => {
-                      setEditingMemoryId(memory.id);
-                      setMemoryContent(memory.content);
-                    }}
-                  >
-                    <NotebookText className="size-4" />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    title={t("settings:assistants.delete_memory_title")}
-                    onClick={() => void removeMemory(memory.id)}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </div>
+          {/* 1.3.2 记忆管理(含 enableMemory 开关)已移至独立的「记忆」板块,见 nav.memory */}
           <div className="rounded-md border p-3">
             <div className="text-sm font-medium">{t("settings:assistants.local_tools_title")}</div>
             <div className="mt-1 text-xs text-muted-foreground">

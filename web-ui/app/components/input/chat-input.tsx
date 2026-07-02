@@ -25,6 +25,7 @@ import { ModelList } from "~/components/input/model-list";
 import { ReasoningPickerButton } from "~/components/input/reasoning-picker";
 import { SearchPickerButton } from "~/components/input/search-picker";
 import { McpPickerButton } from "~/components/input/mcp-picker";
+import { MemoryBadge } from "~/components/memory/memory-badge";
 import { ExtensionPickerButton } from "~/components/input/extension-picker";
 import { useChatInputStore, useSettingsStore } from "~/stores";
 import { Button } from "~/components/ui/button";
@@ -812,6 +813,7 @@ function ChatInputInner({
               <ReasoningPickerButton disabled={!canSwitchModel} />
               <McpPickerButton disabled={!canSwitchModel} />
               <ExtensionPickerButton disabled={!canSwitchModel} />
+              <MemoryBadge />
               <QuickMessageButton
                 quickMessages={quickMessages}
                 disabled={!canUseQuickMessage}

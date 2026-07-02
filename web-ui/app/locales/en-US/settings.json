@@ -8,12 +8,27 @@
     "search": "Search services",
     "mcp": "MCP & extensions",
     "speech": "Speech",
+    "memory": "Memory",
     "data": "Data",
     "stats": "Statistics",
     "logs": "Request logs",
     "proxy": "Proxy & port",
     "about": "About",
     "donate": "Donate"
+  },
+  "memory": {
+    "write_strategy_title": "AI write strategy",
+    "strategy_ask": "Ask each time (default)",
+    "strategy_always_assistant": "Always save as assistant memory",
+    "strategy_always_global": "Always save as global memory",
+    "strategy_readonly": "Read-only (no auto-save)",
+    "global_title": "Global memories",
+    "assistant_title": "Assistant memories",
+    "enable_global": "Enable global memory",
+    "enable_memory": "Enable memory",
+    "add_placeholder": "Enter memory content…",
+    "unnamed_assistant": "Unnamed assistant",
+    "source_ai": "AI proposed"
   },
   "donate": {
     "title": "Donate",

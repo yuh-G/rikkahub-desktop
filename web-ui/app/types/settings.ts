@@ -286,6 +286,51 @@ export interface KeybindingEntry {
   enabled: boolean;
 }
 
+/** 记忆写入策略(1.3.2)。后端 memorySettings.writeStrategy 的前端镜像。 */
+export type WriteStrategy = "ask" | "always_assistant" | "always_global" | "readonly";
+
+export interface MemorySettings {
+  globalEnabled: boolean;
+  writeStrategy: WriteStrategy;
+}
+
+/** 一条记忆(运行时内部表示,含来源标记 source)。 */
+export interface MemoryEntry {
+  id: number;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+  source: "manual" | "ai";
+}
+
+/** 助手记忆分组(assistant_memory.json 结构,含助手名快照)。 */
+export interface AssistantMemoryGroup {
+  assistantId: string;
+  assistantName: string;
+  memories: MemoryEntry[];
+}
+
+/** 待确认记忆条目(模型提议,等用户处理)。 */
+export interface PendingEntry {
+  pendingId: string;
+  conversationId: string;
+  assistantId: string;
+  assistantName: string;
+  content: string;
+  proposedAt: number;
+  messageNodeId?: string;
+}
+
+/** memory SSE(/api/memory/stream)推送的完整快照。 */
+export interface MemorySnapshot {
+  globalEnabled: boolean;
+  writeStrategy: WriteStrategy;
+  globalMemories: MemoryEntry[];
+  assistantMemories: AssistantMemoryGroup[];
+  pending: PendingEntry[];
+  pendingCount: number;
+}
+
 /**
  * Global app settings. The backend pushes the full object via SSE on `/api/settings/stream`
  * whenever any field changes, and the SPA mirrors it into the Zustand settings slice.
@@ -331,5 +376,7 @@ export interface Settings {
   preferredPort?: number | null;
   /** 应用内快捷键绑定。PC-only(备份导出时后端剥离,Android 不可见)。 */
   keybindings?: Partial<Record<KeybindingAction, KeybindingEntry>>;
+  /** 1.3.2 记忆设置。globalEnabled 控制全局记忆层注入;writeStrategy 控制模型提议记忆的处理。 */
+  memorySettings?: MemorySettings;
   [key: string]: unknown;
 }

@@ -8,12 +8,27 @@
     "search": "搜索服务",
     "mcp": "MCP 与拓展",
     "speech": "语音",
+    "memory": "记忆",
     "data": "数据设置",
     "stats": "统计",
     "logs": "请求日志",
     "proxy": "代理与端口",
     "about": "关于",
     "donate": "赞助"
+  },
+  "memory": {
+    "write_strategy_title": "AI 写入策略",
+    "strategy_ask": "每次询问(默认)",
+    "strategy_always_assistant": "默认存为助手记忆",
+    "strategy_always_global": "默认存为全局记忆",
+    "strategy_readonly": "只读(不自动保存)",
+    "global_title": "全局记忆",
+    "assistant_title": "助手记忆",
+    "enable_global": "启用全局记忆",
+    "enable_memory": "启用记忆",
+    "add_placeholder": "输入记忆内容…",
+    "unnamed_assistant": "未命名助手",
+    "source_ai": "AI 提议"
   },
   "donate": {
     "title": "赞助",

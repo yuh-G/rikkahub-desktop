@@ -12,7 +12,7 @@ import { AnimatePresence, motion } from "motion/react";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Route } from "./+types/root";
-import { useSettingsStore, useSettingsSubscription } from "~/stores";
+import { useSettingsStore, useSettingsSubscription, useMemorySubscription } from "~/stores";
 import { useHotkeys } from "~/hooks/use-hotkeys";
 import "./app.css";
 import "./i18n";
@@ -119,6 +119,7 @@ function PageTransition({ children }: { children: React.ReactNode }) {
 
 function AppContent() {
   useSettingsSubscription();
+  useMemorySubscription();
   useHotkeys();
   const displaySetting = useSettingsStore((state) => state.settings?.displaySetting);
   React.useEffect(() => {
