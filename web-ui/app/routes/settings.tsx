@@ -413,10 +413,12 @@ function renderMessageTemplatePreview(
 function PasswordInput({
   value,
   onChange,
+  onBlur,
   placeholder,
 }: {
   value: string;
   onChange: (value: string) => void;
+  onBlur?: () => void;
   placeholder?: string;
 }) {
   const { t } = useTranslation();
@@ -426,6 +428,7 @@ function PasswordInput({
       <Input
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur}
         type={visible ? "text" : "password"}
         placeholder={placeholder}
         className="pr-10"
@@ -441,6 +444,103 @@ function PasswordInput({
       >
         {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
       </Button>
+    </div>
+  );
+}
+
+// 分隔符与后端 splitSearchApiKeys / APP KeyRoulette 一字一致(/[\s,]+/)。前端把字符串拆成多框编辑,
+// 写回时再 join 成单字符串——数据结构不变,备份/APP 兼容零感知。
+const SEARCH_KEY_SPLIT = /[\s,]+/;
+
+/** 搜索服务多 Key 编辑器:每框一个 key,末框额外有「+」追加,每框「×」删除。
+ *  测试结果按 key 精确匹配后内联显示绿勾/红叉(汇总区另有保留)。 */
+function SearchApiKeyList({
+  value,
+  onChange,
+  testEntries,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  testEntries: Array<{ key: string; status: "ok" | "fail"; failCode?: string }>;
+}) {
+  const { t } = useTranslation();
+  // 字符串 → 框数组。始终至少保留一个框(全空时给一个空框),保证可编辑。
+  const keys = React.useMemo(() => {
+    const parts = value.split(SEARCH_KEY_SPLIT).map((k) => k.trim()).filter(Boolean);
+    return parts.length > 0 ? parts : [""];
+  }, [value]);
+
+  // 写回:换行 join。换行属于 \s,与 /[\s,]+/ 兼容;key 不含换行,比逗号/空格更不易和 key 本身冲突。
+  const commit = (next: string[]) => onChange(next.join("\n"));
+  const update = (index: number, val: string) => {
+    const next = [...keys];
+    next[index] = val;
+    commit(next);
+  };
+  const add = () => commit([...keys, ""]);
+  const remove = (index: number) => {
+    if (keys.length <= 1) {
+      commit([""]); // 唯一框:删 = 清空,仍保留一个可编辑框
+      return;
+    }
+    commit(keys.filter((_, i) => i !== index));
+  };
+  // 失焦时收掉尾部连续空框(点 + 又没填)。中间空框不动——用户可能还要填。
+  const trimTrailingEmpty = () => {
+    let next = [...keys];
+    while (next.length > 1 && next[next.length - 1].trim() === "") next.pop();
+    if (next.length !== keys.length) commit(next);
+  };
+
+  return (
+    <div className="space-y-2">
+      {keys.map((key, index) => {
+        const isLast = index === keys.length - 1;
+        // 改了 key 后字符串变化,旧测试结果自动对不上、图标消失——符合预期。
+        const entry = key ? testEntries.find((e) => e.key === key) : undefined;
+        return (
+          <div key={index} className="flex items-center gap-2">
+            <div className="flex-1">
+              <PasswordInput value={key} onChange={(v) => update(index, v)} onBlur={trimTrailingEmpty} />
+            </div>
+            {entry ? (
+              entry.status === "ok" ? (
+                <CheckCircle2
+                  className="size-4 shrink-0 text-emerald-500"
+                  aria-label={t("settings:search.key_ok")}
+                />
+              ) : (
+                <XCircle
+                  className="size-4 shrink-0 text-destructive"
+                  aria-label={t(`settings:search.key_fail_${entry.failCode ?? "other"}`)}
+                />
+              )
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => remove(index)}
+              aria-label={t("settings:search.key_remove")}
+              title={t("settings:search.key_remove")}
+            >
+              <X className="size-4" />
+            </Button>
+            {isLast ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-xs"
+                onClick={add}
+                aria-label={t("settings:search.key_add")}
+                title={t("settings:search.key_add")}
+              >
+                <Plus className="size-4" />
+              </Button>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -3484,14 +3584,15 @@ function SearchSection({
               </Select>
             </label>
             {textValue(draft.type) !== "searxng" && textValue(draft.type) !== "custom_js" ? (
-              <label className="space-y-2 md:col-span-2">
+              <div className="space-y-2 md:col-span-2">
                 <span className="text-sm font-medium">API Key</span>
-                <PasswordInput
+                <SearchApiKeyList
                   value={textValue(draft.apiKey)}
                   onChange={(apiKey) => patchDraft({ apiKey })}
+                  testEntries={keyTestEntries}
                 />
                 <span className="text-xs text-muted-foreground">{t("settings:search.api_key_hint")}</span>
-              </label>
+              </div>
             ) : null}
             {textValue(draft.type) === "searxng" ? (
               <>
