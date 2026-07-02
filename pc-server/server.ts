@@ -198,6 +198,9 @@ interface Settings {
   // 应用内快捷键绑定。PC-only(备份导出时剥离,Android 不可见)。每个 action 映射到
   // { keys: string[]; enabled: boolean };zoomInOut 例外,只有 enabled(滚轮固定不可录制)。
   keybindings: Record<string, JsonValue>;
+  // 1.3.2 记忆设置。globalEnabled 控制全局记忆层是否注入各助手;writeStrategy 控制模型
+  // 提议记忆时的处理方式。详见 记忆系统重构方案.md §5.3、§6.5。
+  memorySettings: MemorySettings;
 }
 
 interface AsrProvider {
@@ -258,6 +261,18 @@ interface AssistantMemory {
   content: string;
   createdAt: number;
   updatedAt: number;
+}
+
+// 记忆写入策略(模型提议记忆时应用如何处理)。阶段 3 启用,阶段 2 先加字段。
+// - "ask":进待确认队列,用户事后确认存哪层(默认)
+// - "always_assistant":直接存为当前助手记忆(助手层未启用则降级 ask)
+// - "always_global":直接存为全局记忆(全局未启用则降级 ask)
+// - "readonly":不暴露写入工具,只注入已有记忆
+type WriteStrategy = "ask" | "always_assistant" | "always_global" | "readonly";
+
+interface MemorySettings {
+  globalEnabled: boolean;       // 启用全局记忆层(注入 + 可写)
+  writeStrategy: WriteStrategy;
 }
 
 interface Conversation {
@@ -1123,6 +1138,12 @@ function defaultSettings(): Settings {
       // 滚轮缩放:binding 固定为 Ctrl+Wheel,无法录制,只有 enabled 开关。
       zoomInOut: { enabled: true },
     },
+    // 默认开启全局记忆层(叠加注入开箱可用)。老用户迁移时由 normalizeState 的 M1 逻辑
+    // 推断:若所有助手 enableMemory=false,改为 false(避免被动注入全局记忆)。
+    memorySettings: {
+      globalEnabled: true,
+      writeStrategy: "ask",
+    },
   };
 }
 
@@ -1197,6 +1218,25 @@ function normalizeState(input: Partial<State>): State {
       ? assistant.mcpToolOverrides as Record<string, Record<string, { enable?: boolean; needsApproval?: boolean }>>
       : {},
   }));
+  // memorySettings 规范化 + M1 迁移推断:老用户首次升级(settings 无 memorySettings)时,
+  // 若所有助手 enableMemory=false,globalEnabled 默认 false(避免被动注入全局,违背用户意愿);
+  // 否则默认 true。用户设过 memorySettings(存在)则保留,仅校验 writeStrategy 合法性。
+  {
+    const userMs = (parsedSettings as Record<string, unknown>).memorySettings;
+    if (isRecord(userMs)) {
+      const ws = String((userMs as Record<string, unknown>).writeStrategy ?? "ask");
+      normalized.settings.memorySettings = {
+        globalEnabled: (userMs as Record<string, unknown>).globalEnabled !== false,
+        writeStrategy: ws === "always_assistant" || ws === "always_global" || ws === "readonly"
+          ? (ws as WriteStrategy)
+          : "ask",
+      };
+    } else {
+      const allDisabled = normalized.settings.assistants.length > 0
+        && normalized.settings.assistants.every((a) => !a.enableMemory);
+      normalized.settings.memorySettings = { globalEnabled: !allDisabled, writeStrategy: "ask" };
+    }
+  }
   normalized.settings.displaySetting = { ...defaults.displaySetting, ...(normalized.settings.displaySetting ?? {}) };
   // Backfill keybindings:以默认表为基底,逐 action 用用户保存的条目覆盖。保证新增 action 自动补
   // 默认、过滤未知 action、且每条 entry 字段完整(即使用户手改 state.json 造成残缺,默认值兜底)。
@@ -3834,6 +3874,9 @@ function applyAndroidZipBackupFromPath(zipPath: string): { settingsImported: boo
         promptOptimizePrompt: pc.promptOptimizePrompt,
         // keybindings 是 PC-only 字段(APP 无对应),导入时必须保 PC 自定义,否则被 normalizeState 重置为默认。
         keybindings: pc.keybindings,
+        // memorySettings 同为 PC-only(APP Settings 无此字段),保 PC 设置,否则 normalizeState
+        // 的 M1 推断会覆盖用户的 globalEnabled 选择。
+        memorySettings: pc.memorySettings,
       } as State["settings"];
       const adjusted = rewriteAvatarsInSettings(merged, ANDROID_AVATAR_TYPE_TO_PC, "to-pc");
       state = normalizeState({ ...state, settings: adjusted as State["settings"] });
@@ -5920,9 +5963,16 @@ function timeReminderContent(current: Message, previous?: Message) {
   return `<time_reminder>Current time: ${weekday}, ${timeText} (${gapText} since last message)</time_reminder>`;
 }
 
-function memoriesForAssistant(assistant: Assistant) {
-  const assistantId = assistant.useGlobalMemory ? GLOBAL_MEMORY_ID : assistant.id;
-  return memoryStore.getMemoriesByAssistantId(assistantId);
+function memoriesForAssistant(assistant: Assistant): MemoryEntry[] {
+  // 叠加注入(1.3.2):助手层(assistant.enableMemory)+ 全局层(memorySettings.globalEnabled)。
+  // 替代旧的 useGlobalMemory 二选一——useGlobalMemory 字段废弃,运行时不再读(老值保留兼容)。
+  // 模型侧完全不感知层级存在(产品决策核心:叠加对模型透明)。
+  if (!assistant.enableMemory) return [];
+  const assistantMems = memoryStore.getAssistantMemories(assistant.id);
+  const globalMems = state.settings.memorySettings.globalEnabled
+    ? memoryStore.getGlobalMemories()
+    : [];
+  return [...globalMems, ...assistantMems].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 function buildMemoryPrompt(assistant: Assistant) {
