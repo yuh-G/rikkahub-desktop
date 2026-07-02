@@ -1,18 +1,24 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Brain, Trash2, Globe, Bot, MessageSquare } from "lucide-react";
+import { Bot, Globe, MessageSquare, Sparkles, Trash2 } from "lucide-react";
 
 import api from "~/services/api";
 import { useMemoryStore, useSettingsStore } from "~/stores";
 import type { PendingEntry } from "~/types";
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
-import { Popover, PopoverContent, PopoverTrigger } from "~/components/ui/popover";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import { cn } from "~/lib/utils";
 
-// 单条 pending:可编辑 textarea + 三按钮(存全局/存助手/丢弃)。
-// "存为助手"显式依赖入队时的 assistantId 快照(可能不是当前会话助手),由后端按 pendingId 定位。
-// 若该助手已被删除(I2),"存为助手"灰掉——避免存出挂在"未知助手"下的孤儿记忆。
+// 单条 pending:元信息一行(弱) + 可编辑内容(主) + 两主一次的动作区。
+// "存为助手"依赖入队时的 assistantId 快照(可能不是当前会话助手),后端按 pendingId 定位。
+// 该助手已删除(I2)时"存为助手"灰掉——避免存出挂在"未知助手"下的孤儿记忆。
 function PendingCard({ entry, globalEnabled, assistantExists }: {
   entry: PendingEntry;
   globalEnabled: boolean;
@@ -20,38 +26,76 @@ function PendingCard({ entry, globalEnabled, assistantExists }: {
 }) {
   const { t } = useTranslation();
   const [content, setContent] = React.useState(entry.content);
+  const [busy, setBusy] = React.useState(false);
   React.useEffect(() => setContent(entry.content), [entry.content]);
 
   const resolve = async (action: "global" | "assistant" | "discard") => {
-    await api.post(`memory/pending/${entry.pendingId}`, { action, content: content.trim() });
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.post(`memory/pending/${entry.pendingId}`, { action, content: content.trim() });
+    } finally {
+      setBusy(false);
+    }
   };
+
   return (
-    <div className="space-y-2 rounded-md border p-2">
-      <div className="text-xs text-muted-foreground">
-        {entry.assistantName} · {new Date(entry.proposedAt).toLocaleString()}
+    <div className="group rounded-xl border bg-card p-3 shadow-float transition-shadow hover:shadow-card">
+      {/* 可编辑内容(主体):无边框贴底,像便签,聚焦时才描边 */}
+      <Textarea
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        rows={2}
+        className="min-h-0 resize-none border-0 bg-transparent p-0 text-sm leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
+      />
+
+      {/* 元信息:助手 · 来源会话 · 时间,单行弱化 */}
+      <div className="mt-2 flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
+        <Bot className="size-3 shrink-0" />
+        <span className="shrink-0">{entry.assistantName}</span>
+        {entry.conversationTitle && (
+          <>
+            <span className="text-muted-foreground/40">·</span>
+            <MessageSquare className="size-3 shrink-0" />
+            <span className="min-w-0 truncate" title={entry.conversationTitle}>
+              {entry.conversationTitle}
+            </span>
+          </>
+        )}
       </div>
-      {entry.conversationTitle && (
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <MessageSquare className="size-3 shrink-0" />
-          <span className="min-w-0 truncate" title={entry.conversationTitle}>{entry.conversationTitle}</span>
-        </div>
-      )}
-      <Textarea value={content} onChange={(e) => setContent(e.target.value)} rows={2} className="text-sm" />
-      <div className="flex gap-1">
-        <Button size="sm" variant="outline" disabled={!globalEnabled} onClick={() => void resolve("global")}>
-          <Globe className="size-3" />{t("message:memory.save_global")}
+
+      {/* 动作区:两主一次。长文案有足够横向空间,不溢出。 */}
+      <div className="mt-2.5 flex items-center gap-1.5">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 flex-1"
+          disabled={!globalEnabled || busy}
+          onClick={() => void resolve("global")}
+        >
+          <Globe className="size-3.5" />
+          {t("message:memory.save_global")}
         </Button>
         <Button
           size="sm"
           variant="outline"
-          disabled={!assistantExists}
+          className="h-8 flex-1"
+          disabled={!assistantExists || busy}
           title={!assistantExists ? t("message:memory.save_assistant_disabled") : undefined}
           onClick={() => void resolve("assistant")}
         >
-          <Bot className="size-3" />{t("message:memory.save_assistant")}
+          <Bot className="size-3.5" />
+          {t("message:memory.save_assistant")}
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => void resolve("discard")}>
-          <Trash2 className="size-3" />
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+          disabled={busy}
+          title={t("message:memory.discard")}
+          onClick={() => void resolve("discard")}
+        >
+          <Trash2 className="size-3.5" />
         </Button>
       </div>
     </div>
@@ -59,8 +103,9 @@ function PendingCard({ entry, globalEnabled, assistantExists }: {
 }
 
 /**
- * 会话页待确认记忆徽章。pendingCount > 0 时显示;点击展开确认面板(批量 + 逐条处理)。
- * 样式参考方案 §11.3:品牌色数字气泡(非红,记忆确认非危险),脉冲暂未实现(v1 简化)。
+ * 会话页待确认记忆提醒。挂在输入框卡片右上角外沿,像现代应用的消息提醒。
+ * 软胶囊卡片(白底 + 微阴影 + Sparkles + "N 条待确认"),信息明确又克制。
+ * pendingCount > 0 时显示;点击弹出居中 Dialog(批量 + 逐条处理)。
  * 数据来自 memory SSE store,处理后后端 broadcast,store 自动刷新。
  */
 export function MemoryBadge() {
@@ -68,14 +113,14 @@ export function MemoryBadge() {
   const snapshot = useMemoryStore((s) => s.snapshot);
   const assistants = useSettingsStore((s) => s.settings?.assistants ?? []);
   const [open, setOpen] = React.useState(false);
-  // U1:pendingCount 增加时短暂脉冲(~2s 后停),不持续打扰。仅追踪增加(减少 = 用户已处理)。
+  // 新增待确认时外圈光晕扩散(ping)~5s 后停,平时安静。仅追踪增加(减少 = 用户已处理)。
   const prevCount = React.useRef(snapshot?.pendingCount ?? 0);
   const [pulse, setPulse] = React.useState(false);
   React.useEffect(() => {
     const cur = snapshot?.pendingCount ?? 0;
     if (cur > prevCount.current) {
       setPulse(true);
-      const timer = setTimeout(() => setPulse(false), 2000);
+      const timer = setTimeout(() => setPulse(false), 5000);
       prevCount.current = cur;
       return () => clearTimeout(timer);
     }
@@ -92,35 +137,76 @@ export function MemoryBadge() {
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            "relative inline-flex h-8 items-center rounded-md border bg-background px-2 text-foreground transition-colors hover:bg-accent",
-            pulse && "animate-pulse ring-2 ring-primary ring-offset-1",
-          )}
-          title={t("message:memory.pending_tooltip", { n: snapshot.pendingCount })}
-        >
-          <Brain className="size-4 text-primary" />
-          <span className="ml-1 text-xs font-medium">{snapshot.pendingCount}</span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-96" align="end">
-        <div className="space-y-2">
-          <div className="text-sm font-medium">{t("message:memory.pending_title", { n: snapshot.pendingCount })}</div>
-          <div className="flex gap-1">
-            <Button size="sm" variant="outline" className="flex-1" onClick={() => void batch("assistant")}>
-              {t("message:memory.batch_assistant")}
-            </Button>
-            <Button size="sm" variant="outline" className="flex-1" disabled={!globalEnabled} onClick={() => void batch("global")}>
+    <>
+      {/* 软胶囊提醒:白底 + 微阴影,新增时外圈光晕扩散一次。 */}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title={t("message:memory.pending_tooltip", { n: snapshot.pendingCount })}
+        className={cn(
+          // 品牌色系软胶囊:淡品牌底 + 品牌描边 + 品牌文字,是工具栏区域里唯一带色的元素,
+          // 天然吸睛保证不被忽略;但半透明淡底而非实心,仍然克制。
+          "relative inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 py-1 pl-2 pr-2.5 text-xs font-semibold text-primary shadow-card backdrop-blur-sm transition-all hover:-translate-y-px hover:bg-primary/15 hover:shadow-elevated",
+        )}
+      >
+        {/* 新增时:外圈光晕扩散一次(~5s)。平时:图标常驻轻微呼吸,保证任何时候瞥到都能注意到。 */}
+        {pulse && (
+          <span className="absolute -inset-1 animate-ping rounded-full bg-primary/25" aria-hidden />
+        )}
+        <span className="relative flex size-3.5 items-center justify-center">
+          <Sparkles className={cn("size-3.5", !pulse && "animate-pulse")} />
+        </span>
+        <span className="leading-none">
+          {t("message:memory.pending_tooltip", { n: snapshot.pendingCount })}
+        </span>
+      </button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-lg gap-0 p-0">
+          <DialogHeader className="space-y-1 border-b px-5 py-4">
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="size-4 text-primary" />
+              {t("message:memory.pending_title")}
+            </DialogTitle>
+            <DialogDescription>
+              {t("message:memory.pending_subtitle", { n: snapshot.pendingCount })}
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* 批量操作条:三个带图标的 ghost 按钮铺满一行,轻量,与逐条动作区分开。 */}
+          <div className="flex items-center gap-1.5 border-b bg-muted/30 px-4 py-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 flex-1 text-xs text-muted-foreground hover:text-foreground"
+              disabled={!globalEnabled}
+              onClick={() => void batch("global")}
+            >
+              <Globe className="size-3.5" />
               {t("message:memory.batch_global")}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => void batch("discard")}>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 flex-1 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => void batch("assistant")}
+            >
+              <Bot className="size-3.5" />
+              {t("message:memory.batch_assistant")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 flex-1 text-xs text-muted-foreground hover:text-destructive"
+              onClick={() => void batch("discard")}
+            >
+              <Trash2 className="size-3.5" />
               {t("message:memory.batch_discard")}
             </Button>
           </div>
-          <div className="max-h-96 space-y-2 overflow-auto">
+
+          {/* 逐条列表 */}
+          <div className="max-h-[52vh] space-y-2.5 overflow-y-auto px-5 py-4">
             {snapshot.pending.map((p) => (
               <PendingCard
                 key={p.pendingId}
@@ -130,8 +216,8 @@ export function MemoryBadge() {
               />
             ))}
           </div>
-        </div>
-      </PopoverContent>
-    </Popover>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

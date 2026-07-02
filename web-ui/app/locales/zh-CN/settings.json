@@ -17,6 +17,14 @@
     "donate": "赞助"
   },
   "memory": {
+    "title": "记忆",
+    "subtitle": "管理全局与助手记忆,设置 AI 何时把对话内容记下来。",
+    "write_strategy_subtitle": "AI 想记住新内容时如何处理。",
+    "global_subtitle": "对所有助手生效的通用记忆。",
+    "assistant_subtitle": "仅在对应助手的对话中生效。",
+    "batch_edit_hint": "编辑原始 JSON",
+    "empty_global": "还没有全局记忆。",
+    "empty_assistant": "该助手还没有记忆。",
     "write_strategy_title": "AI 写入策略",
     "strategy_ask": "每次询问(默认)",
     "strategy_always_assistant": "默认存为助手记忆",

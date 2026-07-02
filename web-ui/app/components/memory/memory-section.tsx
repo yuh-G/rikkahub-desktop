@@ -1,11 +1,18 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Brain, Plus, Trash2, Pencil, Check, X } from "lucide-react";
+import { Brain, Plus, Trash2, Pencil, Check, X, FileJson } from "lucide-react";
 
 import api from "~/services/api";
 import { useMemoryStore } from "~/stores";
 import type { Settings, MemoryEntry, WriteStrategy } from "~/types";
-import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "~/components/ui/card";
 import { Switch } from "~/components/ui/switch";
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
@@ -146,14 +153,26 @@ export function MemorySection({
 
   return (
     <div className="space-y-4">
+      {/* 板块头部:与其它设置板块同构(图标框 + 大标题 + 副标题),统一设计语言。 */}
+      <div className="mb-6 flex items-start gap-3">
+        <div className="rounded-md border bg-card p-2">
+          <Brain className="size-5" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-semibold tracking-normal">{t("settings:memory.title")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t("settings:memory.subtitle")}</p>
+        </div>
+      </div>
+
       {/* 卡片 0:AI 写入策略 */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Brain className="size-4" />{t("settings:memory.write_strategy_title")}</CardTitle>
+          <CardTitle>{t("settings:memory.write_strategy_title")}</CardTitle>
+          <CardDescription>{t("settings:memory.write_strategy_subtitle")}</CardDescription>
         </CardHeader>
         <CardContent>
           <Select value={ms.writeStrategy} onValueChange={(v) => void updateMemorySettings({ writeStrategy: v as WriteStrategy })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full sm:w-72"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="ask">{t("settings:memory.strategy_ask")}</SelectItem>
               <SelectItem value="always_assistant">{t("settings:memory.strategy_always_assistant")}</SelectItem>
@@ -166,21 +185,34 @@ export function MemorySection({
 
       {/* 卡片 1:全局记忆 */}
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle>{t("settings:memory.global_title")}</CardTitle>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => openBatch("global")}>{t("settings:memory.batch_edit")}</Button>
-            <span className="text-sm text-muted-foreground">{t("settings:memory.enable_global")}</span>
-            <Switch checked={ms.globalEnabled} onCheckedChange={(v) => void updateMemorySettings({ globalEnabled: v })} />
-          </div>
+          <CardDescription>{t("settings:memory.global_subtitle")}</CardDescription>
+          <CardAction>
+            <div className="flex items-center gap-1">
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-8 text-muted-foreground"
+                title={t("settings:memory.batch_edit_hint")}
+                onClick={() => openBatch("global")}
+              >
+                <FileJson className="size-4" />
+              </Button>
+              <Switch checked={ms.globalEnabled} onCheckedChange={(v) => void updateMemorySettings({ globalEnabled: v })} />
+            </div>
+          </CardAction>
         </CardHeader>
         <CardContent className={ms.globalEnabled ? "space-y-2" : "space-y-2 opacity-50"}>
+          {snapshot.globalMemories.length === 0 && (
+            <div className="py-1 text-sm text-muted-foreground">{t("settings:memory.empty_global")}</div>
+          )}
           {snapshot.globalMemories.map((m) => (
             <MemoryItem key={m.id} entry={m} scope="global" />
           ))}
           {ms.globalEnabled && (
-            <div className="flex gap-2">
-              <Textarea value={newGlobal} onChange={(e) => setNewGlobal(e.target.value)} rows={1} placeholder={t("settings:memory.add_placeholder")} />
+            <div className="flex gap-2 pt-1">
+              <Textarea value={newGlobal} onChange={(e) => setNewGlobal(e.target.value)} rows={1} placeholder={t("settings:memory.add_placeholder")} className="resize-none" />
               <Button size="icon" onClick={() => void addGlobal()}><Plus className="size-4" /></Button>
             </div>
           )}
@@ -189,9 +221,20 @@ export function MemorySection({
 
       {/* 卡片 2:助手记忆 */}
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle>{t("settings:memory.assistant_title")}</CardTitle>
-          <Button size="sm" variant="ghost" onClick={() => openBatch("assistant")}>{t("settings:memory.batch_edit")}</Button>
+          <CardDescription>{t("settings:memory.assistant_subtitle")}</CardDescription>
+          <CardAction>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-8 text-muted-foreground"
+              title={t("settings:memory.batch_edit_hint")}
+              onClick={() => openBatch("assistant")}
+            >
+              <FileJson className="size-4" />
+            </Button>
+          </CardAction>
         </CardHeader>
         <CardContent className="space-y-4">
           <Input
@@ -204,7 +247,7 @@ export function MemorySection({
             const group = snapshot.assistantMemories.find((g) => g.assistantId === a.id);
             const mems = group?.memories ?? [];
             return (
-              <div key={a.id} className="space-y-2">
+              <div key={a.id} className="space-y-2 border-t pt-3 first:border-t-0 first:pt-0">
                 <div className="flex items-center justify-between">
                   <div className="font-medium">{a.name || t("settings:memory.unnamed_assistant")}</div>
                   <div className="flex items-center gap-2">
@@ -214,6 +257,9 @@ export function MemorySection({
                 </div>
                 {a.enableMemory === true && (
                   <div className="space-y-1.5 pl-2">
+                    {mems.length === 0 && (
+                      <div className="text-sm text-muted-foreground">{t("settings:memory.empty_assistant")}</div>
+                    )}
                     {mems.map((m) => (
                       <MemoryItem key={m.id} entry={m} scope="assistant" assistantId={a.id} />
                     ))}
@@ -223,6 +269,7 @@ export function MemorySection({
                         onChange={(e) => setNewByAssistant((m) => ({ ...m, [a.id]: e.target.value }))}
                         rows={1}
                         placeholder={t("settings:memory.add_placeholder")}
+                        className="resize-none"
                       />
                       <Button size="icon" onClick={() => void addAssistant(a.id)}><Plus className="size-4" /></Button>
                     </div>

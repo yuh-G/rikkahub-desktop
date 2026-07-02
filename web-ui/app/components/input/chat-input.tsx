@@ -628,6 +628,10 @@ function ChatInputInner({
           <div className="h-1 w-10 rounded-full bg-border/70 transition-colors hover:bg-primary/50" />
         </div>
         <div className="relative flex flex-col gap-2 rounded-2xl border bg-card p-3 shadow-lg transition-shadow focus-within:shadow-elevated focus-within:ring-1 focus-within:ring-ring">
+          {/* 待确认记忆提醒角标:浮在输入框右上角外沿,像消息提醒。仅有待确认项时渲染。 */}
+          <div className="absolute -top-4 right-2 z-10">
+            <MemoryBadge />
+          </div>
           {isEditing ? (
             <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
               <span className="text-primary">{t("chat.editing_tip")}</span>
@@ -813,7 +817,6 @@ function ChatInputInner({
               <ReasoningPickerButton disabled={!canSwitchModel} />
               <McpPickerButton disabled={!canSwitchModel} />
               <ExtensionPickerButton disabled={!canSwitchModel} />
-              <MemoryBadge />
               <QuickMessageButton
                 quickMessages={quickMessages}
                 disabled={!canUseQuickMessage}

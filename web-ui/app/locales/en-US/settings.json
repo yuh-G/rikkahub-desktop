@@ -17,6 +17,14 @@
     "donate": "Donate"
   },
   "memory": {
+    "title": "Memory",
+    "subtitle": "Manage global and assistant memories, and control when the AI remembers.",
+    "write_strategy_subtitle": "How to handle new things the AI wants to remember.",
+    "global_subtitle": "Shared memories that apply to every assistant.",
+    "assistant_subtitle": "Only apply within the matching assistant's chats.",
+    "batch_edit_hint": "Edit raw JSON",
+    "empty_global": "No global memories yet.",
+    "empty_assistant": "This assistant has no memories yet.",
     "write_strategy_title": "AI write strategy",
     "strategy_ask": "Ask each time (default)",
     "strategy_always_assistant": "Always save as assistant memory",

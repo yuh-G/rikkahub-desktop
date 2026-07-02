@@ -61,14 +61,17 @@
     "export_image_watermark": "由 Rikkahub 生成 · rikka-ai.com"
   },
   "memory": {
-    "pending_title": "待确认的记忆({{n}} 条)",
-    "pending_tooltip": "{{n}} 条记忆待确认",
+    "pending_title": "待确认的记忆",
+    "pending_subtitle": "AI 从对话里记下了 {{n}} 条,确认后才会真正保存。",
+    "pending_tooltip": "{{n}} 条待确认",
     "batch_assistant": "全部存为助手",
     "batch_global": "全部存为全局",
-    "batch_discard": "全部丢弃",
-    "save_global": "全局",
-    "save_assistant": "助手",
-    "save_assistant_disabled": "该助手已被删除"
+    "batch_discard": "全部不存",
+    "save_global": "保存为全局记忆",
+    "save_assistant": "保存为助手记忆",
+    "discard": "不存入",
+    "save_assistant_disabled": "该助手已被删除",
+    "from_conversation": "来自对话"
   },
   "tool_part": {
     "memory_create": "创建记忆",
