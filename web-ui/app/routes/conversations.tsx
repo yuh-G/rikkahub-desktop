@@ -1771,8 +1771,8 @@ function ConversationsPageInner() {
           onStop={activeId ? handleStop : undefined}
           onExportConversation={
             detail && detail.messages.length > 0
-              ? (includeReasoning: boolean) => {
-                  const content = convertConversationToMarkdown(detail, includeReasoning);
+              ? async (includeReasoning: boolean) => {
+                  const content = await convertConversationToMarkdown(detail, includeReasoning);
                   const filename = safeMarkdownFilename(detail.title || "conversation");
                   downloadMarkdown(content, filename);
                 }

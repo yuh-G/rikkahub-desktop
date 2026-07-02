@@ -47,13 +47,31 @@ export function ShareExportDialog({
   const { t } = useTranslation("message");
   const [expandReasoning, setExpandReasoning] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
+  const [mdExporting, setMdExporting] = React.useState(false);
   const imageRef = React.useRef<HTMLDivElement>(null);
 
-  const handleExportMarkdown = () => {
-    const content = convertMessagesToMarkdown(messages, expandReasoning, title);
+  const handleExportMarkdown = async () => {
+    if (mdExporting) return;
+    setMdExporting(true);
     const filename = safeMarkdownFilename(title || "conversation");
-    downloadMarkdown(content, filename);
-    onOpenChange(false);
+    try {
+      // convertMessagesToMarkdown 会把每张图 fetch 成 base64 内联,图片多/大时可能要几秒
+      const content = await convertMessagesToMarkdown(messages, expandReasoning, title);
+      downloadMarkdown(content, filename);
+      toast.success(t("chat_message.export_success_md"), {
+        description: t("chat_message.export_success_desc", { filename }),
+        duration: 7000,
+      });
+      onOpenChange(false);
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : t("chat_message.export_image_failed", "导出失败"),
+      );
+    } finally {
+      setMdExporting(false);
+    }
   };
 
   const handleExportImage = async () => {
@@ -74,6 +92,10 @@ export function ShareExportDialog({
       });
       const filename = safeMarkdownFilename(title || "conversation").replace(/\.md$/, ".png");
       downloadDataUrl(dataUrl, filename);
+      toast.success(t("chat_message.export_success_image"), {
+        description: t("chat_message.export_success_desc", { filename }),
+        duration: 7000,
+      });
       onOpenChange(false);
     } catch (err) {
       toast.error(
@@ -117,8 +139,17 @@ export function ShareExportDialog({
           </DialogHeader>
 
           <div className="flex flex-col gap-3 py-2">
-            <Button variant="outline" className="justify-start" onClick={handleExportMarkdown}>
-              <FileDown className="size-4" />
+            <Button
+              variant="outline"
+              className="justify-start"
+              onClick={handleExportMarkdown}
+              disabled={mdExporting}
+            >
+              {mdExporting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <FileDown className="size-4" />
+              )}
               {t("chat_message.export_markdown", "导出为 Markdown")}
             </Button>
 

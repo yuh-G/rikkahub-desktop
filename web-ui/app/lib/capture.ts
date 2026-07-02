@@ -23,6 +23,28 @@ async function waitForFonts(timeoutMs = 1500): Promise<void> {
 }
 
 /**
+ * 等容器内所有 <img> 加载完毕(或单张超时)。分享图里的 app logo / 模型 icon /
+ * 用户头像 / 消息配图 / 文档缩略图都是异步资源,不等完会让 html-to-image 截出空位。
+ * warmup 的预载只触发请求不保证解码完成,这里显式等 load/error 事件更稳。
+ */
+async function waitForImages(node: HTMLElement, timeoutMs = 3000): Promise<void> {
+  const imgs = Array.from(node.querySelectorAll("img"));
+  if (imgs.length === 0) return;
+  await Promise.all(
+    imgs.map((img) => {
+      if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+      return Promise.race([
+        new Promise<void>((resolve) => {
+          img.addEventListener("load", () => resolve(), { once: true });
+          img.addEventListener("error", () => resolve(), { once: true });
+        }),
+        new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+      ]);
+    }),
+  );
+}
+
+/**
  * 默认 filter:跳过标记了 `data-export-ignore="true"` 的节点(导出图里要剔除的元素,
  * 例如选择模式的勾选框),以及 display:none 的节点(html-to-image 默认仍会遍历到)。
  */
@@ -51,6 +73,7 @@ export async function captureNodeAsPng(
   const { pixelRatio = 2, backgroundColor, filter = defaultFilter } = options;
 
   await waitForFonts();
+  await waitForImages(node);
 
   const width = node.scrollWidth;
   const height = node.scrollHeight;
