@@ -340,9 +340,11 @@ interface State {
   generatedImages: GeneratedImage[];
   logs: RequestLog[];
   stats: RequestStats;
-  memories: AssistantMemory[];
+  // 1.3.2 起,记忆由 memoryStore 管理(memory/ 目录),不再落进 state.json。这两个字段
+  // 保留 optional 仅为兼容 normalizeState 解析旧 state.json / 备份 incoming;迁移完成后从 state delete。
+  memories?: AssistantMemory[];
   nextFileId: number;
-  nextMemoryId: number;
+  nextMemoryId?: number;
   nextGeneratedImageId: number;
   launchCount: number;
   // 一次性迁移记录。每个已应用的迁移 id 存一次,防止启动时反复执行会覆盖用户后续
@@ -1132,9 +1134,7 @@ function defaultState(): State {
     generatedImages: [],
     logs: [],
     stats: defaultRequestStats(),
-    memories: [],
     nextFileId: 1,
-    nextMemoryId: 1,
     nextGeneratedImageId: 1,
     launchCount: 0,
   };
@@ -1304,7 +1304,7 @@ function normalizeState(input: Partial<State>): State {
   );
   normalized.nextMemoryId = Math.max(
     normalized.nextMemoryId,
-    ...normalized.memories.map((memory) => memory.id + 1),
+    ...(normalized.memories ?? []).map((memory) => memory.id + 1),
     1,
   );
   normalized.nextGeneratedImageId = Math.max(
@@ -1508,6 +1508,438 @@ function normalizeTtsProviders(value: unknown): TtsProvider[] {
 const CONVERSATIONS_SQLITE_MIGRATION = "conversations-sqlite-1.2.6";
 let conversationsDb: InstanceType<typeof Database> | null = null;
 
+// 记忆文件拆分迁移标记(1.3.2)。写入 state.appliedMigrations 后,memories / nextMemoryId
+// 不再落进 state.json(瘦身),memory/ 目录成为记忆唯一来源。⚠️ 同
+// CONVERSATIONS_SQLITE_MIGRATION 一样,此声明必须在 `let state = loadState()` 之前——
+// loadState 会读它。const 不提升(TDZ),放在 loadState 之后会 ReferenceError。
+const MEMORY_FILE_SPLIT_MIGRATION = "memory-file-split-1.3.2";
+
+// ============================================================================
+// 记忆存储层(1.3.2 引入)
+//
+// 记忆从 state.json 分离到 pc-data/memory/ 目录,三个 JSON 文件独立管理:
+//   global_memory.json     全局记忆 + nextMemoryId 全局计数器
+//   assistant_memory.json  所有助手记忆(按 assistantId 分组,带助手名快照)
+//   pending_memory.json    待确认队列(阶段 3 启用,阶段 1 预留结构)
+//
+// 本层是所有记忆读写的唯一入口,屏蔽文件细节。设计要点:
+//   - 全量内存缓存,写入双写(内存 + 原子落盘);读取走内存索引,零 IO
+//   - 原子 temp-rename 写(复用 state.json 的 8 次重试模式),绝不直接覆盖
+//   - 串行化写队列:同一时刻只有一个写操作进行,防 AI 写入与批量编辑/导入并发交错
+//   - S1 不变式:nextMemoryId 启动重算 = max(已落盘记忆 id)+1,不信任持久化值。
+//     addMemory 先自增计数器再写记忆(内存序),persistAll 先写 global(计数器)再写
+//     assistant——崩在任意点,recompute 都能自愈,已落盘 id 永不重用。
+// ============================================================================
+
+const memoryDir = join(dataDir, "memory");
+const globalMemoryPath = join(memoryDir, "global_memory.json");
+const assistantMemoryPath = join(memoryDir, "assistant_memory.json");
+const pendingMemoryPath = join(memoryDir, "pending_memory.json");
+
+interface MemoryEntry {
+  id: number;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+  // 来源标记(非跨端契约,备份导出时丢弃)。语义:用户手动新增/编辑过 → "manual";
+  // 模型提议且用户原样确认 → "ai"。任何手动编辑都置 manual,故 "ai" 徽章不会长期挂着已改动的记忆。
+  source: "manual" | "ai";
+}
+
+interface GlobalMemoryFile {
+  version: 1;
+  nextMemoryId: number;
+  memories: MemoryEntry[];
+}
+
+interface AssistantMemoryGroup {
+  assistantId: string;       // 权威键,不可变
+  assistantName: string;     // 显示快照,每次保存时从 settings 反查刷新;反查不到填 "未知助手"(M5)
+  memories: MemoryEntry[];
+}
+
+interface AssistantMemoryFile {
+  version: 1;
+  assistants: AssistantMemoryGroup[];
+}
+
+// 阶段 3 启用;阶段 1 仅预留文件结构与类型定义。
+interface PendingEntry {
+  pendingId: string;
+  conversationId: string;
+  assistantId: string;
+  assistantName: string;
+  content: string;
+  proposedAt: number;
+  messageNodeId?: string;
+}
+
+interface PendingMemoryFile {
+  version: 1;
+  pending: PendingEntry[];
+}
+
+interface AddMemoryInput {
+  scope: "global" | "assistant";
+  assistantId?: string;       // scope=assistant 时必填
+  content: string;
+  source?: "manual" | "ai";
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+const memoryStore = {
+  globalMemories: [] as MemoryEntry[],
+  assistantGroups: [] as AssistantMemoryGroup[],
+  pending: [] as PendingEntry[],
+  nextMemoryId: 1,
+  loaded: false,
+  // 串行化写队列:每次写操作排队,保证不并发写文件。批量编辑/AI 写入/导入都走这条队列。
+  writeQueue: Promise.resolve() as Promise<unknown>,
+
+  // ---------- 文件 IO ----------
+
+  /** 读 JSON;缺失/损坏降级为 fallback,绝不抛错(启动失败比数据丢失更可接受)。 */
+  readFile<T>(filePath: string, fallback: T): T {
+    if (!existsSync(filePath)) return fallback;
+    try {
+      const parsed = JSON.parse(readFileSync(filePath, "utf8"));
+      return parsed && typeof parsed === "object" ? { ...fallback, ...parsed } as T : fallback;
+    } catch (err) {
+      console.warn(`[memory] 文件解析失败,降级为默认(可能丢失数据):${filePath}`, err);
+      return fallback;
+    }
+  },
+
+  /** 同步原子 temp-rename 写(启动/迁移阶段用,不能异步)。8 次重试,对齐 state.json 模式。 */
+  writeJsonSync(filePath: string, data: unknown) {
+    mkdirSync(memoryDir, { recursive: true });
+    const content = JSON.stringify(data, null, 2);
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const tempPath = `${filePath}.${process.pid}.${Date.now()}.${attempt}.tmp`;
+      try {
+        writeFileSync(tempPath, content);
+        renameSync(tempPath, filePath);
+        return;
+      } catch (err) {
+        lastError = err;
+        try { unlinkSync(tempPath); } catch { /* best-effort cleanup */ }
+      }
+    }
+    console.warn(`[memory] 同步写入失败(已重试 8 次):${filePath}`, lastError);
+  },
+
+  /** 异步原子 temp-rename 写(运行时用)。Bun.write + fsPromises.rename,8 次重试。 */
+  async writeJsonAsync(filePath: string, data: unknown) {
+    mkdirSync(memoryDir, { recursive: true });
+    const content = JSON.stringify(data, null, 2);
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const tempPath = `${filePath}.${process.pid}.${Date.now()}.${attempt}.tmp`;
+      try {
+        await Bun.write(tempPath, content);
+        await fsPromises.rename(tempPath, filePath);
+        return;
+      } catch (err) {
+        lastError = err;
+        try { await fsPromises.unlink(tempPath); } catch { /* best-effort cleanup */ }
+        await new Promise<void>((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+      }
+    }
+    console.warn(`[memory] 异步写入失败(已重试 8 次):${filePath}`, lastError);
+  },
+
+  /** 把一次写任务推入串行队列。吞掉 reject 避免"一次失败永久污染队列"
+   *  (失败已在 task 内部 console.warn,这里只需不让它传播给后续 .then)。 */
+  enqueueWrite(task: () => Promise<unknown>): Promise<unknown> {
+    const run = this.writeQueue.then(task, task);
+    this.writeQueue = run.catch(() => {});
+    return run;
+  },
+
+  /** 全量落盘三个文件。先写 global(含 nextMemoryId 计数器)、再写 assistant/pending——
+   *  保证 S1 顺序:计数器先于记忆持久化。崩在 global 写完、assistant 写之前,
+   *  重启 recompute 会从不完整的 assistant 文件重算 nextMemoryId,已落盘 id 永不重用。 */
+  persistAll(): Promise<unknown> {
+    return this.enqueueWrite(async () => {
+      await this.writeJsonAsync(globalMemoryPath, {
+        version: 1,
+        nextMemoryId: this.nextMemoryId,
+        memories: this.globalMemories,
+      });
+      await this.writeJsonAsync(assistantMemoryPath, {
+        version: 1,
+        assistants: this.assistantGroups,
+      });
+      await this.writeJsonAsync(pendingMemoryPath, {
+        version: 1,
+        pending: this.pending,
+      });
+    });
+  },
+
+  // ---------- 启动加载与迁移 ----------
+
+  /** S1 兜底:nextMemoryId = max(所有现存记忆 id)+1。不信任持久化值——
+   *  无论崩溃发生在写入的哪一步,重启后都能自愈,杜绝 id 重用。 */
+  recomputeNextId() {
+    let max = 0;
+    for (const m of this.globalMemories) if (m.id > max) max = m.id;
+    for (const g of this.assistantGroups) for (const m of g.memories) if (m.id > max) max = m.id;
+    this.nextMemoryId = max + 1;
+  },
+
+  /** 从 settings.assistants 反查助手名,刷新 assistantName 快照。
+   *  反查不到(助手已删除)填 "未知助手"(M5),UI 归"已删除的助手"分组。 */
+  refreshAssistantNames(assistants: Assistant[]) {
+    const nameById = new Map<string, string>();
+    for (const a of assistants) nameById.set(a.id, a.name);
+    for (const group of this.assistantGroups) {
+      group.assistantName = nameById.get(group.assistantId) ?? "未知助手";
+    }
+  },
+
+  /** 已迁移:从 memory/ 目录加载到内存。启动阶段调用,传入当前 state(刷助手名快照)。 */
+  load(stateObj: State) {
+    const gmf = this.readFile<GlobalMemoryFile>(globalMemoryPath, { version: 1, nextMemoryId: 1, memories: [] });
+    this.globalMemories = Array.isArray(gmf.memories) ? gmf.memories : [];
+    const amf = this.readFile<AssistantMemoryFile>(assistantMemoryPath, { version: 1, assistants: [] });
+    this.assistantGroups = Array.isArray(amf.assistants) ? amf.assistants : [];
+    const pmf = this.readFile<PendingMemoryFile>(pendingMemoryPath, { version: 1, pending: [] });
+    this.pending = Array.isArray(pmf.pending) ? pmf.pending : [];
+    this.recomputeNextId();
+    this.refreshAssistantNames(stateObj.settings.assistants);
+    this.loaded = true;
+  },
+
+  /** 首次升级迁移:把旧 state.memories 搬到 memory/ 目录。保留原 id(PC 内部已全局唯一,
+   *  无冲突风险)。同步落盘(启动阶段不能异步),写入后 loaded=true。 */
+  migrateFromStateMemories(memories: AssistantMemory[], assistants: Assistant[]) {
+    this.globalMemories = [];
+    this.assistantGroups = [];
+    this.pending = [];
+    const nameById = new Map<string, string>();
+    for (const a of assistants) nameById.set(a.id, a.name);
+    const now = Date.now();
+    let maxId = 0;
+    for (const m of memories) {
+      const rawId = String(m.assistantId ?? GLOBAL_MEMORY_ID);
+      const assistantId = rawId === "global" ? GLOBAL_MEMORY_ID : rawId;
+      const content = String(m.content ?? "").trim();
+      if (!content) continue;
+      const entry: MemoryEntry = {
+        id: Number(m.id) || 1,
+        content,
+        createdAt: Number(m.createdAt) || now,
+        updatedAt: Number(m.updatedAt) || now,
+        source: "manual",  // 老数据无法判断来源,统一 manual
+      };
+      if (entry.id > maxId) maxId = entry.id;
+      if (assistantId === GLOBAL_MEMORY_ID) {
+        this.globalMemories.push(entry);
+      } else {
+        let group = this.assistantGroups.find((g) => g.assistantId === assistantId);
+        if (!group) {
+          group = { assistantId, assistantName: nameById.get(assistantId) ?? "未知助手", memories: [] };
+          this.assistantGroups.push(group);
+        }
+        group.memories.push(entry);
+      }
+    }
+    this.nextMemoryId = maxId + 1;
+    // 同步写三个文件(启动阶段);目录由 writeJsonSync 内部 mkdirSync 创建。
+    this.writeJsonSync(globalMemoryPath, { version: 1, nextMemoryId: this.nextMemoryId, memories: this.globalMemories });
+    this.writeJsonSync(assistantMemoryPath, { version: 1, assistants: this.assistantGroups });
+    this.writeJsonSync(pendingMemoryPath, { version: 1, pending: [] });
+    this.loaded = true;
+  },
+
+  // ---------- 读取 ----------
+
+  getGlobalMemories(): MemoryEntry[] { return this.globalMemories; },
+
+  getAssistantMemories(assistantId: string): MemoryEntry[] {
+    const group = this.assistantGroups.find((g) => g.assistantId === assistantId);
+    return group ? group.memories : [];
+  },
+
+  /** 按 assistantId 取记忆(注入用)。GLOBAL_MEMORY_ID → 全局层;其他 → 对应助手层。
+   *  阶段 1 仍服务于二选一注入(useGlobalMemory 决定传哪个 assistantId)。 */
+  getMemoriesByAssistantId(assistantId: string): MemoryEntry[] {
+    if (assistantId === GLOBAL_MEMORY_ID) return this.globalMemories;
+    return this.getAssistantMemories(assistantId);
+  },
+
+  getAllAssistantGroups(): AssistantMemoryGroup[] { return this.assistantGroups; },
+
+  getPending(): PendingEntry[] { return this.pending; },
+
+  /** 扁平化所有记忆为备份契约格式(无 source;全局的 assistantId 写 "__global__")。
+   *  这是 PC↔PC / APP↔PC 备份的外部契约,格式不可变([[backup-android-memory-table]])。 */
+  exportFlat(): AssistantMemory[] {
+    const flat: AssistantMemory[] = [];
+    for (const m of this.globalMemories) {
+      flat.push({ id: m.id, assistantId: GLOBAL_MEMORY_ID, content: m.content, createdAt: m.createdAt, updatedAt: m.updatedAt });
+    }
+    for (const g of this.assistantGroups) {
+      for (const m of g.memories) {
+        flat.push({ id: m.id, assistantId: g.assistantId, content: m.content, createdAt: m.createdAt, updatedAt: m.updatedAt });
+      }
+    }
+    return flat;
+  },
+
+  // ---------- 写入(运行时;全局 state 已就绪) ----------
+
+  /** 新增记忆。S1:内存层面先自增 nextMemoryId 再入队;persistAll 先写 global(计数器)
+   *  再写 assistant,保证计数器先于记忆持久化。返回新条目。 */
+  addMemory(input: AddMemoryInput): MemoryEntry {
+    const content = String(input.content ?? "").trim();
+    if (!content) throw new Error("content is required");
+    const now = Date.now();
+    const entry: MemoryEntry = {
+      id: this.nextMemoryId,
+      content,
+      createdAt: input.createdAt ?? now,
+      updatedAt: input.updatedAt ?? now,
+      source: input.source ?? "manual",
+    };
+    this.nextMemoryId += 1;
+    if (input.scope === "global") {
+      this.globalMemories.push(entry);
+    } else {
+      const assistantId = String(input.assistantId ?? "");
+      if (!assistantId) throw new Error("assistantId is required for assistant-scope memory");
+      let group = this.assistantGroups.find((g) => g.assistantId === assistantId);
+      if (!group) {
+        group = {
+          assistantId,
+          assistantName: state.settings.assistants.find((a) => a.id === assistantId)?.name ?? "未知助手",
+          memories: [],
+        };
+        this.assistantGroups.push(group);
+      }
+      group.memories.push(entry);
+    }
+    void this.persistAll();
+    return entry;
+  },
+
+  /** 全局唯一 id 定位 + 改内容。updatedAt 刷新。阶段 1 不改 source;阶段 3 加"编辑置 manual"。 */
+  updateMemory(memoryId: number, content: string): MemoryEntry {
+    const trimmed = String(content ?? "").trim();
+    if (!trimmed) throw new Error("content is required");
+    const entry = this.findEntryById(memoryId);
+    if (!entry) throw new Error(`Memory record #${memoryId} not found`);
+    entry.content = trimmed;
+    entry.updatedAt = Date.now();
+    void this.persistAll();
+    return entry;
+  },
+
+  /** 全局唯一 id 定位 + 删除。返回是否命中。 */
+  deleteMemory(memoryId: number): boolean {
+    const gbefore = this.globalMemories.length;
+    this.globalMemories = this.globalMemories.filter((m) => m.id !== memoryId);
+    if (this.globalMemories.length < gbefore) {
+      void this.persistAll();
+      return true;
+    }
+    for (const group of this.assistantGroups) {
+      const before = group.memories.length;
+      group.memories = group.memories.filter((m) => m.id !== memoryId);
+      if (group.memories.length < before) {
+        void this.persistAll();
+        return true;
+      }
+    }
+    return false;
+  },
+
+  /** 删除某助手的所有记忆(删除助手时调用)。返回删除条数。 */
+  deleteMemoriesByAssistant(assistantId: string): number {
+    const idx = this.assistantGroups.findIndex((g) => g.assistantId === assistantId);
+    if (idx < 0) return 0;
+    const count = this.assistantGroups[idx].memories.length;
+    this.assistantGroups.splice(idx, 1);
+    if (count > 0) void this.persistAll();
+    return count;
+  },
+
+  /** 按 (id AND assistantId) 双键定位——兼容旧 runMemoryTool / 旧 API 的二选一语义
+   *  (useGlobalMemory 决定 assistantId 是 GLOBAL_MEMORY_ID 还是助手自己的 id)。 */
+  findEntryByIdAndAssistant(memoryId: number, assistantId: string): MemoryEntry | undefined {
+    if (assistantId === GLOBAL_MEMORY_ID) {
+      return this.globalMemories.find((m) => m.id === memoryId);
+    }
+    const group = this.assistantGroups.find((g) => g.assistantId === assistantId);
+    return group?.memories.find((m) => m.id === memoryId);
+  },
+
+  findEntryById(memoryId: number): MemoryEntry | undefined {
+    for (const m of this.globalMemories) if (m.id === memoryId) return m;
+    for (const g of this.assistantGroups) for (const m of g.memories) if (m.id === memoryId) return m;
+    return undefined;
+  },
+
+  // ---------- 备份导入 ----------
+
+  /** 清空全部记忆(含 pending)。备份恢复 replace 语义用。 */
+  clearAll() {
+    this.globalMemories = [];
+    this.assistantGroups = [];
+    this.pending = [];
+    this.nextMemoryId = 1;
+  },
+
+  /** 批量导入扁平数组。
+   *  mode="replace":先 clearAll 再导入(PC 备份恢复——整体替换语义)
+   *  mode="merge":按 (assistantId, content) 去重并入(APP→PC 迁移——补充语义)
+   *  两种模式都重新分配 id(备份/APP 的 id 空间可能与当前冲突)。导入后 recompute 兜底。 */
+  importFlatMemories(flat: AssistantMemory[], mode: "replace" | "merge") {
+    if (mode === "replace") this.clearAll();
+    const seen = mode === "merge"
+      ? new Set(this.exportFlat().map((m) => `${m.assistantId} ${m.content}`))
+      : new Set<string>();
+    const now = Date.now();
+    for (const item of flat) {
+      const rawId = String(item.assistantId ?? GLOBAL_MEMORY_ID);
+      const assistantId = rawId === "global" ? GLOBAL_MEMORY_ID : rawId;
+      const content = String(item.content ?? "").trim();
+      if (!content) continue;
+      const key = `${assistantId} ${content}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // 直接构造内存对象(不经 addMemory,避免逐条触发 persistAll 的 IO 开销)。
+      const entry: MemoryEntry = {
+        id: this.nextMemoryId,
+        content,
+        createdAt: Number(item.createdAt) || now,
+        updatedAt: Number(item.updatedAt) || now,
+        source: "manual",  // 导入的记忆无法判断原 source,统一 manual
+      };
+      this.nextMemoryId += 1;
+      if (assistantId === GLOBAL_MEMORY_ID) {
+        this.globalMemories.push(entry);
+      } else {
+        let group = this.assistantGroups.find((g) => g.assistantId === assistantId);
+        if (!group) {
+          group = {
+            assistantId,
+            assistantName: state.settings.assistants.find((a) => a.id === assistantId)?.name ?? "未知助手",
+            memories: [],
+          };
+          this.assistantGroups.push(group);
+        }
+        group.memories.push(entry);
+      }
+    }
+    this.recomputeNextId();
+    void this.persistAll();
+  },
+};
+
 function loadState(): State {
   mkdirSync(filesDir, { recursive: true });
   mkdirSync(skillsDir, { recursive: true });
@@ -1546,7 +1978,87 @@ function loadState(): State {
 
   const state = normalizeState(parsed);
   state.conversations = conversations;
+  migrateMemoryFilesIfNeeded(state);
   return state;
+}
+
+/** 1.3.2 记忆迁移:把 state.memories 搬到 pc-data/memory/ 目录(三个 JSON 文件)。
+ *  迁移完成后 state 不再持有 memories / nextMemoryId(归 memoryStore 管理)。
+ *  S2 三道防线:(a) 备份 state.json → pre-memory-split.bak;(b) 迁移完成后立即同步写瘦
+ *  state.json(绕过 throttle,标记 + 排除第一时间落盘);(c) memory/ 目录已有数据则不覆盖
+ *  (上次半完成),改为从文件加载 + 补写标记,保留用户可能的新增数据。 */
+function migrateMemoryFilesIfNeeded(stateObj: State): void {
+  const appliedMigrations = Array.isArray(stateObj.appliedMigrations) ? stateObj.appliedMigrations : [];
+
+  // 已迁移:从 memory/ 目录加载,state 不持有 memories/nextMemoryId。
+  if (appliedMigrations.includes(MEMORY_FILE_SPLIT_MIGRATION)) {
+    memoryStore.load(stateObj);
+    delete stateObj.memories;
+    delete stateObj.nextMemoryId;
+    return;
+  }
+
+  // S2 防御(c):标记未写但 memory/ 已有数据——上次迁移半完成(写文件后、写标记前崩)。
+  // 不覆盖!从已有文件加载 + 补写标记,保留用户可能的新增数据。
+  if (existsSync(globalMemoryPath) || existsSync(assistantMemoryPath) || existsSync(pendingMemoryPath)) {
+    const gmfTemp = memoryStore.readFile<GlobalMemoryFile>(globalMemoryPath, { version: 1, nextMemoryId: 1, memories: [] });
+    const amfTemp = memoryStore.readFile<AssistantMemoryFile>(assistantMemoryPath, { version: 1, assistants: [] });
+    const hasData = (Array.isArray(gmfTemp.memories) && gmfTemp.memories.length > 0)
+      || (Array.isArray(amfTemp.assistants) && amfTemp.assistants.length > 0);
+    if (hasData) {
+      console.warn("[memory] 检测到上次迁移半完成,memory/ 已有数据,从文件加载(不覆盖)");
+      memoryStore.load(stateObj);
+      stateObj.appliedMigrations = [...appliedMigrations, MEMORY_FILE_SPLIT_MIGRATION];
+      delete stateObj.memories;
+      delete stateObj.nextMemoryId;
+      writeSlimStateJsonSyncForMemory(stateObj);
+      return;
+    }
+  }
+
+  // 正常首次迁移。S2(a):备份 state.json → pre-memory-split.bak(防覆盖已有备份)。
+  const bakPath = join(dataDir, "state.json.pre-memory-split.bak");
+  if (existsSync(statePath) && !existsSync(bakPath)) {
+    try {
+      copyFileSync(statePath, bakPath);
+    } catch (err) {
+      console.warn("[memory] pre-memory-split 备份失败(继续迁移)", err);
+    }
+  }
+
+  const memoriesToMigrate = Array.isArray(stateObj.memories) ? stateObj.memories : [];
+  console.log(`[memory] 首次升级:迁移 ${memoriesToMigrate.length} 条记忆到 memory/ 目录...`);
+  memoryStore.migrateFromStateMemories(memoriesToMigrate, stateObj.settings.assistants);
+
+  stateObj.appliedMigrations = [...appliedMigrations, MEMORY_FILE_SPLIT_MIGRATION];
+  delete stateObj.memories;
+  delete stateObj.nextMemoryId;
+
+  // S2(b):立即同步写瘦 state.json,把"标记已写 + memories 已排除"第一时间持久化,
+  // 把"已迁移但标记未落盘"的崩溃窗口压到几乎为零(对齐 migrateConversationsIfNeeded 的纪律)。
+  writeSlimStateJsonSyncForMemory(stateObj);
+  console.log("[memory] 记忆迁移完成");
+}
+
+/** 同步 temp+rename 写瘦 state.json,记忆迁移后立即落盘用(S2-b)。
+ *  排除 logs(始终内存态)、conversations(会话已迁移则不写,未迁移则保留——按标记判断)、
+ *  memories/nextMemoryId(调用前已 delete,不出现)。 */
+function writeSlimStateJsonSyncForMemory(data: State): void {
+  const convMigrated = Array.isArray(data.appliedMigrations)
+    && data.appliedMigrations.includes(CONVERSATIONS_SQLITE_MIGRATION);
+  const slimContent = JSON.stringify({
+    ...data,
+    logs: undefined,
+    ...(convMigrated ? { conversations: undefined } : {}),
+  });
+  const tempPath = `${statePath}.mem-migrate.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(tempPath, slimContent);
+    renameSync(tempPath, statePath);
+  } catch (err) {
+    try { unlinkSync(tempPath); } catch { /* best-effort cleanup */ }
+    console.warn("[memory] 写瘦 state.json 失败(内存已迁移,下次启动重试)", err);
+  }
 }
 
 function mergeById<T extends { id: string }>(current: T[], defaults: T[]): T[] {
@@ -1795,10 +2307,15 @@ async function performStateSave(): Promise<void> {
   // 会话永久丢失(详见 migrateConversationsIfNeeded 的方案 B 兜底)。
   const convSqliteMigrated = Array.isArray(state.appliedMigrations)
     && state.appliedMigrations.includes(CONVERSATIONS_SQLITE_MIGRATION);
+  const memoryFileSplit = Array.isArray(state.appliedMigrations)
+    && state.appliedMigrations.includes(MEMORY_FILE_SPLIT_MIGRATION);
+  // 与 conversations 同理:记忆迁移未完成时必须保留 state.memories,确保 state.json 始终
+  // 是合法的重试源(迁移失败下次启动重试);迁移完成后排除,瘦身且以 memory/ 为权威。
   const content = JSON.stringify({
     ...state,
     logs: undefined,
     ...(convSqliteMigrated ? { conversations: undefined } : {}),
+    ...(memoryFileSplit ? { memories: undefined, nextMemoryId: undefined } : {}),
   });
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -2948,7 +3465,7 @@ function backupPayloadMetadataOnly(settingsOverride?: Settings) {
       settings,
       generatedImages: state.generatedImages,
       files: state.files,
-      memories: state.memories,
+      memories: memoryStore.exportFlat(),
     },
     skills: exportSkills(),
     files: state.files.map((file) => ({
@@ -2968,6 +3485,19 @@ function applyBackupPayload(body: { state?: Partial<State>; skills?: unknown; fi
     throw new Error("Invalid backup file");
   }
   state = normalizeState(incoming);
+  // 记忆:整体替换语义(恢复备份 = 回到备份时的状态)。normalizeState 已把 incoming.memories
+  // 解析到 state.memories;交给 memoryStore 接管(replace:先清空再导入),然后从 state 移除。
+  // pending 一并清空(备份不含 pending,恢复即丢弃待确认队列——前端应在恢复前弹警告)。
+  const incomingMemories = Array.isArray(state.memories) ? state.memories : [];
+  memoryStore.importFlatMemories(incomingMemories, "replace");
+  delete state.memories;
+  delete state.nextMemoryId;
+  // 迁移标记:pc-backup.json 不导出 appliedMigrations,normalizeState 后丢失。记忆已由
+  // memoryStore 接管,强制补 memory-file-split 标记,避免下次启动误迁移(S2 会兜底,但显式更干净)。
+  if (!Array.isArray(state.appliedMigrations)) state.appliedMigrations = [];
+  if (!state.appliedMigrations.includes(MEMORY_FILE_SPLIT_MIGRATION)) {
+    state.appliedMigrations = [...state.appliedMigrations, MEMORY_FILE_SPLIT_MIGRATION];
+  }
   importSkills(body.skills);
   if (Array.isArray(body.files)) {
     mkdirSync(filesDir, { recursive: true });
@@ -3029,6 +3559,18 @@ function applyPcBackupFromExtractDir(extractDir: string, pcBackupPath: string): 
     // machine's filesystem and would be wrong here).
     const incomingState = { ...(incoming as State), files: [], nextFileId: 1 } as State;
     state = normalizeState(incomingState);
+    // 记忆:整体替换语义(PC 备份恢复)。normalizeState 把 incomingState.memories 解析到
+    // state.memories;交给 memoryStore 接管(replace),然后从 state 移除。
+    const incomingMemories = Array.isArray(state.memories) ? state.memories : [];
+    memoryStore.importFlatMemories(incomingMemories, "replace");
+    delete state.memories;
+    delete state.nextMemoryId;
+    // 迁移标记:pc-backup.json 不导出 appliedMigrations,normalizeState 后丢失。强制补
+    // memory-file-split,避免下次启动误迁移(S2 会兜底,但显式更干净)。
+    if (!Array.isArray(state.appliedMigrations)) state.appliedMigrations = [];
+    if (!state.appliedMigrations.includes(MEMORY_FILE_SPLIT_MIGRATION)) {
+      state.appliedMigrations = [...state.appliedMigrations, MEMORY_FILE_SPLIT_MIGRATION];
+    }
     settingsImported = true;
     if (Array.isArray(incoming.conversations)) {
       conversationsImported = incoming.conversations.length;
@@ -3471,30 +4013,21 @@ function importAndroidConversations(extractDir: string, dbPath: string, androidF
     // recent first" order alongside any PC-side conversations the user already had.
     state.conversations = Array.from(existingById.values()).sort((a, b) => b.updateAt - a.updateAt);
 
-    // 助手记忆:Android 存在同库的 MemoryEntity 表(字段 id / assistant_id / content,无时间戳),
-    // PC 之前只读 ConversationEntity + message_node,完全漏了这张表。按 (assistantId, content) 去重
-    // merge 进 state.memories——PC 已有的相同内容不重复导入;Android 的 Int 自增 id 和 PC 的 id 空间
-    // 不一致,统一用 state.nextMemoryId 重新分配。global 记忆的 assistant_id 两端都是 "__global__"。
-    // MemoryEntity 不存在(老版本 APP / 空库)时查询抛错,静默跳过。
+    // 助手记忆:Android 存在同库的 MemoryEntity 表(字段 id / assistant_id / content,无时间戳)。
+    // 按 (assistantId, content) 去重 merge 进 memoryStore——PC 已有的相同内容不重复导入;
+    // Android 的 Int 自增 id 和 PC 的 id 空间不一致,memoryStore 统一重新分配。global 记忆的
+    // assistant_id 两端都是 "__global__"。MemoryEntity 不存在(老版本 APP / 空库)时查询抛错,
+    // 静默跳过。语义为"合并"(迁移场景,不覆盖 PC 已有记忆),区别于备份恢复的"替换"。
     try {
       const memoryRows = db.query("SELECT assistant_id, content FROM MemoryEntity").all() as Record<string, unknown>[];
-      const now = Date.now();
-      const seen = new Set(state.memories.map((m) => `${m.assistantId} ${m.content}`));
-      for (const row of memoryRows) {
-        const assistantId = String(row.assistant_id ?? GLOBAL_MEMORY_ID) || GLOBAL_MEMORY_ID;
-        const content = String(row.content ?? "").trim();
-        if (!content) continue;
-        const key = `${assistantId} ${content}`;
-        if (seen.has(key)) continue;
-        state.memories.push({
-          id: state.nextMemoryId++,
-          assistantId,
-          content,
-          createdAt: now,
-          updatedAt: now,
-        });
-        seen.add(key);
-      }
+      const flat: AssistantMemory[] = memoryRows.map((row) => ({
+        id: 0,
+        assistantId: String(row.assistant_id ?? GLOBAL_MEMORY_ID) || GLOBAL_MEMORY_ID,
+        content: String(row.content ?? ""),
+        createdAt: 0,
+        updatedAt: 0,
+      }));
+      memoryStore.importFlatMemories(flat, "merge");
     } catch (err) {
       console.warn("[import] failed to read MemoryEntity table:", err);
     }
@@ -3797,12 +4330,36 @@ function generateRikkaHubDb(dbPath: string): boolean {
       try { db.exec(row.sql); } catch { /* */ }
     }
     insertConversationsIntoDb(db);
+    insertMemoriesIntoDb(db);
     writeFileSync(dbPath, db.serialize());
     db.close();
     return true;
   } catch (err) {
     console.warn("[backup] cached db schema read failed:", err);
     return false;
+  }
+}
+
+/** 把 PC 记忆写进 rikka_hub.db 的 MemoryEntity 表(PC→APP 方向,§7.7)。表结构从
+ *  cached.db 克隆(id INTEGER PK AUTOINCREMENT / assistant_id TEXT / content TEXT)。
+ *  防御:cached.db 若来自老版 APP(无 MemoryEntity 表),跳过,不影响会话。
+ *  id 不写:SQLite AUTOINCREMENT 分配(对称 APP→PC 导入丢弃 id 重分配,server.ts:4012)。
+ *  时间戳不写:APP 的 MemoryEntity 表无此列。整体替换语义下助手+记忆同源 assistantId,天然匹配。 */
+function insertMemoriesIntoDb(db: InstanceType<typeof Database>) {
+  const hasTable = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='MemoryEntity'").get();
+  if (!hasTable) return;
+  const flat = memoryStore.exportFlat();
+  if (flat.length === 0) return;
+  const stmt = db.prepare("INSERT INTO MemoryEntity (assistant_id, content) VALUES (?, ?)");
+  const seen = new Set<string>();
+  for (const m of flat) {
+    const content = String(m.content ?? "").trim();
+    if (!content) continue;
+    const assistantId = String(m.assistantId ?? GLOBAL_MEMORY_ID) || GLOBAL_MEMORY_ID;
+    const key = `${assistantId} ${content}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    stmt.run(assistantId, content);
   }
 }
 
@@ -4344,7 +4901,7 @@ function createSettingsBackupZip(): Buffer {
     // in state.json; Android stores them in a Room SQLite database. We create a compatible
     // db from PC's conversation data so the zip is fully restorable on the phone.
     let dbGenerated = false;
-    if (state.conversations.length > 0) {
+    if (state.conversations.length > 0 || memoryStore.exportFlat().length > 0) {
       const dbPath = join(stageDir, "rikka_hub.db");
       try {
         dbGenerated = generateRikkaHubDb(dbPath);
@@ -4469,7 +5026,7 @@ function createSettingsBackupZipToPath(targetZipPath: string, onProgress?: (mess
       join(stageDir, "pc-backup.json"),
       safeJsonStringify(backupPayloadMetadataOnly(sanitizedSettings)),
     );
-    if (state.conversations.length > 0) {
+    if (state.conversations.length > 0 || memoryStore.exportFlat().length > 0) {
       onProgress?.("正在生成对话数据库...");
       const dbPath = join(stageDir, "rikka_hub.db");
       try {
@@ -5365,7 +5922,7 @@ function timeReminderContent(current: Message, previous?: Message) {
 
 function memoriesForAssistant(assistant: Assistant) {
   const assistantId = assistant.useGlobalMemory ? GLOBAL_MEMORY_ID : assistant.id;
-  return state.memories.filter((memory) => memory.assistantId === assistantId);
+  return memoryStore.getMemoriesByAssistantId(assistantId);
 }
 
 function buildMemoryPrompt(assistant: Assistant) {
@@ -7311,19 +7868,15 @@ function runMemoryTool(assistant: Assistant, args: Record<string, JsonValue>) {
   if (!assistant.enableMemory) throw new Error("memory_tool is not enabled for this assistant");
   const action = String(args.action ?? "").trim();
   const assistantId = assistant.useGlobalMemory ? GLOBAL_MEMORY_ID : assistant.id;
-  const now = Date.now();
   if (action === "create") {
     const content = String(args.content ?? "").trim();
     if (!content) throw new Error("content is required");
-    const memory: AssistantMemory = {
-      id: state.nextMemoryId++,
-      assistantId,
+    const memory = memoryStore.addMemory({
+      scope: assistantId === GLOBAL_MEMORY_ID ? "global" : "assistant",
+      assistantId: assistantId === GLOBAL_MEMORY_ID ? undefined : assistantId,
       content,
-      createdAt: now,
-      updatedAt: now,
-    };
-    state.memories.push(memory);
-    saveState();
+      source: "ai",
+    });
     return { id: memory.id, content: memory.content };
   }
   if (action === "edit") {
@@ -7331,20 +7884,18 @@ function runMemoryTool(assistant: Assistant, args: Record<string, JsonValue>) {
     const content = String(args.content ?? "").trim();
     if (!Number.isInteger(memoryId)) throw new Error("id is required");
     if (!content) throw new Error("content is required");
-    const memory = state.memories.find((item) => item.id === memoryId && item.assistantId === assistantId);
-    if (!memory) throw new Error(`Memory record #${memoryId} not found`);
-    memory.content = content;
-    memory.updatedAt = now;
-    saveState();
-    return { id: memory.id, content: memory.content };
+    // 双键定位(阶段 1 保留二选一语义):确认该记忆属于当前作用域,避免跨作用域误改。
+    const existing = memoryStore.findEntryByIdAndAssistant(memoryId, assistantId);
+    if (!existing) throw new Error(`Memory record #${memoryId} not found`);
+    const updated = memoryStore.updateMemory(memoryId, content);
+    return { id: updated.id, content: updated.content };
   }
   if (action === "delete") {
     const memoryId = Number(args.id);
     if (!Number.isInteger(memoryId)) throw new Error("id is required");
-    const before = state.memories.length;
-    state.memories = state.memories.filter((item) => !(item.id === memoryId && item.assistantId === assistantId));
-    if (state.memories.length === before) throw new Error(`Memory record #${memoryId} not found`);
-    saveState();
+    const existing = memoryStore.findEntryByIdAndAssistant(memoryId, assistantId);
+    if (!existing) throw new Error(`Memory record #${memoryId} not found`);
+    memoryStore.deleteMemory(memoryId);
     return { success: true, id: memoryId };
   }
   throw new Error("unknown action: " + action + ", must be one of [create, edit, delete]");
@@ -14612,7 +15163,7 @@ async function routeApi(request: Request, url: URL) {
     const idValue = decodeURIComponent(assistantDelete[1]);
     if (state.settings.assistants.length <= 1) return error("At least one assistant is required", 400);
     const assistants = state.settings.assistants.filter((item) => item.id !== idValue);
-    state.memories = state.memories.filter((memory) => memory.assistantId !== idValue);
+    memoryStore.deleteMemoriesByAssistant(idValue);
     updateSettings({
       ...state.settings,
       assistants,
@@ -14833,8 +15384,15 @@ async function routeApi(request: Request, url: URL) {
     const memoryAssistantId = assistant.useGlobalMemory ? GLOBAL_MEMORY_ID : assistant.id;
     return json({
       assistantId: memoryAssistantId,
-      memories: state.memories
-        .filter((memory) => memory.assistantId === memoryAssistantId)
+      memories: memoryStore
+        .getMemoriesByAssistantId(memoryAssistantId)
+        .map((m) => ({
+          id: m.id,
+          assistantId: memoryAssistantId,
+          content: m.content,
+          createdAt: m.createdAt,
+          updatedAt: m.updatedAt,
+        }))
         .sort((a, b) => a.id - b.id),
     });
   }
@@ -14844,23 +15402,19 @@ async function routeApi(request: Request, url: URL) {
     const memoryAssistantId = assistant.useGlobalMemory ? GLOBAL_MEMORY_ID : assistant.id;
     const content = String(body.content ?? "").trim();
     if (!content) return error("Memory content is required", 400);
-    let memory: AssistantMemory | undefined;
+    let memory: MemoryEntry;
     if (Number.isInteger(Number(body.id)) && Number(body.id) > 0) {
       const memoryId = Number(body.id);
-      memory = state.memories.find((item) => item.id === memoryId && item.assistantId === memoryAssistantId);
-      if (!memory) return error(`Memory record #${memoryId} not found`, 404);
-      memory.content = content;
-      memory.updatedAt = Date.now();
+      const existing = memoryStore.findEntryByIdAndAssistant(memoryId, memoryAssistantId);
+      if (!existing) return error(`Memory record #${memoryId} not found`, 404);
+      memory = memoryStore.updateMemory(memoryId, content);
     } else {
-      const now = Date.now();
-      memory = {
-        id: state.nextMemoryId++,
-        assistantId: memoryAssistantId,
+      memory = memoryStore.addMemory({
+        scope: memoryAssistantId === GLOBAL_MEMORY_ID ? "global" : "assistant",
+        assistantId: memoryAssistantId === GLOBAL_MEMORY_ID ? undefined : memoryAssistantId,
         content,
-        createdAt: now,
-        updatedAt: now,
-      };
-      state.memories.push(memory);
+        source: "manual",
+      });
     }
     saveState();
     broadcastSettings();
@@ -14869,9 +15423,8 @@ async function routeApi(request: Request, url: URL) {
   const memoryDelete = path.match(/^settings\/memory\/(\d+)$/);
   if (memoryDelete && request.method === "DELETE") {
     const memoryId = Number(memoryDelete[1]);
-    const before = state.memories.length;
-    state.memories = state.memories.filter((memory) => memory.id !== memoryId);
-    if (state.memories.length === before) return error(`Memory record #${memoryId} not found`, 404);
+    const deleted = memoryStore.deleteMemory(memoryId);
+    if (!deleted) return error(`Memory record #${memoryId} not found`, 404);
     saveState();
     broadcastSettings();
     return json({ status: "deleted" });
