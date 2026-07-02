@@ -452,8 +452,14 @@ function PasswordInput({
 // 写回时再 join 成单字符串——数据结构不变,备份/APP 兼容零感知。
 const SEARCH_KEY_SPLIT = /[\s,]+/;
 
-/** 搜索服务多 Key 编辑器:每框一个 key,末框额外有「+」追加,每框「×」删除。
- *  测试结果按 key 精确匹配后内联显示绿勾/红叉(汇总区另有保留)。 */
+/** 搜索服务多 Key 编辑器:每框一个 key,框尾「×」删除,底部「+」追加。
+ *  测试结果按 key 精确匹配后内联显示绿勾/红叉(汇总区另有保留)。
+ *
+ *  数据流:父组件存字符串(后端 splitSearchApiKeys 契约,APP 兼容),但字符串往返
+ *  (split/join)无法稳定表示"空框"——filter(Boolean) 会吃掉空串,点「+」追加的空框
+ *  在 value 往返后消失(曾导致+号无反应)。故本地用 state 维护框数组,onChange 只回写
+ *  非空 key 序列;外部 value 变化(切换服务/父重置)经 useEffect 比对非空序列后才同步,
+ *  防覆盖编辑中的空框、也防 commit→onChange→value 往返触发循环。 */
 function SearchApiKeyList({
   value,
   onChange,
@@ -464,14 +470,28 @@ function SearchApiKeyList({
   testEntries: Array<{ key: string; status: "ok" | "fail"; failCode?: string }>;
 }) {
   const { t } = useTranslation();
-  // 字符串 → 框数组。始终至少保留一个框(全空时给一个空框),保证可编辑。
-  const keys = React.useMemo(() => {
+  const [keys, setKeys] = React.useState<string[]>(() => {
     const parts = value.split(SEARCH_KEY_SPLIT).map((k) => k.trim()).filter(Boolean);
     return parts.length > 0 ? parts : [""];
+  });
+
+  // 外部 value 变化时同步。只在"非空 key 序列"不一致时才 setKeys——既覆盖切换服务/
+  // 父重置,又避免覆盖编辑中的空框/中间状态,还阻断 commit→onChange→value 往返循环。
+  React.useEffect(() => {
+    const parts = value.split(SEARCH_KEY_SPLIT).map((k) => k.trim()).filter(Boolean);
+    const external = parts.length > 0 ? parts : [""];
+    const localNonEmpty = keys.filter((k) => k.trim()).map((k) => k.trim());
+    if (localNonEmpty.join("\n") !== external.join("\n")) setKeys(external);
+    // 故意不依赖 keys:commit 时本地已 setKeys,不需要 value 回来再同步
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
-  // 写回:换行 join。换行属于 \s,与 /[\s,]+/ 兼容;key 不含换行,比逗号/空格更不易和 key 本身冲突。
-  const commit = (next: string[]) => onChange(next.join("\n"));
+  // 本地立即更新(保留空框);onChange 只回写非空 key(换行 join——换行属于 \s,
+  // 与后端 /[\s,]+/ 兼容,key 不含换行,比逗号/空格更不易和 key 本身冲突)。
+  const commit = (next: string[]) => {
+    setKeys(next);
+    onChange(next.filter((k) => k.trim()).join("\n"));
+  };
   const update = (index: number, val: string) => {
     const next = [...keys];
     next[index] = val;
@@ -495,7 +515,6 @@ function SearchApiKeyList({
   return (
     <div className="space-y-2">
       {keys.map((key, index) => {
-        const isLast = index === keys.length - 1;
         // 改了 key 后字符串变化,旧测试结果自动对不上、图标消失——符合预期。
         const entry = key ? testEntries.find((e) => e.key === key) : undefined;
         return (
@@ -526,21 +545,14 @@ function SearchApiKeyList({
             >
               <X className="size-4" />
             </Button>
-            {isLast ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="icon-xs"
-                onClick={add}
-                aria-label={t("settings:search.key_add")}
-                title={t("settings:search.key_add")}
-              >
-                <Plus className="size-4" />
-              </Button>
-            ) : null}
           </div>
         );
       })}
+      {/* +号独立放底部:所有 key 框只有 input+叉号,等宽;末框不再被+号挤窄。 */}
+      <Button type="button" variant="outline" size="sm" onClick={add} className="w-full justify-center">
+        <Plus className="size-4" />
+        {t("settings:search.key_add")}
+      </Button>
     </div>
   );
 }
