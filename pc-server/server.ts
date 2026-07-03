@@ -874,7 +874,7 @@ function defaultProviders(): Provider[] {
       name: "RikkaHub",
       baseUrl: "https://api.rikka-ai.com/v1",
       enabled: true,
-      shortDescription: "RikkaHub built-in relay",
+      shortDescription: "RikkaHub 内置模型",
       description: "Built-in RikkaHub provider template, matching the Android default.",
       models: [
         {
@@ -888,7 +888,7 @@ function defaultProviders(): Provider[] {
       id: "1eeea727-9ee5-4cae-93e6-6fb01a4d051e",
       name: "OpenAI",
       baseUrl: "https://api.openai.com/v1",
-      shortDescription: "Official OpenAI-compatible API",
+      shortDescription: "OpenAI 官方 API",
       models: [model("gpt-4.1"), model("gpt-4.1-mini"), model("gpt-4o-mini")],
     }),
     provider({
@@ -905,7 +905,7 @@ function defaultProviders(): Provider[] {
       name: "Gemini",
       baseUrl: "https://generativelanguage.googleapis.com/v1beta",
       enabled: true,
-      shortDescription: "Google Gemini API",
+      shortDescription: "谷歌官方 Gemini API",
       models: [model("gemini-2.5-flash"), model("gemini-2.5-pro")],
     }),
     provider({ id: "ff3cde7e-0f65-43d7-8fb2-6475c99f5990", name: "xAI", baseUrl: "https://api.x.ai/v1", useResponseApi: true }),
@@ -913,7 +913,7 @@ function defaultProviders(): Provider[] {
       id: "f099ad5b-ef03-446d-8e78-7e36787f780b",
       name: "DeepSeek",
       baseUrl: "https://api.deepseek.com/v1",
-      shortDescription: "DeepSeek official API",
+      shortDescription: "DeepSeek 官方 API",
       balanceOption: { enabled: true, apiPath: "/user/balance", resultPath: "balance_infos[0].total_balance" },
     }),
     provider({ id: "f76cae46-069a-4334-ab8e-224e4979e58c", name: "阿里云百炼", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" }),
@@ -945,7 +945,7 @@ function defaultProviders(): Provider[] {
       id: "d5734028-d39b-4d41-9841-fd648d65440e",
       name: "OpenRouter",
       baseUrl: "https://openrouter.ai/api/v1",
-      shortDescription: "OpenRouter multi-model gateway",
+      shortDescription: "OpenRouter 中转站",
       balanceOption: { enabled: true, apiPath: "/credits", resultPath: "data.total_credits - data.total_usage" },
     }),
     provider({
@@ -959,7 +959,7 @@ function defaultProviders(): Provider[] {
       id: "56a94d29-c88b-41c5-8e09-38a7612d6cf8",
       name: "硅基流动",
       baseUrl: "https://api.siliconflow.cn/v1",
-      shortDescription: "SiliconFlow OpenAI-compatible API",
+      shortDescription: "SiliconFlow API",
       balanceOption: { enabled: true, apiPath: "/user/info", resultPath: "data.totalBalance" },
     }),
   ];

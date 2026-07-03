@@ -458,8 +458,8 @@ export function FontPickerPair({
   // 没设中文字体时,中文行用合并链=纯英文链,中文字形落到兜底——真实反映"不分开"的效果。
   const previewRows = [
     { tag: "英文", text: "The quick brown fox jumps 0123456789", family: enFamily },
-    { tag: "中文", text: "你好,世界。春江潮水连海平,海上明月共潮生。", family: merged },
-    { tag: "混排", text: "Hello 你好,这是 RikkaHub 2026 年的测试 Test 测试。", family: merged },
+    { tag: "中文", text: "山映斜阳天接水，芳草无情，更在斜阳外。", family: merged },
+    { tag: "混排", text: "Hello 你好，这是 RikkaHub 2026 年的测试 Test 测试。", family: merged },
   ];
   return (
     <div className="block space-y-2">

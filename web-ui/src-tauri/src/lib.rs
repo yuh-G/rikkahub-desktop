@@ -20,6 +20,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, RunEvent, WindowEvent,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
@@ -44,6 +46,10 @@ struct SidecarState {
 struct UserConfig {
     /// Absolute path to where pc-data should live. None = default (next to exe).
     data_dir: Option<String>,
+    /// Whether closing the main window hides to the tray (true) or quits (false).
+    /// None = default-on, matching the convention of most modern desktop clients.
+    #[serde(default)]
+    minimize_to_tray: Option<bool>,
 }
 
 /// User config lives in the user's roaming AppData so it survives uninstall+reinstall.
@@ -302,6 +308,112 @@ fn set_data_dir(app: AppHandle, path: String) -> Result<(), String> {
     save_user_config(&app, &cfg)
 }
 
+// --- System tray: hide-on-close + click-to-restore -------------------------
+//
+// The tray lets the window hide instead of quitting on close, so background
+// work (SSE streams, long tool calls, in-flight requests) keeps running while
+// the UI is dismissed. A menu entry gives an explicit "Quit" path so closing
+// to tray never becomes a trap where the user can never exit.
+
+struct TrayStrings {
+    show: &'static str,
+    quit: &'static str,
+    tooltip: &'static str,
+}
+
+/// Build the tray label set from the system locale. We only need to distinguish
+/// Chinese vs. everything-else (the app's two UI locales); rebuilding the tray
+/// on the fly when the user switches languages isn't worth it for two items.
+fn tray_strings() -> TrayStrings {
+    let is_zh = sys_locale::get_locale()
+        .map(|l| l.starts_with("zh"))
+        .unwrap_or(false);
+    if is_zh {
+        TrayStrings {
+            show: "显示主窗口",
+            quit: "退出 Rikkahub",
+            tooltip: "Rikkahub",
+        }
+    } else {
+        TrayStrings {
+            show: "Show window",
+            quit: "Quit Rikkahub",
+            tooltip: "Rikkahub",
+        }
+    }
+}
+
+/// Reads the hide-on-close preference. `None` (unset) means default-on, so the
+/// feature is active on first launch without the user having to opt in —
+/// matching Discord / Telegram / WeChat convention.
+fn minimize_to_tray_enabled(app: &AppHandle) -> bool {
+    load_user_config(app).minimize_to_tray.unwrap_or(true)
+}
+
+/// Restore the main window from taskbar / tray: unminimize + show + focus.
+/// Each call is a no-op when the window is already in that state.
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// Builds the system tray icon + menu. Failure is non-fatal: we log and move on
+/// so the app still launches if the tray can't be created for some reason.
+fn build_tray(app: &AppHandle) -> Result<(), String> {
+    let strings = tray_strings();
+    let show_item = MenuItem::with_id(app, "tray_show", strings.show, true, None::<&str>)
+        .map_err(|e| format!("tray show item: {e}"))?;
+    let quit_item = MenuItem::with_id(app, "tray_quit", strings.quit, true, None::<&str>)
+        .map_err(|e| format!("tray quit item: {e}"))?;
+    let menu = Menu::with_items(app, &[&show_item, &quit_item])
+        .map_err(|e| format!("tray menu: {e}"))?;
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .ok_or_else(|| "default window icon missing".to_string())?;
+    let _ = TrayIconBuilder::with_id("main-tray")
+        .icon(icon)
+        .tooltip(strings.tooltip)
+        .menu(&menu)
+        // Left-click is reserved for restoring the window (see on_tray_icon_event).
+        // Without this, the default behavior would pop the menu on left-click and
+        // our restore handler would never fire.
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "tray_show" => show_main_window(app),
+            "tray_quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        })
+        .build(app)
+        .map_err(|e| format!("tray build: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_minimize_to_tray(app: AppHandle) -> bool {
+    minimize_to_tray_enabled(&app)
+}
+
+#[tauri::command]
+fn set_minimize_to_tray(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut cfg = load_user_config(&app);
+    cfg.minimize_to_tray = Some(enabled);
+    save_user_config(&app, &cfg)
+}
+
 /// Launches an installer .exe as a detached process so our shell exiting doesn't take it
 /// down. Used by the in-app update flow: backend downloads the new installer to %TEMP%,
 /// frontend calls this to launch it, then the user is prompted to close Rikkahub so the
@@ -390,7 +502,13 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .manage(SidecarState::default())
-        .invoke_handler(tauri::generate_handler![get_data_dir, set_data_dir, launch_installer])
+        .invoke_handler(tauri::generate_handler![
+            get_data_dir,
+            set_data_dir,
+            launch_installer,
+            get_minimize_to_tray,
+            set_minimize_to_tray,
+        ])
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -444,15 +562,30 @@ pub fn run() {
                 }
             }
 
+            if let Err(err) = build_tray(&handle) {
+                eprintln!("[tray] failed to build tray icon: {err}");
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| match event {
-            WindowEvent::CloseRequested { .. } => {
-                // Tear down the sidecar when the main window is closed so the Bun process
-                // doesn't linger in the background.
-                if let Some(state) = window.app_handle().try_state::<SidecarState>() {
-                    if let Some(child) = state.child.lock().unwrap().take() {
-                        let _ = child.kill();
+            WindowEvent::CloseRequested { api, .. } => {
+                let app = window.app_handle();
+                if minimize_to_tray_enabled(app) {
+                    // Hide to tray instead of closing. The sidecar keeps running so
+                    // SSE streams / tool calls survive. Real teardown happens via the
+                    // tray "Quit" entry → app.exit(0) → ExitRequested below.
+                    api.prevent_close();
+                    if let Some(win) = app.get_webview_window("main") {
+                        let _ = win.hide();
+                    }
+                } else {
+                    // User opted out of tray: tear down the sidecar so the Bun process
+                    // doesn't linger in the background.
+                    if let Some(state) = app.try_state::<SidecarState>() {
+                        if let Some(child) = state.child.lock().unwrap().take() {
+                            let _ = child.kill();
+                        }
                     }
                 }
             }

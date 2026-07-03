@@ -37,8 +37,8 @@
 
 | 发行版 | 安装方式 | 维护者 |
 |---|---|---|
-| Debian / Ubuntu / Mint | 从 [Releases](https://github.com/yuh-G/rikkahub-desktop/releases) 页或从[云盘](https://1842911757.share.123865.com/123pan/oW0UTd-Ielxh)下载 `.deb` → `sudo apt install ./rikkahub-pc_*_amd64.deb` | [@Noah0932](https://github.com/Noah0932) |
-| Arch / Manjaro | 从 [Releases](https://github.com/yuh-G/rikkahub-desktop/releases) 页或从[云盘](https://1842911757.share.123865.com/123pan/oW0UTd-Ielxh)下载 `.pkg.tar.zst` → `sudo pacman -U rikkahub-pc-*-x86_64.pkg.tar.zst` | [@Noah0932](https://github.com/Noah0932) |
+| Debian / Ubuntu / Mint | 从 [Releases](https://github.com/yuh-G/rikkahub-desktop/releases) 页或从[云盘](https://1842911757.share.123pan.cn/123pan/oW0UTd-irzxh)下载 `.deb` → `sudo apt install ./rikkahub-pc_*_amd64.deb` | [@Noah0932](https://github.com/Noah0932) |
+| Arch / Manjaro | 从 [Releases](https://github.com/yuh-G/rikkahub-desktop/releases) 页或从[云盘](https://1842911757.share.123pan.cn/123pan/oW0UTd-irzxh)下载 `.pkg.tar.zst` → `sudo pacman -U rikkahub-pc-*-x86_64.pkg.tar.zst` | [@Noah0932](https://github.com/Noah0932) |
 | NixOS / Nix | `nur.repos.af-nur.rikkahub-desktop`(从源码构建的版本，建议使用二进制缓存 `af-nur.cachix.org`)<br/>`nur.repos.af-nur.rikkahub-desktop-bin`(同步 [Releases](https://github.com/yuh-G/rikkahub-desktop/releases) 中的二进制构建) | [@AstralFlare-owo](https://github.com/AstralFlare-owo) |
 
 感谢两位补上了这些发行版的空缺。

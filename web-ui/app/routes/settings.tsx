@@ -1012,6 +1012,29 @@ function GeneralSection({
   const [saving, setSaving] = React.useState(false);
   const profileDirtyRef = React.useRef(false);
 
+  // --- 窗口行为(最小化到托盘 / 退出)—— 仅 Tauri 桌面端渲染 ---
+  // 该设置存在 Rust 侧的 user-config.json(跟数据目录同处),不走后端 API/SSE,
+  // 因为窗口关闭的瞬间需要 Rust 直接读到它,而不是等前端回传。
+  const [tauriReady, setTauriReady] = React.useState(false);
+  const [minimizeToTray, setMinimizeToTray] = React.useState(true);
+  React.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
+      setTauriReady(true);
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const v = await invoke<boolean>("get_minimize_to_tray");
+        if (!cancelled) setMinimizeToTray(v);
+      } catch (err) {
+        console.warn("[tray] get_minimize_to_tray failed", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // 界面字号滑块的本地镜像值。受控 Slider 的 value 若等 POST→SSE 往返才更新,松手时 thumb 会
   // 被旧 value 弹回(用户体验为"拖过去又弹回来")。改用:onValueChange 只动本地(立即跟随),
   // onValueCommit(松手)才提交后端。display 变化时(重置按钮 / SSE 推送)同步回本地。
@@ -1189,6 +1212,61 @@ function GeneralSection({
             {saving ? t("settings:common.autosaving") : t("settings:common.autosaved")}
           </div>
         </div>
+        {tauriReady && (
+          <div className="space-y-4 rounded-lg border bg-card p-5">
+            <div>
+              <h2 className="text-base font-medium">{t("settings:general.tray_title")}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{t("settings:general.tray_desc")}</p>
+            </div>
+            <label className="flex items-start justify-between gap-4 rounded-md border px-3 py-3">
+              <div className="min-w-0">
+                <div className="text-sm">{t("settings:general.minimize_to_tray")}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {t("settings:general.minimize_to_tray_hint")}
+                </div>
+              </div>
+              <Switch
+                checked={minimizeToTray}
+                onCheckedChange={async (checked) => {
+                  // 乐观更新:先改 UI,失败回滚。invoke 走 Tauri command 写 user-config.json。
+                  const prev = minimizeToTray;
+                  setMinimizeToTray(checked);
+                  try {
+                    const { invoke } = await import("@tauri-apps/api/core");
+                    await invoke("set_minimize_to_tray", { enabled: checked });
+                  } catch (err) {
+                    setMinimizeToTray(prev);
+                    toast.error(t("settings:common.save_failed"));
+                    console.warn("[tray] set_minimize_to_tray failed", err);
+                  }
+                }}
+              />
+            </label>
+            <div className="flex items-center justify-between gap-4 rounded-md border px-3 py-3">
+              <div className="min-w-0">
+                <div className="text-sm">{t("settings:general.quit_app")}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {t("settings:general.quit_app_hint")}
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    const { exit } = await import("@tauri-apps/plugin-process");
+                    await exit(0);
+                  } catch (err) {
+                    toast.error(t("settings:general.quit_failed"));
+                    console.warn("[tray] exit failed", err);
+                  }
+                }}
+              >
+                {t("settings:general.quit_app_button")}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
