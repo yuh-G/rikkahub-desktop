@@ -30,6 +30,8 @@
     "process:allow-exit",
     "allow-get-data-dir",
     "allow-set-data-dir",
-    "allow-launch-installer"
+    "allow-launch-installer",
+    "allow-get-minimize-to-tray",
+    "allow-set-minimize-to-tray"
   ]
 }

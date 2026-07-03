@@ -4,7 +4,13 @@ fn main() {
     // 裸 tauri_build::build() 不会扫描 #[tauri::command],launch_installer 等会被 ACL 拒绝。
     tauri_build::try_build(
         tauri_build::Attributes::new().app_manifest(
-            tauri_build::AppManifest::new().commands(&["get_data_dir", "set_data_dir", "launch_installer"]),
+            tauri_build::AppManifest::new().commands(&[
+            "get_data_dir",
+            "set_data_dir",
+            "launch_installer",
+            "get_minimize_to_tray",
+            "set_minimize_to_tray",
+        ]),
         ),
     )
     .expect("tauri build failed");
