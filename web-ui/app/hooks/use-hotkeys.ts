@@ -20,7 +20,7 @@ import type { KeybindingAction, KeybindingEntry } from "~/types/settings";
 
 const FONT_MIN = 0.85;
 const FONT_MAX = 1.2;
-const FONT_STEP = 0.05;
+const FONT_STEP = 0.01;
 
 /** 走事件总线的 action 集合(需要组件上下文响应)。 */
 const BUS_ACTIONS = new Set<KeybindingAction>([
