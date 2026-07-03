@@ -64,6 +64,7 @@
     "pending_title": "Memories to confirm",
     "pending_subtitle": "The AI drafted {{n}} memories from your chats. They're saved only after you confirm.",
     "pending_tooltip": "{{n}} pending",
+    "pending_inline": "Memories awaiting your confirmation",
     "batch_label": "Batch actions on selected",
     "select_all": "Select all",
     "clear_selection": "Clear selection",

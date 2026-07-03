@@ -64,6 +64,7 @@
     "pending_title": "待确认的记忆",
     "pending_subtitle": "AI 从对话里记下了 {{n}} 条,确认后才会真正保存。",
     "pending_tooltip": "{{n}} 条待确认",
+    "pending_inline": "存在待用户确认的消息",
     "batch_label": "批量处理选中项",
     "select_all": "全选",
     "clear_selection": "取消全选",

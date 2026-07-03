@@ -154,11 +154,16 @@ export function MemoryBadge() {
           <TooltipTrigger asChild>
             <Badge
               variant="default"
-              className="h-6 min-w-6 cursor-pointer items-center justify-center rounded-full px-1.5 text-xs font-medium hover:bg-primary/90 transition-colors"
+              className="h-6 cursor-pointer items-center gap-1 rounded-full px-2 text-xs font-medium hover:bg-primary/90 transition-colors"
               onClick={() => setIsOpen(true)}
             >
-              <Brain className="h-3 w-3 mr-0.5" />
-              {snapshot.pendingCount}
+              <Brain className="h-3 w-3 shrink-0" />
+              <span>{snapshot.pendingCount}</span>
+              {/* 提示文字与数字之间用细分隔点视觉分层,数字粗、文字略淡,整体呈消息提醒胶囊。 */}
+              <span className="w-px h-3 bg-primary-foreground/30" />
+              <span className="font-normal opacity-90 whitespace-nowrap">
+                {t("memory.pending_inline")}
+              </span>
             </Badge>
           </TooltipTrigger>
           <TooltipContent side="top" className="text-xs">
