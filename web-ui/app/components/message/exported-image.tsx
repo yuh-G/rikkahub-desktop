@@ -29,28 +29,41 @@ export interface ExportedImageProps {
   expandReasoning: boolean;
 }
 
-// 浅色主题变量。导出图始终用浅色, 不跟随 app 当前明暗 —— 分享到微信等场景下浅色更易读,
-// 也避免暗色导出图在浅色背景里发糊。通过内联 CSS 变量覆盖 :root 声明, 子树内所有
-// var(--xxx) 取这套浅色值 (CSS 变量按 DOM 树继承, 最近的祖先声明优先)。
-const LIGHT_VARS = {
-  "--background": "0 0% 100%",
-  "--foreground": "222.2 47.4% 11.2%",
-  "--card": "0 0% 100%",
-  "--card-foreground": "222.2 47.4% 11.2%",
-  "--popover": "0 0% 100%",
-  "--popover-foreground": "222.2 47.4% 11.2%",
-  "--muted": "210 40% 96.1%",
-  "--muted-foreground": "215.4 16.3% 46.9%",
-  "--accent": "210 40% 94%",
-  "--accent-foreground": "222.2 47.4% 11.2%",
-  "--border": "214.3 31.8% 91.4%",
-  "--input": "214.3 31.8% 91.4%",
-  "--primary": "222.2 47.4% 11.2%",
-  "--primary-foreground": "210 40% 98%",
-  "--secondary": "210 40% 96.1%",
-  "--secondary-foreground": "222.2 47.4% 11.2%",
-  "--ring": "215 20.2% 65.1%",
-} as React.CSSProperties;
+// 导出图根要承接的 :root CSS 变量名。运行时从 documentElement 的 computed style 读取,
+// 把"当前主题(明暗 + 主题色)"原样搬到导出图根上。这样子树里所有 var(--xxx) 都与应用
+// 所见一致 —— 表格边框/斑马纹、blockquote 引用线、citation 徽章背景、代码块边框等,
+// 不再因写死浅色变量(HSL 通道值与 app.css 的 oklch 直接值格式不匹配)而失效;并且天然
+// 跟随用户当前选中的主题色与明暗模式,导出图就是用户在应用里看到的样子。
+const THEME_VAR_NAMES = [
+  "--background",
+  "--foreground",
+  "--card",
+  "--card-foreground",
+  "--muted",
+  "--muted-foreground",
+  "--accent",
+  "--accent-foreground",
+  "--border",
+  "--input",
+  "--primary",
+  "--primary-foreground",
+  "--secondary",
+  "--secondary-foreground",
+  "--ring",
+  "--destructive",
+  "--destructive-foreground",
+] as const;
+
+function readThemeVars(): Record<string, string> {
+  if (typeof document === "undefined") return {};
+  const computed = getComputedStyle(document.documentElement);
+  const vars: Record<string, string> = {};
+  for (const name of THEME_VAR_NAMES) {
+    const value = computed.getPropertyValue(name).trim();
+    if (value) vars[name] = value;
+  }
+  return vars;
+}
 
 // app logo(Vite public 目录, 构建后是 /app-icon.png)。导出图头部右侧的品牌标识。
 const APP_ICON_SRC = "/app-icon.png";
@@ -154,6 +167,8 @@ export const ExportedImage = React.forwardRef<HTMLDivElement, ExportedImageProps
     const providers = useSettingsStore((state) => state.settings?.providers);
     const displaySetting = useSettingsStore((state) => state.settings?.displaySetting);
     const { t } = useTranslation("message");
+    // 挂载时读一次当前主题变量。分享对话框是模态的,用户不会同时切主题,单次读取足够。
+    const themeVars = React.useMemo(() => readThemeVars(), []);
 
     const userName =
       displaySetting?.userNickname?.trim() || t("chat_message.md_role_user");
@@ -168,17 +183,20 @@ export const ExportedImage = React.forwardRef<HTMLDivElement, ExportedImageProps
       <div
         ref={ref}
         style={{
-          ...LIGHT_VARS,
-          width: 560,
+          ...themeVars,
+          width: 960,
           boxSizing: "border-box",
-          // 顶部带极浅主题色渐变,纯白会显得空洞;渐变在 200px 内过渡到白,不影响阅读
+          // 顶部带极淡 muted 渐变过渡到 background —— 纯色会显得空洞。用 color-mix 让
+          // 浅色/暗色主题都自然:muted 在浅色是浅灰、暗色是深灰,混入 background 即得
+          // 略亮于背景的顶部色调,过渡后回归纯 background。color-mix(in oklch) 在
+          // Chromium 111+ 支持,WebView2 与现代浏览器均覆盖。
           background:
-            "linear-gradient(180deg, hsl(214 40% 97%) 0%, hsl(0 0% 100%) 180px)",
-          color: "hsl(var(--foreground))",
-          padding: 28,
+            "linear-gradient(180deg, color-mix(in oklch, var(--muted) 45%, var(--background)) 0%, var(--background) 280px)",
+          color: "var(--foreground)",
+          padding: 40,
           fontFamily,
-          fontSize: 14,
-          lineHeight: 1.7,
+          fontSize: 15,
+          lineHeight: 1.75,
         }}
       >
         {/* 头部:标题 + 导出时间 + app logo */}
@@ -189,15 +207,15 @@ export const ExportedImage = React.forwardRef<HTMLDivElement, ExportedImageProps
             gap: 14,
             paddingBottom: 16,
             marginBottom: 20,
-            borderBottom: "1px solid hsl(var(--border))",
+            borderBottom: "1px solid var(--border)",
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
             <div
               style={{
-                fontSize: 20,
+                fontSize: 22,
                 fontWeight: 700,
-                color: "hsl(var(--foreground))",
+                color: "var(--foreground)",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
               }}
@@ -206,24 +224,24 @@ export const ExportedImage = React.forwardRef<HTMLDivElement, ExportedImageProps
             </div>
             <div
               style={{
-                fontSize: 12,
-                color: "hsl(var(--muted-foreground))",
+                fontSize: 13,
+                color: "var(--muted-foreground)",
                 marginTop: 4,
               }}
             >
-              {new Date().toLocaleString()} · Rikkahub
+              {new Date().toLocaleString()} · Rikkahub Desktop
             </div>
           </div>
           <img
             src={APP_ICON_SRC}
-            alt="Rikkahub"
+            alt="Rikkahub Desktop"
             crossOrigin="anonymous"
-            style={{ width: 44, height: 44, borderRadius: 10, objectFit: "cover" }}
+            style={{ width: 48, height: 48, borderRadius: 12, objectFit: "cover" }}
           />
         </header>
 
         {/* 消息列表 */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           {messages.map((message, idx) => (
             <ExportedMessage
               key={message.id}
@@ -245,14 +263,14 @@ export const ExportedImage = React.forwardRef<HTMLDivElement, ExportedImageProps
           style={{
             marginTop: 24,
             paddingTop: 14,
-            borderTop: "1px solid hsl(var(--border))",
-            fontSize: 11,
-            color: "hsl(var(--muted-foreground))",
+            borderTop: "1px solid var(--border)",
+            fontSize: 12,
+            color: "var(--muted-foreground)",
             textAlign: "center",
             opacity: 0.8,
           }}
         >
-          {t("chat_message.export_image_watermark", "由 Rikkahub 生成 · rikka-ai.com")}
+          {t("chat_message.export_image_watermark")}
         </div>
       </div>
     );
@@ -289,17 +307,17 @@ function ExportedMessage({
 
   const bubbleStyle: React.CSSProperties = isUser
     ? {
-        backgroundColor: "hsl(var(--muted))",
+        backgroundColor: "var(--muted)",
         borderRadius: 16,
         borderBottomRightRadius: 6,
-        padding: "10px 14px",
+        padding: "12px 16px",
       }
     : showAssistantBubble
       ? {
-          backgroundColor: "hsl(var(--secondary))",
-          border: "1px solid hsl(var(--border))",
+          backgroundColor: "var(--secondary)",
+          border: "1px solid var(--border)",
           borderRadius: 16,
-          padding: "10px 14px",
+          padding: "12px 16px",
         }
       : {};
 
@@ -315,7 +333,7 @@ function ExportedMessage({
             gap: 8,
           }}
         >
-          <span style={{ fontSize: 13, fontWeight: 600, color: "hsl(var(--foreground))" }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "var(--foreground)" }}>
             {userName}
           </span>
           <UIAvatar name={userName} avatar={userAvatar} size="sm" />
@@ -323,7 +341,7 @@ function ExportedMessage({
       ) : showModelHeader ? (
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <AIIcon name={model?.modelId || "AI"} size={32} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: "hsl(var(--foreground))" }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "var(--foreground)" }}>
             {modelName}
           </span>
         </div>
@@ -410,11 +428,11 @@ function PartView({
           display: "flex",
           alignItems: "center",
           gap: 8,
-          border: "1px solid hsl(var(--border))",
+          border: "1px solid var(--border)",
           borderRadius: 10,
           padding: "8px 12px",
-          fontSize: 13,
-          color: "hsl(var(--muted-foreground))",
+          fontSize: 14,
+          color: "var(--muted-foreground)",
         }}
       >
         <FileText className="size-4 shrink-0" />
@@ -431,11 +449,11 @@ function PartView({
           display: "flex",
           alignItems: "center",
           gap: 8,
-          border: "1px solid hsl(var(--border))",
+          border: "1px solid var(--border)",
           borderRadius: 10,
           padding: "8px 12px",
-          fontSize: 13,
-          color: "hsl(var(--muted-foreground))",
+          fontSize: 14,
+          color: "var(--muted-foreground)",
         }}
       >
         <Film className="size-4 shrink-0" />
@@ -450,11 +468,11 @@ function PartView({
           display: "flex",
           alignItems: "center",
           gap: 8,
-          border: "1px solid hsl(var(--border))",
+          border: "1px solid var(--border)",
           borderRadius: 10,
           padding: "8px 12px",
-          fontSize: 13,
-          color: "hsl(var(--muted-foreground))",
+          fontSize: 14,
+          color: "var(--muted-foreground)",
         }}
       >
         <Music className="size-4 shrink-0" />
@@ -477,12 +495,12 @@ function ReasoningCard({
   return (
     <div
       style={{
-        borderLeft: "3px solid hsl(var(--primary))",
-        backgroundColor: "hsl(var(--muted))",
+        borderLeft: "3px solid var(--primary)",
+        backgroundColor: "var(--muted)",
         borderRadius: 8,
         padding: "8px 12px",
-        fontSize: 13,
-        color: "hsl(var(--muted-foreground))",
+        fontSize: 14,
+        color: "var(--muted-foreground)",
       }}
     >
       <div
@@ -520,11 +538,11 @@ function ToolCard({
         display: "flex",
         alignItems: "center",
         gap: 8,
-        backgroundColor: "hsl(var(--accent))",
+        backgroundColor: "var(--accent)",
         borderRadius: 8,
         padding: "6px 10px",
-        fontSize: 13,
-        color: "hsl(var(--accent-foreground))",
+        fontSize: 14,
+        color: "var(--accent-foreground)",
       }}
     >
       <ToolIcon toolName={tool.toolName} />

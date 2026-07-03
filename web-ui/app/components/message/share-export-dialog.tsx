@@ -77,17 +77,20 @@ export function ShareExportDialog({
   const handleExportImage = async () => {
     if (!imageRef.current || exporting) return;
     setExporting(true);
-    // CodeBlock 的 shiki 代码高亮靠 html.dark class 切换暗/亮 (dark:!bg-[var(--shiki-dark-bg)]),
-    // 不是 CSS 变量 —— ExportedImage 根部的浅色变量覆盖不到它。截图前临时摘掉 html.dark,
-    // 让代码块走浅色主题 (catppuccin-latte), 截完恢复。浅色模式用户无影响 (wasDark=false)。
-    const root = document.documentElement;
-    const wasDark = root.classList.contains("dark");
-    if (wasDark) root.classList.remove("dark");
+    // 导出图根自带从 :root 读到的当前主题变量(明暗 + 主题色),shiki 代码块的明暗也靠
+    // html.dark class 切换 —— 两者都跟随应用当前状态,所以这里不再临时摘 dark,导出图
+    // 就是用户此刻看到的样子(浅色模式出浅色图、暗色出暗色图)。captureNodeAsPng 内部
+    // 会等 document.fonts.ready 与 <img> load,这里只额外给 Markdown/shiki 渲染留点缓冲。
     try {
-      // 等 CSS 重算 + shiki 浅色主题生效 + 远程图片加载。captureNodeAsPng 内部再等 fonts.ready。
       await new Promise((resolve) => setTimeout(resolve, 350));
+      // 兜底底色 = 当前主题的 --background。导出图根 div 自带不透明渐变背景,正常情况下
+      // 它盖住整个区域、兜底色不外露;仅在根背景的 color-mix 渐变在某些渲染路径下失效时
+      // 接管,避免出透明残图。跟随主题,暗色模式兜底也是暗色。
+      const backgroundFallback = getComputedStyle(document.documentElement)
+        .getPropertyValue("--background")
+        .trim();
       const dataUrl = await captureNodeAsPng(imageRef.current, {
-        backgroundColor: "#ffffff",
+        backgroundColor: backgroundFallback || undefined,
         filter: exportImageFilter,
       });
       const filename = safeMarkdownFilename(title || "conversation").replace(/\.md$/, ".png");
@@ -104,7 +107,6 @@ export function ShareExportDialog({
           : t("chat_message.export_image_failed", "导出图片失败"),
       );
     } finally {
-      if (wasDark) root.classList.add("dark");
       setExporting(false);
     }
   };

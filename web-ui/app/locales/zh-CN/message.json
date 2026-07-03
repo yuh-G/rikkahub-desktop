@@ -58,7 +58,7 @@
     "export_success_md": "已导出 Markdown",
     "export_success_image": "已导出图片",
     "export_success_desc": "文件已下载到浏览器下载目录:{{filename}}",
-    "export_image_watermark": "由 Rikkahub 生成 · rikka-ai.com"
+    "export_image_watermark": "由 Rikkahub Desktop 生成 · rikkahub-desktop.pages.dev"
   },
   "memory": {
     "pending_title": "待确认的记忆",
