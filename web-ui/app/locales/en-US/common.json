@@ -20,6 +20,8 @@
     "title_empty": "Title cannot be empty",
     "title_updated": "Title updated",
     "title_update_failed": "Failed to update title",
+    "cancel": "Cancel",
+    "save": "Save",
     "move_to_assistant": "Move to assistant",
     "no_available_assistants": "No assistants available",
     "moved_to_assistant": "Moved to {{assistant}}",

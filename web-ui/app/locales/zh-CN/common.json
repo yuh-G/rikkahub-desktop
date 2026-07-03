@@ -20,6 +20,8 @@
     "title_empty": "标题不能为空",
     "title_updated": "标题已更新",
     "title_update_failed": "更新标题失败",
+    "cancel": "取消",
+    "save": "保存",
     "move_to_assistant": "移动到助手",
     "no_available_assistants": "没有可用助手",
     "moved_to_assistant": "已移动到 {{assistant}}",

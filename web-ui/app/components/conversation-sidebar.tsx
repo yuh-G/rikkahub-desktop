@@ -31,6 +31,7 @@ import { useTranslation } from "react-i18next";
 
 import { InfiniteScrollArea } from "~/components/extended/infinite-scroll-area";
 import { AvatarCropper } from "~/components/avatar-cropper";
+import { RenameConversationDialog } from "~/components/rename-conversation-dialog";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -262,6 +263,7 @@ const ConversationListRow = React.memo(
     const { t } = useTranslation();
     const [menuOpen, setMenuOpen] = React.useState(false);
     const [pendingAction, setPendingAction] = React.useState<string | null>(null);
+    const [renameOpen, setRenameOpen] = React.useState(false);
 
     const moveTargets = React.useMemo(
       () => assistants.filter((assistant) => assistant.id !== conversation.assistantId),
@@ -424,29 +426,8 @@ const ConversationListRow = React.memo(
                     disabled={pendingAction !== null}
                     onSelect={(event) => {
                       event.preventDefault();
-                      const nextTitle = window
-                        .prompt(t("conversation_sidebar.edit_title_prompt"), conversation.title)
-                        ?.trim();
-                      if (nextTitle == null) {
-                        return;
-                      }
-                      if (nextTitle.length === 0) {
-                        toast.error(t("conversation_sidebar.title_empty"));
-                        return;
-                      }
-                      if (nextTitle === conversation.title) {
-                        return;
-                      }
-                      void runAction(
-                        "update-title",
-                        async () => {
-                          await onUpdateTitle(conversation.id, nextTitle);
-                        },
-                        {
-                          success: t("conversation_sidebar.title_updated"),
-                          error: t("conversation_sidebar.title_update_failed"),
-                        },
-                      );
+                      setMenuOpen(false);
+                      setRenameOpen(true);
                     }}
                   >
                     <Pencil className="size-4" />
@@ -528,6 +509,26 @@ const ConversationListRow = React.memo(
             </>
           )}
         </DropdownMenu>
+        {onUpdateTitle ? (
+          <RenameConversationDialog
+            open={renameOpen}
+            onOpenChange={setRenameOpen}
+            currentTitle={conversation.title}
+            onConfirm={(nextTitle) => {
+              if (!onUpdateTitle) return;
+              void runAction(
+                "update-title",
+                async () => {
+                  await onUpdateTitle(conversation.id, nextTitle);
+                },
+                {
+                  success: t("conversation_sidebar.title_updated"),
+                  error: t("conversation_sidebar.title_update_failed"),
+                },
+              );
+            }}
+          />
+        ) : null}
       </SidebarMenuItem>
     );
   },

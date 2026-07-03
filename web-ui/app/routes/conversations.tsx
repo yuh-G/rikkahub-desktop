@@ -14,6 +14,7 @@ import { ChatInput } from "~/components/input/chat-input";
 import { GlobalDropZone } from "~/components/global-drop-zone";
 import { ChatMessage } from "~/components/message/chat-message";
 import { ShareExportDialog } from "~/components/message/share-export-dialog";
+import { RenameConversationDialog } from "~/components/rename-conversation-dialog";
 import { Button } from "~/components/ui/button";
 import {
   Dialog,
@@ -1605,16 +1606,13 @@ function ConversationsPageInner() {
     navigate(`/c/${target.id}`);
   };
 
-  // 重命名当前会话,复用侧边栏重命名的 window.prompt 方式(WebView2 需开启 prompt,行为同现有菜单)。
+  // 重命名当前会话:打开自定义 Dialog(替代 WebView2 原生 prompt —— 其标题栏硬编码
+  // "localhost:8080 显示",无法定制、样式与应用割裂)。Dialog 内部处理输入校验与确认。
+  const [renameOpen, setRenameOpen] = React.useState(false);
   const renameActiveConversation = () => {
     if (!activeId) return;
-    const current = conversations.find((c) => c.id === activeId);
-    if (!current) return;
-    const nextTitle = window
-      .prompt(t("common:conversation_sidebar.edit_title_prompt"), current.title)
-      ?.trim();
-    if (nextTitle == null) return;
-    void handleUpdateConversationTitle(activeId, nextTitle);
+    if (!conversations.some((c) => c.id === activeId)) return;
+    setRenameOpen(true);
   };
 
   // 快捷键事件接入:ref 每次 render 更新最新闭包,useEffect 只挂一次监听,避免重建与陈旧。
@@ -1790,6 +1788,15 @@ function ConversationsPageInner() {
   return (
     <SidebarProvider defaultOpen className="h-svh overflow-hidden">
       <GlobalDropZone draftKey={draftKey} disabled={detailLoading || Boolean(detailError)} />
+    <RenameConversationDialog
+      open={renameOpen}
+      onOpenChange={setRenameOpen}
+      currentTitle={conversations.find((c) => c.id === activeId)?.title ?? ""}
+      onConfirm={(nextTitle) => {
+        if (!activeId) return;
+        void handleUpdateConversationTitle(activeId, nextTitle);
+      }}
+    />
       <ConversationSidebar
         conversations={conversations}
         activeId={activeId}
