@@ -743,16 +743,15 @@ export function CodeBlock({
   const previewLanguage = React.useMemo(() => getCodePreviewLanguage(language), [language]);
   const canPreview = Boolean(onPreview && previewLanguage);
   const canInlinePreview = previewLanguage === "html" || previewLanguage === "svg";
-  const [inlinePreview, setInlinePreview] = React.useState(canInlinePreview);
+  // 默认显示源码,不自动渲染 HTML/SVG 预览:流式输出时 iframe 的 srcDoc 会随每个 delta
+  // 变化导致疯狂重载闪动(尚未完成的 HTML 一直在高频重绘,视觉灾难);且多数场景用户只
+  // 想读代码。需要看渲染效果时点头部"预览"按钮手动切换到 iframe 渲染层。
+  const [inlinePreview, setInlinePreview] = React.useState(false);
   const shikiLanguage = React.useMemo(() => resolveShikiLanguage(language), [language]);
   const contextValue = React.useMemo(
     () => ({ code, language: displayLanguage }),
     [code, displayLanguage],
   );
-
-  React.useEffect(() => {
-    setInlinePreview(canInlinePreview);
-  }, [canInlinePreview, previewLanguage]);
 
   return (
     <CodeBlockContext.Provider value={contextValue}>
