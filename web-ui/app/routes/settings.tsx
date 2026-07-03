@@ -1145,7 +1145,7 @@ function GeneralSection({
               }
             />
           </div>
-          <label className="block space-y-2">
+          <div className="block space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">{t("settings:general.ui_font_size")}</span>
               <div className="flex items-center gap-2">
@@ -1168,7 +1168,8 @@ function GeneralSection({
               value={[uiFontSlider]}
               min={0.85}
               max={1.2}
-              step={0.05}
+              step={0.01}
+              aria-label={t("settings:general.ui_font_size")}
               onValueChange={(value) => setUiFontSlider(value[0])}
               onValueCommit={(value) => {
                 const next = value[0];
@@ -1181,7 +1182,7 @@ function GeneralSection({
             <p className="text-muted-foreground text-xs">
               {t("settings:general.ui_font_size_hint")}
             </p>
-          </label>
+          </div>
           <div className="rounded-md border px-3 py-3">
             <KeybindingSettings />
           </div>
