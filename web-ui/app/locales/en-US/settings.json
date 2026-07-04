@@ -340,7 +340,20 @@
     "active_from_system": "{{url}} (from system proxy)",
     "not_active": "Not enabled (direct connection)",
     "socks_not_supported": "SOCKS proxy is not supported (runtime limitation). Please use the proxy tool's HTTP port.",
-    "degraded": "Proxy {{url}} is down — temporarily direct"
+    "degraded": "Proxy {{url}} is down — temporarily direct",
+    "mode_desc": "Choose proxy mode",
+    "mode_auto": "Follow system",
+    "mode_manual": "Manual",
+    "mode_direct": "Force direct",
+    "mode_env": "Environment",
+    "mode_auto_desc": "Automatically follow the system proxy (Windows registry / GNOME settings); fall back to direct if the proxy is unreachable.",
+    "mode_manual_desc": "Use the fixed HTTP proxy specified below.",
+    "mode_direct_desc": "Ignore the system proxy entirely; all requests go direct (an escape hatch when the system proxy is broken).",
+    "mode_env_desc": "Controlled by HTTPS_PROXY / HTTP_PROXY environment variables (common in container deployments).",
+    "container_mode_desc": "Container deployment: the proxy is controlled by docker environment variables (HTTPS_PROXY, etc.) and cannot be changed here. Configure it in docker-compose or docker run.",
+    "failover": "Auto-fall to direct on proxy failure",
+    "failover_desc": "Temporarily switch to direct when the proxy is unreachable; switch back automatically once it recovers.",
+    "active_from_env": "{{url}} (from environment variable)"
   },
   "stats": {
     "loading": "Loading stats",

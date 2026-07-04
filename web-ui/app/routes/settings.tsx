@@ -8530,18 +8530,25 @@ function StatsSection({ stats }: { stats: StatsPayload | null }) {
   );
 }
 
+type ProxyMode = "auto" | "manual" | "direct" | "env";
+
 interface ProxyConfig {
+  mode: ProxyMode;
   url: string;
   username: string;
   password: string;
+  failoverToDirect: boolean;
 }
 
 interface ProxyStatus {
   activeUrl: string | null;
-  source: "manual" | "system" | "none";
+  source: "manual" | "system" | "env" | "none";
   detectedSystemProxy: string | null;
   // 代理已探测为不可达、当前临时直连(P0-1)。前端据此显示"代理失效"而非"无代理"。
   degraded: boolean;
+  // 当前 mode 与容器标记(后端 proxyStatusPayload 返回)。containerMode=true 时 UI 锁定 mode=env 只读。
+  mode: ProxyMode;
+  containerMode: boolean;
 }
 
 function ProxySection({
@@ -8552,7 +8559,7 @@ function ProxySection({
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
-  const initial = (settings.proxyConfig ?? { url: "", username: "", password: "" }) as ProxyConfig;
+  const initial = (settings.proxyConfig ?? { mode: "auto" as ProxyMode, url: "", username: "", password: "", failoverToDirect: true }) as ProxyConfig;
   const [draft, setDraft] = React.useState<ProxyConfig>(initial);
   const [showPassword, setShowPassword] = React.useState(false);
   const [detecting, setDetecting] = React.useState(false);
@@ -8566,7 +8573,7 @@ function ProxySection({
     // resetting `draft` from `initial` would wipe those new keystrokes.
     if (dirtyRef.current) return;
     setDraft(initial);
-  }, [initial.url, initial.username, initial.password]);
+  }, [initial.mode, initial.url, initial.username, initial.password, initial.failoverToDirect]);
 
   // Fetch the active-proxy footer state on mount + after every save so it reflects what the
   // backend is actually using right now (manual override vs auto-detected from system).
@@ -8594,9 +8601,9 @@ function ProxySection({
     async (announce = false) => {
       if (!announce && !dirtyRef.current) return;
       // P0-2: Bun fetch 静默丢弃 SOCKS 代理(表现成直连失败), 在保存前拦截 ——
-      // 否则用户保存后看到"已保存"却所有请求失败, 极难排查。
-      const trimmedUrl = draft.url.trim();
-      if (/^socks/i.test(trimmedUrl)) {
+      // 否则用户保存后看到"已保存"却所有请求失败, 极难排查。仅 manual 模式需校验
+      // (其它模式 url 字段被后端忽略)。
+      if (draft.mode === "manual" && /^socks/i.test(draft.url.trim())) {
         toast.error(t("settings:proxy.socks_not_supported"));
         return;
       }
@@ -8612,6 +8619,8 @@ function ProxySection({
           source: result.source,
           detectedSystemProxy: result.detectedSystemProxy,
           degraded: result.degraded,
+          mode: result.mode,
+          containerMode: result.containerMode,
         });
         if (announce) toast.success(t("settings:proxy.saved"));
       } catch (err) {
@@ -8696,7 +8705,9 @@ function ProxySection({
     : status?.activeUrl
       ? status.source === "system"
         ? t("settings:proxy.active_from_system", { url: status.activeUrl })
-        : status.activeUrl
+        : status.source === "env"
+          ? t("settings:proxy.active_from_env", { url: status.activeUrl })
+          : status.activeUrl
       : t("settings:proxy.not_active");
 
   return (
@@ -8708,78 +8719,125 @@ function ProxySection({
       />
       <div className="space-y-4">
         <div className="space-y-5 rounded-lg border bg-card p-6">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-base font-medium">{t("settings:proxy.http_title")}</div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {t("settings:proxy.http_desc")}
-              </div>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void detectSystemProxy()}
-              disabled={detecting}
+          <div className="space-y-2">
+            <div className="text-base font-medium">{t("settings:proxy.http_title")}</div>
+            <div className="text-xs text-muted-foreground">{t("settings:proxy.mode_desc")}</div>
+            <Select
+              value={draft.mode}
+              onValueChange={(v) => patch({ mode: v as ProxyMode })}
+              disabled={status?.containerMode === true}
             >
-              {detecting ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <RefreshCw className="size-4" />
-              )}
-              {t("settings:proxy.detect")}
-            </Button>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">{t("settings:proxy.mode_auto")}</SelectItem>
+                <SelectItem value="manual">{t("settings:proxy.mode_manual")}</SelectItem>
+                <SelectItem value="direct">{t("settings:proxy.mode_direct")}</SelectItem>
+                <SelectItem value="env">{t("settings:proxy.mode_env")}</SelectItem>
+              </SelectContent>
+            </Select>
+            <div className="text-xs text-muted-foreground">
+              {draft.mode === "auto" && t("settings:proxy.mode_auto_desc")}
+              {draft.mode === "manual" && t("settings:proxy.mode_manual_desc")}
+              {draft.mode === "direct" && t("settings:proxy.mode_direct_desc")}
+              {draft.mode === "env" && t("settings:proxy.mode_env_desc")}
+            </div>
           </div>
 
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">{t("settings:proxy.address")}</span>
-            <Input
-              value={draft.url}
-              onChange={(event) => patch({ url: event.target.value })}
-              placeholder={t("settings:proxy.address_ph")}
-            />
-          </label>
+          {status?.containerMode && (
+            <div className="rounded-md border border-blue-500/30 bg-blue-500/5 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+              {t("settings:proxy.container_mode_desc")}
+            </div>
+          )}
 
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">
-              {t("settings:proxy.username")}{" "}
-              <span className="text-xs font-normal text-muted-foreground">
-                {t("settings:proxy.optional")}
-              </span>
-            </span>
-            <Input
-              value={draft.username}
-              onChange={(event) => patch({ username: event.target.value })}
-              placeholder="proxy username"
-              autoComplete="off"
-            />
-          </label>
-
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">
-              {t("settings:proxy.password")}{" "}
-              <span className="text-xs font-normal text-muted-foreground">
-                {t("settings:proxy.optional")}
-              </span>
-            </span>
-            <div className="flex gap-2">
-              <Input
-                type={showPassword ? "text" : "password"}
-                value={draft.password}
-                onChange={(event) => patch({ password: event.target.value })}
-                placeholder="proxy password"
-                autoComplete="off"
-              />
+          {(draft.mode === "auto" || draft.mode === "manual") && (
+            <div className="flex justify-end">
               <Button
                 type="button"
                 variant="outline"
-                size="icon"
-                onClick={() => setShowPassword((value) => !value)}
+                size="sm"
+                onClick={() => void detectSystemProxy()}
+                disabled={detecting}
               >
-                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                {detecting ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+                {t("settings:proxy.detect")}
               </Button>
             </div>
-          </label>
+          )}
+
+          {draft.mode === "manual" && (
+            <>
+              <label className="block space-y-2">
+                <span className="text-sm font-medium">{t("settings:proxy.address")}</span>
+                <Input
+                  value={draft.url}
+                  onChange={(event) => patch({ url: event.target.value })}
+                  placeholder={t("settings:proxy.address_ph")}
+                />
+              </label>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-medium">
+                  {t("settings:proxy.username")}{" "}
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {t("settings:proxy.optional")}
+                  </span>
+                </span>
+                <Input
+                  value={draft.username}
+                  onChange={(event) => patch({ username: event.target.value })}
+                  placeholder="proxy username"
+                  autoComplete="off"
+                />
+              </label>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-medium">
+                  {t("settings:proxy.password")}{" "}
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {t("settings:proxy.optional")}
+                  </span>
+                </span>
+                <div className="flex gap-2">
+                  <Input
+                    type={showPassword ? "text" : "password"}
+                    value={draft.password}
+                    onChange={(event) => patch({ password: event.target.value })}
+                    placeholder="proxy password"
+                    autoComplete="off"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setShowPassword((value) => !value)}
+                  >
+                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </Button>
+                </div>
+              </label>
+            </>
+          )}
+
+          {(draft.mode === "auto" || draft.mode === "manual") && (
+            <div className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-sm font-medium">{t("settings:proxy.failover")}</div>
+                <div className="mt-0.5 text-xs text-muted-foreground">
+                  {t("settings:proxy.failover_desc")}
+                </div>
+              </div>
+              <Switch
+                checked={draft.failoverToDirect}
+                onCheckedChange={(v) => patch({ failoverToDirect: v })}
+              />
+            </div>
+          )}
 
           <div
             className={`rounded-md px-3 py-2 text-xs ${

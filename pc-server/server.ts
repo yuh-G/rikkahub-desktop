@@ -93,14 +93,25 @@ interface S3Config {
   items: string[];
 }
 
+type ProxyMode = "auto" | "manual" | "direct" | "env";
+
 interface ProxyConfig {
-  // User-set proxy URL. Empty string means "follow the system proxy automatically"
-  // (Windows registry → Bun env), matching browser-like behavior for non-technical users.
+  // 代理模式:
+  // - auto: 跟随系统代理(Windows 注册表 / GNOME gsettings), 配合活性探测自动降级
+  // - manual: 使用 url 指定的固定代理, 同样支持活性探测与降级
+  // - direct: 强制直连, 完全忽略系统代理声明(系统代理失效时的逃生口)
+  // - env: 完全由 HTTPS_PROXY/HTTP_PROXY 环境变量控制(Docker 部署), UI 只读
+  mode: ProxyMode;
+  // manual 模式下的代理地址(auto/direct/env 下被忽略)。空字符串在 manual 下等同直连。
   url: string;
   // Optional HTTP basic auth credentials, applied as `http://user:pass@host:port` when
-  // forwarding to upstream APIs.
+  // forwarding to upstream APIs. 仅 manual 模式生效。
   username: string;
   password: string;
+  // 代理探测不可达时是否自动临时降级直连(仅 mode=auto/manual 生效)。
+  // true(默认): 浏览器级行为, 死了自动 fallback 直连并提示; false: 死了报错
+  // (适合故意配代理绕过审查、不希望自作主张直连的场景)。
+  failoverToDirect: boolean;
 }
 
 interface Assistant {
@@ -1121,9 +1132,12 @@ function defaultSettings(): Settings {
       items: ["DATABASE", "FILES"],
     },
     proxyConfig: {
+      // 容器部署默认 env(docker 注入 HTTPS_PROXY); 桌面默认 auto(跟随系统代理)
+      mode: RUNNING_IN_CONTAINER ? "env" : "auto",
       url: "",
       username: "",
       password: "",
+      failoverToDirect: true,
     },
     webServerJwtEnabled: false,
     preferredPort: null,
@@ -2381,6 +2395,34 @@ function readWindowsSystemProxy(): string | undefined {
   }
 }
 
+// Linux 桌面 GNOME 代理读取(gsettings)。仅处理 mode='manual'(明确主机端口);
+// 'none' 返回 undefined; 'auto'(PAC) 不支持(我们不实现 PAC 解析)。
+// KDE 暂不支持, 用户可在 UI 手动填代理(mode=manual)。
+function readGnomeProxy(): string | undefined {
+  if (process.platform !== "linux") return undefined;
+  try {
+    const run = (args: string[]) =>
+      Bun.spawnSync(["gsettings", ...args], { stdout: "pipe", stderr: "ignore" });
+    const modeRaw = run(["get", "org.gnome.system.proxy", "mode"]).stdout?.toString().trim();
+    if (!modeRaw || modeRaw === "'none'") return undefined;
+    if (modeRaw !== "'manual'") return undefined; // 'auto'(PAC) 未实现
+    const host = run(["get", "org.gnome.system.proxy.http", "host"]).stdout?.toString().trim().replace(/^'|'$/g, "");
+    const port = run(["get", "org.gnome.system.proxy.http", "port"]).stdout?.toString().trim();
+    if (!host || !port || host === "''" || port === "0") return undefined;
+    return `http://${host}:${port}`;
+  } catch {
+    return undefined;
+  }
+}
+
+// 统一的系统代理读取入口(auto 模式调用): Windows 读注册表, Linux 桌面读 GNOME。
+// Docker 容器返回 undefined(容器代理走 env, 由 mode=env 处理, 不走 auto)。
+function readSystemProxy(): string | undefined {
+  if (RUNTIME_PLATFORM === "win") return readWindowsSystemProxy();
+  if (RUNTIME_PLATFORM === "linux" && !RUNNING_IN_CONTAINER) return readGnomeProxy();
+  return undefined;
+}
+
 function composeProxyUrl(base: string, username: string, password: string): string {
   const trimmed = base.trim();
   if (!trimmed) return "";
@@ -2397,19 +2439,44 @@ function composeProxyUrl(base: string, username: string, password: string): stri
   }
 }
 
-function resolveEffectiveProxy(): { url: string | undefined; source: "manual" | "system" | "none" } {
+function resolveEffectiveProxy(): { url: string | undefined; source: "manual" | "system" | "env" | "none" } {
   const cfg = state?.settings?.proxyConfig;
-  const manual = cfg?.url?.trim();
-  if (manual) {
-    return { url: composeProxyUrl(manual, cfg!.username ?? "", cfg!.password ?? ""), source: "manual" };
+  const mode = cfg?.mode ?? "auto";
+
+  if (mode === "direct") {
+    // 强制直连: 完全忽略系统代理声明, 用户显式选择的逃生口
+    return { url: undefined, source: "none" };
   }
-  const system = readWindowsSystemProxy();
+
+  if (mode === "env") {
+    // 完全由 env 控制(Docker): 读当前 env 值用于展示, 不由我们写入(applyEffectiveProxy 也是 no-op)
+    const envUrl = process.env.HTTPS_PROXY?.trim() || process.env.HTTP_PROXY?.trim();
+    return { url: envUrl || undefined, source: envUrl ? "env" : "none" };
+  }
+
+  if (mode === "manual") {
+    const manual = cfg?.url?.trim();
+    if (manual) {
+      return { url: composeProxyUrl(manual, cfg!.username ?? "", cfg!.password ?? ""), source: "manual" };
+    }
+    return { url: undefined, source: "none" };
+  }
+
+  // mode === "auto": 跟随系统代理(Windows 注册表 / GNOME gsettings)
+  const system = readSystemProxy();
   lastDetectedSystemProxy = system;
   if (system) return { url: system, source: "system" };
   return { url: undefined, source: "none" };
 }
 
 function applyEffectiveProxy() {
+  // mode=env: env 完全控制(Docker), apply 是 no-op —— 不读 cfg 也不写 env,
+  // 让 docker 注入的 HTTPS_PROXY 原样生效。重置 lastApplied 便于切回其它 mode 时重设。
+  const mode = state?.settings?.proxyConfig?.mode ?? "auto";
+  if (mode === "env") {
+    lastAppliedEffectiveProxy = undefined;
+    return;
+  }
   const { url, source } = resolveEffectiveProxy();
   // proxyMarkedDead 时强制走直连: 代理端口已探测为不可达, 不能再把死代理写进 env
   const effectiveUrl = proxyMarkedDead ? undefined : url;
@@ -2441,6 +2508,18 @@ function applyEffectiveProxy() {
 // 仍读到死端口, 仅靠 10s 轮询的 applyEffectiveProxy 永远命中 lastApplied 早 return →
 // env 永久指向死端口, 应用"假死"。此探测打破该死锁。
 async function probeProxyLiveness(): Promise<void> {
+  const cfg = state?.settings?.proxyConfig;
+  const mode = cfg?.mode ?? "auto";
+  const failover = cfg?.failoverToDirect ?? true;
+  // direct 本就直连; env 由 docker 控制; failoverToDirect=false 用户明确不降级 → 都不探测。
+  // 清掉残留死标记(若有), 让 lastApplied 归位便于 mode 切换时重设。
+  if (mode === "direct" || mode === "env" || !failover) {
+    if (proxyMarkedDead) {
+      proxyMarkedDead = false;
+      lastAppliedEffectiveProxy = undefined;
+    }
+    return;
+  }
   const { url } = resolveEffectiveProxy();
   if (!url) {
     // 没有代理需要探测。清掉残留的死标记(若有), 让 lastApplied 同步归位便于下次有代理时重设。
@@ -2502,11 +2581,14 @@ function proxyStatusPayload() {
   }
   return {
     activeUrl: displayUrl ?? null,
-    source, // "manual" | "system" | "none"
+    source, // "manual" | "system" | "env" | "none"
     detectedSystemProxy: lastDetectedSystemProxy ?? null,
     // 代理已探测为死、当前临时直连。前端据此显示"代理失效"而非"无代理",
     // 让用户知道是降级而非本就没设。
     degraded: proxyMarkedDead,
+    // 当前 mode 与容器标记, 前端据此决定 UI 分支(如 containerMode 锁定 mode=env 只读)
+    mode: state?.settings?.proxyConfig?.mode ?? "auto",
+    containerMode: RUNNING_IN_CONTAINER,
   };
 }
 
@@ -3434,11 +3516,22 @@ function normalizeS3Config(value: unknown): S3Config {
 
 function normalizeProxyConfig(value: unknown): ProxyConfig {
   const raw = isRecord(value) ? value : {};
-  return {
-    url: String(raw.url ?? "").trim(),
-    username: String(raw.username ?? ""),
-    password: String(raw.password ?? ""),
-  };
+  const url = String(raw.url ?? "").trim();
+  const username = String(raw.username ?? "");
+  const password = String(raw.password ?? "");
+  const failoverToDirect = typeof raw.failoverToDirect === "boolean" ? raw.failoverToDirect : true;
+  const rawMode = raw.mode;
+  let mode: ProxyMode;
+  if (rawMode === "auto" || rawMode === "manual" || rawMode === "direct" || rawMode === "env") {
+    mode = rawMode;
+  } else {
+    // 旧 settings 无 mode 字段(或值非法)→ 按平台推断, 保证旧行为兼容:
+    //   有 url → manual; 无 url + 容器 → env(docker 默认); 无 url + 桌面 → auto(跟随系统)
+    if (url) mode = "manual";
+    else if (RUNNING_IN_CONTAINER) mode = "env";
+    else mode = "auto";
+  }
+  return { mode, url, username, password, failoverToDirect };
 }
 
 // Port setting: integer in [1, 65535] or null (auto). Anything out of range / wrong type
