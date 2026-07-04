@@ -112,6 +112,10 @@ interface ProxyConfig {
   // true(默认): 浏览器级行为, 死了自动 fallback 直连并提示; false: 死了报错
   // (适合故意配代理绕过审查、不希望自作主张直连的场景)。
   failoverToDirect: boolean;
+  // 代理绕过规则: 逗号分隔的域名/通配符列表, 命中的 URL 直连不走代理。
+  // 例 "*.internal.corp,10.0.0.0/8,git.company.com"。localhost/127.0.0.1/::1 永远 bypass(硬编码)。
+  // 仅 mode=auto/manual 生效; env(Docker) / direct 忽略。
+  bypassRules: string;
 }
 
 interface Assistant {
@@ -1138,6 +1142,7 @@ function defaultSettings(): Settings {
       username: "",
       password: "",
       failoverToDirect: true,
+      bypassRules: "",
     },
     webServerJwtEnabled: false,
     preferredPort: null,
@@ -2341,22 +2346,20 @@ function clearNodeBroadcast(conversation: Conversation, node: MessageNode) {
 //      browsers and Clash/V2Ray "规则代理 / 系统代理" mode set it. This is the path that
 //      "just works" for users who have a proxy tool running.
 //
-// The result is mirrored into `HTTPS_PROXY`/`HTTP_PROXY` env vars because Bun's `fetch()`
-// reads those dynamically — so every LLM / search / MCP request picks up the proxy. We
-// refresh every 10 s so toggling Clash on/off propagates without restarting the app.
+// ⚠️ Bun fetch 在进程首次网络请求时快照 HTTPS_PROXY/HTTP_PROXY/NO_PROXY env 并永久锁定,
+// 之后运行时改 env 不读 (实测 Bun 1.3.13)。所以"写 env 让 fetch 自动走代理"的路线在运行时
+// 切换代理 / 降级 / mode 切换场景下失效。改为: 启动时清空 env 防 Bun 锁定 (见
+// installProxyFetchInterceptor), 拦截 globalThis.fetch, per-request 按当前代理状态显式传
+// `proxy` 选项。env 只在容器 (mode=env) 场景保留 —— 让 Bun 快照 docker 注入的 HTTPS_PROXY。
 
 const SYSTEM_PROXY_REFRESH_MS = 10_000;
-const USER_SET_HTTPS_PROXY = process.env.HTTPS_PROXY?.trim();
-const USER_SET_HTTP_PROXY = process.env.HTTP_PROXY?.trim();
-const USER_SET_NO_PROXY = process.env.NO_PROXY?.trim();
-let lastAppliedEffectiveProxy: string | undefined;
 let lastDetectedSystemProxy: string | undefined;
 // 实际监听端口(Bun.serve 绑定后赋值)。端口顺延后可能与 preferredPort 不同,
 // proxyStatusPayload 返回给前端用于显示"当前运行端口"(P2-5)。
 let actualServingPort: number | undefined;
-// P0-1: 代理活性探测。探测到代理端口不可达时置 true, applyEffectiveProxy 据此临时降级为
-// 直连(不把死代理写进 env), 避免 Clash 崩溃/被 kill 后注册表残留导致所有请求永久超时。
-// resolveEffectiveProxy 不感知此标记 —— 仍返回"声明应该用什么", 降级是 apply 层的运行态决策。
+// P0-1: 代理活性探测。探测到代理端口不可达时置 true, 拦截器据此临时降级为直连
+// (不向死代理发请求), 避免 Clash 崩溃/被 kill 后注册表残留导致所有请求永久超时。
+// resolveEffectiveProxy 不感知此标记 —— 仍返回"声明应该用什么", 降级是拦截器的运行态决策。
 let proxyMarkedDead = false;
 
 function parseProxyServerValue(value: string): string | undefined {
@@ -2473,36 +2476,100 @@ function resolveEffectiveProxy(): { url: string | undefined; source: "manual" | 
 }
 
 function applyEffectiveProxy() {
-  // mode=env: env 完全控制(Docker), apply 是 no-op —— 不读 cfg 也不写 env,
-  // 让 docker 注入的 HTTPS_PROXY 原样生效。重置 lastApplied 便于切回其它 mode 时重设。
+  // 代理的 per-request 应用由 installProxyFetchInterceptor 安装的拦截器负责。
+  // 此函数仅做日志输出, 保留调用点不变 (updateSettings / settings/proxy POST / 轮询都调它)。
   const mode = state?.settings?.proxyConfig?.mode ?? "auto";
   if (mode === "env") {
-    lastAppliedEffectiveProxy = undefined;
+    const envUrl = process.env.HTTPS_PROXY?.trim() || process.env.HTTP_PROXY?.trim();
+    console.log(envUrl ? `[proxy] env: ${redactProxyForLog(envUrl)}` : "[proxy] env: direct (no HTTPS_PROXY)");
     return;
   }
   const { url, source } = resolveEffectiveProxy();
-  // proxyMarkedDead 时强制走直连: 代理端口已探测为不可达, 不能再把死代理写进 env
-  const effectiveUrl = proxyMarkedDead ? undefined : url;
-  if (effectiveUrl === lastAppliedEffectiveProxy) return;
-  lastAppliedEffectiveProxy = effectiveUrl;
-  if (!USER_SET_HTTPS_PROXY) {
-    if (effectiveUrl) process.env.HTTPS_PROXY = effectiveUrl;
-    else delete process.env.HTTPS_PROXY;
-  }
-  if (!USER_SET_HTTP_PROXY) {
-    if (effectiveUrl) process.env.HTTP_PROXY = effectiveUrl;
-    else delete process.env.HTTP_PROXY;
-  }
-  if (!USER_SET_NO_PROXY) {
-    // localhost/loopback must always bypass — the sidecar's own webview and smoke tests
-    // talk to 127.0.0.1 and would otherwise loop through the proxy.
-    process.env.NO_PROXY = "localhost,127.0.0.1,::1";
-  }
   if (proxyMarkedDead && url) {
     console.warn(`[proxy] ${redactProxyForLog(url)} not responding — temporarily direct`);
   } else {
-    console.log(effectiveUrl ? `[proxy] ${source}: ${redactProxyForLog(effectiveUrl)}` : "[proxy] direct (no proxy)");
+    console.log(url ? `[proxy] ${source}: ${redactProxyForLog(url)}` : "[proxy] direct (no proxy)");
   }
+}
+
+// bypassRules 匹配 (逻辑移植自 opencode proxy-from-env 的 shouldProxy, 改为返回 true=bypass)。
+// localhost/127.0.0.1/::1 永远 bypass (硬编码, 即使没配 rules); 用户 rules 支持精确域名 /
+// 通配 (*.example.com / .example.com) / host:port 端口限定。
+function shouldBypassProxy(targetUrl: string, userRules: string): boolean {
+  let hostname: string;
+  let port: number;
+  try {
+    const u = new URL(targetUrl);
+    hostname = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    port = u.port ? parseInt(u.port, 10) : u.protocol === "https:" || u.protocol === "wss:" ? 443 : 80;
+  } catch {
+    return false; // URL 解析不出, 不 bypass (让请求正常发出, 由调用方处理错误)
+  }
+  const noProxy = `localhost,127.0.0.1,::1,${userRules}`.toLowerCase();
+  for (const rule of noProxy.split(/[,\s]/)) {
+    const trimmed = rule.trim();
+    if (!trimmed) continue;
+    const parsed = trimmed.match(/^(.+):(\d+)$/);
+    const rh = parsed ? parsed[1] : trimmed;
+    const rp = parsed ? parseInt(parsed[2], 10) : 0;
+    if (rp && rp !== port) continue; // 端口限定的规则, 端口不匹配跳过
+    if (rh === "*") return true; // 全 bypass
+    if (rh.startsWith("*")) {
+      // *.example.com 匹配 example.com 及子域
+      if (hostname === rh.slice(2) || hostname.endsWith(rh.slice(1))) return true;
+    } else if (rh.startsWith(".")) {
+      // .example.com 匹配子域
+      if (hostname.endsWith(rh)) return true;
+    } else {
+      if (hostname === rh) return true;
+    }
+  }
+  return false;
+}
+
+// Bun fetch 在进程首次网络请求时快照 HTTPS_PROXY/HTTP_PROXY/NO_PROXY env 并永久锁定
+// (实测 Bun 1.3.13)。本函数在 server 启动早期 (首次 fetch 前) 安装拦截:
+//   - 非容器部署: 清空 env 防 Bun 锁定旧代理
+//   - 容器部署 (mode=env): 保留 docker 注入的 HTTPS_PROXY, 让 Bun 快照它
+//   - 替换 globalThis.fetch, per-request 按当前代理状态显式传 proxy 选项
+function installProxyFetchInterceptor(): void {
+  if (!RUNNING_IN_CONTAINER) {
+    delete process.env.HTTPS_PROXY;
+    delete process.env.HTTP_PROXY;
+    delete process.env.https_proxy;
+    delete process.env.http_proxy;
+    delete process.env.NO_PROXY;
+    delete process.env.no_proxy;
+  }
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = function (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) {
+    // 调用方已显式传 proxy (如 /settings/proxy/test 端点): 尊重, 不拦截
+    const explicitProxy = (init as (RequestInit & { proxy?: string }) | undefined)?.proxy;
+    if (explicitProxy !== undefined) {
+      return originalFetch(input, init);
+    }
+    let target = "";
+    if (typeof input === "string") target = input;
+    else if (input instanceof URL) target = input.href;
+    else if (input instanceof Request) target = input.url;
+    const cfg = state?.settings?.proxyConfig;
+    const mode = cfg?.mode ?? "auto";
+    const failover = cfg?.failoverToDirect ?? true;
+    let proxy: string | undefined;
+    // env 模式 (Docker): 不注入, 让 Bun 用启动时快照的 docker env
+    if (mode !== "env" && mode !== "direct") {
+      const { url } = resolveEffectiveProxy();
+      // 降级条件: 代理被探测为死 且 用户允许降级 (failoverToDirect=true)。
+      // failoverToDirect=false = 用户明确"死了也别直连", 此时强制走代理。
+      if (url && !(proxyMarkedDead && failover) && !shouldBypassProxy(target, cfg?.bypassRules ?? "")) {
+        proxy = url;
+      }
+    }
+    if (proxy) {
+      return originalFetch(input, { ...(init as RequestInit), proxy } as RequestInit & { proxy: string });
+    }
+    return originalFetch(input, init);
+  } as typeof fetch;
 }
 
 // P0-1: 探测当前生效代理是否可达。不可达时降级为临时直连, 恢复后自动切回。
@@ -2515,20 +2582,20 @@ async function probeProxyLiveness(): Promise<void> {
   const mode = cfg?.mode ?? "auto";
   const failover = cfg?.failoverToDirect ?? true;
   // direct 本就直连; env 由 docker 控制; failoverToDirect=false 用户明确不降级 → 都不探测。
-  // 清掉残留死标记(若有), 让 lastApplied 归位便于 mode 切换时重设。
+  // 清掉残留死标记(若有)。
   if (mode === "direct" || mode === "env" || !failover) {
     if (proxyMarkedDead) {
       proxyMarkedDead = false;
-      lastAppliedEffectiveProxy = undefined;
+      applyEffectiveProxy();
     }
     return;
   }
   const { url } = resolveEffectiveProxy();
   if (!url) {
-    // 没有代理需要探测。清掉残留的死标记(若有), 让 lastApplied 同步归位便于下次有代理时重设。
+    // 没有代理需要探测。清掉残留的死标记(若有)。
     if (proxyMarkedDead) {
       proxyMarkedDead = false;
-      lastAppliedEffectiveProxy = undefined;
+      applyEffectiveProxy();
     }
     return;
   }
@@ -2600,9 +2667,9 @@ function proxyStatusPayload() {
     activeUrl: displayUrl ?? null,
     source, // "manual" | "system" | "env" | "none"
     detectedSystemProxy: lastDetectedSystemProxy ?? null,
-    // 代理已探测为死、当前临时直连。前端据此显示"代理失效"而非"无代理",
-    // 让用户知道是降级而非本就没设。
-    degraded: proxyMarkedDead,
+    // 代理已探测为死 且 当前正在降级直连(failoverToDirect=false 时用户明确不降级,
+    // 即使代理死了也走代理, 此时不算 degraded)。前端据此显示"代理失效"而非"无代理"。
+    degraded: proxyMarkedDead && (state?.settings?.proxyConfig?.failoverToDirect ?? true),
     // 当前 mode 与容器标记, 前端据此决定 UI 分支(如 containerMode 锁定 mode=env 只读)
     mode: state?.settings?.proxyConfig?.mode ?? "auto",
     containerMode: RUNNING_IN_CONTAINER,
@@ -2614,6 +2681,9 @@ function proxyStatusPayload() {
 let state = loadState();
 state.launchCount += 1;
 
+// 必须在首次 fetch 之前安装 (Bun.serve 接受请求之前), 否则首个请求触发 env 快照锁定。
+// 清空 env (非容器) + 拦截 globalThis.fetch, per-request 按当前代理状态显式传 proxy。
+installProxyFetchInterceptor();
 applyEffectiveProxy();
 // P2-1: 自适应轮询 —— 有代理时 3s 快速响应代理软件开关/崩溃; 无代理时 10s 省开销。
 // (注册表通知 RegNotifyChangeKeyValue 在 Bun spawn 的 PowerShell 子进程里未能可靠触发,
@@ -3547,6 +3617,7 @@ function normalizeProxyConfig(value: unknown): ProxyConfig {
   const username = String(raw.username ?? "");
   const password = String(raw.password ?? "");
   const failoverToDirect = typeof raw.failoverToDirect === "boolean" ? raw.failoverToDirect : true;
+  const bypassRules = String(raw.bypassRules ?? "").trim();
   const rawMode = raw.mode;
   let mode: ProxyMode;
   if (rawMode === "auto" || rawMode === "manual" || rawMode === "direct" || rawMode === "env") {
@@ -3558,7 +3629,7 @@ function normalizeProxyConfig(value: unknown): ProxyConfig {
     else if (RUNNING_IN_CONTAINER) mode = "env";
     else mode = "auto";
   }
-  return { mode, url, username, password, failoverToDirect };
+  return { mode, url, username, password, failoverToDirect, bypassRules };
 }
 
 // Port setting: integer in [1, 65535] or null (auto). Anything out of range / wrong type
@@ -15056,7 +15127,20 @@ function startAsrRealtimeSession(client: any, providerId?: string) {
         Authorization: `Bearer ${provider.apiKey}`,
         ...(provider.type === "dashscope" ? { "OpenAI-Beta": "realtime=v1" } : {}),
       };
-  const upstream = new WebSocket(endpoint, { headers });
+  // Bun 的 WebSocket 不自动读 HTTPS_PROXY env (跟 fetch 不同), 必须显式传 proxy 选项,
+  // 否则 ASR/TTS 的 wss 请求在配了代理的环境下会绕过代理直连失败。
+  const wsProxy: string | undefined = (() => {
+    const cfg = state?.settings?.proxyConfig;
+    const mode = cfg?.mode ?? "auto";
+    const failover = cfg?.failoverToDirect ?? true;
+    if (mode === "env" || mode === "direct") return undefined;
+    const { url } = resolveEffectiveProxy();
+    if (!url) return undefined;
+    if (proxyMarkedDead && failover) return undefined; // 降级直连
+    if (shouldBypassProxy(endpoint, cfg?.bypassRules ?? "")) return undefined;
+    return url;
+  })();
+  const upstream = new WebSocket(endpoint, wsProxy ? { headers, proxy: wsProxy } : { headers });
   session.upstream = upstream;
   upstream.binaryType = "arraybuffer";
   upstream.onopen = () => {
@@ -15433,6 +15517,9 @@ function updateSettings(next: Settings) {
     // 地址变化时旧的"死代理"标记不再适用(可能换了新代理), 重置让下次探测重新判断
     proxyMarkedDead = false;
     applyEffectiveProxy();
+    // 立即探测一次, 不等下一轮轮询(scheduleProxyRefresh 周期由上一轮 hasProxy 决定,
+    // 配置变化后可能要等最多 10s 才探测 —— 用户配死代理时这 10s 内所有请求都会超时)
+    void probeProxyLiveness();
   }
 }
 

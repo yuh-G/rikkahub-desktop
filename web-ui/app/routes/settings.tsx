@@ -8540,6 +8540,9 @@ interface ProxyConfig {
   username: string;
   password: string;
   failoverToDirect: boolean;
+  // 代理绕过规则 (逗号分隔域名/通配符): 命中的 URL 直连不走代理。
+  // localhost/127.0.0.1/::1 永远 bypass (后端硬编码)。仅 auto/manual 生效。
+  bypassRules: string;
 }
 
 interface ProxyStatus {
@@ -8607,7 +8610,7 @@ function ProxySection({
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
-  const initial = (settings.proxyConfig ?? { mode: "auto" as ProxyMode, url: "", username: "", password: "", failoverToDirect: true }) as ProxyConfig;
+  const initial = (settings.proxyConfig ?? { mode: "auto" as ProxyMode, url: "", username: "", password: "", failoverToDirect: true, bypassRules: "" }) as ProxyConfig;
   const [draft, setDraft] = React.useState<ProxyConfig>(initial);
   const [showPassword, setShowPassword] = React.useState(false);
   const [showAuth, setShowAuth] = React.useState(!!initial.username || !!initial.password);
@@ -8624,7 +8627,7 @@ function ProxySection({
     // resetting `draft` from `initial` would wipe those new keystrokes.
     if (dirtyRef.current) return;
     setDraft(initial);
-  }, [initial.mode, initial.url, initial.username, initial.password, initial.failoverToDirect]);
+  }, [initial.mode, initial.url, initial.username, initial.password, initial.failoverToDirect, initial.bypassRules]);
 
   // Fetch the active-proxy footer state on mount + after every save so it reflects what the
   // backend is actually using right now (manual override vs auto-detected from system).
@@ -8925,6 +8928,18 @@ function ProxySection({
                 checked={draft.failoverToDirect}
                 onCheckedChange={(v) => patch({ failoverToDirect: v })}
               />
+            </div>
+          )}
+
+          {(draft.mode === "auto" || draft.mode === "manual") && (
+            <div className="space-y-1.5">
+              <div className="text-sm font-medium">{t("settings:proxy.bypass_rules")}</div>
+              <Input
+                value={draft.bypassRules}
+                onChange={(e) => patch({ bypassRules: e.target.value })}
+                placeholder={t("settings:proxy.bypass_rules_placeholder")}
+              />
+              <p className="text-xs text-muted-foreground">{t("settings:proxy.bypass_rules_desc")}</p>
             </div>
           )}
 
