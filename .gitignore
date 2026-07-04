@@ -34,6 +34,9 @@ node_modules/
 # Reference source trees (separate repos, checked out locally for study)
 Rikkahub-Android/
 cherry-studio/
+lobehub/
+opencode-dev/
+kelivo/
 
 # 过程文档(本地私有,确认稳定后删除,不入库)
 记忆系统思考.md

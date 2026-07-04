@@ -878,7 +878,6 @@ export default function SettingsPage() {
                   )}
                 />
                 {t(item.labelKey)}
-                {item.id === "proxy" && <ProxyNavDot />}
               </button>
             );
           })}
@@ -8539,7 +8538,6 @@ interface ProxyConfig {
   url: string;
   username: string;
   password: string;
-  failoverToDirect: boolean;
   // 代理绕过规则 (逗号分隔域名/通配符): 命中的 URL 直连不走代理。
   // localhost/127.0.0.1/::1 永远 bypass (后端硬编码)。仅 auto/manual 生效。
   bypassRules: string;
@@ -8549,8 +8547,6 @@ interface ProxyStatus {
   activeUrl: string | null;
   source: "manual" | "system" | "env" | "none";
   detectedSystemProxy: string | null;
-  // 代理已探测为不可达、当前临时直连(P0-1)。前端据此显示"代理失效"而非"无代理"。
-  degraded: boolean;
   // 当前 mode 与容器标记(后端 proxyStatusPayload 返回)。containerMode=true 时 UI 锁定 mode=env 只读。
   mode: ProxyMode;
   containerMode: boolean;
@@ -8571,36 +8567,36 @@ function isValidProxyUrl(url: string): boolean {
 }
 
 // 导航项"代理"右侧的状态点(P2-7): 让用户不进设置页就知道代理运行态。
-// 绿=走代理且通 / 黄=代理失效已临时直连 / 灰=直连(无代理)。独立轮询, 不依赖 ProxySection。
+// 绿=走代理 / 灰=直连(无代理)。独立轮询, 不依赖 ProxySection。
 function ProxyNavDot() {
   const { t } = useTranslation();
-  const [st, setSt] = React.useState<{ activeUrl: string | null; degraded: boolean } | null>(null);
+  const [st, setSt] = React.useState<{ activeUrl: string | null } | null>(null);
   React.useEffect(() => {
     const refresh = async () => {
       try {
-        const s = await api.get<{ activeUrl: string | null; degraded: boolean }>("settings/proxy/status");
-        setSt({ activeUrl: s.activeUrl, degraded: s.degraded });
+        const s = await api.get<{ activeUrl: string | null }>("settings/proxy/status");
+        setSt({ activeUrl: s.activeUrl });
       } catch {
         // 后端未起或请求失败时静默, 不显示点
       }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 10_000);
+    const timer = window.setInterval(refresh, 3_000);
     return () => window.clearInterval(timer);
   }, []);
   if (!st) return null;
-  const cls = st.degraded
-    ? "bg-amber-500"
-    : st.activeUrl
-      ? "bg-green-500"
-      : "bg-muted-foreground/30";
-  const tip = st.degraded
-    ? t("settings:proxy.nav_status_degraded")
-    : st.activeUrl
-      ? t("settings:proxy.nav_status_proxy", { url: st.activeUrl })
-      : t("settings:proxy.nav_status_direct");
+  const cls = st.activeUrl ? "bg-green-500" : "bg-muted-foreground/30";
+  const tip = st.activeUrl
+    ? t("settings:proxy.nav_status_proxy", { url: st.activeUrl })
+    : t("settings:proxy.nav_status_direct");
   return <span className={`ml-auto size-2 shrink-0 rounded-full ${cls}`} title={tip} />;
 }
+
+// 测试 URL 是纯 UI 偏好 (不属于代理配置), 存 localStorage 即可 — 不进 settings/备份,
+// 避免 APP↔PC 备份兼容性波纹。ProxySection 是条件渲染 (切页即 unmount), 必须持久化,
+// 否则用户填的测试 URL 切走再回来就丢了。
+const PROXY_TEST_URL_KEY = "rikkahub:proxy-test-url";
+const DEFAULT_PROXY_TEST_URL = "https://www.gstatic.com/generate_204";
 
 function ProxySection({
   settings,
@@ -8610,12 +8606,22 @@ function ProxySection({
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
-  const initial = (settings.proxyConfig ?? { mode: "auto" as ProxyMode, url: "", username: "", password: "", failoverToDirect: true, bypassRules: "" }) as ProxyConfig;
+  const initial = (settings.proxyConfig ?? { mode: "auto" as ProxyMode, url: "", username: "", password: "", bypassRules: "" }) as ProxyConfig;
   const [draft, setDraft] = React.useState<ProxyConfig>(initial);
   const [showPassword, setShowPassword] = React.useState(false);
-  const [showAuth, setShowAuth] = React.useState(!!initial.username || !!initial.password);
   const [detecting, setDetecting] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
+  const [testUrl, setTestUrl] = React.useState<string>(() => {
+    try {
+      return window.localStorage.getItem(PROXY_TEST_URL_KEY) || DEFAULT_PROXY_TEST_URL;
+    } catch {
+      return DEFAULT_PROXY_TEST_URL;
+    }
+  });
+  const updateTestUrl = React.useCallback((v: string) => {
+    setTestUrl(v);
+    try { window.localStorage.setItem(PROXY_TEST_URL_KEY, v); } catch { /* 隐私模式/SSR */ }
+  }, []);
   const [testResult, setTestResult] = React.useState<{ ok: boolean; status?: number; latencyMs?: number; error?: string } | null>(null);
   const [status, setStatus] = React.useState<ProxyStatus | null>(null);
   const dirtyRef = React.useRef(false);
@@ -8627,7 +8633,7 @@ function ProxySection({
     // resetting `draft` from `initial` would wipe those new keystrokes.
     if (dirtyRef.current) return;
     setDraft(initial);
-  }, [initial.mode, initial.url, initial.username, initial.password, initial.failoverToDirect, initial.bypassRules]);
+  }, [initial.mode, initial.url, initial.username, initial.password, initial.bypassRules]);
 
   // Fetch the active-proxy footer state on mount + after every save so it reflects what the
   // backend is actually using right now (manual override vs auto-detected from system).
@@ -8641,8 +8647,9 @@ function ProxySection({
   }, []);
   React.useEffect(() => {
     void refreshStatus();
-    // Poll every 10s so toggling Clash on/off updates the footer without a manual refresh.
-    const timer = window.setInterval(() => void refreshStatus(), 10_000);
+    // 后端 readSystemProxy 已加 2s TTL 缓存, 这里 3s 轮询命中缓存的成本几乎为零,
+    // 用户开关 Clash 后小绿点最多 ~5s (TTL 过期 + 下一轮) 更新。
+    const timer = window.setInterval(() => void refreshStatus(), 3_000);
     return () => window.clearInterval(timer);
   }, [refreshStatus]);
 
@@ -8679,7 +8686,6 @@ function ProxySection({
           activeUrl: result.activeUrl,
           source: result.source,
           detectedSystemProxy: result.detectedSystemProxy,
-          degraded: result.degraded,
           mode: result.mode,
           containerMode: result.containerMode,
           runningPort: result.runningPort,
@@ -8723,7 +8729,7 @@ function ProxySection({
     try {
       const result = await api.post<{ ok: boolean; status?: number; latencyMs?: number; error?: string }>(
         "settings/proxy/test",
-        {},
+        { url: testUrl.trim() },
       );
       setTestResult(result);
     } catch (e) {
@@ -8778,15 +8784,13 @@ function ProxySection({
     return () => window.clearTimeout(timer);
   }, [portDraft, savePort]);
 
-  const activeDisplay = status?.degraded
-    ? t("settings:proxy.degraded", { url: status.activeUrl ?? "" })
-    : status?.activeUrl
-      ? status.source === "system"
-        ? t("settings:proxy.active_from_system", { url: status.activeUrl })
-        : status.source === "env"
-          ? t("settings:proxy.active_from_env", { url: status.activeUrl })
-          : status.activeUrl
-      : t("settings:proxy.not_active");
+  const activeDisplay = status?.activeUrl
+    ? status.source === "system"
+      ? t("settings:proxy.active_from_system", { url: status.activeUrl })
+      : status.source === "env"
+        ? t("settings:proxy.active_from_env", { url: status.activeUrl })
+        : status.activeUrl
+    : t("settings:proxy.not_active");
 
   return (
     <>
@@ -8796,9 +8800,12 @@ function ProxySection({
         subtitle={t("settings:proxy.subtitle")}
       />
       <div className="space-y-4">
-        <div className="space-y-5 rounded-lg border bg-card p-6">
+        <div className="space-y-4 rounded-lg border bg-card p-6">
           <div className="space-y-2">
-            <div className="text-base font-medium">{t("settings:proxy.http_title")}</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-base font-medium">{t("settings:proxy.http_title")}</div>
+              <ProxyNavDot />
+            </div>
             <div className="text-xs text-muted-foreground">{t("settings:proxy.mode_desc")}</div>
             <Select
               value={draft.mode}
@@ -8808,7 +8815,7 @@ function ProxySection({
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent position="popper" sideOffset={4}>
                 <SelectItem value="auto">{t("settings:proxy.mode_auto")}</SelectItem>
                 <SelectItem value="manual">{t("settings:proxy.mode_manual")}</SelectItem>
                 <SelectItem value="direct">{t("settings:proxy.mode_direct")}</SelectItem>
@@ -8830,104 +8837,76 @@ function ProxySection({
           )}
 
           {draft.mode === "manual" && (
-            <div className="flex justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void detectSystemProxy()}
-                disabled={detecting}
-              >
-                {detecting ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="size-4" />
-                )}
-                {t("settings:proxy.detect")}
-              </Button>
-            </div>
-          )}
-
-          {draft.mode === "manual" && (
-            <>
-              <label className="block space-y-2">
+            <div className="space-y-3">
+              <label className="block space-y-1.5">
                 <span className="text-sm font-medium">{t("settings:proxy.address")}</span>
-                <Input
-                  value={draft.url}
-                  onChange={(event) => patch({ url: event.target.value })}
-                  placeholder={t("settings:proxy.address_ph")}
-                />
+                <div className="flex gap-2">
+                  <Input
+                    className="flex-1"
+                    value={draft.url}
+                    onChange={(event) => patch({ url: event.target.value })}
+                    placeholder={t("settings:proxy.address_ph")}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => void detectSystemProxy()}
+                    disabled={detecting}
+                  >
+                    {detecting ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="size-4" />
+                    )}
+                    {t("settings:proxy.detect")}
+                  </Button>
+                </div>
               </label>
 
-              {showAuth ? (
-                <>
-                  <label className="block space-y-2">
-                    <span className="text-sm font-medium">
-                      {t("settings:proxy.username")}{" "}
-                      <span className="text-xs font-normal text-muted-foreground">
-                        {t("settings:proxy.optional")}
-                      </span>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block space-y-1.5">
+                  <span className="text-sm font-medium">
+                    {t("settings:proxy.username")}
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">
+                      {t("settings:proxy.optional")}
                     </span>
+                  </span>
+                  <Input
+                    value={draft.username}
+                    onChange={(event) => patch({ username: event.target.value })}
+                    placeholder="proxy username"
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="text-sm font-medium">
+                    {t("settings:proxy.password")}
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">
+                      {t("settings:proxy.optional")}
+                    </span>
+                  </span>
+                  <div className="relative">
                     <Input
-                      value={draft.username}
-                      onChange={(event) => patch({ username: event.target.value })}
-                      placeholder="proxy username"
+                      type={showPassword ? "text" : "password"}
+                      value={draft.password}
+                      onChange={(event) => patch({ password: event.target.value })}
+                      placeholder="proxy password"
                       autoComplete="off"
+                      className="pr-9"
                     />
-                  </label>
-
-                  <label className="block space-y-2">
-                    <span className="text-sm font-medium">
-                      {t("settings:proxy.password")}{" "}
-                      <span className="text-xs font-normal text-muted-foreground">
-                        {t("settings:proxy.optional")}
-                      </span>
-                    </span>
-                    <div className="flex gap-2">
-                      <Input
-                        type={showPassword ? "text" : "password"}
-                        value={draft.password}
-                        onChange={(event) => patch({ password: event.target.value })}
-                        placeholder="proxy password"
-                        autoComplete="off"
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => setShowPassword((value) => !value)}
-                      >
-                        {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                      </Button>
-                    </div>
-                  </label>
-                </>
-              ) : (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="text-xs text-muted-foreground"
-                  onClick={() => setShowAuth(true)}
-                >
-                  {t("settings:proxy.show_auth")}
-                </Button>
-              )}
-            </>
-          )}
-
-          {(draft.mode === "auto" || draft.mode === "manual") && (
-            <div className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2">
-              <div className="min-w-0">
-                <div className="text-sm font-medium">{t("settings:proxy.failover")}</div>
-                <div className="mt-0.5 text-xs text-muted-foreground">
-                  {t("settings:proxy.failover_desc")}
-                </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((value) => !value)}
+                      tabIndex={-1}
+                      className="absolute right-2 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-muted"
+                    >
+                      {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                </label>
               </div>
-              <Switch
-                checked={draft.failoverToDirect}
-                onCheckedChange={(v) => patch({ failoverToDirect: v })}
-              />
             </div>
           )}
 
@@ -8943,34 +8922,37 @@ function ProxySection({
             </div>
           )}
 
-          <div
-            className={`rounded-md px-3 py-2 text-xs ${
-              status?.degraded
-                ? "border border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300"
-                : "bg-muted/40 text-muted-foreground"
-            }`}
-          >
+          <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
             {t("settings:proxy.current")}:
             <span className="font-mono text-foreground">{activeDisplay}</span>
           </div>
 
-          <div className="flex items-center gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void testProxy()}
-              disabled={testing || !status?.activeUrl}
-            >
-              {testing ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Zap className="size-4" />
-              )}
-              {t("settings:proxy.test")}
-            </Button>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Input
+                value={testUrl}
+                onChange={(e) => updateTestUrl(e.target.value)}
+                placeholder={DEFAULT_PROXY_TEST_URL}
+                className="flex-1"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => void testProxy()}
+                disabled={testing || !status?.activeUrl}
+              >
+                {testing ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Zap className="size-4" />
+                )}
+                {t("settings:proxy.test")}
+              </Button>
+            </div>
             {testResult && (
-              <span
+              <div
                 className={`text-xs ${
                   testResult.ok
                     ? "text-green-600 dark:text-green-400"
@@ -8979,8 +8961,8 @@ function ProxySection({
               >
                 {testResult.ok
                   ? t("settings:proxy.test_ok", { latency: testResult.latencyMs ?? 0 })
-                  : t("settings:proxy.test_fail")}
-              </span>
+                  : `${t("settings:proxy.test_fail")}${testResult.error ? `: ${testResult.error}` : ""}`}
+              </div>
             )}
           </div>
         </div>
@@ -9087,7 +9069,7 @@ function AboutSection() {
   // Hard-coded current version — must match pc-server/server.ts:APP_VERSION and
   // web-ui/src-tauri/tauri.conf.json:version. The update checker compares this against
   // the latest GitHub release.
-  const APP_VERSION = "1.4.0";
+  const APP_VERSION = "1.4.1";
 
   const [checking, setChecking] = React.useState(false);
   const [updateInfo, setUpdateInfo] = React.useState<UpdateInfo | null>(null);
