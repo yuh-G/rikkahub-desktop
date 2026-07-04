@@ -310,7 +310,7 @@
     "subtitle": "为 AI API、搜索、MCP 等所有出站请求统一指定 HTTP 代理，以及本地服务的监听端口。代理留空将自动跟随系统代理，端口留空将自动选择。",
     "http_title": "HTTP 代理设置",
     "http_desc": "所有 AI API 请求均通过此代理转发",
-    "detect": "自动检测系统代理",
+    "detect": "从系统代理填入",
     "address": "代理地址",
     "address_ph": "http://127.0.0.1:7890（留空 = 跟随系统代理）",
     "username": "用户名",
@@ -347,7 +347,14 @@
     "container_mode_desc": "容器化部署：代理由 docker 环境变量（HTTPS_PROXY 等）控制，此处不可修改。请在 docker-compose 或 docker run 中配置。",
     "failover": "代理失效自动直连",
     "failover_desc": "探测到代理不可达时临时改走直连，代理恢复后自动切回。",
-    "active_from_env": "{{url}}（来自环境变量）"
+    "active_from_env": "{{url}}（来自环境变量）",
+    "detected_filled": "已从系统代理填入：{{url}}",
+    "url_invalid": "代理地址格式无效，应为 http(s)://host:port 或 host:port",
+    "show_auth": "代理需要账号密码",
+    "test": "测试代理",
+    "test_ok": "可用（{{latency}} ms）",
+    "test_fail": "不可用",
+    "port_running": "当前运行端口：{{port}}"
   },
   "stats": {
     "loading": "加载统计",

@@ -2351,6 +2351,9 @@ const USER_SET_HTTP_PROXY = process.env.HTTP_PROXY?.trim();
 const USER_SET_NO_PROXY = process.env.NO_PROXY?.trim();
 let lastAppliedEffectiveProxy: string | undefined;
 let lastDetectedSystemProxy: string | undefined;
+// 实际监听端口(Bun.serve 绑定后赋值)。端口顺延后可能与 preferredPort 不同,
+// proxyStatusPayload 返回给前端用于显示"当前运行端口"(P2-5)。
+let actualServingPort: number | undefined;
 // P0-1: 代理活性探测。探测到代理端口不可达时置 true, applyEffectiveProxy 据此临时降级为
 // 直连(不把死代理写进 env), 避免 Clash 崩溃/被 kill 后注册表残留导致所有请求永久超时。
 // resolveEffectiveProxy 不感知此标记 —— 仍返回"声明应该用什么", 降级是 apply 层的运行态决策。
@@ -2589,6 +2592,8 @@ function proxyStatusPayload() {
     // 当前 mode 与容器标记, 前端据此决定 UI 分支(如 containerMode 锁定 mode=env 只读)
     mode: state?.settings?.proxyConfig?.mode ?? "auto",
     containerMode: RUNNING_IN_CONTAINER,
+    // 实际运行端口(顺延后可能与 preferredPort 不同), 前端口 Card 显示
+    runningPort: actualServingPort ?? null,
   };
 }
 
@@ -17223,6 +17228,28 @@ async function routeApi(request: Request, url: URL) {
   if (path === "settings/proxy/status" && request.method === "GET") {
     return json(proxyStatusPayload());
   }
+  if (path === "settings/proxy/test" && request.method === "POST") {
+    // 测试当前生效代理能否真的连通。显式传 proxy 选项绕过 env —— 否则降级态下 env 已清,
+    // fetch 会直连 google 成功, 误判成"代理通了"。命中 generate_204 = 通; 拒连/超时 = 代理问题。
+    const { url } = resolveEffectiveProxy();
+    if (!url) return json({ ok: false, error: "no_proxy" });
+    const t0 = Date.now();
+    try {
+      const resp = await fetch("https://www.gstatic.com/generate_204", {
+        proxy: url,
+        signal: AbortSignal.timeout(8000),
+        redirect: "manual",
+      });
+      const ok = resp.status === 204 || resp.status === 200;
+      return json({ ok, status: resp.status, latencyMs: Date.now() - t0 });
+    } catch (e) {
+      return json({
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+        latencyMs: Date.now() - t0,
+      });
+    }
+  }
   if (path === "data/export/status" && request.method === "GET") {
     const cachedDbPath = join(dataDir, "rikka_hub_cached.db");
     let schemaInfo: { identityHash: string; version: number } | null = null;
@@ -18108,6 +18135,7 @@ const { server, port } = (() => {
 // Machine-readable marker parsed by the Tauri shell (src-tauri/src/lib.rs) to learn which port
 // the sidecar actually bound to — the shell navigates the webview here when 8080 was taken.
 // Keep it a single line with the exact `RIKKAHUB_PORT:<port>` prefix.
+actualServingPort = port;
 console.log(`RIKKAHUB_PORT:${port}`);
 
 console.log(`RikkaHub PC server running at http://localhost:${port}`);

@@ -36,6 +36,7 @@ import {
   Square,
   Sparkles,
   WandSparkles,
+  Zap,
   Brain,
   X,
   XCircle,
@@ -8549,6 +8550,20 @@ interface ProxyStatus {
   // 当前 mode 与容器标记(后端 proxyStatusPayload 返回)。containerMode=true 时 UI 锁定 mode=env 只读。
   mode: ProxyMode;
   containerMode: boolean;
+  // 实际运行端口(顺延后可能与 preferredPort 不同), 端口 Card 显示
+  runningPort: number | null;
+}
+
+function isValidProxyUrl(url: string): boolean {
+  // 允许 "host:port" / "http://host:port" / "https://..."。先补 scheme 再用 WHATWG URL 校验,
+  // 与后端 composeProxyUrl 的容错保持一致(用户可不填 scheme)。
+  const withScheme = /^https?:\/\//i.test(url) ? url : `http://${url}`;
+  try {
+    const u = new URL(withScheme);
+    return (u.protocol === "http:" || u.protocol === "https:") && !!u.hostname;
+  } catch {
+    return false;
+  }
 }
 
 function ProxySection({
@@ -8562,7 +8577,10 @@ function ProxySection({
   const initial = (settings.proxyConfig ?? { mode: "auto" as ProxyMode, url: "", username: "", password: "", failoverToDirect: true }) as ProxyConfig;
   const [draft, setDraft] = React.useState<ProxyConfig>(initial);
   const [showPassword, setShowPassword] = React.useState(false);
+  const [showAuth, setShowAuth] = React.useState(!!initial.username || !!initial.password);
   const [detecting, setDetecting] = React.useState(false);
+  const [testing, setTesting] = React.useState(false);
+  const [testResult, setTestResult] = React.useState<{ ok: boolean; status?: number; latencyMs?: number; error?: string } | null>(null);
   const [status, setStatus] = React.useState<ProxyStatus | null>(null);
   const dirtyRef = React.useRef(false);
 
@@ -8603,9 +8621,16 @@ function ProxySection({
       // P0-2: Bun fetch 静默丢弃 SOCKS 代理(表现成直连失败), 在保存前拦截 ——
       // 否则用户保存后看到"已保存"却所有请求失败, 极难排查。仅 manual 模式需校验
       // (其它模式 url 字段被后端忽略)。
-      if (draft.mode === "manual" && /^socks/i.test(draft.url.trim())) {
-        toast.error(t("settings:proxy.socks_not_supported"));
-        return;
+      if (draft.mode === "manual") {
+        const trimmedUrl = draft.url.trim();
+        if (/^socks/i.test(trimmedUrl)) {
+          toast.error(t("settings:proxy.socks_not_supported"));
+          return;
+        }
+        if (trimmedUrl && !isValidProxyUrl(trimmedUrl)) {
+          toast.error(t("settings:proxy.url_invalid"));
+          return;
+        }
       }
       try {
         const result = await api.post<{ config: ProxyConfig } & ProxyStatus>(
@@ -8621,6 +8646,7 @@ function ProxySection({
           degraded: result.degraded,
           mode: result.mode,
           containerMode: result.containerMode,
+          runningPort: result.runningPort,
         });
         if (announce) toast.success(t("settings:proxy.saved"));
       } catch (err) {
@@ -8642,7 +8668,7 @@ function ProxySection({
       const result = await api.post<{ detected: string | null }>("settings/proxy/detect", {});
       if (result.detected) {
         patch({ url: result.detected });
-        toast.success(t("settings:proxy.detected", { url: result.detected }));
+        toast.success(t("settings:proxy.detected_filled", { url: result.detected }));
       } else {
         toast.message(t("settings:proxy.none_detected"), {
           description: t("settings:proxy.none_detected_desc"),
@@ -8652,6 +8678,22 @@ function ProxySection({
       toast.error(err instanceof Error ? err.message : t("settings:proxy.detect_failed"));
     } finally {
       setDetecting(false);
+    }
+  };
+
+  const testProxy = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await api.post<{ ok: boolean; status?: number; latencyMs?: number; error?: string }>(
+        "settings/proxy/test",
+        {},
+      );
+      setTestResult(result);
+    } catch (e) {
+      setTestResult({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -8751,7 +8793,7 @@ function ProxySection({
             </div>
           )}
 
-          {(draft.mode === "auto" || draft.mode === "manual") && (
+          {draft.mode === "manual" && (
             <div className="flex justify-end">
               <Button
                 type="button"
@@ -8781,46 +8823,60 @@ function ProxySection({
                 />
               </label>
 
-              <label className="block space-y-2">
-                <span className="text-sm font-medium">
-                  {t("settings:proxy.username")}{" "}
-                  <span className="text-xs font-normal text-muted-foreground">
-                    {t("settings:proxy.optional")}
-                  </span>
-                </span>
-                <Input
-                  value={draft.username}
-                  onChange={(event) => patch({ username: event.target.value })}
-                  placeholder="proxy username"
-                  autoComplete="off"
-                />
-              </label>
+              {showAuth ? (
+                <>
+                  <label className="block space-y-2">
+                    <span className="text-sm font-medium">
+                      {t("settings:proxy.username")}{" "}
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {t("settings:proxy.optional")}
+                      </span>
+                    </span>
+                    <Input
+                      value={draft.username}
+                      onChange={(event) => patch({ username: event.target.value })}
+                      placeholder="proxy username"
+                      autoComplete="off"
+                    />
+                  </label>
 
-              <label className="block space-y-2">
-                <span className="text-sm font-medium">
-                  {t("settings:proxy.password")}{" "}
-                  <span className="text-xs font-normal text-muted-foreground">
-                    {t("settings:proxy.optional")}
-                  </span>
-                </span>
-                <div className="flex gap-2">
-                  <Input
-                    type={showPassword ? "text" : "password"}
-                    value={draft.password}
-                    onChange={(event) => patch({ password: event.target.value })}
-                    placeholder="proxy password"
-                    autoComplete="off"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={() => setShowPassword((value) => !value)}
-                  >
-                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                  </Button>
-                </div>
-              </label>
+                  <label className="block space-y-2">
+                    <span className="text-sm font-medium">
+                      {t("settings:proxy.password")}{" "}
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {t("settings:proxy.optional")}
+                      </span>
+                    </span>
+                    <div className="flex gap-2">
+                      <Input
+                        type={showPassword ? "text" : "password"}
+                        value={draft.password}
+                        onChange={(event) => patch({ password: event.target.value })}
+                        placeholder="proxy password"
+                        autoComplete="off"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => setShowPassword((value) => !value)}
+                      >
+                        {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                      </Button>
+                    </div>
+                  </label>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs text-muted-foreground"
+                  onClick={() => setShowAuth(true)}
+                >
+                  {t("settings:proxy.show_auth")}
+                </Button>
+              )}
             </>
           )}
 
@@ -8848,6 +8904,36 @@ function ProxySection({
           >
             {t("settings:proxy.current")}:
             <span className="font-mono text-foreground">{activeDisplay}</span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void testProxy()}
+              disabled={testing || !status?.activeUrl}
+            >
+              {testing ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Zap className="size-4" />
+              )}
+              {t("settings:proxy.test")}
+            </Button>
+            {testResult && (
+              <span
+                className={`text-xs ${
+                  testResult.ok
+                    ? "text-green-600 dark:text-green-400"
+                    : "text-red-600 dark:text-red-400"
+                }`}
+              >
+                {testResult.ok
+                  ? t("settings:proxy.test_ok", { latency: testResult.latencyMs ?? 0 })
+                  : t("settings:proxy.test_fail")}
+              </span>
+            )}
           </div>
         </div>
 
@@ -8882,6 +8968,11 @@ function ProxySection({
           <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
             {t("settings:proxy.port_restart_note")}
           </div>
+          {status?.runningPort != null && (
+            <div className="text-xs text-muted-foreground">
+              {t("settings:proxy.port_running", { port: status.runningPort })}
+            </div>
+          )}
         </div>
       </div>
     </>
