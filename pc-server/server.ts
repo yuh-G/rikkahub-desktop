@@ -2337,6 +2337,10 @@ const USER_SET_HTTP_PROXY = process.env.HTTP_PROXY?.trim();
 const USER_SET_NO_PROXY = process.env.NO_PROXY?.trim();
 let lastAppliedEffectiveProxy: string | undefined;
 let lastDetectedSystemProxy: string | undefined;
+// P0-1: 代理活性探测。探测到代理端口不可达时置 true, applyEffectiveProxy 据此临时降级为
+// 直连(不把死代理写进 env), 避免 Clash 崩溃/被 kill 后注册表残留导致所有请求永久超时。
+// resolveEffectiveProxy 不感知此标记 —— 仍返回"声明应该用什么", 降级是 apply 层的运行态决策。
+let proxyMarkedDead = false;
 
 function parseProxyServerValue(value: string): string | undefined {
   if (!value) return undefined;
@@ -2349,7 +2353,9 @@ function parseProxyServerValue(value: string): string | undefined {
       const [k, v] = piece.split("=");
       if (k && v) map.set(k.trim().toLowerCase(), v.trim());
     }
-    const target = map.get("https") ?? map.get("http") ?? map.get("socks");
+    // P0-3: 不 fallback 到 socks=。Bun fetch 只支持 http/https 代理, 把 SOCKS 端口当
+    // HTTP 代理用会导致 CONNECT 握手挂起。注册表只有 socks= 时返回 undefined(等同无系统代理)。
+    const target = map.get("https") ?? map.get("http");
     if (!target) return undefined;
     return /^https?:\/\//i.test(target) ? target : `http://${target}`;
   }
@@ -2405,14 +2411,16 @@ function resolveEffectiveProxy(): { url: string | undefined; source: "manual" | 
 
 function applyEffectiveProxy() {
   const { url, source } = resolveEffectiveProxy();
-  if (url === lastAppliedEffectiveProxy) return;
-  lastAppliedEffectiveProxy = url;
+  // proxyMarkedDead 时强制走直连: 代理端口已探测为不可达, 不能再把死代理写进 env
+  const effectiveUrl = proxyMarkedDead ? undefined : url;
+  if (effectiveUrl === lastAppliedEffectiveProxy) return;
+  lastAppliedEffectiveProxy = effectiveUrl;
   if (!USER_SET_HTTPS_PROXY) {
-    if (url) process.env.HTTPS_PROXY = url;
+    if (effectiveUrl) process.env.HTTPS_PROXY = effectiveUrl;
     else delete process.env.HTTPS_PROXY;
   }
   if (!USER_SET_HTTP_PROXY) {
-    if (url) process.env.HTTP_PROXY = url;
+    if (effectiveUrl) process.env.HTTP_PROXY = effectiveUrl;
     else delete process.env.HTTP_PROXY;
   }
   if (!USER_SET_NO_PROXY) {
@@ -2420,7 +2428,51 @@ function applyEffectiveProxy() {
     // talk to 127.0.0.1 and would otherwise loop through the proxy.
     process.env.NO_PROXY = "localhost,127.0.0.1,::1";
   }
-  console.log(url ? `[proxy] ${source}: ${redactProxyForLog(url)}` : "[proxy] direct (no proxy)");
+  if (proxyMarkedDead && url) {
+    console.warn(`[proxy] ${redactProxyForLog(url)} not responding — temporarily direct`);
+  } else {
+    console.log(effectiveUrl ? `[proxy] ${source}: ${redactProxyForLog(effectiveUrl)}` : "[proxy] direct (no proxy)");
+  }
+}
+
+// P0-1: 探测当前生效代理是否可达。不可达时降级为临时直连, 恢复后自动切回。
+// 用 Bun.connect 做轻量 TCP 握手(不发送 HTTP 数据), 800ms 超时。
+// 核心场景: Clash 崩溃/被 kill/断电后注册表 ProxyEnable 残留为 1, readWindowsSystemProxy
+// 仍读到死端口, 仅靠 10s 轮询的 applyEffectiveProxy 永远命中 lastApplied 早 return →
+// env 永久指向死端口, 应用"假死"。此探测打破该死锁。
+async function probeProxyLiveness(): Promise<void> {
+  const { url } = resolveEffectiveProxy();
+  if (!url) {
+    // 没有代理需要探测。清掉残留的死标记(若有), 让 lastApplied 同步归位便于下次有代理时重设。
+    if (proxyMarkedDead) {
+      proxyMarkedDead = false;
+      lastAppliedEffectiveProxy = undefined;
+    }
+    return;
+  }
+  let alive = false;
+  try {
+    const parsed = new URL(url);
+    const handle = await Promise.race([
+      Bun.connect({
+        hostname: parsed.hostname,
+        port: Number(parsed.port) || 80,
+        socket: { data: () => {}, open: () => {}, error: () => {} },
+      }),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("probe-timeout")), 800)),
+    ]);
+    handle.end();
+    alive = true;
+  } catch {
+    // 连接被拒/超时/域名解析失败 → 视为不可达
+  }
+  if (!alive && !proxyMarkedDead) {
+    proxyMarkedDead = true;
+    applyEffectiveProxy();
+  } else if (alive && proxyMarkedDead) {
+    proxyMarkedDead = false;
+    applyEffectiveProxy();
+  }
 }
 
 function redactProxyForLog(url: string): string {
@@ -2452,6 +2504,9 @@ function proxyStatusPayload() {
     activeUrl: displayUrl ?? null,
     source, // "manual" | "system" | "none"
     detectedSystemProxy: lastDetectedSystemProxy ?? null,
+    // 代理已探测为死、当前临时直连。前端据此显示"代理失效"而非"无代理",
+    // 让用户知道是降级而非本就没设。
+    degraded: proxyMarkedDead,
   };
 }
 
@@ -2459,7 +2514,10 @@ let state = loadState();
 state.launchCount += 1;
 
 applyEffectiveProxy();
-setInterval(applyEffectiveProxy, SYSTEM_PROXY_REFRESH_MS).unref();
+setInterval(() => {
+  applyEffectiveProxy();
+  void probeProxyLiveness();
+}, SYSTEM_PROXY_REFRESH_MS).unref();
 
 
 
@@ -15240,10 +15298,20 @@ function truncateConversationForRegenerate(conversation: Conversation, messageId
 }
 
 function updateSettings(next: Settings) {
+  // P0-4: 比较代理配置变化, 变了立即刷新 env(不等 10s 轮询)。
+  // 覆盖备份恢复 / 数据导入 / Android 合并等所有走 updateSettings 的路径 —— 之前只有
+  // /settings/proxy POST 显式调 applyEffectiveProxy, 其它路径恢复后最多 10s 内仍走旧代理。
+  const prevProxyUrl = resolveEffectiveProxy().url;
   state.settings = next;
   saveState();
   broadcastSettings();
   broadcastList();
+  const newProxyUrl = resolveEffectiveProxy().url;
+  if (newProxyUrl !== prevProxyUrl) {
+    // 地址变化时旧的"死代理"标记不再适用(可能换了新代理), 重置让下次探测重新判断
+    proxyMarkedDead = false;
+    applyEffectiveProxy();
+  }
 }
 
 async function routeApi(request: Request, url: URL) {
@@ -17030,6 +17098,15 @@ async function routeApi(request: Request, url: URL) {
   }
   if (path === "settings/proxy" && request.method === "POST") {
     const body = await readJson<Partial<ProxyConfig>>(request);
+    // P0-2: Bun fetch 静默丢弃 SOCKS 代理(表现为直连失败), 这里显式拒绝。
+    // 前端 save() 也有同样校验, 此处为防御性(防止其它调用方绕过前端直接 POST)。
+    const trimmedUrl = String(body?.url ?? "").trim();
+    if (/^socks/i.test(trimmedUrl)) {
+      return json(
+        { error: "SOCKS proxy is not supported (Bun fetch only handles HTTP/HTTPS). Please use the proxy tool's HTTP port." },
+        { status: 400 },
+      );
+    }
     const proxyConfig = normalizeProxyConfig(body);
     updateSettings({ ...state.settings, proxyConfig });
     applyEffectiveProxy();

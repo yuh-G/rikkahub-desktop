@@ -8540,6 +8540,8 @@ interface ProxyStatus {
   activeUrl: string | null;
   source: "manual" | "system" | "none";
   detectedSystemProxy: string | null;
+  // 代理已探测为不可达、当前临时直连(P0-1)。前端据此显示"代理失效"而非"无代理"。
+  degraded: boolean;
 }
 
 function ProxySection({
@@ -8591,6 +8593,13 @@ function ProxySection({
   const save = React.useCallback(
     async (announce = false) => {
       if (!announce && !dirtyRef.current) return;
+      // P0-2: Bun fetch 静默丢弃 SOCKS 代理(表现成直连失败), 在保存前拦截 ——
+      // 否则用户保存后看到"已保存"却所有请求失败, 极难排查。
+      const trimmedUrl = draft.url.trim();
+      if (/^socks/i.test(trimmedUrl)) {
+        toast.error(t("settings:proxy.socks_not_supported"));
+        return;
+      }
       try {
         const result = await api.post<{ config: ProxyConfig } & ProxyStatus>(
           "settings/proxy",
@@ -8602,6 +8611,7 @@ function ProxySection({
           activeUrl: result.activeUrl,
           source: result.source,
           detectedSystemProxy: result.detectedSystemProxy,
+          degraded: result.degraded,
         });
         if (announce) toast.success(t("settings:proxy.saved"));
       } catch (err) {
@@ -8681,11 +8691,13 @@ function ProxySection({
     return () => window.clearTimeout(timer);
   }, [portDraft, savePort]);
 
-  const activeDisplay = status?.activeUrl
-    ? status.source === "system"
-      ? t("settings:proxy.active_from_system", { url: status.activeUrl })
-      : status.activeUrl
-    : t("settings:proxy.not_active");
+  const activeDisplay = status?.degraded
+    ? t("settings:proxy.degraded", { url: status.activeUrl ?? "" })
+    : status?.activeUrl
+      ? status.source === "system"
+        ? t("settings:proxy.active_from_system", { url: status.activeUrl })
+        : status.activeUrl
+      : t("settings:proxy.not_active");
 
   return (
     <>
@@ -8769,7 +8781,13 @@ function ProxySection({
             </div>
           </label>
 
-          <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          <div
+            className={`rounded-md px-3 py-2 text-xs ${
+              status?.degraded
+                ? "border border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+                : "bg-muted/40 text-muted-foreground"
+            }`}
+          >
             {t("settings:proxy.current")}:
             <span className="font-mono text-foreground">{activeDisplay}</span>
           </div>

@@ -332,7 +332,9 @@
     "port_save_failed": "保存端口设置失败",
     "port_restart_note": "修改端口后需要重启应用才能生效。当前运行中的实例仍使用原端口。",
     "active_from_system": "{{url}}（来自系统代理）",
-    "not_active": "未启用（所有请求直连）"
+    "not_active": "未启用（所有请求直连）",
+    "socks_not_supported": "不支持 SOCKS 代理（运行时不支持），请改用代理工具的 HTTP 端口。",
+    "degraded": "代理 {{url}} 失效，已临时直连"
   },
   "stats": {
     "loading": "加载统计",
