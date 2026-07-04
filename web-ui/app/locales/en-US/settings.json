@@ -360,7 +360,10 @@
     "test": "Test proxy",
     "test_ok": "Reachable ({{latency}} ms)",
     "test_fail": "Unreachable",
-    "port_running": "Current running port: {{port}}"
+    "port_running": "Current running port: {{port}}",
+    "nav_status_degraded": "Proxy unreachable — temporarily direct",
+    "nav_status_proxy": "Via proxy: {{url}}",
+    "nav_status_direct": "Direct (no proxy)"
   },
   "stats": {
     "loading": "Loading stats",

@@ -878,6 +878,7 @@ export default function SettingsPage() {
                   )}
                 />
                 {t(item.labelKey)}
+                {item.id === "proxy" && <ProxyNavDot />}
               </button>
             );
           })}
@@ -8564,6 +8565,38 @@ function isValidProxyUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+// 导航项"代理"右侧的状态点(P2-7): 让用户不进设置页就知道代理运行态。
+// 绿=走代理且通 / 黄=代理失效已临时直连 / 灰=直连(无代理)。独立轮询, 不依赖 ProxySection。
+function ProxyNavDot() {
+  const { t } = useTranslation();
+  const [st, setSt] = React.useState<{ activeUrl: string | null; degraded: boolean } | null>(null);
+  React.useEffect(() => {
+    const refresh = async () => {
+      try {
+        const s = await api.get<{ activeUrl: string | null; degraded: boolean }>("settings/proxy/status");
+        setSt({ activeUrl: s.activeUrl, degraded: s.degraded });
+      } catch {
+        // 后端未起或请求失败时静默, 不显示点
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 10_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (!st) return null;
+  const cls = st.degraded
+    ? "bg-amber-500"
+    : st.activeUrl
+      ? "bg-green-500"
+      : "bg-muted-foreground/30";
+  const tip = st.degraded
+    ? t("settings:proxy.nav_status_degraded")
+    : st.activeUrl
+      ? t("settings:proxy.nav_status_proxy", { url: st.activeUrl })
+      : t("settings:proxy.nav_status_direct");
+  return <span className={`ml-auto size-2 shrink-0 rounded-full ${cls}`} title={tip} />;
 }
 
 function ProxySection({

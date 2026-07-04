@@ -354,7 +354,10 @@
     "test": "测试代理",
     "test_ok": "可用（{{latency}} ms）",
     "test_fail": "不可用",
-    "port_running": "当前运行端口：{{port}}"
+    "port_running": "当前运行端口：{{port}}",
+    "nav_status_degraded": "代理失效，已临时直连",
+    "nav_status_proxy": "走代理：{{url}}",
+    "nav_status_direct": "直连（未启用代理）"
   },
   "stats": {
     "loading": "加载统计",

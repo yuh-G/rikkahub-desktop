@@ -2567,6 +2567,20 @@ function redactProxyForLog(url: string): string {
   }
 }
 
+// P1-6: 识别 fetch 错误是否疑似代理问题(ECONNREFUSED/ECONNRESET/407/CONNECT 失败等)。
+// 有代理时返回友好提示(替代泛化"请求失败:..."), 无代理返回 null(走原"请求失败"逻辑)。
+// 这是横向覆盖所有 provider 流式调用的最小注入点 —— send 端点 catch 调它即可。
+function classifyProxyError(err: unknown): string | null {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (!/ECONNREFUSED|ECONNRESET|EPIPE|_tunnel|proxy connect|407|Unable to connect|fetch failed/i.test(msg)) {
+    return null;
+  }
+  const { url, source } = resolveEffectiveProxy();
+  if (!url && source === "none") return null; // 无代理, 是普通网络/API 问题, 不冒充代理错误
+  const display = url ? redactProxyForLog(url) : "系统代理";
+  return `代理连接失败 (${display}) —— 请检查代理地址 / 端口 / 密码是否正确, 或在 设置 → 代理 中切换为「直连」模式。\n[原始错误] ${msg}`;
+}
+
 function proxyStatusPayload() {
   const { url, source } = resolveEffectiveProxy();
   // Strip credentials from the URL we send back to the UI — the UI shows the username/password
@@ -2601,10 +2615,18 @@ let state = loadState();
 state.launchCount += 1;
 
 applyEffectiveProxy();
-setInterval(() => {
-  applyEffectiveProxy();
-  void probeProxyLiveness();
-}, SYSTEM_PROXY_REFRESH_MS).unref();
+// P2-1: 自适应轮询 —— 有代理时 3s 快速响应代理软件开关/崩溃; 无代理时 10s 省开销。
+// (注册表通知 RegNotifyChangeKeyValue 在 Bun spawn 的 PowerShell 子进程里未能可靠触发,
+//  改用短轮询务实方案, 3s 延迟对桌面应用可接受)
+const scheduleProxyRefresh = () => {
+  const hasProxy = !!resolveEffectiveProxy().url;
+  setTimeout(() => {
+    applyEffectiveProxy();
+    void probeProxyLiveness();
+    scheduleProxyRefresh();
+  }, hasProxy ? 3_000 : SYSTEM_PROXY_REFRESH_MS).unref();
+};
+scheduleProxyRefresh();
 
 
 
@@ -15335,13 +15357,15 @@ async function generateAnswer(conversation: Conversation, regenerateAtNodeId?: s
       broadcastConversation(conversation);
       return;
     }
-    const content = err instanceof Error ? err.message : String(err);
+    const rawContent = err instanceof Error ? err.message : String(err);
+    const proxyHint = classifyProxyError(err);
+    const failureText = proxyHint ?? `请求失败：${rawContent}`;
     applyOutputTransforms(currentMessage, assistant);
     finishReasoningParts(currentMessage);
     if (currentMessage.parts.length === 0) {
-      finishMessage(currentMessage, [{ type: "text", text: `请求失败：${content}` }]);
+      finishMessage(currentMessage, [{ type: "text", text: failureText }]);
     } else {
-      appendTextPart(currentMessage, `\n\n请求失败：${content}`);
+      appendTextPart(currentMessage, `\n\n${failureText}`);
       currentMessage.finishedAt = new Date().toISOString();
     }
     ensureUsage(currentMessage, conversation);
