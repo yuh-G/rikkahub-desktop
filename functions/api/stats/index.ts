@@ -45,13 +45,13 @@ export const onRequest = async (context) => {
   try {
     // 数据最新日(用数据本身而非服务器 UTC,消除时区偏移)。
     const latestRow = await DB.prepare("SELECT MAX(date) AS d FROM pings" + filterWhere).bind(...filterBinds).first();
-    const today = endParam && /^\d{4}-\d{2}-\d{2}$/.test(endParam) ? endParam : (latestRow?.d ?? new Date().toISOString().slice(0, 10));
-    const days = startParam && /^\d{4}-\d{2}-\d{2}$/.test(startParam)
+    const today = endParam && isValidDate(endParam) ? endParam : (latestRow?.d ?? new Date().toISOString().slice(0, 10));
+    const days = startParam && isValidDate(startParam)
       ? Math.max(1, Math.round((new Date(today) - new Date(startParam)) / 86400000) + 1)
       : daysParam;
 
     let startDate;
-    if (startParam && /^\d{4}-\d{2}-\d{2}$/.test(startParam)) {
+    if (startParam && isValidDate(startParam)) {
       startDate = startParam;
     } else if (daysRaw === "all") {
       const minRow = await DB.prepare("SELECT MIN(date) AS d FROM pings" + filterWhere).bind(...filterBinds).first();
@@ -200,6 +200,15 @@ export const onRequest = async (context) => {
     });
   }
 };
+
+// 日期字符串加减天数(全程 UTC,避免本地时区污染 "YYYY-MM-DD")。
+// YYYY-MM-DD 既要格式对、也要是真实日历日期(堵 2026-13-45 / 02-30,否则 addDays
+// 产出 Invalid Date 让 BETWEEN 查空,虽不崩溃但看板会莫名空白)。
+function isValidDate(s) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s + "T00:00:00Z");
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
 
 // 日期字符串加减天数(全程 UTC,避免本地时区污染 "YYYY-MM-DD")。
 function addDays(dateStr, n) {

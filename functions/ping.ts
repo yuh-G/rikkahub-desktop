@@ -11,7 +11,7 @@ export const onRequest = async (context) => {
   const os = (rawOs === "win" || rawOs === "mac" || rawOs === "linux") ? rawOs : "";
   const mc = parseInt(url.searchParams.get("mc") ?? "0", 10);
 
-  if (!id || !date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^[a-f0-9-]{20,64}$/.test(id)) {
+  if (!id || !date || !isValidDate(date) || !/^[a-f0-9-]{20,64}$/.test(id)) {
     return new Response(JSON.stringify({ ok: false, error: "bad params" }), {
       status: 400,
       headers: cors(),
@@ -54,6 +54,14 @@ export const onRequest = async (context) => {
     return new Response(JSON.stringify({ ok: false }), { status: 500, headers: cors() });
   }
 };
+
+// YYYY-MM-DD 既要格式对、也要是真实日历日期(堵 2026-13-45 / 02-30 这类,否则写进
+// 一条假日期 ping,daily_summary/version_dist 多出一个幽灵日期,看板冒出怪列)。
+function isValidDate(s) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s + "T00:00:00Z");
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
 
 function cors() {
   return { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
