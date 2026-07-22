@@ -268,6 +268,8 @@ let activeSection = 'overview', activeRetTab = 'new';
 let showMA = false;          // 概览 DAU 趋势是否叠加 7 日均线
 let allVersions = null;      // 版本下拉缓存
 let lastData = null;         // 供 CSV 导出复用
+let retPages = { new: 0, week: 0, rolling: 0 };  // 留存三表各自的分页页码
+const RET_PS = 15;           // 留存表每页条数
 
 const fmt = n => (n ?? 0).toLocaleString('zh-CN');
 const fmtPct = n => (n != null ? n + '%' : '—');
@@ -467,9 +469,9 @@ function renderRetention(d) {
     '<button data-tab="week" class="'+(activeRetTab==='week'?'active':'')+'">新用户 cohort(周)</button>' +
     '<button data-tab="rolling" class="'+(activeRetTab==='rolling'?'active':'')+'">全量滚动留存</button></div>';
   const body =
-    '<div id="rt-new" style="margin-top:10px;display:'+(activeRetTab==='new'?'block':'none')+'">'+cohortTable(newC,[1,3,7,14,30],'日期')+'</div>' +
-    '<div id="rt-week" style="margin-top:10px;display:'+(activeRetTab==='week'?'block':'none')+'">'+(weekly.length?cohortTable(weekly.map(w=>({date:w.week,size:w.size,retention:w.retention})),[1,3,7,14,30],'周起始'):'<div class="empty"><div class="empty-text">样本不足</div></div>')+'</div>' +
-    '<div id="rt-rolling" style="margin-top:10px;display:'+(activeRetTab==='rolling'?'block':'none')+'">'+(rollC.length?cohortTable(rollC,[1,3,7,14,30],'日期'):'<div class="empty"><div class="empty-text">近期样本不足</div></div>')+'</div>' +
+    '<div id="rt-new" style="margin-top:10px;display:'+(activeRetTab==='new'?'block':'none')+'"><div id="ret-table-new">'+cohortTablePage(newC,[1,3,7,14,30],'日期','new')+'</div></div>' +
+    '<div id="rt-week" style="margin-top:10px;display:'+(activeRetTab==='week'?'block':'none')+'"><div id="ret-table-week">'+(weekly.length?cohortTablePage(weekly.map(w=>({date:w.week,size:w.size,retention:w.retention})),[1,3,7,14,30],'周起始','week'):'<div class="empty"><div class="empty-text">样本不足</div></div>')+'</div></div>' +
+    '<div id="rt-rolling" style="margin-top:10px;display:'+(activeRetTab==='rolling'?'block':'none')+'"><div id="ret-table-rolling">'+(rollC.length?cohortTablePage(rollC,[1,3,7,14,30],'日期','rolling'):'<div class="empty"><div class="empty-text">近期样本不足</div></div>')+'</div></div>' +
     '<div style="font-size:11px;color:var(--text-dim);margin-top:10px">全量滚动留存:cohort = 当日全部活跃设备(不限新用户),衡量存量粘性。其 base 本身就是"已留下来的活跃用户",数值天然高于新用户 cohort 留存,偏高属正常。</div>';
   html += '<div class="grid full">';
   html += card('留存矩阵', '不同 cohort 在 D+N 的回访率', null, body, tabs);
@@ -478,16 +480,39 @@ function renderRetention(d) {
   html += '</div>';
   return html;
 }
-function cohortTable(cohorts, offsets, firstHead) {
+function cohortTablePage(cohorts, offsets, firstHead, tabKey) {
+  if (!cohorts.length) return '<div class="empty"><div class="empty-text">无数据</div></div>';
+  const totalPages = Math.max(1, Math.ceil(cohorts.length / RET_PS));
+  const page = retPages[tabKey] || 0;
+  const slice = cohorts.slice(page * RET_PS, page * RET_PS + RET_PS);
   const head = offsets.map(o => '<th>D+'+o+'</th>').join('');
   let t = '<table class="rtable"><thead><tr><th>'+firstHead+'</th><th>样本</th>'+head+'</tr></thead><tbody>';
-  for (const c of cohorts.slice(0, 24)) {
+  for (const c of slice) {
     t += '<tr><td>'+c.date+'</td><td>'+(c.size??0)+'</td>';
     for (const o of offsets) { const v = c.retention[o]; if (v==null) t += '<td><span class="ret-cell" style="background:rgba(255,255,255,0.02);color:var(--text-dim)">—</span></td>'; else { const s = retentionStyle(v); t += '<td><span class="ret-cell" style="background:'+s.bg+';color:'+s.color+'">'+v+'%</span></td>'; } }
     t += '</tr>';
   }
   t += '</tbody></table>';
+  if (totalPages > 1) {
+    t += '<div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:10px;font-size:12px;color:var(--text-dim)">' +
+      '<button class="csv-btn" onclick="retPager(\''+tabKey+'\',-1)"'+(page<=0?' disabled style="opacity:0.4"':'')+'>‹ 上一页</button>' +
+      '<span>第 '+(page+1)+' / '+totalPages+' 页 · 共 '+cohorts.length+' 个 cohort</span>' +
+      '<button class="csv-btn" onclick="retPager(\''+tabKey+'\',1)"'+(page>=totalPages-1?' disabled style="opacity:0.4"':'')+'>下一页 ›</button>' +
+    '</div>';
+  }
   return t;
+}
+// 翻页:从 lastData 重取当前 tab 的全部 cohort,渲染指定页(不重新 fetch)。
+function retPager(tabKey, dir) {
+  if (!lastData) return;
+  let cohorts;
+  if (tabKey === 'week') cohorts = weeklyCohorts(lastData.retention?.cohorts || []).map(w=>({date:w.week,size:w.size,retention:w.retention}));
+  else if (tabKey === 'rolling') cohorts = lastData.rollingRetention?.cohorts || [];
+  else cohorts = lastData.retention?.cohorts || [];
+  const totalPages = Math.max(1, Math.ceil(cohorts.length / RET_PS));
+  retPages[tabKey] = Math.max(0, Math.min(totalPages-1, (retPages[tabKey]||0) + dir));
+  const wrap = document.getElementById('ret-table-' + tabKey);
+  if (wrap) wrap.innerHTML = cohortTablePage(cohorts, [1,3,7,14,30], tabKey==='week'?'周起始':'日期', tabKey);
 }
 
 // ── 渲染:用户 ──
@@ -582,6 +607,7 @@ function renderPlatforms(d) {
 // ── 主渲染 ──
 function render(d) {
   lastData = d;
+  retPages = { new: 0, week: 0, rolling: 0 };  // 新数据,分页回首页
   const overview = renderOverview(d);
   const retention = renderRetention(d);
   const users = renderUsers(d);
