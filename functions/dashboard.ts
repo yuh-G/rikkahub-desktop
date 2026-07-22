@@ -269,7 +269,7 @@ let showMA = false;          // 概览 DAU 趋势是否叠加 7 日均线
 let allVersions = null;      // 版本下拉缓存
 let lastData = null;         // 供 CSV 导出复用
 let retPages = { new: 0, week: 0, rolling: 0 };  // 留存三表各自的分页页码
-const RET_PS = 15;           // 留存表每页条数
+const RET_PS = 30;           // 留存表每页条数
 
 const fmt = n => (n ?? 0).toLocaleString('zh-CN');
 const fmtPct = n => (n != null ? n + '%' : '—');
