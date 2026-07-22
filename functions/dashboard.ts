@@ -469,7 +469,7 @@ function renderRetention(d) {
   const body =
     '<div id="rt-new" style="margin-top:10px;display:'+(activeRetTab==='new'?'block':'none')+'">'+cohortTable(newC,[1,3,7,14,30],'日期')+'</div>' +
     '<div id="rt-week" style="margin-top:10px;display:'+(activeRetTab==='week'?'block':'none')+'">'+(weekly.length?cohortTable(weekly.map(w=>({date:w.week,size:w.size,retention:w.retention})),[1,3,7,14,30],'周起始'):'<div class="empty"><div class="empty-text">样本不足</div></div>')+'</div>' +
-    '<div id="rt-rolling" style="margin-top:10px;display:'+(activeRetTab==='rolling'?'block':'none')+'">'+(rollC.length?cohortTable(rollC,[1,3,7,14],'日期'):'<div class="empty"><div class="empty-text">近期样本不足</div></div>')+'</div>' +
+    '<div id="rt-rolling" style="margin-top:10px;display:'+(activeRetTab==='rolling'?'block':'none')+'">'+(rollC.length?cohortTable(rollC,[1,3,7,14,30],'日期'):'<div class="empty"><div class="empty-text">近期样本不足</div></div>')+'</div>' +
     '<div style="font-size:11px;color:var(--text-dim);margin-top:10px">全量滚动留存:cohort = 当日全部活跃设备(不限新用户),衡量存量粘性。其 base 本身就是"已留下来的活跃用户",数值天然高于新用户 cohort 留存,偏高属正常。</div>';
   html += '<div class="grid full">';
   html += card('留存矩阵', '不同 cohort 在 D+N 的回访率', null, body, tabs);
@@ -702,14 +702,22 @@ function drawCharts(d) {
     const verTrend = document.getElementById('ver-trend-chart');
     if (verTrend && d.versionTrend && d.versionTrend.length) {
       // pivot date×version,取总量前 6 版本,其余合并"其他"
+      // 堆叠面积:dataset 带 stack + scales.y.stacked 才能纵向累加(旧版无 stack,各版本
+      // 都从 0 填半透明面积互相遮挡,看不出升级进度)。lookup 把 {date|ver: c} 建一次,
+      // 替代 dates×top×find 的 O(n²) 查找。
       const byVer = {};
-      for (const r of d.versionTrend) byVer[r.version||'(unknown)'] = (byVer[r.version||'(unknown)']||0) + (r.c||0);
+      const lookup = {};
+      for (const r of d.versionTrend) {
+        const v = r.version || '(unknown)';
+        byVer[v] = (byVer[v]||0) + (r.c||0);
+        lookup[r.date + '|' + v] = r.c || 0;
+      }
       const top = Object.keys(byVer).sort((a,b)=>byVer[b]-byVer[a]).slice(0,6);
       const dates = []; const seen = {};
       for (const r of d.versionTrend) { if (!seen[r.date]) { seen[r.date]=1; dates.push(r.date); } }
       const palette = ['#818cf8','#34d399','#fbbf24','#fb7185','#38bdf8','#a78bfa','#71717a'];
-      const datasets = top.map((v,i) => ({ label:v, data: dates.map(dt => { const r = d.versionTrend.find(x=>x.date===dt && (x.version||'(unknown)')===v); return r?r.c:0; }), backgroundColor: hexA(palette[i],0.55), borderColor: palette[i], fill:true, tension:0.3, pointRadius:0, borderWidth:1.2 }));
-      new Chart(verTrend, { type:'line', data:{ labels: dates.map(x=>x.slice(5).replace('-','/')), datasets }, options: base });
+      const datasets = top.map((v,i) => ({ label:v, stack:'ver', data: dates.map(dt => lookup[dt + '|' + v] || 0), backgroundColor: hexA(palette[i],0.55), borderColor: palette[i], fill:true, tension:0.3, pointRadius:0, borderWidth:1.2 }));
+      new Chart(verTrend, { type:'line', data:{ labels: dates.map(x=>x.slice(5).replace('-','/')), datasets }, options: { ...base, scales: { ...base.scales, x:{...base.scales.x, stacked:true}, y:{...base.scales.y, stacked:true} } } });
     }
     const verPie = document.getElementById('ver-pie');
     if (verPie && d.versions && d.versions.length) { const pal = ['#818cf8','#34d399','#fbbf24','#fb7185','#38bdf8','#a78bfa','#f472b6','#fb923c']; new Chart(verPie, { type:'doughnut', data:{ labels: d.versions.map(v=>esc(v.version)||'未知'), datasets:[{ data:d.versions.map(v=>v.count), backgroundColor:pal.slice(0,d.versions.length), borderWidth:0, hoverOffset:8 }] }, options: donutOpts() }); }
@@ -748,14 +756,19 @@ function populateVersionSelect() {
 }
 
 // ── 加载与控制同步 ──
+// 用递增序号做"最新胜出":连点刷新或快速切筛选会并发多个 fetch,只有最后一次的
+// 结果才 render,避免旧响应覆盖新数据。load 返回 promise 供 reload 清理 spinning。
+let loadSeq = 0;
 async function load() {
-  try { render(await fetchData()); }
-  catch (e) { document.getElementById('content').innerHTML = '<div class="error">数据加载失败:'+e.message+'</div>'; }
+  const seq = ++loadSeq;
+  try { const d = await fetchData(); if (seq === loadSeq) render(d); }
+  catch (e) { if (seq === loadSeq) document.getElementById('content').innerHTML = '<div class="error">数据加载失败:'+e.message+'</div>'; }
 }
 function reload(fromBtn) {
   document.getElementById('content').innerHTML = '<div class="loading"><div class="spinner"></div><div>正在加载数据…</div></div>';
-  if (fromBtn) { const b = document.getElementById('refresh-btn'); b.classList.add('spinning'); setTimeout(()=>b.classList.remove('spinning'),700); }
-  load();
+  const btn = fromBtn ? document.getElementById('refresh-btn') : null;
+  if (btn) btn.classList.add('spinning');
+  load().finally(() => { if (btn) btn.classList.remove('spinning'); });
 }
 function syncControls() {
   document.querySelectorAll('#range button').forEach(b => b.classList.toggle('active', String(b.dataset.d)===String(currentDays)));
@@ -779,9 +792,13 @@ document.getElementById('range').addEventListener('click', e => {
   currentStart = null; currentEnd = null; writeHash(); syncControls(); reload();
 });
 document.getElementById('apply-custom').addEventListener('click', () => {
-  const s = document.getElementById('start-date').value, en = document.getElementById('end-date').value;
-  if (!s || !en || s > en) return;
-  currentStart = s; currentEnd = en; currentDays = 'custom'; writeHash(); syncControls(); reload();
+  const sEl = document.getElementById('start-date'), eEl = document.getElementById('end-date');
+  if (!sEl.value || !eEl.value || sEl.value > eEl.value) {
+    // 校验失败给个可见反馈(红框 1.5s),而非静默无视点击。
+    [sEl, eEl].forEach(el => { el.style.borderColor = 'var(--rose)'; setTimeout(()=>el.style.borderColor='', 1500); });
+    return;
+  }
+  currentStart = sEl.value; currentEnd = eEl.value; currentDays = 'custom'; writeHash(); syncControls(); reload();
 });
 document.getElementById('os-seg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; currentOs = b.dataset.os; writeHash(); syncControls(); reload(); });
 document.getElementById('seg-seg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; currentSegment = b.dataset.seg; writeHash(); syncControls(); reload(); });

@@ -18,7 +18,9 @@ export const onRequest = async (context) => {
     });
   }
 
-  const clampedMc = Math.max(0, Math.min(mc, 999999));
+  // 公开端点,mc 可能是非数字垃圾值;parseInt 遇之得 NaN,Math.min/max 会一路
+  // 把 NaN 透传到 D1 bind(SQLite 不存 NaN,行为未定义)。先 isFinite 兜底成 0。
+  const clampedMc = Number.isFinite(mc) ? Math.max(0, Math.min(mc, 999999)) : 0;
 
   try {
     const DB = context.env.DB;
