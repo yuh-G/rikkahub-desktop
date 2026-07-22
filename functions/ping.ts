@@ -2,8 +2,13 @@ export const onRequest = async (context) => {
   const url = new URL(context.request.url);
   const id = url.searchParams.get("id");
   const date = url.searchParams.get("d");
-  const version = url.searchParams.get("v") ?? "";
-  const os = url.searchParams.get("os") ?? "";
+  // version / os 会被看板直接拼进 innerHTML 渲染,必须在入库前白名单收口,堵存储型
+  // XSS(本端点公开,任何人都能构造带恶意 version 的 ping)。非法值降级为空串而非拒收
+  // ——避免误杀合法客户端;空值在看板显示为 "(unknown)"、系统分布归入 other。
+  const rawVer = url.searchParams.get("v") ?? "";
+  const version = /^[\w.\-+ ]{0,32}$/.test(rawVer) ? rawVer : "";
+  const rawOs = (url.searchParams.get("os") ?? "").toLowerCase();
+  const os = (rawOs === "win" || rawOs === "mac" || rawOs === "linux") ? rawOs : "";
   const mc = parseInt(url.searchParams.get("mc") ?? "0", 10);
 
   if (!id || !date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^[a-f0-9-]{20,64}$/.test(id)) {

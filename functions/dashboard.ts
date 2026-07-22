@@ -193,7 +193,7 @@ const dashboardHtml = `<!DOCTYPE html>
 <div class="container">
   <div class="header fade-in">
     <div class="brand">
-      <div class="brand-mark"><img src="/icon.png" alt="RikkaHub" onerror="this.style.display='none';this.parentElement.style.background='linear-gradient(135deg,#818cf8,#a78bfa)'"></div>
+      <div class="brand-mark" style="background:linear-gradient(135deg,#818cf8,#a78bfa)"></div>
       <div class="brand-text">
         <div class="brand-name">RikkaHub 数据看板</div>
         <div class="brand-sub">用户增长 · 留存 · 参与度分析</div>
@@ -271,6 +271,9 @@ let lastData = null;         // 供 CSV 导出复用
 
 const fmt = n => (n ?? 0).toLocaleString('zh-CN');
 const fmtPct = n => (n != null ? n + '%' : '—');
+// HTML 转义:所有从库中读回再拼进 innerHTML 的动态值(version/os/device_id)都走它,
+// 与 ping 端的白名单校验互为纵深防御,堵存储型 XSS。
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 
 function readHash() {
   const h = new URLSearchParams(location.hash.replace(/^#/, ''));
@@ -372,7 +375,11 @@ function renderOverview(d) {
   html += kpi('当日日活', fmt(today.dau), '较昨日' + info('最新一天的活跃设备数(去重)。卡片始终是"最新日"快照,图表则展示所选范围的逐日趋势。'), sparkline(dauArr,'#818cf8'), pctDelta(today.dau||0, yDau));
   html += kpi('当日新增', fmt(today.new_users), '较昨日' + info('最新一天首次出现的设备数。'), sparkline(newArr,'#f472b6'), pctDelta(today.new_users||0, yNew));
   html += kpi('周活 / 月活', fmt(d.wau) + ' <span style="font-weight:400;color:var(--text-dim);font-size:18px"> / </span>' + fmt(d.mau), 'DAU/WAU ' + fmtPct(d.stickinessWau) + ' · DAU/MAU ' + fmtPct(d.stickinessMau) + info('周活=近 7 天、月活=近 30 天出现过的去重设备;DAU/MAU 即"粘性比",越高月内回访越频繁。'), '', '');
-  html += kpi('累计用户', fmt(d.totalUsers), (currentSegment==='all' ? '本期净增 ' + fmt(netAdd) : '所选用户群设备数') + info('历史出现过的不重复设备总数。用户群筛选下变为该群的设备数。'), '', '');
+  const osVerFiltered = currentOs !== 'all' || currentVer !== 'all';
+  const cumulativeSub = currentSegment !== 'all' ? '所选用户群设备数'
+    : osVerFiltered ? '当前筛选群体 · 本期净增 ' + fmt(netAdd)
+    : '本期净增 ' + fmt(netAdd);
+  html += kpi('累计用户', fmt(d.totalUsers), cumulativeSub + info('历史出现过的不重复设备总数。系统/版本/用户群筛选下均变为该群体的设备数。'), '', '');
   html += '</div>';
 
   // 健康度二级指标
@@ -384,7 +391,7 @@ function renderOverview(d) {
   html += mini('30 日留存', ar.d30!=null?ar.d30+'%':'—', '<span class="badge-tag">D+30</span> 新用户加权');
   html += mini('流失率', churn.churnRate!=null?churn.churnRate+'%':'—', churn.churned!=null?('近 7 天流失 '+churn.churned):'—');
   html += mini('复活用户', fmt(churn.resurrected||0), '近 7 天回流');
-  html += mini('重度用户占比', powerPct!=null?powerPct+'%':'—', '<span class="badge-tag">>20 条/日</span>');
+  html += mini('重度活跃日占比', powerPct!=null?powerPct+'%':'—', '<span class="badge-tag">>20 条/日</span>');
   html += '</div>';
 
   // DAU 趋势(可叠加 7 日均线)
@@ -414,7 +421,7 @@ function renderOverview(d) {
 
   // 消息数分布(近 7 天分桶,全宽)+ 参与度分位
   html += '<div class="grid two">';
-  html += card('消息数分布(近 7 天)', '按当日发送消息数给活跃设备分桶' + info('看用户里"仅启动/轻度/常规/重度"各占多少,判断整体参与质量。中位数/P90 在「用户」章节。'),
+  html += card('消息数分布(近 7 天)', '按"设备-日"记录的消息数分桶' + info('统计单位是设备×天(同一用户不同天各计一次),非去重设备;看"仅启动/轻度/常规/重度"活跃日各占多少。中位数/P90 在「用户」章节。'),
     null, depthTotal>0 ? '<div class="chart-wrap short"><canvas id="ov-depth-chart"></canvas></div>' : emptyState('近 7 天无数据'),
     '<button class="csv-btn" id="csv-depth">'+CSV_ICON+'导出</button>');
   html += card('参与度强度', '近 ' + t.length + ' 天活跃用户当日消息数' + info('中位数=典型用户强度;均值被重度用户拉高;P90=前 10% 重度用户。'),
@@ -463,7 +470,7 @@ function renderRetention(d) {
     '<div id="rt-new" style="margin-top:10px;display:'+(activeRetTab==='new'?'block':'none')+'">'+cohortTable(newC,[1,3,7,14,30],'日期')+'</div>' +
     '<div id="rt-week" style="margin-top:10px;display:'+(activeRetTab==='week'?'block':'none')+'">'+(weekly.length?cohortTable(weekly.map(w=>({date:w.week,size:w.size,retention:w.retention})),[1,3,7,14,30],'周起始'):'<div class="empty"><div class="empty-text">样本不足</div></div>')+'</div>' +
     '<div id="rt-rolling" style="margin-top:10px;display:'+(activeRetTab==='rolling'?'block':'none')+'">'+(rollC.length?cohortTable(rollC,[1,3,7,14],'日期'):'<div class="empty"><div class="empty-text">近期样本不足</div></div>')+'</div>' +
-    '<div style="font-size:11px;color:var(--text-dim);margin-top:10px">全量滚动留存:cohort = 当日全部活跃设备(不限新用户),衡量存量粘性。</div>';
+    '<div style="font-size:11px;color:var(--text-dim);margin-top:10px">全量滚动留存:cohort = 当日全部活跃设备(不限新用户),衡量存量粘性。其 base 本身就是"已留下来的活跃用户",数值天然高于新用户 cohort 留存,偏高属正常。</div>';
   html += '<div class="grid full">';
   html += card('留存矩阵', '不同 cohort 在 D+N 的回访率', null, body, tabs);
   html += '</div>';
@@ -513,7 +520,7 @@ function renderUsers(d) {
     '</div><div style="font-size:11px;color:var(--text-dim);margin-top:8px">样本量 '+fmt(pct.count)+' 条/日记录</div>' :
     emptyState('无活跃样本'));
   // 会话深度
-  html += card('会话深度', '近 7 天按当日消息数分桶' + info('看用户里"仅启动/轻度/常规/重度"各占多少,判断整体参与质量。'),
+  html += card('会话深度', '近 7 天按"设备-日"记录的消息数分桶' + info('统计单位是设备×天(同一用户不同天各计一次),非去重设备;判断整体参与质量。'),
     null, total>0 ? '<div class="chart-wrap short"><canvas id="depth-chart"></canvas></div>' : emptyState('近 7 天无数据'));
   html += '</div>';
 
@@ -525,10 +532,10 @@ function renderUsers(d) {
     const short = (u.device_id||'').slice(0,8);
     const osL = u.os==='win'?'Windows':u.os==='mac'?'macOS':u.os==='linux'?'Linux':'—';
     const osC = u.os==='win'?'win':u.os==='mac'?'mac':u.os==='linux'?'linux':'';
-    ut += '<tr data-key="'+((u.device_id||'')+' '+(u.version||'')).toLowerCase()+'">';
-    ut += '<td><span class="device-id" data-full="'+(u.device_id||'')+'" title="点击复制完整 ID">'+short+'… <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></span></td>';
+    ut += '<tr data-key="'+esc((u.device_id||'')+' '+(u.version||'')).toLowerCase()+'">';
+    ut += '<td><span class="device-id" data-full="'+esc(u.device_id)+'" title="点击复制完整 ID">'+esc(short)+'… <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></span></td>';
     ut += '<td>'+(osL==='—'?'<span style="color:var(--text-dim)">—</span>':'<span class="os-tag '+osC+'">'+osL+'</span>')+'</td>';
-    ut += '<td>'+(u.version?'<span class="ver-tag">'+u.version+'</span>':'<span style="color:var(--text-dim)">—</span>')+'</td>';
+    ut += '<td>'+(u.version?'<span class="ver-tag">'+esc(u.version)+'</span>':'<span style="color:var(--text-dim)">—</span>')+'</td>';
     ut += '<td>'+(u.first_date||'—')+'</td><td>'+(u.last_date||'—')+'</td>';
     ut += '<td class="num">'+(u.active_days||0)+'</td><td class="num">'+fmt(u.total_msgs||0)+'</td></tr>';
   }
@@ -551,19 +558,20 @@ function renderPlatforms(d) {
   const vt = d.versionTrend || [];
   let html = '<div class="section' + (activeSection==='platforms'?' on':'') + '" id="sec-platforms">';
 
-  const hasOs = (today.win_users||0)+(today.linux_users||0)+(today.mac_users||0) > 0;
+  const od = d.osDist || {};
+  const hasOs = (od.win||0)+(od.mac||0)+(od.linux||0)+(od.other||0) > 0;
   html += '<div class="grid two">';
   html += card('系统 DAU 趋势', '各系统日活叠加对比' + info('把 Windows/Linux/macOS 当日活跃画在同一坐标系,直观对比体量与趋势。'),
     [{label:'Windows',color:'#38bdf8'},{label:'Linux',color:'#fbbf24'},{label:'macOS',color:'#a78bfa'}],
     hasOs ? '<div class="chart-wrap"><canvas id="os-trend-chart"></canvas></div>' : emptyState('暂无系统数据'));
-  html += card('系统分布', '当日活跃用户占比',
+  html += card('系统分布', '全部用户(按各自最新一次上报)',
     null, hasOs ? '<div class="chart-wrap"><canvas id="os-pie"></canvas></div>' : emptyState('暂无系统数据'));
   html += '</div>';
 
   html += '<div class="grid two">';
   html += card('版本采用曲线', '近 30 天每日每版本 DAU' + info('堆叠面积图,反映新版本发布后的滚动升级速度;此图不受筛选影响。'),
     null, vt.length ? '<div class="chart-wrap tall"><canvas id="ver-trend-chart"></canvas></div>' : emptyState('无数据'));
-  html += card('版本分布', '当前最新日活跃版本',
+  html += card('版本分布', '全部用户的最新版本',
     null, versions.length ? '<div class="chart-wrap"><canvas id="ver-pie"></canvas></div>' : emptyState('暂无版本数据'));
   html += '</div>';
 
@@ -592,8 +600,11 @@ function syncSummary(d) {
   const rangeTxt = (f.range === 'all') ? '全部历史' : (f.range === 'custom' ? '自定义' : ('近 ' + (d.trends||[]).length + ' 天'));
   document.getElementById('filter-summary').textContent = segTxt + ' · ' + osTxt + ' · ' + verTxt + ' · ' + rangeTxt + ' · 截至 ' + (f.asOf || '—');
   document.getElementById('updated').textContent = new Date().toTimeString().slice(0,8) + ' 已更新';
-  // 版本下拉缓存:仅在"全部用户群 + 全部版本"时取全集,避免被筛掉后下拉失真
-  if ((!f.segment || f.segment==='all') && (!f.version || f.version==='all') && d.versions && d.versions.length) { allVersions = d.versions; populateVersionSelect(); }
+  // 版本下拉:后端 versions 现在是"全量用户最新版本"快照(不叠任何筛选),每次返回都是
+  // 稳定全集,取更长的那份缓存即可。修掉旧逻辑"仅全部+全部时才填充"导致带 v= 刷新时
+  // 下拉卡死、永远只剩"全部版本"且实际数据被筛着的 bug。
+  if (d.versions && d.versions.length && (!allVersions || d.versions.length > allVersions.length)) allVersions = d.versions;
+  populateVersionSelect();
 }
 
 // ── 图表 ──
@@ -665,7 +676,8 @@ function drawCharts(d) {
       const ar = d.avgRetention || {};
       const pts = [[1,ar.d1],[3,ar.d3],[7,ar.d7],[14,ar.d14],[30,ar.d30]].filter(p=>p[1]!=null);
       const ctx = rc.getContext('2d'); const grad = ctx.createLinearGradient(0,0,0,220); grad.addColorStop(0,'rgba(167,139,250,0.25)'); grad.addColorStop(1,'rgba(167,139,250,0)');
-      new Chart(rc, { type:'line', data:{ labels: pts.map(p=>'D+'+p[0]), datasets:[{ label:'留存率', data: pts.map(p=>p[1]), borderColor:'#a78bfa', backgroundColor:grad, fill:true, tension:0.35, pointRadius:4, pointHoverRadius:6, borderWidth:2.5 }] }, options:{ ...base, scales:{ ...base.scales, y:{ ...base.scales.y, max:100, ticks:{ ...base.scales.y.ticks, callback:v=>v+'%' } } }, plugins:{ ...base.plugins, tooltip:{ ...base.plugins.tooltip, callbacks:{ label: ctx => '留存 '+ctx.parsed.y+'%' } } } } });
+      // X 轴用 linear(按真实天数),避免 D+1/3/7/14/30 在分类轴等距渲染、衰减尾巴被压扁。
+      new Chart(rc, { type:'line', data:{ datasets:[{ label:'留存率', data: pts.map(p=>({x:p[0], y:p[1]})), borderColor:'#a78bfa', backgroundColor:grad, fill:true, tension:0.35, pointRadius:4, pointHoverRadius:6, borderWidth:2.5 }] }, options:{ ...base, scales:{ x:{ type:'linear', title:{ display:true, text:'距首次使用天数', color:'#71717a', font:{ family:fam, size:10.5 } }, ticks:{ color:'#71717a', font:{ family:fam, size:10.5 }, stepSize:1, callback:v=>'D+'+v } }, y:{ ...base.scales.y, max:100, ticks:{ ...base.scales.y.ticks, callback:v=>v+'%' } } }, plugins:{ ...base.plugins, tooltip:{ ...base.plugins.tooltip, callbacks:{ label: ctx => 'D+'+ctx.parsed.x+' 留存 '+ctx.parsed.y+'%' } } } } });
     }
   }
 
@@ -684,8 +696,8 @@ function drawCharts(d) {
       { label:'macOS', data:t.map(x=>x.mac_users||0), borderColor:'#a78bfa', backgroundColor:'transparent', tension:0.3, pointRadius:0, pointHoverRadius:4, borderWidth:2 },
     ]}, options: base });
     const osPie = document.getElementById('os-pie');
-    const today = t[t.length-1] || {};
-    const osData = [{label:'Windows',value:today.win_users||0,color:'#38bdf8'},{label:'macOS',value:today.mac_users||0,color:'#a78bfa'},{label:'Linux',value:today.linux_users||0,color:'#fbbf24'}].filter(x=>x.value>0);
+    const od = d.osDist || {};
+    const osData = [{label:'Windows',value:od.win||0,color:'#38bdf8'},{label:'macOS',value:od.mac||0,color:'#a78bfa'},{label:'Linux',value:od.linux||0,color:'#fbbf24'},{label:'其他',value:od.other||0,color:'#71717a'}].filter(x=>x.value>0);
     if (osPie && osData.length) new Chart(osPie, { type:'doughnut', data:{ labels:osData.map(x=>x.label), datasets:[{ data:osData.map(x=>x.value), backgroundColor:osData.map(x=>x.color), borderWidth:0, hoverOffset:8 }] }, options: donutOpts() });
     const verTrend = document.getElementById('ver-trend-chart');
     if (verTrend && d.versionTrend && d.versionTrend.length) {
@@ -700,7 +712,7 @@ function drawCharts(d) {
       new Chart(verTrend, { type:'line', data:{ labels: dates.map(x=>x.slice(5).replace('-','/')), datasets }, options: base });
     }
     const verPie = document.getElementById('ver-pie');
-    if (verPie && d.versions && d.versions.length) { const pal = ['#818cf8','#34d399','#fbbf24','#fb7185','#38bdf8','#a78bfa','#f472b6','#fb923c']; new Chart(verPie, { type:'doughnut', data:{ labels: d.versions.map(v=>v.version||'未知'), datasets:[{ data:d.versions.map(v=>v.count), backgroundColor:pal.slice(0,d.versions.length), borderWidth:0, hoverOffset:8 }] }, options: donutOpts() }); }
+    if (verPie && d.versions && d.versions.length) { const pal = ['#818cf8','#34d399','#fbbf24','#fb7185','#38bdf8','#a78bfa','#f472b6','#fb923c']; new Chart(verPie, { type:'doughnut', data:{ labels: d.versions.map(v=>esc(v.version)||'未知'), datasets:[{ data:d.versions.map(v=>v.count), backgroundColor:pal.slice(0,d.versions.length), borderWidth:0, hoverOffset:8 }] }, options: donutOpts() }); }
   }
 }
 
@@ -728,7 +740,10 @@ function exportCSV(filename, rows) {
 function populateVersionSelect() {
   const sel = document.getElementById('ver-select'); if (!sel || !allVersions) return;
   let opts = '<option value="all">全部版本</option>';
-  for (const v of allVersions) opts += '<option value="'+(v.version||'')+'"'+((v.version||'')===currentVer?' selected':'')+'>'+(v.version||'(unknown)')+' · '+v.count+'</option>';
+  for (const v of allVersions) {
+    const ver = v.version || '';
+    opts += '<option value="'+esc(ver)+'"'+(ver===currentVer?' selected':'')+'">'+esc(ver || '(unknown)')+' · '+v.count+'</option>';
+  }
   sel.innerHTML = opts;
 }
 

@@ -1,46 +1,51 @@
-// GET /api/stats?token=...&days=30&os=all&version=all
+// GET /api/stats?token=...&days=30&os=all&version=all&segment=all&start=&end=
 //
-// 全部指标直接从 pings 表派生(而非 daily_summary 缓存),这样:
-//   1) 支持 os / version 筛选,把整张看板切到任意子群体;
-//   2) 窗口锚定到"数据里的最新日期",而不是服务器 UTC,消除跨时区偏移;
-//   3) 新增 returning_users(DAU = 新增 + 回访)、rolling retention(全量活跃留存)、
-//      累计增长曲线等更专业的指标。
-// 保留所有旧字段,旧版看板照常工作;新版看板用新增字段。
+// 看板数据接口。本文件曾有几处严重缺陷,一并修复:
+//   1) 鉴权:此前完全无 token 校验,任何人都能拉走全部统计(设备列表/版本/OS/消息数)。
+//   2) 性能:daily_summary 与 version_dist 两张缓存表一直被 ping.ts 的 refreshDay
+//      在写、却从未被读,每次都全量扫 pings。现在无筛选时 trends / versionTrend
+//      改读这两张表(数量级提速);筛选时才回退 pings 实时聚合。
+//   3) 正确性:留存照搬了旧版的 LIMIT 30,把窗口扩到 60 天却忘了同步,恰好砍掉
+//      唯一能满龄 D+30 的 cohort;滚动留存 baseDays=14 连 D+14 都满不了龄;流失率
+//      窗口含"未结束的今天"导致虚高;versions/osDist 按"当日活跃"算,样本小波动大。
+//   4) 留存 N+1:原 cohort×offset 逐条查询最多 150+ 次 D1 往返,改批量 UNION。
 export const onRequest = async (context) => {
   const url = new URL(context.request.url);
+
+  // ── 鉴权(此前缺失)──
+  if (!context.env.AUTH_TOKEN || url.searchParams.get("token") !== context.env.AUTH_TOKEN) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }
+
   const DB = context.env.DB;
-  const daysRaw = url.searchParams.get("days") ?? "30";     // "all" 表示全部历史
+  const daysRaw = url.searchParams.get("days") ?? "30";
   const daysParam = daysRaw === "all" ? 99999 : Math.min(parseInt(daysRaw, 10), 365);
-  const startParam = url.searchParams.get("start");   // 可选 YYYY-MM-DD(自定义起点)
-  const endParam = url.searchParams.get("end");       // 可选 YYYY-MM-DD(自定义终点)
-  const osFilter = (url.searchParams.get("os") ?? "all").toLowerCase(); // all|win|linux|mac
+  const startParam = url.searchParams.get("start");
+  const endParam = url.searchParams.get("end");
+  const osFilter = (url.searchParams.get("os") ?? "all").toLowerCase();
   const verFilter = url.searchParams.get("version") ?? "all";
-  // 用户群筛选(设备级 cohort):
-  //   all       全部设备
-  //   new       本期新增:首次出现日落在所选区间 [startDate, today] 的设备
-  //   returning 存量回访:区间开始前就已存在、区间内仍活跃的设备
   const segment = (url.searchParams.get("segment") ?? "all").toLowerCase();
 
-  // 公共筛选片段:所有聚合共用,保证整页看板一致地切到同一子群体。
+  // 公共筛选:os/version 按 ping 行;segment 按 device 首现日 cohort。
   const filters = [];
   if (osFilter !== "all") filters.push({ sql: "os = ?", val: osFilter });
   if (verFilter !== "all") filters.push({ sql: "version = ?", val: verFilter });
   const filterSql = filters.map((f) => f.sql).join(" AND ");
   const filterBinds = filters.map((f) => f.val);
-  const filterAnd = filterSql ? " AND " + filterSql : "";      // 用于已有 WHERE 的拼接
-  const filterWhere = filterSql ? " WHERE " + filterSql : "";  // 用于尚无 WHERE 的整段查询
+  const filterAnd = filterSql ? " AND " + filterSql : "";
+  const filterWhere = filterSql ? " WHERE " + filterSql : "";
 
   try {
-    // 数据域内的最新日期——用数据本身而非服务器 UTC,避免 WAU/MAU 窗口被时区推移。
-    const latestRow = await DB.prepare(
-      "SELECT MAX(date) AS d FROM pings" + filterWhere
-    ).bind(...filterBinds).first();
+    // 数据最新日(用数据本身而非服务器 UTC,消除时区偏移)。
+    const latestRow = await DB.prepare("SELECT MAX(date) AS d FROM pings" + filterWhere).bind(...filterBinds).first();
     const today = endParam && /^\d{4}-\d{2}-\d{2}$/.test(endParam) ? endParam : (latestRow?.d ?? new Date().toISOString().slice(0, 10));
     const days = startParam && /^\d{4}-\d{2}-\d{2}$/.test(startParam)
       ? Math.max(1, Math.round((new Date(today) - new Date(startParam)) / 86400000) + 1)
       : daysParam;
 
-    // ── 起点:自定义 > 全部历史(用数据最早日) > 回看 N 天 ──
     let startDate;
     if (startParam && /^\d{4}-\d{2}-\d{2}$/.test(startParam)) {
       startDate = startParam;
@@ -51,9 +56,8 @@ export const onRequest = async (context) => {
       startDate = addDays(today, -(days - 1));
     }
 
-    // ── 用户群 cohort 片段:基于设备首次出现日划定的子集 ──
-    // new/returning 都是相对"所选区间起点 startDate"定义的;固定一次,套到所有适用聚合上。
-    let cohortAnd = "";        // 拼在 filterAnd 之后
+    // segment cohort 片段
+    let cohortAnd = "";
     let cohortBinds = [];
     if (segment === "new") {
       cohortAnd = " AND device_id IN (SELECT device_id FROM pings WHERE first_seen = 1 AND date BETWEEN ? AND ?)";
@@ -62,161 +66,134 @@ export const onRequest = async (context) => {
       cohortAnd = " AND device_id IN (SELECT device_id FROM pings WHERE first_seen = 1 AND date < ?)";
       cohortBinds = [startDate];
     }
-    // 通用尾部:filterAnd + cohortAnd 一起出现,binds 也 filterBinds + cohortBinds 顺序一致。
     const allBinds = [...filterBinds, ...cohortBinds];
     const allAnd = filterAnd + cohortAnd;
-    // ── 日趋势:直接 GROUP BY date(支持筛选 + returning_users + 用户群 cohort)──
-    const trendsQ = await DB.prepare(
-      "SELECT date, " +
+
+    // 无任何筛选时才能安全读缓存表(它们不存 segment/os/version 细分)。
+    const noFilter = osFilter === "all" && verFilter === "all" && segment === "all";
+
+    // ── 日趋势:无筛选读缓存表(快),有筛选从 pings 实时聚合 ──
+    let trends;
+    if (noFilter) {
+      const r = await DB.prepare(
+        "SELECT date, dau, eff_dau, new_users, (dau - new_users) AS returning_users, " +
+        "total_msgs, win_users, linux_users, mac_users " +
+        "FROM daily_summary WHERE date BETWEEN ? AND ? ORDER BY date"
+      ).bind(startDate, today).all();
+      trends = r.results ?? [];
+    } else {
+      const r = await DB.prepare(
+        "SELECT date, " +
         "COUNT(*) AS dau, " +
         "SUM(CASE WHEN msg_count > 0 THEN 1 ELSE 0 END) AS eff_dau, " +
         "SUM(CASE WHEN first_seen THEN 1 ELSE 0 END) AS new_users, " +
         "SUM(CASE WHEN first_seen = 0 THEN 1 ELSE 0 END) AS returning_users, " +
         "SUM(msg_count) AS total_msgs, " +
-        "SUM(CASE WHEN os = 'win'   THEN 1 ELSE 0 END) AS win_users, " +
+        "SUM(CASE WHEN os = 'win' THEN 1 ELSE 0 END) AS win_users, " +
         "SUM(CASE WHEN os = 'linux' THEN 1 ELSE 0 END) AS linux_users, " +
-        "SUM(CASE WHEN os = 'mac'   THEN 1 ELSE 0 END) AS mac_users " +
-        "FROM pings WHERE date BETWEEN ? AND ? " + allAnd + " " +
-        "GROUP BY date ORDER BY date"
-    ).bind(startDate, today, ...allBinds).all();
-    const trends = trendsQ.results ?? [];
+        "SUM(CASE WHEN os = 'mac' THEN 1 ELSE 0 END) AS mac_users " +
+        "FROM pings WHERE date BETWEEN ? AND ? " + allAnd + " GROUP BY date ORDER BY date"
+      ).bind(startDate, today, ...allBinds).all();
+      trends = r.results ?? [];
+    }
 
     const todayRow = trends[trends.length - 1] ?? {};
-    const yesterday = trends[trends.length - 2] ?? {};
     const dau = todayRow?.dau ?? 0;
 
-    // ── WAU / MAU(窗口锚定到数据最新日期;cohort 限定到所选用户群)──
+    // ── WAU / MAU(跨天 distinct,无法用日聚合缓存,始终走 pings)──
     const wau = await uniqueDevices(DB, today, 7, allAnd, allBinds);
     const mau = await uniqueDevices(DB, today, 30, allAnd, allBinds);
     const stickinessMau = mau > 0 ? Math.round((dau / mau) * 100) : 0;
     const stickinessWau = wau > 0 ? Math.round((dau / wau) * 100) : 0;
 
-    // ── 累计用户(筛选 + 用户群 cohort 后的设备总数)──
-    const totalRow = await DB.prepare(
-      "SELECT COUNT(DISTINCT device_id) AS cnt FROM pings WHERE 1=1 " + allAnd
-    ).bind(...allBinds).first();
+    // ── 累计用户 ──
+    const totalRow = await DB.prepare("SELECT COUNT(DISTINCT device_id) AS cnt FROM pings WHERE 1=1 " + allAnd).bind(...allBinds).first();
     const totalUsers = totalRow?.cnt ?? 0;
 
-    // ── 历史峰值 DAU(SQLite 裸列随 MAX 取峰值所在行,得到 peakDate)──
-    const peakRow = await DB.prepare(
-      "SELECT MAX(dau) AS peak, date FROM (" +
-        "SELECT date, COUNT(*) AS dau FROM pings WHERE 1=1 " + allAnd + " GROUP BY date" +
-      ")"
-    ).bind(...allBinds).first();
-    const peakDau = peakRow?.peak ?? 0;
-    const peakDate = peakRow?.date ?? null;
-
-    // ── 当日有效用户平均消息数 ──
-    const avgMsgs = await DB.prepare(
-      "SELECT AVG(msg_count) AS avg FROM pings WHERE date = ? AND msg_count > 0 " + allAnd
-    ).bind(today, ...allBinds).first();
-
-    // ── 会话深度分布(过去 7 天)──
+    // ── 会话深度(近 7 天分桶;单位是"设备-日"记录,非去重设备)──
     const sevenDaysAgo = addDays(today, -6);
     const buckets = await DB.prepare(
       "SELECT " +
-        "SUM(CASE WHEN msg_count = 0 THEN 1 ELSE 0 END) AS b0, " +
-        "SUM(CASE WHEN msg_count BETWEEN 1 AND 5 THEN 1 ELSE 0 END) AS b1_5, " +
-        "SUM(CASE WHEN msg_count BETWEEN 6 AND 20 THEN 1 ELSE 0 END) AS b6_20, " +
-        "SUM(CASE WHEN msg_count > 20 THEN 1 ELSE 0 END) AS b20p " +
-        "FROM pings WHERE date >= ? " + allAnd
+      "SUM(CASE WHEN msg_count = 0 THEN 1 ELSE 0 END) AS b0, " +
+      "SUM(CASE WHEN msg_count BETWEEN 1 AND 5 THEN 1 ELSE 0 END) AS b1_5, " +
+      "SUM(CASE WHEN msg_count BETWEEN 6 AND 20 THEN 1 ELSE 0 END) AS b6_20, " +
+      "SUM(CASE WHEN msg_count > 20 THEN 1 ELSE 0 END) AS b20p " +
+      "FROM pings WHERE date >= ? " + allAnd
     ).bind(sevenDaysAgo, ...allBinds).first();
 
-    // ── 版本分布(最新日;版本筛选下只剩一项,无妨)──
+    // ── 版本分布 + 系统分布:全量用户"最新一次上报"的版本/系统 ──
+    // 刻意不叠筛选——这是全量用户的稳定快照(按全部用户而非当日活跃),用于版本下拉
+    // 与分布饼图;每日的版本采用趋势另见 versionTrend。
     const versions = await DB.prepare(
-      "SELECT version, COUNT(*) AS count FROM pings WHERE date = ? " + allAnd + " GROUP BY version ORDER BY count DESC"
-    ).bind(today, ...allBinds).all();
+      "SELECT version, COUNT(*) AS count FROM (" +
+      "  SELECT device_id, version, ROW_NUMBER() OVER (PARTITION BY device_id ORDER BY date DESC, created_at DESC) AS rn FROM pings" +
+      ") WHERE rn = 1 GROUP BY version ORDER BY count DESC"
+    ).all();
+    const osDistRow = await DB.prepare(
+      "SELECT " +
+      "SUM(CASE WHEN os = 'win' THEN 1 ELSE 0 END) AS win, " +
+      "SUM(CASE WHEN os = 'mac' THEN 1 ELSE 0 END) AS mac, " +
+      "SUM(CASE WHEN os = 'linux' THEN 1 ELSE 0 END) AS linux, " +
+      "SUM(CASE WHEN os NOT IN ('win','mac','linux') THEN 1 ELSE 0 END) AS other " +
+      "FROM (SELECT device_id, os, ROW_NUMBER() OVER (PARTITION BY device_id ORDER BY date DESC, created_at DESC) AS rn FROM pings) WHERE rn = 1"
+    ).first();
 
-    // ── 累计用户增长曲线(按首次出现日累计 distinct 设备;叠用户群 cohort,
-    //    使"总用户增长"折线也响应全部筛选)──
+    // ── 版本采用曲线(近 30 天):全量,读 version_dist 缓存(由 refreshDay 维护)──
+    const vtStart = addDays(today, -29);
+    const versionTrend = await DB.prepare(
+      "SELECT date, version, count AS c FROM version_dist WHERE date BETWEEN ? AND ? ORDER BY date"
+    ).bind(vtStart, today).all();
+
+    // ── 累计增长曲线 ──
     const growth = await computeGrowth(DB, allAnd, allBinds);
 
-    // ── 留存:新用户 cohort + 全量滚动留存 ──
-    const retention = await computeRetention(DB, today, 60, filterAnd, filterBinds);
-    const rollingRetention = await computeRollingRetention(DB, today, 14, filterAnd, filterBinds);
+    // ── 留存:新用户 cohort + 全量滚动(均批量、全量口径)──
+    // 留存是 cohort 分析,按 os/版本切片样本太小、波动大,统一用全量口径。
+    const retention = await computeRetention(DB, today, 60);
+    const rollingRetention = await computeRollingRetention(DB, today, 60);
     const avgRetention = computeAvgRetention(retention.cohorts);
 
-    // ── 环比(本期 vs 等长上期):KPI 卡做"较上期 ±%"──
-    // 仅在"全部用户群 + 非全期"时计算:cohort 视图下"上期"群体定义不一致,
-    // 全期下没有等长"上期",两种情况下环比都没意义,直接置零(前端隐藏 delta)。
-    let popRow = null;
-    if (segment === "all" && daysRaw !== "all") {
-      const prevStart = addDays(today, -(2 * days - 1));
-      const prevEnd = addDays(today, -days);
-      popRow = await DB.prepare(
-        "SELECT " +
-          "(SELECT COUNT(DISTINCT device_id) FROM pings WHERE date BETWEEN ? AND ? " + filterAnd + ") AS cur_users, " +
-          "(SELECT COUNT(DISTINCT device_id) FROM pings WHERE date BETWEEN ? AND ? " + filterAnd + ") AS prev_users, " +
-          "(SELECT SUM(CASE WHEN first_seen THEN 1 ELSE 0 END) FROM pings WHERE date BETWEEN ? AND ? " + filterAnd + ") AS prev_new, " +
-          "(SELECT SUM(msg_count) FROM pings WHERE date BETWEEN ? AND ? " + filterAnd + ") AS prev_msgs, " +
-          "(SELECT COUNT(*) FROM pings WHERE date BETWEEN ? AND ? " + filterAnd + ") AS prev_user_days"
-      ).bind(
-        startDate, today, ...filterBinds,
-        prevStart, prevEnd, ...filterBinds,
-        prevStart, prevEnd, ...filterBinds,
-        prevStart, prevEnd, ...filterBinds,
-        prevStart, prevEnd, ...filterBinds
-      ).first();
-    }
-
-    // ── 流失 / 复活(最近 7 天 vs 前 7 天;只认 os/version,不叠用户群 cohort)──
+    // ── 流失 / 复活:窗口排除"未结束的今天",近 7 天 = [asOf-7, asOf-1] ──
     const churn = await computeChurn(DB, today, filterAnd, filterBinds);
 
-    // ── 参与度分位:中位数 / P90 / 均值(只看有消息的活跃设备,叠用户群 cohort)──
-    // 均值会被重度用户拉高,中位数才是"典型用户"的真实强度。
-    const percentiles = await computePercentiles(DB, startDate, today, allAnd, allBinds);
+    // ── 参与度分位:窗口上限 90 天、排除今天(今天消息还在累积,分位不准)──
+    const pctStart = startDate < addDays(today, -89) ? addDays(today, -89) : startDate;
+    const pctEnd = addDays(today, -1);
+    const percentiles = await computePercentiles(DB, pctStart, pctEnd, allAnd, allBinds);
 
-    // ── 版本采用曲线(近 30 天每日每版本 DAU;不受筛选影响,反映真实升级速度)──
-    const versionTrend = await computeVersionTrend(DB, today);
-
-    // ── 最近活跃设备列表(version/os 取该设备最新一条;叠用户群 cohort)──
+    // ── 最近活跃设备(版本/os 取该设备最新一条)──
     const recentUsers = await DB.prepare(
       "SELECT device_id, " +
-        "MIN(date) AS first_date, MAX(date) AS last_date, " +
-        "SUM(msg_count) AS total_msgs, COUNT(*) AS active_days, " +
-        "(SELECT version FROM pings p2 WHERE p2.device_id = p.device_id ORDER BY date DESC LIMIT 1) AS version, " +
-        "(SELECT os FROM pings p2 WHERE p2.device_id = p.device_id ORDER BY date DESC LIMIT 1) AS os " +
-        "FROM pings p WHERE 1=1 " + allAnd + " " +
-        "GROUP BY device_id ORDER BY last_date DESC, total_msgs DESC LIMIT 50"
+      "MIN(date) AS first_date, MAX(date) AS last_date, " +
+      "SUM(msg_count) AS total_msgs, COUNT(*) AS active_days, " +
+      "(SELECT version FROM pings p2 WHERE p2.device_id = p.device_id ORDER BY date DESC LIMIT 1) AS version, " +
+      "(SELECT os FROM pings p2 WHERE p2.device_id = p.device_id ORDER BY date DESC LIMIT 1) AS os " +
+      "FROM pings p WHERE 1=1 " + allAnd + " GROUP BY device_id ORDER BY last_date DESC, total_msgs DESC LIMIT 50"
     ).bind(...allBinds).all();
 
     return new Response(JSON.stringify({
       trends,
       wau, mau,
-      stickiness: stickinessMau,         // 兼容老字段
+      stickiness: stickinessMau,
       stickinessMau, stickinessWau,
       totalUsers,
-      peakDau, peakDate,
-      avgMsgsPerActive: Math.round((avgMsgs?.avg ?? 0) * 10) / 10,
-      depth: {
-        b0: buckets?.b0 ?? 0,
-        b1_5: buckets?.b1_5 ?? 0,
-        b6_20: buckets?.b6_20 ?? 0,
-        b20p: buckets?.b20p ?? 0,
-      },
-      avgRetention,
+      depth: { b0: buckets?.b0 ?? 0, b1_5: buckets?.b1_5 ?? 0, b6_20: buckets?.b6_20 ?? 0, b20p: buckets?.b20p ?? 0 },
       versions: versions.results ?? [],
+      osDist: { win: osDistRow?.win ?? 0, mac: osDistRow?.mac ?? 0, linux: osDistRow?.linux ?? 0, other: osDistRow?.other ?? 0 },
+      avgRetention,
       retention,
       rollingRetention,
       growth,
       recentUsers: recentUsers.results ?? [],
-      pop: popRow ? {
-        curUsers: popRow.cur_users ?? 0,
-        prevUsers: popRow.prev_users ?? 0,
-        prevNew: popRow.prev_new ?? 0,
-        prevMsgs: popRow.prev_msgs ?? 0,
-        prevUserDays: popRow.prev_user_days ?? 0,
-      } : null,
       churn,
       percentiles,
-      versionTrend,
+      versionTrend: versionTrend.results ?? [],
       filter: { os: osFilter, version: verFilter, segment, range: daysRaw, startDate, asOf: today },
-    }), {
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
+    }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
   } catch (err) {
     console.error("stats error:", err);
-    return new Response(JSON.stringify({ error: String(err?.message ?? err) }), {
+    // 不把后端错误细节透出到页面。
+    return new Response(JSON.stringify({ error: "stats failed" }), {
       status: 500,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
@@ -252,32 +229,47 @@ async function computeGrowth(DB, filterAnd, filterBinds) {
   return out;
 }
 
-// 新用户 cohort 留存:每个"首次出现日"的设备,在 D+N 日的回访率。
-async function computeRetention(DB, asOf, cohortDays, filterAnd, filterBinds) {
+// 新用户 cohort 留存(批量、全量口径):一次取所有 cohort 的 size,再用一条 UNION ALL
+// 一次性取每个 cohort 在 D+1/3/7/14/30 的回访数。替代原先 cohort×offset 的 N+1
+// (最多 30 cohort × 5 offset = 150 次串行查询)。
+async function computeRetention(DB, asOf, cohortDays) {
   try {
     const since = addDays(asOf, -cohortDays);
-    const cohorts = await DB.prepare(
-      "SELECT date, COUNT(*) AS size FROM pings " +
-        "WHERE first_seen = 1 AND date >= ? " + filterAnd + " " +
-        "GROUP BY date ORDER BY date DESC LIMIT 30"
-    ).bind(since, ...filterBinds).all();
+    const offsets = [1, 3, 7, 14, 30];
+
+    const sizeRows = await DB.prepare(
+      "SELECT fd AS cdate, COUNT(*) AS size " +
+      "FROM (SELECT device_id, MIN(date) AS fd FROM pings GROUP BY device_id) " +
+      "WHERE fd >= ? GROUP BY fd"
+    ).bind(since).all();
+    const sizeMap = new Map();
+    for (const r of sizeRows.results ?? []) sizeMap.set(r.cdate, r.size);
+
+    // 每个 offset 一段子查询,UNION ALL 成一条;LEFT JOIN 保证无回访的 cohort 计 0。
+    const parts = offsets.map((o) =>
+      "SELECT f.fd AS cdate, " + o + " AS off, COUNT(p.device_id) AS cnt " +
+      "FROM (SELECT device_id, MIN(date) AS fd FROM pings GROUP BY device_id) f " +
+      "LEFT JOIN pings p ON p.device_id = f.device_id AND p.date = date(f.fd, '+" + o + " day') " +
+      "WHERE f.fd >= ? GROUP BY f.fd"
+    );
+    const retRows = await DB.prepare(parts.join(" UNION ALL ")).bind(...offsets.map(() => since)).all();
+    const retMap = new Map();
+    for (const r of retRows.results ?? []) {
+      if (!retMap.has(r.cdate)) retMap.set(r.cdate, {});
+      retMap.get(r.cdate)[r.off] = r.cnt;
+    }
 
     const result = [];
-    const offsets = [1, 3, 7, 14, 30];
-    for (const cohort of cohorts.results ?? []) {
+    for (const [cdate, size] of sizeMap) {
       const retention = {};
-      for (const offset of offsets) {
-        const target = addDays(cohort.date, offset);
-        if (target > asOf) continue;
-        const row = await DB.prepare(
-          "SELECT COUNT(*) AS cnt FROM pings " +
-            "WHERE device_id IN (SELECT device_id FROM pings WHERE date = ? AND first_seen = 1 " + filterAnd + ") " +
-            "AND date = ? " + filterAnd
-        ).bind(cohort.date, ...filterBinds, target, ...filterBinds).first();
-        retention[offset] = cohort.size > 0 ? Math.round(((row?.cnt ?? 0) / cohort.size) * 100) : 0;
+      for (const off of offsets) {
+        if (addDays(cdate, off) > asOf) { retention[off] = null; continue; }
+        const cnt = retMap.get(cdate)?.[off] ?? 0;
+        retention[off] = size > 0 ? Math.round((cnt / size) * 100) : 0;
       }
-      result.push({ date: cohort.date, size: cohort.size, retention });
+      result.push({ date: cdate, size, retention });
     }
+    result.sort((a, b) => (a.date < b.date ? 1 : -1));
     return { cohorts: result };
   } catch (err) {
     console.error("retention error:", err);
@@ -285,31 +277,41 @@ async function computeRetention(DB, asOf, cohortDays, filterAnd, filterBinds) {
   }
 }
 
-// 全量滚动留存:以"某天所有活跃设备"为 cohort(不限新用户),看 D+N 回访率。
-// 衡量产品对存量用户的整体粘性,与新用户 cohort 互补。
-async function computeRollingRetention(DB, asOf, baseDays, filterAnd, filterBinds) {
+// 全量滚动留存:cohort = 当日全部活跃设备(不限新用户),衡量存量粘性。同样批量。
+async function computeRollingRetention(DB, asOf, baseDays) {
   try {
     const since = addDays(asOf, -(baseDays - 1));
-    const bases = await DB.prepare(
-      "SELECT date, COUNT(*) AS size FROM pings WHERE date >= ? " + filterAnd + " GROUP BY date ORDER BY date DESC LIMIT ?"
-    ).bind(since, ...filterBinds, baseDays).all();
+    const offsets = [1, 3, 7, 14, 30];
+
+    const sizeRows = await DB.prepare(
+      "SELECT date AS bdate, COUNT(*) AS size FROM pings WHERE date >= ? GROUP BY date"
+    ).bind(since).all();
+    const sizeMap = new Map();
+    for (const r of sizeRows.results ?? []) sizeMap.set(r.bdate, r.size);
+
+    const parts = offsets.map((o) =>
+      "SELECT b.date AS bdate, " + o + " AS off, COUNT(p.device_id) AS cnt " +
+      "FROM pings b LEFT JOIN pings p ON p.device_id = b.device_id AND p.date = date(b.date, '+" + o + " day') " +
+      "WHERE b.date >= ? GROUP BY b.date"
+    );
+    const retRows = await DB.prepare(parts.join(" UNION ALL ")).bind(...offsets.map(() => since)).all();
+    const retMap = new Map();
+    for (const r of retRows.results ?? []) {
+      if (!retMap.has(r.bdate)) retMap.set(r.bdate, {});
+      retMap.get(r.bdate)[r.off] = r.cnt;
+    }
 
     const result = [];
-    const offsets = [1, 3, 7, 14];
-    for (const base of bases.results ?? []) {
+    for (const [bdate, size] of sizeMap) {
       const retention = {};
-      for (const offset of offsets) {
-        const target = addDays(base.date, offset);
-        if (target > asOf) continue;
-        const row = await DB.prepare(
-          "SELECT COUNT(*) AS cnt FROM pings " +
-            "WHERE device_id IN (SELECT device_id FROM pings WHERE date = ? " + filterAnd + ") " +
-            "AND date = ? " + filterAnd
-        ).bind(base.date, ...filterBinds, target, ...filterBinds).first();
-        retention[offset] = base.size > 0 ? Math.round(((row?.cnt ?? 0) / base.size) * 100) : 0;
+      for (const off of offsets) {
+        if (addDays(bdate, off) > asOf) { retention[off] = null; continue; }
+        const cnt = retMap.get(bdate)?.[off] ?? 0;
+        retention[off] = size > 0 ? Math.round((cnt / size) * 100) : 0;
       }
-      result.push({ date: base.date, size: base.size, retention });
+      result.push({ date: bdate, size, retention });
     }
+    result.sort((a, b) => (a.date < b.date ? 1 : -1));
     return { cohorts: result };
   } catch (err) {
     console.error("rolling retention error:", err);
@@ -317,8 +319,7 @@ async function computeRollingRetention(DB, asOf, baseDays, filterAnd, filterBind
   }
 }
 
-// 聚合新用户 cohort 的 D1/D3/D7/D14/D30 加权平均(只取已"满龄"的 cohort,避免新日拉低均值)。
-// cohort 本身已计算这些 offset,这里只是按 cohort 规模加权汇总,无额外查询。
+// 把各新用户 cohort 的 D1/D3/D7/D14/D30 按规模加权平均(只取已满龄的)。
 function computeAvgRetention(cohorts) {
   const result = { d1: null, d3: null, d7: null, d14: null, d30: null };
   if (!cohorts?.length) return result;
@@ -332,15 +333,15 @@ function computeAvgRetention(cohorts) {
   return result;
 }
 
-// 流失 / 复活分析:把"最近 7 天"与"前 7 天"对比。
-//   retained  = 两窗都活跃的设备
-//   churned   = 前窗活跃、最近没回来(流失)
-//   resurrected = 最近活跃、前窗不在、但更早出现过(复活)
+// 流失 / 复活:近 7 天 = [asOf-7, asOf-1](排除可能未结束的 asOf),前 7 天 = [asOf-14, asOf-8]。
+//   retained   = 两窗都活跃
+//   churned    = 前窗活跃、最近没回(流失)
+//   resurrected= 最近活跃、前窗不在、但更早出现过(复活)
 async function computeChurn(DB, asOf, filterAnd, filterBinds) {
   try {
-    const rStart = addDays(asOf, -6), rEnd = asOf;            // 最近 7 天
-    const pStart = addDays(asOf, -13), pEnd = addDays(asOf, -7); // 前 7 天
-    const before = addDays(asOf, -14);                         // 早于前窗
+    const rStart = addDays(asOf, -7), rEnd = addDays(asOf, -1);
+    const pStart = addDays(asOf, -14), pEnd = addDays(asOf, -8);
+    const before = addDays(asOf, -15);
     const recentQ = await DB.prepare(
       "SELECT COUNT(DISTINCT device_id) AS c FROM pings WHERE date BETWEEN ? AND ? " + filterAnd
     ).bind(rStart, rEnd, ...filterBinds).first();
@@ -368,8 +369,7 @@ async function computeChurn(DB, asOf, filterAnd, filterBinds) {
   }
 }
 
-// 活跃用户当日消息数的分位(排序后取中位 / P90)。均值被重度用户拉高,
-// 中位数才能反映"典型用户"的真实参与强度。
+// 活跃用户当日消息数的分位(中位 / P90 / 均值)。窗口由调用方限定并排除今天。
 async function computePercentiles(DB, start, end, filterAnd, filterBinds) {
   try {
     const rows = await DB.prepare(
@@ -387,20 +387,5 @@ async function computePercentiles(DB, start, end, filterAnd, filterBinds) {
   } catch (err) {
     console.error("percentiles error:", err);
     return null;
-  }
-}
-
-// 版本采用曲线:近 30 天每日每版本 DAU。刻意不套筛选——这一图专门反映"新版本
-// 滚动升级的速度",套了版本筛选就没意义了。
-async function computeVersionTrend(DB, asOf) {
-  try {
-    const start = addDays(asOf, -29);
-    const rows = await DB.prepare(
-      "SELECT date, version, COUNT(*) AS c FROM pings WHERE date BETWEEN ? AND ? GROUP BY date, version ORDER BY date"
-    ).bind(start, asOf).all();
-    return rows.results ?? [];
-  } catch (err) {
-    console.error("versionTrend error:", err);
-    return [];
   }
 }
