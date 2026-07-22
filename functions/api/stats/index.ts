@@ -252,11 +252,12 @@ async function computeRetention(DB, asOf, cohortDays) {
     const rows = await DB.prepare(
       "WITH " +
       "firsts AS (SELECT device_id, MIN(date) AS fd FROM pings GROUP BY device_id), " +
-      "sizes  AS (SELECT fd, COUNT(*) AS size FROM firsts GROUP BY fd) " +
+      "sizes  AS (SELECT fd, COUNT(*) AS size FROM firsts GROUP BY fd), " +
+      "offs(off) AS (SELECT 1 UNION ALL SELECT 3 UNION ALL SELECT 7 UNION ALL SELECT 14 UNION ALL SELECT 30) " +
       "SELECT f.fd AS cdate, s.size AS size, o.off AS off, COUNT(p.device_id) AS cnt " +
       "FROM firsts f " +
       "JOIN sizes s ON s.fd = f.fd " +
-      "CROSS JOIN (VALUES (1),(3),(7),(14),(30)) AS o(off) " +
+      "CROSS JOIN offs o " +
       "LEFT JOIN pings p ON p.device_id = f.device_id AND p.date = date(f.fd, '+' || o.off || ' day') " +
       "WHERE f.fd >= ? " +
       "GROUP BY f.fd, o.off"
@@ -299,11 +300,12 @@ async function computeRollingRetention(DB, asOf, baseDays) {
     const rows = await DB.prepare(
       "WITH " +
       "base  AS (SELECT device_id, date AS bdate FROM pings WHERE date >= ?), " +
-      "sizes AS (SELECT bdate, COUNT(*) AS size FROM base GROUP BY bdate) " +
+      "sizes AS (SELECT bdate, COUNT(*) AS size FROM base GROUP BY bdate), " +
+      "offs(off) AS (SELECT 1 UNION ALL SELECT 3 UNION ALL SELECT 7 UNION ALL SELECT 14 UNION ALL SELECT 30) " +
       "SELECT b.bdate AS bdate, s.size AS size, o.off AS off, COUNT(p.device_id) AS cnt " +
       "FROM base b " +
       "JOIN sizes s ON s.bdate = b.bdate " +
-      "CROSS JOIN (VALUES (1),(3),(7),(14),(30)) AS o(off) " +
+      "CROSS JOIN offs o " +
       "LEFT JOIN pings p ON p.device_id = b.device_id AND p.date = date(b.bdate, '+' || o.off || ' day') " +
       "GROUP BY b.bdate, o.off"
     ).bind(since).all();

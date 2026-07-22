@@ -193,7 +193,7 @@ const dashboardHtml = `<!DOCTYPE html>
 <div class="container">
   <div class="header fade-in">
     <div class="brand">
-      <div class="brand-mark" style="background:linear-gradient(135deg,#818cf8,#a78bfa)"></div>
+      <div class="brand-mark"><img src="/icon.png" alt="RikkaHub" onerror="this.style.display='none';this.parentElement.style.background='linear-gradient(135deg,#818cf8,#a78bfa)'"></div>
       <div class="brand-text">
         <div class="brand-name">RikkaHub 数据看板</div>
         <div class="brand-sub">用户增长 · 留存 · 参与度分析</div>
