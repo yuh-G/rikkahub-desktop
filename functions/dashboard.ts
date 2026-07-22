@@ -495,9 +495,9 @@ function cohortTablePage(cohorts, offsets, firstHead, tabKey) {
   t += '</tbody></table>';
   if (totalPages > 1) {
     t += '<div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:10px;font-size:12px;color:var(--text-dim)">' +
-      '<button class="csv-btn" onclick="retPager(\''+tabKey+'\',-1)"'+(page<=0?' disabled style="opacity:0.4"':'')+'>‹ 上一页</button>' +
+      '<button class="csv-btn ret-pager" data-tab="'+tabKey+'" data-dir="-1"'+(page<=0?' disabled style="opacity:0.4"':'')+'>‹ 上一页</button>' +
       '<span>第 '+(page+1)+' / '+totalPages+' 页 · 共 '+cohorts.length+' 个 cohort</span>' +
-      '<button class="csv-btn" onclick="retPager(\''+tabKey+'\',1)"'+(page>=totalPages-1?' disabled style="opacity:0.4"':'')+'>下一页 ›</button>' +
+      '<button class="csv-btn ret-pager" data-tab="'+tabKey+'" data-dir="1"'+(page>=totalPages-1?' disabled style="opacity:0.4"':'')+'>下一页 ›</button>' +
     '</div>';
   }
   return t;
@@ -514,6 +514,9 @@ function retPager(tabKey, dir) {
   const wrap = document.getElementById('ret-table-' + tabKey);
   if (wrap) wrap.innerHTML = cohortTablePage(cohorts, [1,3,7,14,30], tabKey==='week'?'周起始':'日期', tabKey);
 }
+// 分页按钮用事件委托(绑一次 document,翻页重渲也自动生效),不用 inline onclick——
+// 后者在 dashboardHtml 模板字符串里的引号转义会被模板吃掉一层,让前端语法错、整个 script 中断。
+document.addEventListener('click', e => { const b = e.target.closest('.ret-pager'); if (b && !b.disabled) retPager(b.dataset.tab, parseInt(b.dataset.dir)); });
 
 // ── 渲染:用户 ──
 function renderUsers(d) {
