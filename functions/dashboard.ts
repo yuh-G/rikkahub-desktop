@@ -163,7 +163,9 @@ const dashboardHtml = `<!DOCTYPE html>
   .card-title h3 { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
   .card-title .desc { font-size: 12px; color: var(--text-dim); font-weight: 400; }
   .card-legend { display: flex; gap: 14px; font-size: 12px; flex-wrap: wrap; }
-  .card-legend .item { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+  .card-legend .item { display: flex; align-items: center; gap: 6px; color: var(--text-muted); cursor: pointer; user-select: none; transition: opacity 0.15s ease; }
+  .card-legend .item:hover { color: var(--text); }
+  .card-legend .item.off { opacity: 0.35; filter: grayscale(1); text-decoration: line-through; }
   .card-legend .dot { width: 8px; height: 8px; border-radius: 50%; }
   .card-actions { display: flex; gap: 6px; align-items: center; }
   .toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-muted); cursor: pointer; user-select: none; }
@@ -410,7 +412,9 @@ function info(tip) { return ' <span class="info" title="' + tip + '">i</span>'; 
 function emptyState(msg) { return '<div class="empty"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><div class="empty-text">' + msg + '</div></div>'; }
 
 function card(title, desc, legend, body, actions) {
-  const lh = legend ? '<div class="card-legend">' + legend.map(l => '<div class="item"><div class="dot" style="background:'+l.color+'"></div>'+l.label+'</div>').join('') + '</div>' : '';
+  // 图例可点击:data-idx 与图表 datasets 下标一一对应(所有带图例的卡片,图例顺序
+  // 都与 datasets 顺序保持一致),点击切换该系列显隐,刻度随之自适应。
+  const lh = legend ? '<div class="card-legend">' + legend.map((l,i) => '<div class="item legend-item" data-idx="'+i+'" title="点击隐藏/显示该系列"><div class="dot" style="background:'+l.color+'"></div>'+l.label+'</div>').join('') + '</div>' : '';
   const ah = actions ? '<div class="card-actions">' + actions + '</div>' : '';
   let s = '<div class="card fade-in"><div class="card-head"><div class="card-title"><h3>'+title+'</h3>'+(desc?'<div class="desc">'+desc+'</div>':'')+'</div>'+ah+lh+'</div>';
   s += body + '</div>';
@@ -548,9 +552,15 @@ function renderRetention(d) {
   // 留存衰减曲线(加权均值 D1/D3/D7/D14/D30)
   const segNote = currentSegment !== 'all' ? ' · 用户群筛选不影响留存(留存本身就是 cohort 分析)' : '';
   const curvePts = [[1,ar.d1],[3,ar.d3],[7,ar.d7],[14,ar.d14],[30,ar.d30]].filter(p=>p[1]!=null);
-  html += '<div class="grid full">';
+  // 留存曲线只有 5 个点,独占整行浪费;与"日均使用时长"并排——两者都回答
+  // "用户有没有留下来、留下来用得深不深",放一起互为印证。
+  const qt = d.qualityTrend || [];
+  const hasDur = qt.some(x=>x.avg_minutes!=null);
+  html += '<div class="grid two">';
   html += card('留存衰减曲线', '新用户 cohort 在 D+N 的加权平均回访率' + segNote + info('把所有已满龄的新用户 cohort 按规模加权平均,得到一条整体留存衰减曲线,是衡量产品长期粘性的核心指标。'),
     null, curvePts.length>=2 ? '<div class="chart-wrap short"><canvas id="ret-curve"></canvas></div>' : emptyState('满龄 cohort 不足'));
+  html += card('日均使用时长', '有心跳上报设备的当日平均在线分钟数(心跳 × 10 分钟估算)' + info('客户端每 10 分钟一跳,时长=跳数×10,粒度粗但趋势可靠;仅统计新版客户端。时长与留存同升,说明粘性提升来自真实使用加深。'),
+    null, hasDur ? '<div class="chart-wrap short"><canvas id="dur-chart"></canvas></div>' : emptyState('等待新版客户端上报'));
   html += '</div>';
 
   // cohort 表(周维度 + 双视图 Tab)
@@ -618,6 +628,21 @@ document.addEventListener('click', e => { const b = e.target.closest('.ret-pager
 
 // 用户表交互也走事件委托(排序/翻页/复制都会触发局部重渲,逐元素绑定会丢)。
 document.addEventListener('click', e => {
+  // 图例点击:找同卡片内 canvas 对应的 Chart 实例,切换该 dataset 显隐并置灰图例
+  const li = e.target.closest('.legend-item');
+  if (li) {
+    const cardEl = li.closest('.card');
+    const canvas = cardEl ? cardEl.querySelector('canvas') : null;
+    const chart = canvas ? Chart.getChart(canvas) : null;
+    const idx = parseInt(li.dataset.idx);
+    if (chart && idx < chart.data.datasets.length) {
+      const vis = chart.isDatasetVisible(idx);
+      chart.setDatasetVisibility(idx, !vis);
+      li.classList.toggle('off', vis);
+      chart.update();
+    }
+    return;
+  }
   const th = e.target.closest('#users-table th.sortable');
   if (th) {
     const k = th.dataset.key;
@@ -806,14 +831,10 @@ function renderQuality(d) {
   const waitNote = '等待新版客户端上报(功能/时长/失败遥测随下一个发布版本生效)';
   let html = '<div class="section' + (activeSection==='quality'?' on':'') + '" id="sec-quality">';
 
+  // 日均使用时长已挪到「留存」章节(与留存衰减曲线并排),这里剩功能使用度 + 失败率
   html += '<div class="grid two">';
   html += card('功能使用度(近 7 天)', '各功能"当日至少用过一次"的去重设备数' + info('分母 base = 近 7 天活跃设备;对话=发过消息。老客户端不上报功能计数,数字会低估,新版本覆盖率上来后才可比。'),
     null, (fu.base>0 && (featTotal>0 || fu.chat>0)) ? '<div class="chart-wrap"><canvas id="feat-chart"></canvas></div>' : emptyState(fu.base>0?waitNote:'近 7 天无数据'));
-  html += card('日均使用时长', '有心跳上报设备的当日平均在线分钟数(心跳 × 10 分钟估算)' + info('客户端每 10 分钟一跳,时长=跳数×10,粒度粗但趋势可靠;仅统计新版客户端。'),
-    null, qt.some(x=>x.avg_minutes!=null) ? '<div class="chart-wrap"><canvas id="dur-chart"></canvas></div>' : emptyState(waitNote));
-  html += '</div>';
-
-  html += '<div class="grid full">';
   html += card('请求失败率趋势', '每日 provider 失败数 ÷(失败数 + 消息数)' + info('失败=非用户中断的请求错误(网络/鉴权/限流等)。失败率抬头往往先于用户流失,是最值得盯的质量信号。老客户端不上报失败数,初期数值偏低。'),
     null, hasQuality ? '<div class="chart-wrap"><canvas id="err-chart"></canvas></div>' : emptyState(waitNote));
   html += '</div>';
@@ -974,6 +995,12 @@ function drawCharts(d) {
       // Y 轴不锁死 0-100:留存值通常集中在 0-40%,锁 100 会把曲线压成近似直线
       new Chart(rc, { type:'line', data:{ datasets:[{ label:'留存率', data: pts.map(p=>({x:p[0], y:p[1]})), borderColor:'#a78bfa', backgroundColor:grad, fill:true, tension:0.35, pointRadius:4, pointHoverRadius:6, borderWidth:2.5 }] }, options:{ ...base, scales:{ x:{ type:'linear', title:{ display:true, text:'距首次使用天数', color:'#71717a', font:{ family:fam, size:10.5 } }, ticks:{ color:'#71717a', font:{ family:fam, size:10.5 }, stepSize:1, callback:v=>'D+'+v } }, y:{ ...base.scales.y, grace:'15%', ticks:{ ...base.scales.y.ticks, callback:v=>v+'%' } } }, plugins:{ ...base.plugins, tooltip:{ ...base.plugins.tooltip, callbacks:{ label: ctx => 'D+'+ctx.parsed.x+' 留存 '+ctx.parsed.y+'%' } } } } });
     }
+    const durC = document.getElementById('dur-chart');
+    const qtr = d.qualityTrend || [];
+    if (durC && qtr.some(x=>x.avg_minutes!=null)) {
+      const ctx2 = durC.getContext('2d'); const grad2 = ctx2.createLinearGradient(0,0,0,220); grad2.addColorStop(0,'rgba(52,211,153,0.22)'); grad2.addColorStop(1,'rgba(52,211,153,0)');
+      new Chart(durC, { type:'line', data:{ labels: qtr.map(x=>x.date.slice(5).replace('-','/')), datasets:[{ label:'日均分钟', data: qtr.map(x=>x.avg_minutes), borderColor:'#34d399', backgroundColor:grad2, fill:true, tension:0.35, pointRadius:0, pointHoverRadius:4, borderWidth:2, spanGaps:true }] }, options: base });
+    }
     const cqC = document.getElementById('cq-chart');
     if (cqC && d.cohortQuality && d.cohortQuality.length) {
       const cq = d.cohortQuality;
@@ -997,7 +1024,15 @@ function drawCharts(d) {
       for (const r of d.powerCurve) byDays[r.days] = r.devices || 0;
       const labels = []; const vals = []; const colors = [];
       for (let i = 2; i <= 30; i++) { labels.push(i + ' 天'); vals.push(byDays[i]||0); colors.push(i >= 15 ? 'rgba(52,211,153,0.75)' : 'rgba(129,140,248,0.7)'); }
-      new Chart(powerC, { type:'bar', data:{ labels, datasets:[{ label:'设备数', data: vals, backgroundColor: colors, borderRadius:3, barPercentage:0.8, categoryPercentage:0.85 }] }, options: base });
+      // 柱顶标数值(内联 plugin,免外部依赖);0 值不标,避免一排 0 糊满横轴
+      const barValues = { id:'barValues', afterDatasetsDraw(chart) {
+        const c2 = chart.ctx; const meta = chart.getDatasetMeta(0);
+        c2.save(); c2.fillStyle = '#a1a1aa'; c2.font = '600 10px ' + fam; c2.textAlign = 'center'; c2.textBaseline = 'bottom';
+        meta.data.forEach((el, i) => { const v = chart.data.datasets[0].data[i]; if (v > 0) c2.fillText(String(v), el.x, el.y - 3); });
+        c2.restore();
+      } };
+      new Chart(powerC, { type:'bar', data:{ labels, datasets:[{ label:'设备数', data: vals, backgroundColor: colors, borderRadius:3, barPercentage:0.8, categoryPercentage:0.85 }] },
+        options:{ ...base, scales:{ ...base.scales, y:{ ...base.scales.y, grace:'12%' } } }, plugins:[barValues] });
     }
   }
 
@@ -1068,11 +1103,6 @@ function drawCharts(d) {
     }
     const qt = d.qualityTrend || [];
     const qLabels = qt.map(x=>x.date.slice(5).replace('-','/'));
-    const durC = document.getElementById('dur-chart');
-    if (durC && qt.some(x=>x.avg_minutes!=null)) {
-      const ctx = durC.getContext('2d'); const grad = ctx.createLinearGradient(0,0,0,280); grad.addColorStop(0,'rgba(52,211,153,0.22)'); grad.addColorStop(1,'rgba(52,211,153,0)');
-      new Chart(durC, { type:'line', data:{ labels: qLabels, datasets:[{ label:'日均分钟', data: qt.map(x=>x.avg_minutes), borderColor:'#34d399', backgroundColor:grad, fill:true, tension:0.35, pointRadius:0, pointHoverRadius:4, borderWidth:2, spanGaps:true }] }, options: base });
-    }
     const errC = document.getElementById('err-chart');
     if (errC && qt.length) {
       const rate = qt.map(x=>{ const e=x.errs||0, m=x.msgs||0; return (e+m)>0 ? Math.round(e/(e+m)*1000)/10 : 0; });
