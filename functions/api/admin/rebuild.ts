@@ -4,12 +4,21 @@
 //
 // 调用:POST /api/admin/rebuild?token=<AUTH_TOKEN>
 // 建议在每次部署 ping.ts 修复后执行一次,之后只在怀疑数据再次不一致时手动跑。
+import { isAuthorized } from "../../_lib";
+
 export const onRequest = async (context) => {
   const url = new URL(context.request.url);
-  if (!context.env.AUTH_TOKEN || url.searchParams.get("token") !== context.env.AUTH_TOKEN) {
+  if (!isAuthorized(context, url)) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },
+    });
+  }
+  // 全量重写三张表,只允许显式 POST,防浏览器地址栏误触 / 预取器带 cookie GET 触发。
+  if (context.request.method !== "POST") {
+    return new Response(JSON.stringify({ error: "POST only" }), {
+      status: 405,
+      headers: { "Content-Type": "application/json", "Allow": "POST" },
     });
   }
 

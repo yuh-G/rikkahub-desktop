@@ -550,9 +550,12 @@ function writeSkippedVersion(version: string) {
 }
 
 // ── Analytics (anonymous DAU tracking) ────────────────────────────────────
-// One ping per app start + periodic updates during the session.  Sends only:
-//   device UUID, date, version, OS, cumulative message count for the day.
-// No user content, no IP storage, no model names, no file names.
+// One ping per app start + periodic updates during the session.  Sends only
+// daily counters — device UUID, date, version, OS, plus:
+//   mc = messages sent        hb = heartbeats (~session minutes / 10)
+//   er = provider failures    fs/ft/fm/fi = search / TTS / MCP / image-gen uses
+// No user content, no IP storage, no model names, no file names, no queries.
+// 服务端只按 MAX 合并当日计数,全部计数每天归零。
 //
 // 设计准则:
 //   - 完全静默:无网络/DNS 失败/防火墙拦截都不能让用户看到任何报错
@@ -562,6 +565,22 @@ const ANALYTICS_ENDPOINT = "https://rikkahub-desktop.pages.dev/ping";
 const deviceIdPath = join(dataDir, "device-id.txt");
 let analyticsDeviceId = "";
 let analyticsMsgCount = 0;
+let analyticsHbCount = 0;      // 心跳数:每次 ping +1,≈ 当日使用时长 / 10 分钟
+let analyticsErrCount = 0;     // provider 请求失败数(不含用户主动中断)
+let analyticsSearchCount = 0;  // search_web / scrape_web 执行次数
+let analyticsTtsCount = 0;     // TTS 朗读次数
+let analyticsMcpCount = 0;     // MCP 工具调用次数
+let analyticsImgCount = 0;     // 图像生成次数
+
+function resetAnalyticsCounters(): void {
+  analyticsMsgCount = 0;
+  analyticsHbCount = 0;
+  analyticsErrCount = 0;
+  analyticsSearchCount = 0;
+  analyticsTtsCount = 0;
+  analyticsMcpCount = 0;
+  analyticsImgCount = 0;
+}
 
 function readOrCreateDeviceId(): string {
   try { return readFileSync(deviceIdPath, "utf-8").trim(); } catch { /* not found */ }
@@ -586,11 +605,18 @@ function analyticsOs(): string {
 
 function sendAnalyticsPing(): void {
   if (!analyticsDeviceId) return;
+  analyticsHbCount++; // 每次 ping 即一跳(启动 + 每 10 分钟),服务端按 MAX 合并
   const url = `${ANALYTICS_ENDPOINT}?id=${encodeURIComponent(analyticsDeviceId)}`
     + `&d=${localDateStr()}`
     + `&v=${encodeURIComponent(APP_VERSION)}`
     + `&os=${analyticsOs()}`
-    + `&mc=${analyticsMsgCount}`;
+    + `&mc=${analyticsMsgCount}`
+    + `&hb=${analyticsHbCount}`
+    + `&er=${analyticsErrCount}`
+    + `&fs=${analyticsSearchCount}`
+    + `&ft=${analyticsTtsCount}`
+    + `&fm=${analyticsMcpCount}`
+    + `&fi=${analyticsImgCount}`;
   // 三重静默防御:
   //   (1) try/catch 包裹同步部分,防 fetch() 同步抛错(比如 URL 不合法)
   //   (2) AbortSignal.timeout 限制网络等待,DNS 失败/连接超时都会被吞
@@ -613,7 +639,7 @@ function startAnalytics(): void {
     sendAnalyticsPing(); // startup ping
     setInterval(() => {
       const now = localDateStr();
-      if (now !== lastDate) { analyticsMsgCount = 0; lastDate = now; }
+      if (now !== lastDate) { resetAnalyticsCounters(); lastDate = now; }
       sendAnalyticsPing();
     }, 10 * 60 * 1000); // every 10 minutes
   } catch { /* analytics must never break the app */ }
@@ -8152,6 +8178,7 @@ let systemTtsChain: Promise<void> = Promise.resolve();
 const activeSystemTtsProcs = new Set<ReturnType<typeof Bun.spawn>>();
 
 async function speakSystemText(text: string, speechRate = 1) {
+  analyticsTtsCount++;
   const prev = systemTtsChain;
   let release: () => void = () => {};
   systemTtsChain = new Promise<void>((resolve) => { release = resolve; });
@@ -8349,12 +8376,14 @@ async function executeToolCall(
         "Web search is currently disabled. Stop calling search_web and answer from your own knowledge, or ask the user to re-enable web search.",
       );
     }
+    analyticsSearchCount++;
     return runSearchWeb(args);
   }
   if (name === "scrape_web") {
     if (!state.settings.enableWebSearch) {
       throw new Error("Web search is currently disabled. Stop calling scrape_web.");
     }
+    analyticsSearchCount++;
     return runScrapeWeb(args);
   }
   if (name === "get_time_info") {
@@ -8433,6 +8462,7 @@ async function executeToolCall(
     return { name: skillName, content };
   }
   if (name.startsWith("mcp__")) {
+    analyticsMcpCount++;
     return callMcpTool(assistant, name, args);
   }
   throw new Error(`Unknown tool: ${name}`);
@@ -14371,6 +14401,7 @@ async function callImageGeneration(input: {
   aspectRatio: string;
   referenceFileIds?: number[];
 }) {
+  analyticsImgCount++;
   const picked = findModel(state.settings.imageGenerationModelId);
   const providerItem = picked.provider;
   const modelItem = picked.model;
@@ -15396,6 +15427,8 @@ async function generateAnswer(conversation: Conversation, regenerateAtNodeId?: s
       broadcastConversation(conversation);
       return;
     }
+    // 匿名遥测:只记"发生了一次 provider 失败",不采集错误内容/模型/服务商。
+    analyticsErrCount++;
     const rawContent = err instanceof Error ? err.message : String(err);
     const proxyHint = classifyProxyError(err);
     const failureText = proxyHint ?? `请求失败：${rawContent}`;
