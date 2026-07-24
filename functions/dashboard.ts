@@ -510,11 +510,11 @@ function renderOverview(d) {
   // 粘性趋势 + 星期活跃模式
   const st = d.stickinessTrend || [];
   html += '<div class="grid two">';
-  html += card('粘性趋势', 'DAU/WAU 与 DAU/MAU 逐日变化' + info('单点粘性数字看不出方向;这条线回答"用户回访频率是在改善还是恶化"。窗口上限 90 天。'),
-    [{label:'DAU/WAU',color:'#34d399'},{label:'DAU/MAU',color:'#818cf8'}],
+  html += card('粘性趋势', 'DAU/MAU 粘性(左轴)+ DAU、MAU 规模(右轴)' + info('粘性 = 当日 DAU ÷ 滚动 30 天 MAU,回答"用户回访频率是在改善还是恶化"。配上 DAU、MAU 两条规模线(右轴),能分辨粘性变化是分子(日活)还是分母(月活)驱动的。窗口上限 90 天。'),
+    [{label:'DAU/MAU',color:'#818cf8'},{label:'DAU',color:'#34d399'},{label:'MAU',color:'#fbbf24'}],
     st.length>=2 ? '<div class="chart-wrap"><canvas id="stick-chart"></canvas></div>' : emptyState('样本不足'));
-  html += card('星期活跃模式', '所选区间各星期几的平均日活' + info('工作日 vs 周末的使用差异,指导发版与运营节奏。区间不足一周时参考意义有限。'),
-    null, t.length>=7 ? '<div class="chart-wrap"><canvas id="dow-chart"></canvas></div>' : emptyState('区间不足 7 天'));
+  html += card('星期活跃模式', '所选区间各星期几的平均日活' + info('工作日 vs 周末的使用差异,指导发版与运营节奏。今天尚未过完,不计入均值;纵轴不从 0 起,以放大星期间差异。'),
+    null, t.length>=8 ? '<div class="chart-wrap"><canvas id="dow-chart"></canvas></div>' : emptyState('完整天数不足 7 天'));
   html += '</div>';
 
   // 日均消息(人均) + 每日消息总量
@@ -669,11 +669,15 @@ function renderUsers(d) {
     '<button class="csv-btn" id="csv-depth">'+CSV_ICON+'导出</button>');
   html += '</div>';
 
-  // Power User Curve:活跃频次分布
+  // Power User Curve:活跃频次分布。"仅活跃 1 天"的柱子往往比其余档位大一个数量级,
+  // 留在图里会把其他柱子压扁,所以从图中拿掉、改在右上角以数字呈现。
   const pc = d.powerCurve || [];
+  const mau30 = pc.reduce((s,x)=>s+(x.devices||0),0);
+  const day1Only = pc.filter(x=>x.days===1).reduce((s,x)=>s+(x.devices||0),0);
   html += '<div class="grid full">';
-  html += card('活跃频次分布(Power User Curve)', '近 30 天内活跃 N 天的设备各有多少' + info('横轴=近 30 天内的活跃天数,纵轴=设备数。右侧隆起(微笑曲线)说明存在一批高频核心用户;纯 L 型则多数人来一两天就走,留存工作优先级最高。'),
-    null, pc.length ? '<div class="chart-wrap"><canvas id="power-chart"></canvas></div>' : emptyState('近 30 天无数据'));
+  html += card('活跃频次分布(Power User Curve)', '近 30 天内活跃 N 天(N≥2)的设备各有多少' + info('横轴=近 30 天内的活跃天数,纵轴=设备数。"仅活跃 1 天"的设备数见右上角,不入图以免压扁其余档位。右侧隆起(微笑曲线)说明存在一批高频核心用户;若 2~3 天档独大且右侧平坦,留存工作优先级最高。'),
+    null, pc.length ? '<div class="chart-wrap"><canvas id="power-chart"></canvas></div>' : emptyState('近 30 天无数据'),
+    pc.length ? '<span class="badge-tag">近 30 天活跃 '+fmt(mau30)+' 台 · 仅活跃 1 天 '+fmt(day1Only)+' 台</span>' : null);
   html += '</div>';
 
   // 用户列表(客户端排序 + 分页,数据集为最近活跃的前 500 台)
@@ -868,7 +872,9 @@ function drawCharts(d) {
   const fam = "'Inter','JetBrains Mono','Noto Sans SC',sans-serif";
   const base = {
     responsive: true, maintainAspectRatio: false,
-    interaction: { intersect: false, mode: 'index' },
+    // axis:'x' 关键:默认按二维距离找最近元素,悬浮在矮柱上方时会命中旁边高柱,
+    // 造成"指着一根柱子显示另一根的信息";限定只按 x 距离后命中即所指。
+    interaction: { intersect: false, mode: 'index', axis: 'x' },
     plugins: { legend: { display: false }, tooltip: { backgroundColor: 'rgba(20,20,30,0.95)', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, padding: 12, boxPadding: 6, titleColor: '#fafafa', bodyColor: '#a1a1aa', titleFont: { family: fam, weight: 600, size: 12 }, bodyFont: { family: fam, size: 12 }, cornerRadius: 8 } },
     scales: {
       x: { ticks: { color: '#71717a', font: { family: fam, size: 10.5 }, maxRotation: 0, padding: 8 }, grid: { display: false }, border: { display: false } },
@@ -925,18 +931,27 @@ function drawCharts(d) {
     const stickC = document.getElementById('stick-chart');
     if (stickC && d.stickinessTrend && d.stickinessTrend.length >= 2) {
       const st = d.stickinessTrend;
+      // 双轴:左轴是比率(%),右轴是设备数。三条线数量级不同,塞一个轴必然压扁其一。
       new Chart(stickC, { type:'line', data:{ labels: st.map(x=>x.date.slice(5).replace('-','/')), datasets:[
-        { label:'DAU/WAU', data: st.map(x=>x.dauWau), borderColor:'#34d399', backgroundColor:'transparent', tension:0.35, pointRadius:0, pointHoverRadius:4, borderWidth:2 },
-        { label:'DAU/MAU', data: st.map(x=>x.dauMau), borderColor:'#818cf8', backgroundColor:'transparent', tension:0.35, pointRadius:0, pointHoverRadius:4, borderWidth:2 },
-      ]}, options:{ ...base, scales:{ ...base.scales, y:{ ...base.scales.y, max:100, ticks:{ ...base.scales.y.ticks, callback:v=>v+'%' } } } } });
+        { label:'DAU/MAU', yAxisID:'y', data: st.map(x=>x.dauMau), borderColor:'#818cf8', backgroundColor:'transparent', tension:0.35, pointRadius:0, pointHoverRadius:4, borderWidth:2.5 },
+        { label:'DAU', yAxisID:'y1', data: st.map(x=>x.dau||0), borderColor:'#34d399', backgroundColor:'transparent', tension:0.35, pointRadius:0, pointHoverRadius:4, borderWidth:1.5, borderDash:[5,4] },
+        { label:'MAU', yAxisID:'y1', data: st.map(x=>x.mau||0), borderColor:'#fbbf24', backgroundColor:'transparent', tension:0.35, pointRadius:0, pointHoverRadius:4, borderWidth:1.5, borderDash:[5,4] },
+      ]}, options:{ ...base, scales:{ x: base.scales.x,
+        y:{ ...base.scales.y, position:'left', beginAtZero:false, grace:'15%', title:{ display:true, text:'粘性', color:'#71717a', font:{ family:fam, size:10.5 } }, ticks:{ ...base.scales.y.ticks, callback:v=>v+'%' } },
+        y1:{ position:'right', beginAtZero:true, grace:'10%', title:{ display:true, text:'设备数', color:'#71717a', font:{ family:fam, size:10.5 } }, ticks:{ color:'#71717a', font:{ family:fam, size:10.5 }, padding:8 }, grid:{ display:false }, border:{ display:false } } },
+        plugins:{ ...base.plugins, tooltip:{ ...base.plugins.tooltip, callbacks:{ label: ctx => ctx.dataset.label + ': ' + fmt(ctx.parsed.y) + (ctx.dataset.yAxisID==='y' ? '%' : ' 台') } } } } });
     }
     const dowC = document.getElementById('dow-chart');
-    if (dowC && t.length >= 7) {
+    if (dowC && t.length >= 8) {
+      // 最后一天是"今天",还没过完,计入会拉低所在星期的均值,排除
+      const full = t.slice(0, -1);
       const sums=[0,0,0,0,0,0,0], cnts=[0,0,0,0,0,0,0];
-      for (const x of t) { const wd=(new Date(x.date+'T00:00:00Z').getUTCDay()+6)%7; sums[wd]+=(x.dau||0); cnts[wd]++; }
+      for (const x of full) { const wd=(new Date(x.date+'T00:00:00Z').getUTCDay()+6)%7; sums[wd]+=(x.dau||0); cnts[wd]++; }
       const avgs = sums.map((s,i)=>cnts[i]>0?Math.round(s/cnts[i]*10)/10:0);
       const dowColors = ['#818cf8','#818cf8','#818cf8','#818cf8','#818cf8','#a78bfa','#a78bfa'];
-      new Chart(dowC, { type:'bar', data:{ labels:['周一','周二','周三','周四','周五','周六','周日'], datasets:[{ label:'平均日活', data:avgs, backgroundColor:dowColors.map(c=>hexA(c,0.7)), borderRadius:4, barPercentage:0.7 }] }, options: base });
+      // 纵轴不从 0 起(grace 留白),否则各天差异只有几个点位时全被压平
+      new Chart(dowC, { type:'bar', data:{ labels:['周一','周二','周三','周四','周五','周六','周日'], datasets:[{ label:'平均日活', data:avgs, backgroundColor:dowColors.map(c=>hexA(c,0.7)), borderRadius:4, barPercentage:0.7 }] },
+        options:{ ...base, scales:{ ...base.scales, y:{ ...base.scales.y, beginAtZero:false, grace:'30%' } } } });
     }
     const avgC = document.getElementById('avg-chart');
     if (avgC) {
@@ -956,7 +971,8 @@ function drawCharts(d) {
       const pts = [[1,ar.d1],[3,ar.d3],[7,ar.d7],[14,ar.d14],[30,ar.d30]].filter(p=>p[1]!=null);
       const ctx = rc.getContext('2d'); const grad = ctx.createLinearGradient(0,0,0,220); grad.addColorStop(0,'rgba(167,139,250,0.25)'); grad.addColorStop(1,'rgba(167,139,250,0)');
       // X 轴用 linear(按真实天数),避免 D+1/3/7/14/30 在分类轴等距渲染、衰减尾巴被压扁。
-      new Chart(rc, { type:'line', data:{ datasets:[{ label:'留存率', data: pts.map(p=>({x:p[0], y:p[1]})), borderColor:'#a78bfa', backgroundColor:grad, fill:true, tension:0.35, pointRadius:4, pointHoverRadius:6, borderWidth:2.5 }] }, options:{ ...base, scales:{ x:{ type:'linear', title:{ display:true, text:'距首次使用天数', color:'#71717a', font:{ family:fam, size:10.5 } }, ticks:{ color:'#71717a', font:{ family:fam, size:10.5 }, stepSize:1, callback:v=>'D+'+v } }, y:{ ...base.scales.y, max:100, ticks:{ ...base.scales.y.ticks, callback:v=>v+'%' } } }, plugins:{ ...base.plugins, tooltip:{ ...base.plugins.tooltip, callbacks:{ label: ctx => 'D+'+ctx.parsed.x+' 留存 '+ctx.parsed.y+'%' } } } } });
+      // Y 轴不锁死 0-100:留存值通常集中在 0-40%,锁 100 会把曲线压成近似直线
+      new Chart(rc, { type:'line', data:{ datasets:[{ label:'留存率', data: pts.map(p=>({x:p[0], y:p[1]})), borderColor:'#a78bfa', backgroundColor:grad, fill:true, tension:0.35, pointRadius:4, pointHoverRadius:6, borderWidth:2.5 }] }, options:{ ...base, scales:{ x:{ type:'linear', title:{ display:true, text:'距首次使用天数', color:'#71717a', font:{ family:fam, size:10.5 } }, ticks:{ color:'#71717a', font:{ family:fam, size:10.5 }, stepSize:1, callback:v=>'D+'+v } }, y:{ ...base.scales.y, grace:'15%', ticks:{ ...base.scales.y.ticks, callback:v=>v+'%' } } }, plugins:{ ...base.plugins, tooltip:{ ...base.plugins.tooltip, callbacks:{ label: ctx => 'D+'+ctx.parsed.x+' 留存 '+ctx.parsed.y+'%' } } } } });
     }
     const cqC = document.getElementById('cq-chart');
     if (cqC && d.cohortQuality && d.cohortQuality.length) {
@@ -972,14 +988,15 @@ function drawCharts(d) {
   // 用户
   if (activeSection === 'users') {
     const depthC = document.getElementById('depth-chart');
-    if (depthC && d.depth) { const dd = d.depth; new Chart(depthC, { type:'bar', data:{ labels:['0 条','1–5','6–20','20+'], datasets:[{ data:[dd.b0||0,dd.b1_5||0,dd.b6_20||0,dd.b20p||0], backgroundColor:['rgba(113,113,122,0.6)','rgba(251,191,36,0.7)','rgba(52,211,153,0.7)','rgba(129,140,248,0.85)'], borderRadius:4, barPercentage:0.7 }] }, options:{ ...base, indexAxis:'y', scales:{ x: base.scales.y, y:{ ticks:{ color:'#a1a1aa', font:{ family:fam, size:11 }, padding:8 }, grid:{ display:false }, border:{ display:false } } } } }); }
+    if (depthC && d.depth) { const dd = d.depth; new Chart(depthC, { type:'bar', data:{ labels:['0 条','1–5','6–20','20+'], datasets:[{ data:[dd.b0||0,dd.b1_5||0,dd.b6_20||0,dd.b20p||0], backgroundColor:['rgba(113,113,122,0.6)','rgba(251,191,36,0.7)','rgba(52,211,153,0.7)','rgba(129,140,248,0.85)'], borderRadius:4, barPercentage:0.7 }] }, options:{ ...base, indexAxis:'y', interaction:{ intersect:false, mode:'index', axis:'y' }, scales:{ x: base.scales.y, y:{ ticks:{ color:'#a1a1aa', font:{ family:fam, size:11 }, padding:8 }, grid:{ display:false }, border:{ display:false } } } } }); }
     const powerC = document.getElementById('power-chart');
     if (powerC && d.powerCurve && d.powerCurve.length) {
-      // 补齐 1..30 全部横轴(查询只返回有设备的天数档);≥15 天的档位换绿色突出核心用户
+      // 补齐 2..30 横轴(查询只返回有设备的天数档);"仅 1 天"档不入图(见卡片右上角数字),
+      // 否则它比其余档位大一个数量级,把整张图压扁。≥15 天的档位换绿色突出核心用户。
       const byDays = {};
       for (const r of d.powerCurve) byDays[r.days] = r.devices || 0;
       const labels = []; const vals = []; const colors = [];
-      for (let i = 1; i <= 30; i++) { labels.push(i + ' 天'); vals.push(byDays[i]||0); colors.push(i >= 15 ? 'rgba(52,211,153,0.75)' : 'rgba(129,140,248,0.7)'); }
+      for (let i = 2; i <= 30; i++) { labels.push(i + ' 天'); vals.push(byDays[i]||0); colors.push(i >= 15 ? 'rgba(52,211,153,0.75)' : 'rgba(129,140,248,0.7)'); }
       new Chart(powerC, { type:'bar', data:{ labels, datasets:[{ label:'设备数', data: vals, backgroundColor: colors, borderRadius:3, barPercentage:0.8, categoryPercentage:0.85 }] }, options: base });
     }
   }
@@ -1028,7 +1045,7 @@ function drawCharts(d) {
       if (geoPie) new Chart(geoPie, { type:'doughnut', data:{ labels: geoData.map(x=>x.label), datasets:[{ data: geoData.map(x=>x.value), backgroundColor: pal.slice(0, geoData.length), borderWidth:0, hoverOffset:8 }] }, options: donutOpts() });
       const geoBar = document.getElementById('geo-bar');
       const top10 = cd.filter(x=>x.country).slice(0, 10);
-      if (geoBar && top10.length) new Chart(geoBar, { type:'bar', data:{ labels: top10.map(x=>countryName(x.country)), datasets:[{ label:'用户数', data: top10.map(x=>x.count), backgroundColor:'rgba(129,140,248,0.7)', borderRadius:4, barPercentage:0.7 }] }, options:{ ...base, indexAxis:'y', scales:{ x: base.scales.y, y:{ ticks:{ color:'#a1a1aa', font:{ family:fam, size:11 }, padding:8 }, grid:{ display:false }, border:{ display:false } } } } });
+      if (geoBar && top10.length) new Chart(geoBar, { type:'bar', data:{ labels: top10.map(x=>countryName(x.country)), datasets:[{ label:'用户数', data: top10.map(x=>x.count), backgroundColor:'rgba(129,140,248,0.7)', borderRadius:4, barPercentage:0.7 }] }, options:{ ...base, indexAxis:'y', interaction:{ intersect:false, mode:'index', axis:'y' }, scales:{ x: base.scales.y, y:{ ticks:{ color:'#a1a1aa', font:{ family:fam, size:11 }, padding:8 }, grid:{ display:false }, border:{ display:false } } } } });
     }
   }
 
@@ -1045,7 +1062,7 @@ function drawCharts(d) {
         { label:'TTS 朗读', v: fu.tts||0, color:'rgba(56,189,248,0.75)' },
       ];
       new Chart(featC, { type:'bar', data:{ labels: items.map(x=>x.label), datasets:[{ label:'使用设备数', data: items.map(x=>x.v), backgroundColor: items.map(x=>x.color), borderRadius:4, barPercentage:0.7 }] },
-        options:{ ...base, indexAxis:'y',
+        options:{ ...base, indexAxis:'y', interaction:{ intersect:false, mode:'index', axis:'y' },
           scales:{ x: base.scales.y, y:{ ticks:{ color:'#a1a1aa', font:{ family:fam, size:11 }, padding:8 }, grid:{ display:false }, border:{ display:false } } },
           plugins:{ ...base.plugins, tooltip:{ ...base.plugins.tooltip, callbacks:{ label: ctx => ctx.parsed.x + ' 台 · 占活跃 ' + (fu.base>0?Math.round(ctx.parsed.x/fu.base*100):0) + '%' } } } } });
     }

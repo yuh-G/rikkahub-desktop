@@ -250,6 +250,8 @@ export const onRequest = async (context) => {
       .sort((a, b) => b.count - a.count);
 
     const stickinessTrend = (stickinessRaw.results ?? []).map((r) => ({
+      dau: r.dau,
+      mau: r.mau,
       date: r.date,
       dauWau: r.wau > 0 ? Math.round((r.dau / r.wau) * 100) : 0,
       dauMau: r.mau > 0 ? Math.round((r.dau / r.mau) * 100) : 0,

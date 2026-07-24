@@ -189,6 +189,7 @@ console.log("[stats]");
   check("PowerCurve 设备数对账", pcSum === distinct30, { pcSum, distinct30 });
   const st = d.stickinessTrend ?? [];
   check("粘性趋势有值且 ≤100", st.length > 0 && st.every((r: { dauMau: number; dauWau: number }) => r.dauMau <= 100 && r.dauWau <= 100), st.length);
+  check("粘性趋势带 DAU/MAU 规模字段", st.every((r: { dau: number; mau: number }) => r.dau > 0 && r.mau >= r.dau), st[0]);
   const cq = d.cohortQuality ?? [];
   check("新用户质量仅含满龄周", cq.length > 0 && cq.every((r: { week: string }) => addDays(r.week, 12) <= d.filter.asOf), cq);
 
