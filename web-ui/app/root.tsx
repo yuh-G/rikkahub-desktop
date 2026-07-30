@@ -69,8 +69,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
         />
         <Meta />
         <Links />
+        {/* 内联 splash: WebView2 启动时在 JS 就绪前就有可见内容，避免白屏。React 挂载后瞬间移除，不等动画。 */}
+        <style>{`
+          #splash{align-items:center;background:#fff;display:flex;height:100vh;inset:0;justify-content:center;position:fixed;width:100vw;z-index:9999}
+          @media(prefers-color-scheme:dark){#splash{background:#1c1c22}}
+          .sp-ld{display:flex;gap:6px}
+          .sp-dt{width:10px;height:10px;border-radius:50%;background:#3b3a42;animation:sp-bnc 1.4s infinite both}
+          @media(prefers-color-scheme:dark){.sp-dt{background:#d4d4d8}}
+          .sp-dt:nth-child(2){animation-delay:.16s}
+          .sp-dt:nth-child(3){animation-delay:.32s}
+          @keyframes sp-bnc{0%,80%,100%{transform:scale(0)}40%{transform:scale(1)}}
+        `}</style>
       </head>
       <body>
+        <div id="splash">
+          <div class="sp-ld">
+            <div class="sp-dt"></div>
+            <div class="sp-dt"></div>
+            <div class="sp-dt"></div>
+          </div>
+        </div>
         {children}
         <ScrollRestoration />
         <Scripts />
@@ -230,6 +248,12 @@ function AppContent() {
     displaySetting?.chatFontFamilyCjkCss,
     displaySetting?.uiFontSize,
   ]);
+
+  // React 挂载后直接移除内联 splash（瞬间移除，无过渡，避免白屏/重影）
+  React.useEffect(() => {
+    const el = document.getElementById('splash');
+    if (el) el.remove();
+  }, []);
 
   // Tauri's WebView2 swallows `window.open` and ignores `<a target="_blank">` by default —
   // links to external pages would do nothing. Intercept every left-click on an anchor that

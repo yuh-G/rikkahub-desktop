@@ -31,6 +31,7 @@ import { useTranslation } from "react-i18next";
 
 import { InfiniteScrollArea } from "~/components/extended/infinite-scroll-area";
 import { AvatarCropper } from "~/components/avatar-cropper";
+import Logo from "~/components/logo";
 import { RenameConversationDialog } from "~/components/rename-conversation-dialog";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -577,6 +578,28 @@ function LanguageSwitcher() {
         })}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function ThemeToggleButtonSidebar() {
+  const { theme, setTheme } = useTheme();
+  const isDark =
+    theme === "dark" ||
+    (theme === "system" &&
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-color-scheme: dark)").matches);
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      className="text-muted-foreground hover:text-foreground"
+      onClick={() => setTheme(isDark ? "light" : "dark")}
+      aria-label={isDark ? "切换到浅色模式" : "切换到深色模式"}
+      title={isDark ? "切换到浅色模式" : "切换到深色模式"}
+    >
+      {isDark ? <Moon className="size-4" /> : <Sun className="size-4" />}
+    </Button>
   );
 }
 
@@ -1312,15 +1335,24 @@ export const ConversationSidebar = React.memo(
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <a
-              href="https://rikka-ai.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-auto truncate whitespace-nowrap text-xs font-normal text-foreground/80 hover:text-foreground transition-colors"
+            <ThemeToggleButtonSidebar />
+
+            <Button
+              asChild
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground hover:text-foreground"
+              type="button"
               title="RikkaHub"
             >
-              RikkaHub
-            </a>
+              <a
+                href="https://rikka-ai.com"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Logo className="size-4" />
+              </a>
+            </Button>
           </div>
         </SidebarFooter>
       </Sidebar>

@@ -124,6 +124,74 @@ export const ConversationQuickJump = React.memo(function ConversationQuickJump({
   const canQuickJump = items.length > 1;
   const safeActiveIndex = Math.max(0, Math.min(activeIndex, items.length - 1));
   const listRef = React.useRef<HTMLDivElement>(null);
+  const [fixedStyle, setFixedStyle] = React.useState<React.CSSProperties | null>(null);
+
+
+  // 用 ResizeObserver 监听消息容器尺寸变化,动态计算 fixed 定位位置。
+  // 消息在 Virtuoso 内以 max-w-3xl mx-auto 居中,滚动条出现时消息内容区会缩窄,
+  // 但本组件用 position:fixed 定位,不依赖外层容器的坐标系,因此不受滚动条影响。
+  React.useLayoutEffect(() => {
+    const updatePosition = () => {
+      // 找外层容器:position:relative 且 flex-1 且 min-h-0 的父级
+      // (就是原来 QuickJump 的 absolute 定位参考的那个容器)
+      const anchor = document.querySelector('[id^="message-anchor-"]');
+      if (!anchor) return;
+      let outer: HTMLElement | null = anchor.parentElement;
+      for (let i = 0; i < 15 && outer; i++) {
+        if (outer.classList.contains("flex-1") && outer.classList.contains("min-h-0")) {
+          break;
+        }
+        outer = outer.parentElement;
+      }
+      if (!outer) return;
+
+      const outerRect = outer.getBoundingClientRect();
+      // 消息内容 max-w-3xl = 768px,在 outer 内 mx-auto 居中
+      const contentWidth = Math.min(outerRect.width, 768);
+      // 内容的右边缘(视口坐标系,不含 padding——因为 px-4 是 padding,内容的实际右边缘)
+      const contentRight = outerRect.left + (outerRect.width + contentWidth) / 2;
+      // 水平:内容右边缘向右偏移(根据视觉拖拽校正,+72.5px)
+      const right = window.innerWidth - contentRight - 67.5;
+      // 垂直:消息区域的上下边界各留一些内边距
+      const top = outerRect.top + 16;
+      const bottom = window.innerHeight - outerRect.bottom + 16;
+      setFixedStyle({ right, top, bottom });
+    };
+
+    // 若消息尚未渲染(首次 mount 时 items 为空),几帧内重试
+    let retries = 0;
+    const tryUpdate = () => {
+      if (document.querySelector('[id^="message-anchor-"]')) {
+        updatePosition();
+      } else if (retries < 10) {
+        retries++;
+        requestAnimationFrame(tryUpdate);
+      }
+    };
+    tryUpdate();
+
+    window.addEventListener("resize", updatePosition);
+
+    const ro = new ResizeObserver(updatePosition);
+    const anchor = document.querySelector('[id^="message-anchor-"]');
+    if (anchor) {
+      ro.observe(anchor);
+      let scrollParent: HTMLElement | null = anchor.parentElement;
+      for (let i = 0; i < 10 && scrollParent; i++) {
+        const style = window.getComputedStyle(scrollParent);
+        if (style.overflowY === "auto" || style.overflowY === "scroll") {
+          ro.observe(scrollParent);
+          break;
+        }
+        scrollParent = scrollParent.parentElement;
+      }
+    }
+
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      ro.disconnect();
+    };
+  }, [items]);
 
   // 单例悬停预览面板(替代逐行 Radix Tooltip):记录悬停行下标与锚点坐标,渲染一个
   // fixed 定位的浮层。视觉样式对齐 ui/tooltip.tsx 的 TooltipContent(去箭头)。
@@ -167,8 +235,11 @@ export const ConversationQuickJump = React.memo(function ConversationQuickJump({
   const hoveredItem = hovered ? items[hovered.index] : undefined;
 
   return (
-    <div className="pointer-events-none absolute inset-y-0 left-1/2 z-20 hidden w-full max-w-3xl -translate-x-1/2 lg:block">
-      <div className="pointer-events-auto absolute inset-y-4 -right-5 flex flex-col justify-center">
+    <div
+      className="pointer-events-none fixed z-30 hidden lg:block"
+      style={fixedStyle ?? { display: "none" }}
+    >
+      <div className="pointer-events-auto flex h-full flex-col justify-center">
         <div
           ref={listRef}
           className="flex min-h-0 flex-col items-start gap-1 overflow-y-auto"

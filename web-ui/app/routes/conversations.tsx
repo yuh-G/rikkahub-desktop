@@ -72,7 +72,7 @@ import {
   type Settings,
   type UIMessagePart,
 } from "~/types";
-import { ArrowDown, Check, ListChecks, Loader2, MessageSquare, Moon, Pencil, Sun, X } from "lucide-react";
+import { ArrowDown, Check, ListChecks, Loader2, MessageSquare, Pencil, X } from "lucide-react";
 import Logo from "~/components/logo";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { useTranslation } from "react-i18next";
@@ -184,29 +184,6 @@ interface EditingSession {
   messageId: string;
   sourceParts: UIMessagePart[];
   textPartIndex: number | null;
-}
-
-function ThemeToggleButton() {
-  const { theme, setTheme } = useTheme();
-  const { t } = useTranslation("page");
-  // Resolve "system" to a concrete light/dark, so the toggle always lands on the opposite mode.
-  const isDark =
-    theme === "dark" ||
-    (theme === "system" &&
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-color-scheme: dark)").matches);
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-sm"
-      onClick={() => setTheme(isDark ? "light" : "dark")}
-      aria-label={isDark ? t("conversations.theme_toggle.to_light") : t("conversations.theme_toggle.to_dark")}
-      title={isDark ? t("conversations.theme_toggle.to_light") : t("conversations.theme_toggle.to_dark")}
-    >
-      {isDark ? <Moon className="size-4" /> : <Sun className="size-4" />}
-    </Button>
-  );
 }
 
 function createHomeDraftId() {
@@ -438,8 +415,8 @@ function useDraftInputController({
     if (parts.length === 0) return;
 
     if (activeId) {
-      await api.post<{ status: string }>(`conversations/${activeId}/messages`, { parts });
       clearDraft(draftKey);
+      await api.post<{ status: string }>(`conversations/${activeId}/messages`, { parts });
       return;
     }
 
@@ -449,8 +426,8 @@ function useDraftInputController({
     // Send the message BEFORE setting activeId so the detail fetcher doesn't race
     // (`POST /messages` calls ensureConversation on the server; only then does the
     // subsequent `GET /api/conversations/{id}` succeed).
-    await api.post<{ status: string }>(`conversations/${conversationId}/messages`, { parts });
     clearDraft(draftKey);
+    await api.post<{ status: string }>(`conversations/${conversationId}/messages`, { parts });
 
     setActiveId(conversationId);
     navigate(`/c/${conversationId}`);
@@ -1036,6 +1013,7 @@ const ConversationTimeline = React.memo(
             components={{
               Header: () => <div className="h-4" />,
               Footer: () => <div className="h-4" />,
+
             }}
             itemContent={(index, { node, message }) => {
               const model = message.modelId
@@ -1896,7 +1874,7 @@ function ConversationsPageInner() {
         {/* pt-9 (36px) 让出沉浸式标题栏的高度,避免 SidebarTrigger / 标题被透明标题栏盖住。
             背景色仍由 SidebarInset 继承(--background),顶到窗口顶,和透明标题栏无缝衔接。
             border-divider:用比 --border 更淡的分界色,让区域分隔退到背景里。 */}
-        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-divider bg-background/95 px-4 pb-3 pt-9 shadow-sm backdrop-blur supports-backdrop-filter:bg-background/60">
+        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-divider bg-background/95 px-4 pb-2 pt-2 shadow-sm backdrop-blur supports-backdrop-filter:bg-background/60">
           <SidebarTrigger />
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-medium text-muted-foreground">
@@ -1927,7 +1905,6 @@ function ConversationsPageInner() {
               <Pencil className="size-4" />
             </Button>
           ) : null}
-          <ThemeToggleButton />
         </div>
 
         {!isMobile ? (
