@@ -11,7 +11,8 @@
     "typecheck": "bunx tsc --noEmit --skipLibCheck",
     "version:bump": "bun run scripts/bump-version.ts",
     "compile": "bun install && bun build --compile --target=bun-windows-x64 server.ts --outfile ../dist/rikkahub-pc.exe && bun -e \"await Bun.write('../web-ui/src-tauri/binaries/rikkahub-server-x86_64-pc-windows-msvc.exe', Bun.file('../dist/rikkahub-pc.exe'))\"",
-    "compile:linux": "bun install && bun build --compile --target=bun-linux-x64 server.ts --outfile ../dist/rikkahub-pc"
+    "compile:linux": "bun install && bun build --compile --target=bun-linux-x64 server.ts --outfile ../dist/rikkahub-pc",
+    "compile:linux:sidecar": "bun install && bun build --compile --target=bun-linux-x64 server.ts --outfile ../web-ui/src-tauri/binaries/rikkahub-server-x86_64-unknown-linux-gnu && chmod +x ../web-ui/src-tauri/binaries/rikkahub-server-x86_64-unknown-linux-gnu"
   },
   "devDependencies": {
     "@types/bun": "^1.3.4"

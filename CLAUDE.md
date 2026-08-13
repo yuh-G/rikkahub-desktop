@@ -28,6 +28,7 @@ web-ui/                 # React Router 7 SPA (SPA mode, no SSR)
 
 icons/                  # Provider/search-service SVG/PNG logos
 dist/                   # Portable bundle: rikkahub-pc.exe + icons + web-ui build
+                        # Linux: dist/rikkahub-app/ (rikkahub shell + rikkahub-server + web-ui)
                         # Also where pc-data/ lives at runtime when running the exe
 pc-data/                # Runtime state (gitignored). Contains API keys — never commit.
 ```
@@ -47,6 +48,9 @@ cd web-ui && bun run typecheck
 # Production build → produces a fresh portable exe
 cd web-ui && bun run build          # build SPA + copy to dist/
 cd pc-server && bun run compile     # bundles server.ts → ../dist/rikkahub-pc.exe
+
+# Linux Tauri desktop build (native window, same shell as Windows)
+bash web-ui/src-tauri/build-linux.sh   # sidecar + SPA + Rust shell → dist/rikkahub-app/ + tar.gz
 
 # Backend smoke (spins up mock provider/MCP/WebDAV and exercises the request chain)
 cd pc-server && bun run smoke:request-chain
@@ -117,11 +121,21 @@ the runtime will.
   `callProviderStreaming`, add to the defaultSettings list, add provider-specific paths
   for the test endpoints.
 - **Releasing a new exe**: web-ui build + pc-server compile. Smoke first.
-- **Releasing the Linux binary**: push a `v*.*.*` tag — `.github/workflows/build-linux.yml`
-  builds web-ui + compiles the x64 binary + packs both into a tar.gz, and attaches it to the
-  Release automatically. The tar.gz is **not** a bare binary: `routeStatic` serves the
-  frontend from `web-ui/build/client/` next to the exe at runtime, so the bundle must ship
-  both or the user sees "web-ui is not built". The in-app updater matches the asset by the
-  `Rikkahub_<tag>_linux_x64.tar.gz` naming convention, so don't rename the uploaded file.
-  Windows (`Rikkahub_<tag>_x64-setup.exe`) and Linux assets live side by side on the same
-  Release.
+- **Releasing the Linux desktop app**: push a `v*.*.*` tag — `.github/workflows/build-linux.yml`
+  builds the SPA + compiles the x64 sidecar into `src-tauri/binaries/` + builds the Tauri shell
+  with `tauri build --no-bundle`, then packs `rikkahub-app/` (shell + sidecar + web-ui + fonts
+  + icons) into a tar.gz attached to the Release. The tar.gz is **not** a bare binary:
+  `routeStatic` serves the frontend from `web-ui/build/client` next to the sidecar at runtime,
+  so the bundle must ship both or the user sees "web-ui is not built". The in-app updater
+  matches the asset by the `Rikkahub_<tag>_linux_x64.tar.gz` naming convention, so don't rename
+  the uploaded file. Windows (`Rikkahub_<tag>_x64-setup.exe`) and Linux assets live side by
+  side on the same Release.
+- **Linux update flow**: `update/download` extracts the tar.gz and returns the inner sidecar
+  path (`rikkahub-app/rikkahub-server`, legacy `rikkahub-pc/rikkahub-pc` tolerated);
+  `update/apply` swaps the sidecar + web-ui, and additionally swaps the Tauri shell binary
+  (`rikkahub`) when present — the shell is a thin wrapper, so a failed shell swap is only a
+  warning. Both swaps use copy-to-staging + rename so the running processes keep their old
+  inodes (Linux allows renaming over a running executable).
+- **Linux sidecar lifecycle**: the shell sets `RIKKAHUB_PARENT_PID` on the sidecar; server.ts
+  watches it (non-Windows only) and exits when the shell dies — Linux's counterpart to the
+  Windows Job Object. Standalone binary / Docker don't set the var and keep their old behavior.

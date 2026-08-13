@@ -41,7 +41,9 @@ windows = { version = "0.62", features = [
 ] }
 
 [profile.release]
-panic = "abort"
+# 不能用 panic = "abort":build_tray 依赖 catch_unwind 把 Linux 缺 appindicator 库时的
+# dlopen panic 降级为"无托盘运行"(见 lib.rs)。abort 策略下 catch_unwind 是空操作,
+# 精简桌面/容器桌面上应用会整个崩溃。unwind 对 GUI 应用也更好:辅助线程 panic 只死线程。
 codegen-units = 1
 lto = true
 opt-level = "s"

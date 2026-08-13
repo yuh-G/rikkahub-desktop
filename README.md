@@ -33,9 +33,10 @@ No telemetry, no admin, no cloud account required. Everything is local.
 Prefer no installer? Each release also ships a portable **.zip** — unzip and run, nothing
 else needed.
 
-> **On Linux?** Each release ships a portable `.tar.gz` (binary + frontend, unzip and run).
+> **On Linux?** Each release ships a portable `.tar.gz` — the same native Tauri desktop app as
+> Windows (native window + custom titlebar), unzip and run.
 > Prefer a native distro package, or building from source / running Docker? See
-> [Community packages](#-community-packages), [Linux binary](#linux-binary) and [Docker](#docker) below.
+> [Community packages](#-community-packages), [Linux desktop app](#-linux-desktop-app) and [Docker](#docker) below.
 
 ## 📦 Community packages
 
@@ -54,7 +55,7 @@ Many thanks to both for covering these distributions.
 ## ✨ Features
 
 - 🎨 Multiple theme palettes (Claude / RikkaHub / Mono / Custom) + 🌙 dark mode
-- 🐧 Runs on Linux too — self-contained native binary or multi-arch Docker image (amd64 / arm64)
+- 🐧 Runs on Linux too — native Tauri desktop app (same shell as Windows) or multi-arch Docker image (amd64 / arm64)
 - 🔄 Multi-provider support: OpenAI / Anthropic / Google Gemini + any OpenAI-compatible endpoint
 - 🦙 Local model support via [Ollama](https://ollama.com/) /
   [LM Studio](https://lmstudio.ai/) /
@@ -151,39 +152,59 @@ bun run smoke:request-chain
 
 Spins up mock provider / MCP / WebDAV / S3 servers and exercises the full request chain.
 
-### Linux binary
+### 🐧 Linux desktop app
 
-Build a self-contained Linux x64 binary (requires only [Bun](https://bun.sh/)):
+The Linux release ships the same Tauri desktop shell as Windows — a native window with the
+custom titlebar, single-instance behavior, and a sidecar lifecycle that tears the backend
+down when the app exits (even if the shell is hard-killed). The portable `.tar.gz` contains
+everything in one self-contained `rikkahub-app/` directory:
 
-```bash
-# 1. Build the SPA
-cd web-ui && bun install && bun run build
-
-# 2. Compile the server binary
-cd ../pc-server && bun run compile:linux
-# → dist/rikkahub-pc
+```
+rikkahub-app/
+├── rikkahub            # Tauri shell (native window)
+├── rikkahub-server     # Backend (Bun-compiled, serves the SPA over HTTP + SSE)
+├── web-ui/build/client # Frontend assets (served at runtime, not embedded)
+├── fonts/   icons/
 ```
 
 Run it:
 
 ```bash
-./dist/rikkahub-pc
-# Open http://localhost:8080 in your browser
-# Data is stored in ./pc-data/
+tar xzf Rikkahub_X.X.X_linux_x64.tar.gz
+./rikkahub-app/rikkahub
+# Native window, same UX as Windows. Data is stored in ./rikkahub-app/pc-data/
 ```
 
-**Required system packages** — install before using the relevant features:
+Build from source (requires [Bun](https://bun.sh/) 1.1+, Rust stable, and the
+[Tauri v2 Linux system dependencies](https://tauri.app/start/prerequisites/)):
+
+```bash
+bash web-ui/src-tauri/build-linux.sh
+# → dist/rikkahub-app/                      (run ./dist/rikkahub-app/rikkahub)
+# → dist/Rikkahub_<version>_linux_x64.tar.gz (release archive, same layout as the release asset)
+```
+
+Debian/Ubuntu build deps:
+`sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev javascriptcoregtk-4.1-dev librsvg2-dev patchelf`
+
+> The standalone browser-served build (`pc-server` + `bun run compile:linux`, open
+> `http://localhost:8080`) still exists and keeps working — it's just no longer the shipped
+> Linux artifact.
+
+**Required runtime packages** — install before using the relevant features:
 
 | Package | Feature |
 |---|---|
+| `webkit2gtk-4.1` | The GUI itself (native window) |
+| `libayatana-appindicator` | System tray (optional — without it the tray is skipped and closing the window quits instead of hiding) |
 | `espeak-ng` | System TTS (text-to-speech tool, voice playback) |
 | `xclip` (X11) or `wl-clipboard` (Wayland) | Clipboard read/write tool |
 | `unzip`, `zip` | Backup restore / skill import from ZIP |
 
-On Debian/Ubuntu: `sudo apt install espeak-ng xclip unzip zip`  
-On Fedora/RHEL: `sudo dnf install espeak-ng xclip unzip zip`
+On Debian/Ubuntu: `sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1 espeak-ng xclip unzip zip`  
+On Fedora/RHEL: `sudo dnf install webkit2gtk4.1 libayatana-appindicator espeak-ng xclip unzip zip`
 
-Missing tools are detected at startup and listed as warnings — the server still starts and
+Missing tools are detected at startup and listed as warnings — the app still starts and
 all other features remain available.
 
 ### Docker
@@ -263,8 +284,9 @@ Set `RIKKAHUB_PASSWORD` whenever the proxy makes the server reachable beyond loc
 ## 🧰 Tech stack
 
 - [Bun](https://bun.sh/) — runtime, bundler, package manager
-- [Tauri v2](https://tauri.app/) + Rust — desktop shell (native window, NSIS installer,
-  sidecar lifecycle, Job-Object-bound process tree)
+- [Tauri v2](https://tauri.app/) + Rust — desktop shell (native window, custom titlebar, NSIS
+  installer, sidecar lifecycle; Job Object on Windows / parent-PID watchdog on Linux so the
+  backend dies with the shell)
 - [TypeScript](https://www.typescriptlang.org/) — strict end-to-end typing
 - [React 19](https://react.dev/) + [React Router 7](https://reactrouter.com/) — SPA
   (client-only mode)

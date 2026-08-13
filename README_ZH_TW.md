@@ -27,8 +27,9 @@
 
 不想用安裝包？每個版本同時提供**便攜版 .zip**——解壓即用，無需安裝。
 
-> **使用 Linux？** 每個版本都提供便攜版 `.tar.gz`（二進位檔 + 前端，解壓即用）。想用發行版原生套件，
-> 或從原始碼建置 / 執行 Docker？詳見下方 [社群打包](#-社群打包)、[Linux 二進位檔](#-linux-二進位檔) 與 [Docker](#docker)。
+> **使用 Linux？** 每個版本都提供便攜版 `.tar.gz` —— 與 Windows 相同的原生 Tauri 桌面應用
+> （原生視窗 + 自訂標題列），解壓即用。想用發行版原生套件，或從原始碼建置 / 執行 Docker？
+> 詳見下方 [社群打包](#-社群打包)、[Linux 桌面版](#-linux-桌面版) 與 [Docker](#docker)。
 
 ## 📦 社群打包
 
@@ -45,7 +46,7 @@
 ## ✨ 功能特色
 
 - 🎨 多套主題色（Claude / RikkaHub / Mono / 自訂） + 🌙 深色模式
-- 🐧 同樣支援 Linux —— 自帶相依套件的原生二進位檔，或多架構 Docker 映像（amd64 / arm64）
+- 🐧 同樣支援 Linux —— 原生 Tauri 桌面應用（與 Windows 同一套殼），或多架構 Docker 映像（amd64 / arm64）
 - 🔄 多種供應商支援：OpenAI / Anthropic / Google Gemini + 任意 OpenAI 相容介面
 - 🦙 開箱即用的本地模型支援：透過 [Ollama](https://ollama.com/) /
   [LM Studio](https://lmstudio.ai/) /
@@ -137,39 +138,57 @@ bun run smoke:request-chain
 
 會啟動 mock 供應商 / MCP / WebDAV / S3 服務，跑完整的請求鏈路。
 
-### 🐧 Linux 二進位檔
+### 🐧 Linux 桌面版
 
-建置一個自帶相依套件的 Linux x64 原生二進位檔（只需要 [Bun](https://bun.sh/)）：
+Linux 版與 Windows 共用同一套 Tauri 桌面殼——原生視窗 + 自訂標題列、
+單一實例行為，以及「殼結束即回收後端」的生命週期管理（即使殼被強制終止也能兜底）。
+便攜版 `.tar.gz` 裡是一個自包含的 `rikkahub-app/` 目錄：
 
-```bash
-# 1. 建置前端 SPA
-cd web-ui && bun install && bun run build
-
-# 2. 編譯後端二進位檔
-cd ../pc-server && bun run compile:linux
-# → dist/rikkahub-pc
+```
+rikkahub-app/
+├── rikkahub            # Tauri 殼（原生視窗）
+├── rikkahub-server     # 後端（Bun 編譯，HTTP + SSE 伺服前端）
+├── web-ui/build/client # 前端資源（執行時從檔案系統讀取，不嵌入二進位檔）
+├── fonts/   icons/
 ```
 
 執行：
 
 ```bash
-./dist/rikkahub-pc
-# 瀏覽器開啟 http://localhost:8080
-# 資料儲存在 ./pc-data/
+tar xzf Rikkahub_X.X.X_linux_x64.tar.gz
+./rikkahub-app/rikkahub
+# 原生視窗，體驗與 Windows 一致。資料儲存在 ./rikkahub-app/pc-data/
 ```
+
+從原始碼建置（需要 [Bun](https://bun.sh/) 1.1+、Rust stable，以及
+[Tauri v2 的 Linux 系統相依套件](https://tauri.app/start/prerequisites/)）：
+
+```bash
+bash web-ui/src-tauri/build-linux.sh
+# → dist/rikkahub-app/                       （執行 ./dist/rikkahub-app/rikkahub）
+# → dist/Rikkahub_<version>_linux_x64.tar.gz （發布包，與 Release 資產同構）
+```
+
+Debian/Ubuntu 建置相依套件：
+`sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev javascriptcoregtk-4.1-dev librsvg2-dev patchelf`
+
+> 舊的「純瀏覽器版」（`pc-server` + `bun run compile:linux`，瀏覽器開啟
+> `http://localhost:8080`）仍然可用，只是不再作為 Linux 官方產物發布。
 
 **需要的系統套件** —— 用到對應功能前安裝即可：
 
 | 系統套件 | 對應功能 |
 |---|---|
+| `webkit2gtk-4.1` | 桌面 GUI 本身（原生視窗） |
+| `libayatana-appindicator` | 系統托盤（選用——缺失時托盤自動跳過，「關閉」退化為直接結束而非隱藏） |
 | `espeak-ng` | 系統語音播報（TTS 工具、語音播放） |
 | `xclip`（X11）或 `wl-clipboard`（Wayland） | 剪貼簿讀寫工具 |
 | `unzip`、`zip` | 備份還原 / 從 ZIP 匯入 Skill |
 
-Debian/Ubuntu：`sudo apt install espeak-ng xclip unzip zip`  
-Fedora/RHEL：`sudo dnf install espeak-ng xclip unzip zip`
+Debian/Ubuntu：`sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1 espeak-ng xclip unzip zip`  
+Fedora/RHEL：`sudo dnf install webkit2gtk4.1 libayatana-appindicator espeak-ng xclip unzip zip`
 
-缺少的工具會在啟動時被偵測並以警告列出——服務照常啟動，其它功能不受影響。
+缺少的工具會在啟動時被偵測並以警告列出——應用照常啟動，其它功能不受影響。
 
 ### Docker
 
@@ -235,8 +254,8 @@ server {
 ## 🧰 技術棧
 
 - [Bun](https://bun.sh/) —— 執行環境、打包器、套件管理器
-- [Tauri v2](https://tauri.app/) + Rust —— 桌面殼（原生視窗、NSIS 安裝器、sidecar 生命週期、
-  以 Job Object 綁定子處理程序，父處理程序異常結束時系統會一併清理）
+- [Tauri v2](https://tauri.app/) + Rust —— 桌面殼（原生視窗、自訂標題列、NSIS 安裝器、
+  sidecar 生命週期；Windows 用 Job Object、Linux 用父處理程序看門狗，保證殼結束時後端一併清理）
 - [TypeScript](https://www.typescriptlang.org/) —— 嚴格型別，前後端一致
 - [React 19](https://react.dev/) + [React Router 7](https://reactrouter.com/) —— SPA（純用戶端模式）
 - [Tailwind CSS v4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) —— 樣式與元件

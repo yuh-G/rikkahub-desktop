@@ -11,6 +11,7 @@
 /web-ui/.react-router/
 /web-ui/node_modules/
 /web-ui/src-tauri/binaries/*.exe
+/web-ui/src-tauri/binaries/rikkahub-server-*
 /web-ui/src-tauri/gen/
 /web-ui/src-tauri/permissions/
 /web-ui/src-tauri/target/
