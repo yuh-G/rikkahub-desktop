@@ -1,5 +1,5 @@
 import { dataDir } from "./foundation/paths";
-import { RUNNING_IN_CONTAINER } from "./foundation/platform";
+import { RUNNING_IN_CONTAINER, startParentWatchdogIfRequested } from "./foundation/platform";
 import { setActualServingPort } from "./foundation/net";
 import { flushSaveState, peekPreferredPort, saveState } from "./persistence/json-store";
 import { asrRealtimeSessions, sendAsrAudio, startAsrRealtimeSession, stopAsrRealtimeSession } from "./media/asr";
@@ -68,6 +68,10 @@ if (process.platform === "linux") {
     for (const dep of missing) console.warn(`  - ${dep}`);
   }
 }
+
+// Linux 桌面壳强杀兜底:壳把自身 PID 注入 RIKKAHUB_PARENT_PID,父进程消失即自退(见
+// foundation/platform.ts)。放在启动早期,壳死后不留孤儿进程。
+startParentWatchdogIfRequested();
 
 // Resolve the preferred port by priority: explicit `--port` flag > `PORT` env > user setting
 // > 8080. Containerized deploys skip the user setting — inside a container the port is fixed

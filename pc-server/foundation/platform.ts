@@ -26,3 +26,35 @@ export const RUNTIME_PLATFORM: "win" | "mac" | "linux" =
 // 旧版本，原地更新没有意义 —— 这类部署应当 docker pull 新镜像。检测 /.dockerenv（Docker
 // 标准标记）或显式注入的环境变量（兼容其他容器运行时）。
 export const RUNNING_IN_CONTAINER = existsSync("/.dockerenv") || process.env.RIKKAHUB_CONTAINER === "1";
+
+// ── 桌面壳生命周期守护(Linux)──────────────────────────────────────────
+// Windows 侧由 Tauri 壳用 Job Object 保证"壳退出即回收 sidecar";Linux 没有等价的内核
+// 机制,壳被强杀/崩溃后 sidecar 会变成孤儿进程,继续占住端口和数据目录。Tauri 壳启动
+// sidecar 时注入 RIKKAHUB_PARENT_PID(壳自身 PID),这里周期性探测:父进程消失就自行退出
+// (normal 退出走壳的 /api/app/shutdown 优雅停机,本守护只管"壳死了"的兜底)。
+// 只在变量存在时启用——独立二进制(直接运行 rikkahub-app/rikkahub-server)和 Docker 不
+// 设置,行为与之前完全一致;Windows 不启用(Job Object 已覆盖,且 kill(pid, 0) 语义不同)。
+//
+// 退出方式:向自身发 SIGTERM 而非直接 process.exit(0)——server.ts 尾部注册的 SIGTERM
+// 处理器会走完整刷盘链(saveState/flushSaveState/flushConvDirtyNow/reconcile/checkpoint),
+// 壳被强杀时最多丢 throttle 窗口内的增量,而不是把整个 state 写丢了。模块纪律不受影响:
+// 这里不 import 任何业务逻辑,刷盘由 server 自己的信号路径完成。
+export function startParentWatchdogIfRequested(): void {
+  const parentShellPid = Number(process.env.RIKKAHUB_PARENT_PID || 0);
+  if (parentShellPid <= 0 || process.platform === "win32") return;
+  const parentWatchdog = setInterval(() => {
+    try {
+      process.kill(parentShellPid, 0);
+    } catch (watchErr) {
+      // 只有 ESRCH(进程不存在)才退出;EPERM 等其他错误说明进程还在,只是权限受限。
+      const code =
+        typeof watchErr === "object" && watchErr !== null && "code" in watchErr
+          ? String(watchErr.code)
+          : "";
+      if (code !== "ESRCH") return;
+      console.log("[sidecar] parent shell exited, shutting down");
+      clearInterval(parentWatchdog);
+      process.kill(process.pid, "SIGTERM");
+    }
+  }, 2000);
+}

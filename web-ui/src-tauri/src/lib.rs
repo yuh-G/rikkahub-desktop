@@ -311,7 +311,12 @@ fn spawn_sidecar(
         // meant for portable / standalone use. Inside the Tauri shell the webview already
         // navigates to the same URL, so a second browser window would just be noise.
         .args(["--no-open"])
-        .env("RIKKAHUB_PC_DATA_DIR", &data_dir);
+        .env("RIKKAHUB_PC_DATA_DIR", &data_dir)
+        // Linux has no kernel-level equivalent of the Windows Job Object, so a hard-killed
+        // shell would leave the sidecar orphaned on its port. Hand our PID to the sidecar,
+        // which watches it and exits when we die (server.ts, non-Windows only — Windows is
+        // already covered by the kill-on-close job).
+        .env("RIKKAHUB_PARENT_PID", std::process::id().to_string());
         // NOTE: we deliberately do NOT pass PORT here. The sidecar now picks its own port
         // (8080 by default, walking up on conflict) and reports the actual value via the
         // `RIKKAHUB_PORT:<n>` stdout marker parsed below. Hardcoding 8080 would make the
@@ -541,49 +546,68 @@ fn tray_icon_for_scale(scale: f64) -> Option<tauri::image::Image<'static>> {
 
 /// Builds the system tray icon + menu. Failure is non-fatal: we log and move on
 /// so the app still launches if the tray can't be created for some reason.
+///
+/// Linux 注意:libappindicator-sys 在系统缺少 libayatana-appindicator3 / libappindicator3
+/// 时不是返回 Err,而是直接 panic!(dlopen 失败)。若不兜住,没有托盘库的 Linux 机器
+/// (常见于精简桌面/容器化桌面)会在启动时整个崩溃——Windows/macOS 托盘是系统 API,
+/// 无此问题。catch_unwind 把崩溃降级为"无托盘运行",与其他构建失败同路径。
+/// 托盘构建失败还通过 TRAY_AVAILABLE 通知关闭行为:无托盘时"关闭=最小化到托盘"是
+/// 死路(窗口消失后没有任何入口找回),必须退化为"关闭即退出"。
+static TRAY_AVAILABLE: AtomicBool = AtomicBool::new(false);
+
 fn build_tray(app: &AppHandle) -> Result<(), String> {
-    let strings = tray_strings();
-    let show_item = MenuItem::with_id(app, "tray_show", strings.show, true, None::<&str>)
-        .map_err(|e| format!("tray show item: {e}"))?;
-    let quit_item = MenuItem::with_id(app, "tray_quit", strings.quit, true, None::<&str>)
-        .map_err(|e| format!("tray quit item: {e}"))?;
-    let menu = Menu::with_items(app, &[&show_item, &quit_item])
-        .map_err(|e| format!("tray menu: {e}"))?;
-    let scale = app
-        .primary_monitor()
-        .ok()
-        .flatten()
-        .map(|m| m.scale_factor())
-        .unwrap_or(1.0);
-    let icon = tray_icon_for_scale(scale)
-        .or_else(|| app.default_window_icon().cloned())
-        .ok_or_else(|| "tray icon unavailable".to_string())?;
-    let _ = TrayIconBuilder::with_id("main-tray")
-        .icon(icon)
-        .tooltip(strings.tooltip)
-        .menu(&menu)
-        // Left-click is reserved for restoring the window (see on_tray_icon_event).
-        // Without this, the default behavior would pop the menu on left-click and
-        // our restore handler would never fire.
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "tray_show" => show_main_window(app),
-            "tray_quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                show_main_window(tray.app_handle());
-            }
-        })
-        .build(app)
-        .map_err(|e| format!("tray build: {e}"))?;
-    Ok(())
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let strings = tray_strings();
+        let show_item = MenuItem::with_id(app, "tray_show", strings.show, true, None::<&str>)
+            .map_err(|e| format!("tray show item: {e}"))?;
+        let quit_item = MenuItem::with_id(app, "tray_quit", strings.quit, true, None::<&str>)
+            .map_err(|e| format!("tray quit item: {e}"))?;
+        let menu = Menu::with_items(app, &[&show_item, &quit_item])
+            .map_err(|e| format!("tray menu: {e}"))?;
+        let scale = app
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .map(|m| m.scale_factor())
+            .unwrap_or(1.0);
+        let icon = tray_icon_for_scale(scale)
+            .or_else(|| app.default_window_icon().cloned())
+            .ok_or_else(|| "tray icon unavailable".to_string())?;
+        TrayIconBuilder::with_id("main-tray")
+            .icon(icon)
+            .tooltip(strings.tooltip)
+            .menu(&menu)
+            // Left-click is reserved for restoring the window (see on_tray_icon_event).
+            // Without this, the default behavior would pop the menu on left-click and
+            // our restore handler would never fire.
+            .show_menu_on_left_click(false)
+            .on_menu_event(|app, event| match event.id.as_ref() {
+                "tray_show" => show_main_window(app),
+                "tray_quit" => app.exit(0),
+                _ => {}
+            })
+            .on_tray_icon_event(|tray, event| {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    show_main_window(tray.app_handle());
+                }
+            })
+            .build(app)
+            .map_err(|e| format!("tray build: {e}"))?;
+        Ok(())
+    }));
+    match result {
+        Ok(Ok(())) => {
+            TRAY_AVAILABLE.store(true, Ordering::Relaxed);
+            Ok(())
+        }
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err("tray build panicked (appindicator library missing?)".to_string()),
+    }
 }
 
 #[tauri::command]
@@ -786,7 +810,9 @@ pub fn run() {
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
                 let app = window.app_handle();
-                if minimize_to_tray_enabled(app) {
+                // TRAY_AVAILABLE:托盘构建失败(Linux 缺 appindicator 库)时"关闭即隐藏"
+                // 是死路——窗口没了但没有任何入口能找回,必须退化为关闭即退出。
+                if minimize_to_tray_enabled(app) && TRAY_AVAILABLE.load(Ordering::Relaxed) {
                     // Hide to tray instead of closing. The sidecar keeps running so
                     // SSE streams / tool calls survive. Real teardown happens via the
                     // tray "Quit" entry → app.exit(0) → ExitRequested below.

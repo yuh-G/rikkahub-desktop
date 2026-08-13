@@ -32,8 +32,8 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
 
     // 按当前运行平台挑选 release asset。命名约定：
     //   Windows: Rikkahub_<tag>_x64-setup.exe   (NSIS 安装器,含 exe+web-ui+icons)
-    //   Linux:   Rikkahub_<tag>_linux_x64.tar.gz (二进制 + 前端资源一起打包,
-    //            因为前端由 routeStatic 在运行时从文件系统读取,不嵌入二进制)
+    //   Linux:   Rikkahub_<tag>_linux_x64.tar.gz (Tauri 壳 rikkahub + sidecar rikkahub-server
+    //             + 前端资源,因为前端由 routeStatic 在运行时从文件系统读取,不嵌入二进制)
     //   macOS:   暂未发布 —— 返回 undefined,前端引导用户去 Release 页手动下载。
     // 容器化部署(Docker 等)无法通过替换二进制持久更新,直接返回 undefined,
     // 前端会提示用 docker pull 升级镜像。
@@ -260,9 +260,16 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
             send({ type: "error", message: `解压更新包失败：${tar.stderr?.toString().trim() || `tar exited ${tar.exitCode}`}` });
             return;
           }
-          // 解压后约定结构:extractDir/rikkahub-pc/rikkahub-pc (+ extractDir/rikkahub-pc/web-ui/)
-          const innerExe = join(extractDir, "rikkahub-pc", "rikkahub-pc");
-          if (!existsSync(innerExe) || statSync(innerExe).size === 0) {
+          // 解压后约定结构:
+          //   Tauri 版: extractDir/rikkahub-app/rikkahub-server
+          //             (+ 同目录 rikkahub 壳、web-ui/build/client、fonts、icons)
+          //   旧版:     extractDir/rikkahub-pc/rikkahub-pc (+ 同目录 web-ui)
+          // 优先新结构,旧包名保留做兼容(老客户端下载新包会失败,但新客户端解析旧包不报错)。
+          const innerExe = [
+            join(extractDir, "rikkahub-app", "rikkahub-server"),
+            join(extractDir, "rikkahub-pc", "rikkahub-pc"),
+          ].find((p) => existsSync(p) && statSync(p).size > 0);
+          if (!innerExe) {
             send({ type: "error", message: "解压后未找到可执行文件（更新包结构异常）" });
             return;
           }
@@ -289,10 +296,13 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
     return new Response(stream, { headers: sseHeaders({ "Cache-Control": "no-store" }) });
   }
   // Linux only: 把刚下载并解压的新版本(二进制 + 前端资源)原地替换到当前应用目录。
-  // download 已把 tar.gz 解压到 <tmp>/rikkahub-updates/extracted-*/rikkahub-pc/,其中含新
-  // 二进制和 web-ui。这里:
-  //   1. 用 staging + rename 原子替换 web-ui 目录(routeStatic 每次请求重读,换完立即生效)
-  //   2. rename 新二进制覆盖正在运行的二进制(Linux 允许,旧进程继续用旧 inode 直到退出)
+  // download 已把 tar.gz 解压到 <tmp>/rikkahub-updates/extracted-*/rikkahub-app/,其中含新
+  // 二进制、Tauri 壳(rikkahub)和 web-ui。这里:
+  //   1. 用 staging + rename 原子替换随包资源目录(web-ui / icons / fonts)
+  //   2. rename 新二进制(rikkahub-server)覆盖正在运行的二进制(Linux 允许,旧进程继续用
+  //      旧 inode 直到退出)
+  //   3. 若同目录存在 Tauri 壳(rikkahub),同样 staging + rename 覆盖——壳也在运行中,但
+  //      rename 只改目录项,运行进程不受影响,下次启动即新壳。失败不致命(壳是薄封装)。
   // 替换成功后前端提示用户重启;systemd 配 Restart=always 的会自动拉起新版本。
   //
   // Windows 走 Tauri NSIS 安装器,macOS 暂不支持原地更新 —— 都在此拒绝。Docker 也不行
@@ -398,6 +408,28 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
         try { if (existsSync(stagingExe)) unlinkSync(stagingExe); } catch { /* */ }
         console.warn("[update/apply] binary swap failed:", swapErr);
         return error(`替换二进制失败：${swapErr instanceof Error ? swapErr.message : String(swapErr)}`, 500);
+      }
+
+      // ── 3. 可选:同步替换 Tauri 壳二进制(rikkahub)───────────────────────
+      // Tauri 版应用目录里,除 sidecar(rikkahub-server)外还有壳(rikkahub)。壳同样在运行中,
+      // 但 Linux 允许 rename 覆盖运行中的文件,换掉后用户重启即运行新壳。只在两边都存在且
+      // 非空时执行;失败只记 warning,不阻塞整个更新(壳是薄封装,版本逻辑都在后端/前端)。
+      const currentShell = join(currentAppDir, "rikkahub");
+      const newShell = join(newAppDir, "rikkahub");
+      if (
+        existsSync(currentShell) && statSync(currentShell).size > 0 &&
+        existsSync(newShell) && statSync(newShell).size > 0
+      ) {
+        const stagingShell = `${currentShell}.new`;
+        try {
+          copyFileSync(newShell, stagingShell);
+          try { chmodSync(stagingShell, 0o755); } catch { /* */ }
+          renameSync(stagingShell, currentShell);
+          console.log("[update/apply] shell replaced");
+        } catch (shellErr) {
+          try { if (existsSync(stagingShell)) unlinkSync(stagingShell); } catch { /* */ }
+          console.warn("[update/apply] shell swap skipped:", shellErr);
+        }
       }
 
       return json({ status: "ok", exePath: currentExe, backupPath: existsSync(backupPath) ? backupPath : null, needRestart: true });
