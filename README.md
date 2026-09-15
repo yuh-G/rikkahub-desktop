@@ -289,3 +289,6 @@ If Rikkahub is useful to you, please give it a star ⭐
 ## 📄 License
 
 [License](LICENSE)
+
+## FriendLink
+[LinuxDo](Linux.do)
