@@ -39,8 +39,10 @@ import {
   SortableRow,
   textValue,
 } from "~/components/settings/shared";
-
-type ProviderKind = "openai" | "claude" | "google";
+// API 格式切换的 base 换算(协议默认/出厂/登记三张表 + 机器地址判定 + 换算规则)独立在
+// lib/provider-base-urls.ts——纯函数零依赖,行为锁在 pc-server/api/provider-base-urls.test.ts
+// 的往返矩阵(核心不变量:往返不漂移、自定义不覆写)。御三家 URL 与登记端点只在那一个文件维护。
+import { DEFAULT_BASE_URLS, type ProviderKind, baseUrlForKindSwitch } from "~/lib/provider-base-urls";
 
 type ProviderTestMode = "non_stream" | "stream" | "tools";
 
@@ -192,16 +194,10 @@ function createProvider(): ProviderProfile {
 }
 
 function normalizeKindPatch(provider: ProviderProfile, kind: ProviderKind): ProviderProfile {
-  const nextBaseUrl =
-    kind === "claude"
-      ? "https://api.anthropic.com/v1"
-      : kind === "google"
-        ? "https://generativelanguage.googleapis.com/v1beta"
-        : textValue(provider.baseUrl) || "https://api.openai.com/v1";
   return {
     ...provider,
     type: kind,
-    baseUrl: nextBaseUrl,
+    baseUrl: baseUrlForKindSwitch(provider.id, textValue(provider.baseUrl), kind),
     useResponseApi: kind === "openai" ? provider.useResponseApi === true : false,
     chatCompletionsPath: defaultPathForKind(
       kind,
@@ -861,7 +857,12 @@ export function ProvidersSection({
                 onValueChange={(value) => {
                   // 类型切换也是编辑,必须置脏,否则永不自动保存(复审 F3 补获)
                   autosave.markDirty();
-                  setDraft(normalizeKindPatch(draft, value as ProviderKind));
+                  const next = normalizeKindPatch(draft, value as ProviderKind);
+                  // 按登记表/协议默认换算过地址时告知用户去向;自定义地址不动则不打扰
+                  if (next.baseUrl !== textValue(draft.baseUrl) && textValue(draft.baseUrl)) {
+                    toast(t("settings:providers.base_url_switched", { url: next.baseUrl }));
+                  }
+                  setDraft(next);
                 }}
               >
                 <SelectTrigger className="w-full">
@@ -899,9 +900,7 @@ export function ProvidersSection({
               <Input
                 value={textValue(draft.baseUrl)}
                 onChange={(event) => patchDraft({ baseUrl: event.target.value })}
-                placeholder={
-                  kind === "claude" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"
-                }
+                placeholder={DEFAULT_BASE_URLS[kind]}
               />
               <span className="block break-all text-xs text-muted-foreground">
                 {t("settings:providers.chat_url", { url: endpointPreview(draft) })}

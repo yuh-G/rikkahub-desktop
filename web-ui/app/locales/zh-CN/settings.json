@@ -137,6 +137,7 @@
     "loading": "加载 PC 设置",
     "get_key": "获取 API Key",
     "get_key_title": "前往官网获取 API Key",
+    "base_url_switched": "已切换请求地址：{{url}}",
     "chat_url": "聊天完整 URL：{{url}}",
     "models_url": "模型列表 URL：{{url}}",
     "response_api_desc": "开启后聊天端点自动切换为 /responses",

@@ -137,6 +137,7 @@
     "loading": "Loading settings",
     "get_key": "Get API Key",
     "get_key_title": "Go to the provider's website to get an API key",
+    "base_url_switched": "Base URL switched to {{url}}",
     "chat_url": "Chat endpoint URL: {{url}}",
     "models_url": "Model list URL: {{url}}",
     "response_api_desc": "When enabled, the chat endpoint switches to /responses",
