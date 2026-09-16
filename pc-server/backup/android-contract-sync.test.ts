@@ -35,6 +35,7 @@ const repoRoot = join(import.meta.dir, "..", "..");
 const ANDROID_SEARCH_SERVICE_TYPES = new Set([
   "bing_local", "zhipu", "tavily", "exa", "searxng", "linkup", "brave", "metaso", "ollama",
   "perplexity", "firecrawl", "jina", "bocha", "rikkahub", "grok", "tinyfish", "serper", "custom_js",
+  "doubao",
 ]);
 const ANDROID_MESSAGE_PART_TYPES = new Set([
   "text", "image", "video", "audio", "document", "reasoning", "search", "tool_call", "tool_result", "tool",

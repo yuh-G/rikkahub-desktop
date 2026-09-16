@@ -27,4 +27,14 @@ describe("iconForName", () => {
     expect(iconForName("moonshot-v1-8k")).toBe("moonshot.svg");
     expect(iconForName("月之暗面")).toBe("moonshot.svg");
   });
+
+  test("搜索服务新类型:serper/豆包/ollama/exa 图标命中(label 作图标键)", () => {
+    // serper 不在 lobehub,用官方品牌标 serper.png
+    expect(iconForName("Serper")).toBe("serper.png");
+    // 豆包 label 是中文,需命中豆包专属图标而非 bytedance/兜底
+    expect(iconForName("豆包")).toBe("doubao-color.svg");
+    expect(iconForName("doubao")).toBe("doubao-color.svg");
+    expect(iconForName("Ollama")).toBe("ollama.svg");
+    expect(iconForName("Exa")).toBe("exa.png");
+  });
 });

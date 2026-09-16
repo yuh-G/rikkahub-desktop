@@ -1,4 +1,4 @@
-// search/index.ts — 搜索服务（17 种实现、连接测试、多 key failover、custom_js 脚本执行）
+// search/index.ts — 搜索服务（19 种实现、连接测试、多 key failover、custom_js 脚本执行）
 // 纪律：负责 search_web / scrape_web 工具的具体实现与搜索服务测试。
 // 不处理路由、不处理 SSE；请求日志暂经 ../server 的 addLog 记录（3.5 拆 api/ 时收敛）。
 
@@ -285,6 +285,132 @@ async function runCustomJsScrape(service: Record<string, JsonValue>, target: str
   };
 }
 
+// === Exa 时效证据 / 请求体构造(对齐 ExaSearchService.kt)===
+const EXA_MAX_EVIDENCE_TEXT = 8_000;
+const EXA_MAX_EVIDENCE_HIGHLIGHT = 1_200;
+const EXA_MAX_AGE_MIN = -1;
+const EXA_MAX_AGE_MAX = 720;
+
+/** 读取可选时效参数(startPublishedDate/endPublishedDate/includeDomains/excludeDomains/maxAgeHours),
+ *  由模型经 search_web 参数传入;非法/空白一律丢弃,maxAgeHours 钳到 [-1,720]。 */
+function buildExaEvidenceParams(params: Record<string, JsonValue>) {
+  const str = (key: string) => {
+    const value = params[key];
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  };
+  const strArray = (key: string) => {
+    const value = params[key];
+    if (!Array.isArray(value)) return undefined;
+    const list = value.map((entry) => (typeof entry === "string" ? entry.trim() : "")).filter((entry) => entry.length > 0);
+    return list.length ? list : undefined;
+  };
+  let maxAgeHours: number | undefined;
+  const rawAge = params.maxAgeHours;
+  if (typeof rawAge === "number" && Number.isFinite(rawAge)) {
+    const clamped = Math.trunc(rawAge);
+    if (clamped >= EXA_MAX_AGE_MIN && clamped <= EXA_MAX_AGE_MAX) maxAgeHours = clamped;
+  }
+  return {
+    startPublishedDate: str("startPublishedDate"),
+    endPublishedDate: str("endPublishedDate"),
+    includeDomains: strArray("includeDomains"),
+    excludeDomains: strArray("excludeDomains"),
+    maxAgeHours,
+  };
+}
+
+function buildExaSearchBody(
+  params: Record<string, JsonValue>,
+  resultSize: number,
+  evidence: ReturnType<typeof buildExaEvidenceParams>,
+) {
+  const query = String(params.query ?? params.q ?? "").trim();
+  const searchType = String(params.type ?? "auto").toLowerCase();
+  const hasEvidence = Boolean(
+    evidence.startPublishedDate || evidence.endPublishedDate || evidence.includeDomains || evidence.excludeDomains || evidence.maxAgeHours != null,
+  );
+  const contents: Record<string, JsonValue> = hasEvidence
+    ? { text: { maxCharacters: EXA_MAX_EVIDENCE_TEXT }, highlights: { maxCharacters: EXA_MAX_EVIDENCE_HIGHLIGHT } }
+    : { text: true };
+  if (evidence.maxAgeHours != null) contents.maxAgeHours = evidence.maxAgeHours;
+  const body: Record<string, JsonValue> = {
+    query,
+    numResults: resultSize,
+    type: ["fast", "auto", "deep"].includes(searchType) ? searchType : "auto",
+    contents,
+  };
+  if (evidence.startPublishedDate) body.startPublishedDate = evidence.startPublishedDate;
+  if (evidence.endPublishedDate) body.endPublishedDate = evidence.endPublishedDate;
+  if (evidence.includeDomains) body.includeDomains = evidence.includeDomains;
+  if (evidence.excludeDomains) body.excludeDomains = evidence.excludeDomains;
+  return body;
+}
+
+// === 豆包(火山 Search-Infinity)响应解析(DoubaoSearchService.parseResponse)===
+// 豆包把鉴权失败装进 HTTP 200 的 ResponseMetadata.Error({"Message":"invalid api key",...})——
+// 不归为 401/403 的话,多 key failover 与测试失败码都会误判成"网络/其它",永不换 key。这里把
+// 明显的 key 类业务错误识别为 SearchKeyError(403),其余业务错误仍按普通 Error 抛。
+function isDoubaoKeyError(message: string): boolean {
+  return /invalid\s*api\s*key|invalid\s*token|unauthori[sz]ed|authentication|forbidden/i.test(message);
+}
+function throwDoubaoApiError(message: string): never {
+  if (isDoubaoKeyError(message)) throw new SearchKeyError(403, `Doubao: ${message}`);
+  throw new Error(`Doubao: ${message}`);
+}
+function parseDoubaoSearch(
+  mode: "global" | "custom",
+  raw: any,
+  response: Response,
+  text: string,
+  maxResults: number,
+  query: string,
+) {
+  if (!response.ok) throwSearchStatus(response.status, `Doubao search failed #${response.status}: ${text.slice(0, 500)}`);
+  const metaError = raw?.ResponseMetadata?.Error;
+  if (metaError && (metaError.Message || metaError.Code)) {
+    throwDoubaoApiError(String(metaError.Message ?? metaError.Code ?? "Doubao API error"));
+  }
+  const result = raw?.Result;
+  if (!result) throw new Error("Doubao response does not contain Result");
+  if (mode === "global") {
+    if (result.ErrorCode != null && result.ErrorCode !== 0) {
+      throwDoubaoApiError(String(result.ErrorMsg ?? `Doubao API error #${result.ErrorCode}`));
+    }
+    const documents = Array.isArray(result.Documents) ? result.Documents : [];
+    const images = documents
+      .flatMap((doc: any) => (Array.isArray(doc?.Snippet) ? doc.Snippet : []))
+      .map((snippet: any) => String(snippet?.Image?.ImageUrl ?? "").trim())
+      .filter((url: string) => url.length > 0);
+    return {
+      query,
+      service: "豆包",
+      images: [...new Set(images)],
+      items: documents.slice(0, maxResults).map((doc: any, index: number) =>
+        searchResult(index, {
+          title: doc?.Title,
+          url: doc?.Url,
+          text: (Array.isArray(doc?.Snippet) ? doc.Snippet : [])
+            .map((snippet: any) => String(snippet?.Text ?? "").trim())
+            .filter(Boolean)
+            .join("\n"),
+        }),
+      ),
+    };
+  }
+  const webResults = Array.isArray(result.WebResults) ? result.WebResults : [];
+  return {
+    query,
+    service: "豆包",
+    items: webResults.slice(0, maxResults).map((item: any, index: number) =>
+      searchResult(index, {
+        title: item?.Title,
+        url: item?.Url,
+        text: String(item?.Summary ?? "").trim() || String(item?.Snippet ?? ""),
+      }),
+    ),
+  };
+}
+
 export async function runSearchWeb(params: Record<string, JsonValue>) {
   const started = Date.now();
   const service = selectedSearchService();
@@ -374,19 +500,24 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
     return rawKey.trim() ? withSearchKeyFailover(rawKey, exec) : exec("");
   }
 
+  // Exa(ExaSearchService.kt):search 带 type(fast/auto/deep)+ contents(text/highlights)+
+  // 可选时效/域过滤;Authorization Bearer(非旧 x-api-key)。scrape 走 api.exa.ai/contents。
   if (type === "exa") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const requestHeaders = { "Content-Type": "application/json", "x-api-key": apiKey };
-      const response = await fetchWithTimeout("https://api.exa.ai/search", {
+      const endpoint = "https://api.exa.ai/search";
+      const evidenceParams = buildExaEvidenceParams(params);
+      const requestBody = buildExaSearchBody(params, maxResults, evidenceParams);
+      const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+      const response = await fetchWithTimeout(endpoint, {
         method: "POST",
         headers: requestHeaders,
-        body: JSON.stringify({ query, numResults: maxResults }),
+        body: JSON.stringify(requestBody),
       });
-      const raw = await response.json();
+      const { text, raw } = await parseJsonResponse(response);
       addLog({
         providerId: String(service.id ?? "search"),
         providerName: nameOfSearchService(service),
-        url: "https://api.exa.ai/search",
+        url: endpoint,
         ok: response.ok,
         status: response.status,
         kind: "tool:search_web",
@@ -395,18 +526,107 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
         method: "POST",
         requestHeaders,
         responseHeaders: Object.fromEntries(response.headers.entries()),
-        requestBody: jsonBody({ query, maxResults }),
-        responseBody: jsonBody(raw),
-        error: response.ok ? undefined : jsonBody(raw),
+        requestBody: jsonBody(requestBody),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
       });
-      if (!response.ok) throwSearchStatus(response.status, JSON.stringify(raw).slice(0, 500));
+      if (!response.ok) throwSearchStatus(response.status, `Exa search failed with code ${response.status}: ${text.slice(0, 500)}`);
+      const results = Array.isArray(raw.results) ? raw.results : [];
+      const images = results
+        .map((item: any) => String(item?.image ?? "").trim())
+        .filter((url: string) => url.length > 0);
       return {
         query,
         service: "Exa",
-        items: (raw.results ?? []).slice(0, maxResults).map((item: any, index: number) =>
-          searchResult(index, { title: item.title, url: item.url, text: item.text ?? item.summary }),
+        answer: typeof raw.output?.content === "string" ? raw.output.content : undefined,
+        images,
+        items: results.slice(0, maxResults).map((item: any, index: number) =>
+          searchResult(index, {
+            title: item.title,
+            url: item.url,
+            text: item.text ?? item.summary ?? (Array.isArray(item.highlights) ? item.highlights.join("\n") : ""),
+          }),
         ),
       };
+    });
+  }
+
+  // Serper(google.serper.dev):Google 结果 API。answerBox/knowledgeGraph 合成答案,organic 出列表。
+  if (type === "serper") {
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = "https://google.serper.dev/search";
+      const requestBody = { q: query, num: maxResults };
+      const requestHeaders = { "Content-Type": "application/json", "X-API-KEY": apiKey };
+      const response = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: endpoint,
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:search_web",
+        toolName: "search_web",
+        durationMs: Date.now() - started,
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody(requestBody),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Serper search failed with code ${response.status}: ${text.slice(0, 500)}`);
+      const answer =
+        (typeof raw.answerBox?.answer === "string" && raw.answerBox.answer) ||
+        (typeof raw.answerBox?.snippet === "string" && raw.answerBox.snippet) ||
+        (typeof raw.knowledgeGraph?.description === "string" ? raw.knowledgeGraph.description : undefined);
+      return {
+        query,
+        service: "Serper",
+        answer,
+        items: (raw.organic ?? []).slice(0, maxResults).map((item: any, index: number) =>
+          searchResult(index, { title: item.title, url: item.link, text: item.snippet }),
+        ),
+      };
+    });
+  }
+
+  // 豆包(火山 Search-Infinity,DoubaoSearchService.kt):GLOBAL/CUSTOM 两模,端点与字段各不同。
+  if (type === "doubao") {
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const mode = String(service.mode ?? "custom").toLowerCase() === "global" ? "global" : "custom";
+      const endpoint = `https://open.feedcoopapi.com/search_api/${mode === "global" ? "global_search" : "web_search"}`;
+      const requestBody = mode === "global"
+        ? { Query: query, DocCount: Math.min(20, Math.max(1, maxResults)), MaxSnippetLength: 300, MaxImageCountPerDoc: 1 }
+        : { Query: query, SearchType: "web", Count: Math.min(50, Math.max(1, maxResults)), QueryControl: { QueryRewrite: false } };
+      const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+      const response = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: endpoint,
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:search_web",
+        toolName: "search_web",
+        durationMs: Date.now() - started,
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody(requestBody),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
+      });
+      return parseDoubaoSearch(mode, raw, response, text, maxResults, query);
     });
   }
 
@@ -687,6 +907,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
   if (type === "ollama") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
       const endpoint = "https://ollama.com/api/web_search";
+      // OllamaSearchService.kt:max_results 钳到 [5,10](上游接受区间)。
       const clamped = Math.max(5, Math.min(10, maxResults));
       const body: Record<string, JsonValue> = { query, max_results: clamped };
       const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
@@ -978,6 +1199,85 @@ export async function runScrapeWeb(params: Record<string, JsonValue>) {
     });
     return result;
   }
+  if (type === "exa") {
+    // Exa scrape:api.exa.ai/contents,返回首条 result 的正文 + title(对齐 mapScrapedResult)。
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = "https://api.exa.ai/contents";
+      const evidence = buildExaEvidenceParams(params);
+      const requestBody: Record<string, JsonValue> = { urls: [target], text: { maxCharacters: EXA_MAX_EVIDENCE_TEXT } };
+      if (evidence.maxAgeHours != null) requestBody.maxAgeHours = evidence.maxAgeHours;
+      const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+      const response = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: endpoint,
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:scrape_web",
+        toolName: "scrape_web",
+        durationMs: Date.now() - started,
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody(requestBody),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Exa scrape failed with code ${response.status}: ${text.slice(0, 500)}`);
+      const item = Array.isArray(raw.results) ? raw.results[0] : null;
+      return {
+        url: String(item?.url ?? target),
+        title: item?.title,
+        description: undefined,
+        language: undefined,
+        text: String(item?.text ?? "").slice(0, 12000),
+      };
+    });
+  }
+  if (type === "ollama") {
+    // Ollama scrape:ollama.com/api/web_fetch,返回 { title, content }(OllamaSearchService.kt scrape)。
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = "https://ollama.com/api/web_fetch";
+      const requestBody = { url: target };
+      const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+      const response = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: endpoint,
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:scrape_web",
+        toolName: "scrape_web",
+        durationMs: Date.now() - started,
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody(requestBody),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwSearchStatus(response.status, `Ollama fetch failed for ${target} with code ${response.status}: ${text.slice(0, 500)}`);
+      return {
+        url: target,
+        title: raw?.title,
+        description: undefined,
+        language: undefined,
+        text: String(raw?.content ?? "").slice(0, 12000),
+      };
+    });
+  }
   if (type === "tinyfish") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
       const endpoint = "https://api.fetch.tinyfish.ai";
@@ -1092,11 +1392,51 @@ export async function testSearchService(service: SearchService) {
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": k },
+        // 与 runSearchWeb 对齐:Authorization Bearer(非 x-api-key),numResults 最小化。
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${k}` },
         body: JSON.stringify({ query: "RikkaHub", numResults: 1 }),
       });
       const text = await response.text();
       if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
+    });
+  }
+  if (type === "serper") {
+    const endpoint = "https://google.serper.dev/search";
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-KEY": k },
+        body: JSON.stringify({ q: "RikkaHub", num: 1 }),
+      });
+      const text = await response.text();
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
+    });
+  }
+  if (type === "doubao") {
+    const mode = String(service.mode ?? "custom").toLowerCase() === "global" ? "global" : "custom";
+    const endpoint = `https://open.feedcoopapi.com/search_api/${mode === "global" ? "global_search" : "web_search"}`;
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const body = mode === "global"
+        ? { Query: "RikkaHub", DocCount: 1, MaxSnippetLength: 300, MaxImageCountPerDoc: 1 }
+        : { Query: "RikkaHub", SearchType: "web", Count: 1, QueryControl: { QueryRewrite: false } };
+      const response = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${k}` },
+        body: JSON.stringify(body),
+      });
+      const text = await response.text();
+      // 豆包把业务错误装进 ResponseMetadata.Error(HTTP 仍 200),测试也要识别;key 类错误
+      // 走 throwDoubaoApiError 归一为可换 key(与 runSearchWeb 同语义)。
+      if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      let raw: any = null;
+      // 解析失败视为非 JSON 响应(同 parseJsonResponse 兜底):raw 留 null,metaError 取不到则不误报业务错误。
+      try { raw = text ? JSON.parse(text) : null; } catch { raw = null; }
+      const metaError = raw?.ResponseMetadata?.Error;
+      if (metaError && (metaError.Message || metaError.Code)) {
+        throwDoubaoApiError(String(metaError.Message ?? metaError.Code ?? "Doubao API error"));
+      }
       return text;
     });
   }

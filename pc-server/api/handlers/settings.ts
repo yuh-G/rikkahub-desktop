@@ -48,7 +48,7 @@ import { endpointFor, fetchProviderBalance, fetchProviderModels, runProviderChec
 // 搜索服务的鉴权/端点字段。两处消费必须共用同一集合:detail 保存时任一变更即撤销
 // testPassed(R5-3 失效规则);service/test 落章前复核当前配置与被测 body 是否仍一致
 // (飞行竞态守卫)。改这份清单 = 同时改两处语义。
-const SEARCH_SERVICE_AUTH_FIELDS = ["type", "apiKey", "url", "customUrl", "model", "username", "password", "engines"] as const;
+const SEARCH_SERVICE_AUTH_FIELDS = ["type", "apiKey", "url", "customUrl", "model", "username", "password", "engines", "mode"] as const;
 
 const mcpServerWriteQueues = new Map<string, Promise<unknown>>();
 function withMcpServerWriteLock(serverId: string, task: () => Promise<Response>): Promise<Response> {

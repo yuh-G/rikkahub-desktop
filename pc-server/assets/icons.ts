@@ -27,7 +27,9 @@ const iconRules: Array<[RegExp, string]> = [
   [/deepseek/i, "deepseek-color.svg"],
   [/grok/i, "grok.svg"],
   [/qwen|qwq|qvq/i, "qwen-color.svg"],
-  [/doubao/i, "doubao-color.svg"],
+  // 豆包:label 是中文"豆包",APP 模式为 doubao|豆包|火山;火山由下方 bytedance 规则兜住,
+  // 这里补 doubao|豆包 让搜索服务的中文标签命中豆包专属图标(而非落 bytedance)。
+  [/doubao|豆包/i, "doubao-color.svg"],
   [/openrouter/i, "openrouter.svg"],
   [/zhipu|智谱|glm/i, "zhipu-color.svg"],
   [/mistral/i, "mistral-color.svg"],
@@ -74,6 +76,8 @@ const iconRules: Array<[RegExp, string]> = [
   [/firecrawl/i, "firecrawl.svg"],
   [/jina/i, "jina.svg"],
   [/tinyfish/i, "tinyfish.svg"],
+  // serper 不在 lobehub 图标库(APP 同样落灰底字母),用官方品牌标(serper.dev 的 S-in-ring)。
+  [/serper/i, "serper.png"],
   [/searxng/i, "searxng.svg"],
   [/naapi|钠/i, "naapi.jpg"],
 ];

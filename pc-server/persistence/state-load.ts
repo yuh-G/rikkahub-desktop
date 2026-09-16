@@ -253,6 +253,8 @@ export function normalizeState(input: Partial<State>): State {
   // 内置搜索服务补齐(带墓碑豁免):type 不存在且用户没删过 → 补。新增内置服务时在
   // 此登记即可,墓碑机制天然防复活,无需迁移标记。
   const backfillSearchPresets: Array<Record<string, JsonValue>> = [
+    { type: "doubao", id: id(), name: "豆包", apiKey: "", mode: "custom" },
+    { type: "serper", id: id(), name: "Serper", apiKey: "" },
     { type: "tinyfish", id: id(), name: "Tinyfish", apiKey: "" },
     { type: "firecrawl", id: id(), name: "Firecrawl", apiKey: "" },
     { type: "grok", id: id(), name: "Grok", apiKey: "", customUrl: "https://api.x.ai/v1/responses", model: "grok-4-fast" },

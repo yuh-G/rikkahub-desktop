@@ -30,10 +30,12 @@ import { PickerErrorAlert } from "./picker-error-alert";
 
 const SEARCH_TOOL_NAME = "search";
 
+// 顺序同 settings 的 SEARCH_SERVICE_TYPE_LABELS / APP SearchServiceOptions.TYPES。
 const SEARCH_SERVICE_LABELS: Record<string, string> = {
   bing_local: "Bing",
   rikkahub: "RikkaHub",
   zhipu: "智谱",
+  doubao: "豆包",
   tavily: "Tavily",
   exa: "Exa",
   searxng: "SearXNG",
@@ -43,10 +45,11 @@ const SEARCH_SERVICE_LABELS: Record<string, string> = {
   ollama: "Ollama",
   perplexity: "Perplexity",
   firecrawl: "Firecrawl",
-  grok: "Grok",
   jina: "Jina",
   bocha: "博查",
+  grok: "Grok",
   tinyfish: "Tinyfish",
+  serper: "Serper",
   custom_js: "Custom JS",
 };
 
