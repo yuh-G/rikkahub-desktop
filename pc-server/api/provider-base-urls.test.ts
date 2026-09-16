@@ -17,7 +17,6 @@ const KINDS = ["openai", "claude", "google"] as const;
 
 // 预置供应商 id → 名称(测试报错可读)
 const NAMES: Record<string, string> = {
-  "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce": "RikkaHub",
   "1eeea727-9ee5-4cae-93e6-6fb01a4d051e": "OpenAI",
   "b2c7e1a4-9f3d-4a6e-8c1b-5d7f9e2a3b14": "Anthropic",
   "6ab18148-c138-4394-a46f-1cd8c8ceaa6d": "Gemini",
@@ -33,6 +32,8 @@ const NAMES: Record<string, string> = {
   "d5734028-d39b-4d41-9841-fd648d65440e": "OpenRouter",
   "386e0f29-8228-4512-affe-8fd8add82d88": "Vercel AI Gateway",
   "56a94d29-c88b-41c5-8e09-38a7612d6cf8": "硅基流动",
+  "b4deabea-20fb-4101-a74c-65679c7e4754": "MiniMax",
+  "a2bafe83-eaf8-47bf-a8c7-3dd82d89f637": "MIMO",
 };
 
 // 每家供应商切换后允许出现的地址集合:出厂 + 全部登记格式。御三家供应商(出厂地址即
@@ -64,9 +65,14 @@ describe("baseUrlForKindSwitch — R1 往返不漂移", () => {
           }
         }
       }
-      // 游走回到起始格式(openai)后,地址必须收敛到该格式的自家值:御三家供应商=协议默认
-      // (它们互切就是换官方协议服务,终点由最后停留的格式决定);其余=登记或出厂单点。
-      if ([...allowed].some((u) => Object.values(DEFAULT_BASE_URLS).includes(u) && u !== BUILTIN_BASE_URLS[id] && !Object.values(PROVIDER_FORMAT_BASES[id] ?? {}).includes(u))) {
+      // 游走回到起始格式(openai)后,地址必须收敛到该格式的自家值:
+      //   · 御三家供应商(出厂=某协议默认)→ 协议默认(互切即换官方协议服务);
+      //   · MiniMax 这类出厂即非 openai 协议默认、又未登记 openai 镜像的 → 落 openai 协议默认;
+      //   · 其余 → 登记的 openai 端点或出厂单点。
+      const hasForeignDefault =
+        [...allowed].some((u) => Object.values(DEFAULT_BASE_URLS).includes(u) && u !== BUILTIN_BASE_URLS[id]) ||
+        Object.values(DEFAULT_BASE_URLS).includes(BUILTIN_BASE_URLS[id]!);
+      if (hasForeignDefault || (Object.values(DEFAULT_BASE_URLS).includes(BUILTIN_BASE_URLS[id]!) && !PROVIDER_FORMAT_BASES[id]?.openai)) {
         expect(Object.values(DEFAULT_BASE_URLS)).toContain(current);
       } else {
         expect(current).toBe(PROVIDER_FORMAT_BASES[id]?.openai ?? BUILTIN_BASE_URLS[id]!);

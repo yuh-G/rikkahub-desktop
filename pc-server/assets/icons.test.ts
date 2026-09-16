@@ -37,4 +37,10 @@ describe("iconForName", () => {
     expect(iconForName("Ollama")).toBe("ollama.svg");
     expect(iconForName("Exa")).toBe("exa.png");
   });
+
+  test("预置供应商新类型:MiniMax/MIMO 图标命中(label 作图标键)", () => {
+    // 与 APP AIIconMatcher 对齐:MiniMax→minimax-color.svg,MIMO(小米)→xiaomimimo.svg
+    expect(iconForName("MiniMax")).toBe("minimax-color.svg");
+    expect(iconForName("MIMO")).toBe("xiaomimimo.svg");
+  });
 });

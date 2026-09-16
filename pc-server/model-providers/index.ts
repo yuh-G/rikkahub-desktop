@@ -108,7 +108,9 @@ export function provider(input: Partial<Provider> & Pick<Provider, "id" | "name"
     promptCaching: false,
     promptCacheTtl: "5m",
     promptCacheKey: false,
-    testPassed: input.name === "RikkaHub" || input.id === "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce",
+    // 出厂即视为连通、免手动测试的,只有 RikkaHub 内置供应商一条;它已下架(SUNSET),
+    // 但条件保留——老用户 state 里若仍存着该内置供应商(配过 key 的),沿用出厂 testPassed。
+    testPassed: input.id === "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce",
     models: [],
     balanceOption: { enabled: false, apiPath: "/credits", resultPath: "data.total_usage" },
     ...input,
@@ -124,6 +126,7 @@ export const SUNSET_PROVIDER_IDS = new Set<string>([
   "da93779f-3956-48cc-82ef-67bb482eaaf7", // 302.AI
   "53027b08-1b58-43d5-90ed-29173203e3d8", // AckAI
   "4da09554-8844-4cc8-a4a9-fe1b2515e91b", // UnifyLLM
+  "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce", // RikkaHub(内置模型,服务停维护下架;配过 key 的保留)
 ]);
 
 // 1.1.1 供应商迁移用的固定 id。改名/补模型走 id 匹配,确保老用户 state 也生效。
@@ -141,7 +144,6 @@ export const NA_API_PRESET_MODELS = [
 // 对应位置,用户新增的自定义供应商不受影响,统一保留在内置供应商之后(保持其相对顺序)。
 // 排序是幂等的:重复执行结果一致,不会反复改动已排好的 state。
 const BUILTIN_PROVIDER_ORDER: readonly string[] = [
-  "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce", // RikkaHub
   "1eeea727-9ee5-4cae-93e6-6fb01a4d051e", // OpenAI
   "b2c7e1a4-9f3d-4a6e-8c1b-5d7f9e2a3b14", // Anthropic
   "6ab18148-c138-4394-a46f-1cd8c8ceaa6d", // Gemini
@@ -157,6 +159,9 @@ const BUILTIN_PROVIDER_ORDER: readonly string[] = [
   "d5734028-d39b-4d41-9841-fd648d65440e", // OpenRouter
   "386e0f29-8228-4512-affe-8fd8add82d88", // Vercel AI Gateway
   "56a94d29-c88b-41c5-8e09-38a7612d6cf8", // 硅基流动
+  // 对齐 APP 新增的 Claude 形 / OpenAI 形预置(APP 顺序追加在末尾,APP 的 MaruCode 赞助商不移植)。
+  "b4deabea-20fb-4101-a74c-65679c7e4754", // MiniMax
+  "a2bafe83-eaf8-47bf-a8c7-3dd82d89f637", // MIMO
 ];
 
 export function builtinProviderRank(providerItem: Provider): number {
@@ -166,21 +171,6 @@ export function builtinProviderRank(providerItem: Provider): number {
 
 export function defaultProviders(): Provider[] {
   return [
-    provider({
-      id: "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce",
-      name: "RikkaHub",
-      baseUrl: "https://api.rikka-ai.com/v1",
-      enabled: true,
-      shortDescription: "RikkaHub 内置模型",
-      description: "Built-in RikkaHub provider template, matching the Android default.",
-      models: [
-        {
-          ...model("auto", "Auto"),
-          id: DEFAULT_AUTO_MODEL_ID,
-          abilities: ["TOOL", "REASONING"],
-        },
-      ],
-    }),
     provider({
       id: "1eeea727-9ee5-4cae-93e6-6fb01a4d051e",
       name: "OpenAI",
@@ -258,6 +248,21 @@ export function defaultProviders(): Provider[] {
       baseUrl: "https://api.siliconflow.cn/v1",
       shortDescription: "SiliconFlow API",
       balanceOption: { enabled: true, apiPath: "/user/info", resultPath: "data.totalBalance" },
+    }),
+    // 对齐 APP 新增的两家内置供应商(APP 的 MaruCode 为赞助商位,不移植)。沿用 APP 的稳定
+    // UUID,使未来 merge/reorder 与 APP 对齐;均无出厂预置模型,配 key 后由 /models 拉取。
+    provider({
+      id: "b4deabea-20fb-4101-a74c-65679c7e4754",
+      type: "claude",
+      name: "MiniMax",
+      baseUrl: "https://api.minimaxi.com/anthropic/v1",
+      shortDescription: "MiniMax 官方 Anthropic 兼容端点",
+    }),
+    provider({
+      id: "a2bafe83-eaf8-47bf-a8c7-3dd82d89f637",
+      name: "MIMO",
+      baseUrl: "https://api.xiaomimimo.com/v1",
+      shortDescription: "小米 MiMo 官方 OpenAI 兼容 API",
     }),
   ];
 }
