@@ -676,6 +676,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       const consumed = resolveToolApproval(conversation.id, String(body.toolCallId ?? ""), {
         approved: body.approved === true,
         ...(body.reason ? { reason: String(body.reason) } : {}),
+        // ask_user:把答复载荷一并送达在途等待者(pi 引擎 execute 据此把答案回灌模型)。
+        ...(body.answer != null ? { answer: String(body.answer) } : {}),
       });
       if (consumed || resolveEngineForConversation(conversation).resumeSemantics === "run-and-suspend") {
         return json({ status: "accepted" }, { status: 202 });

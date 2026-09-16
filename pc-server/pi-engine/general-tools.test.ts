@@ -145,3 +145,59 @@ describe("审批语义(同聊天引擎口径)", () => {
     expect(result.details ?? {}).toEqual({});
   });
 });
+
+describe("ask_user(run-and-suspend 提问)", () => {
+  const withAskUser = { localTools: [{ type: "ask_user" }] };
+
+  test("挂载随助手 localTools 开关;声明面含 selection_type 枚举", () => {
+    const off = createPiGeneralTools(fixture().ctx).map((tool) => tool.name);
+    expect(off).not.toContain("ask_user");
+
+    const { ctx } = fixture(withAskUser);
+    const ask = createPiGeneralTools(ctx).find((tool) => tool.name === "ask_user");
+    if (!ask) throw new Error("ask_user missing");
+    const items = (ask.parameters as { properties?: { questions?: { items?: { properties?: Record<string, unknown> } } } })
+      .properties?.questions?.items?.properties;
+    expect(items).toHaveProperty("selection_type");
+  });
+
+  test("作答:execute 挂起 → resolve 携 answer → 回灌文本为扁平契约(与聊天引擎逐字一致)", async () => {
+    const { ctx, conversation, events } = fixture(withAskUser);
+    const ask = createPiGeneralTools(ctx).find((tool) => tool.name === "ask_user");
+    if (!ask) throw new Error("ask_user missing");
+
+    const questions = [{ id: "q1", question: "选哪个?", selection_type: "multi", options: ["甲", "乙"] }];
+    const running = execOf(ask)("call-q1", { questions }, new AbortController().signal, () => {});
+    await Bun.sleep(10);
+    expect(approvalEvents(events).map((e) => e.approvalState.type)).toEqual(["pending"]);
+
+    const payload = JSON.stringify({ answers: { q1: "甲, 乙, 都要" } });
+    expect(resolveToolApproval(conversation.id, "call-q1", { approved: true, answer: payload })).toBe(true);
+
+    const result = await running;
+    expect(result.content[0]?.text).toBe(payload);
+    // 单文本结果不带 details.app → 事件桥按 content 渲染(与聊天 answered 回放同字符串)。
+    expect(result.details ?? {}).toEqual({});
+    expect(approvalEvents(events).at(-1)?.approvalState).toEqual({ type: "answered", answer: payload });
+  });
+
+  test("拒绝:抛历史契约文案(桥映射 {error})", async () => {
+    const { ctx, conversation } = fixture(withAskUser);
+    const ask = createPiGeneralTools(ctx).find((tool) => tool.name === "ask_user");
+    if (!ask) throw new Error("ask_user missing");
+    const running = execOf(ask)("call-q2", { questions: [{ id: "q", question: "?" }] }, new AbortController().signal, () => {});
+    await Bun.sleep(10);
+    expect(resolveToolApproval(conversation.id, "call-q2", { approved: false, reason: "跳过" })).toBe(true);
+    await expect(running).rejects.toThrow("Tool execution denied by user. Reason: 跳过");
+  });
+
+  test("非法入参(零题/超上限)→ 抛错回灌模型重试,不挂卡", async () => {
+    const { ctx, events } = fixture(withAskUser);
+    const ask = createPiGeneralTools(ctx).find((tool) => tool.name === "ask_user");
+    if (!ask) throw new Error("ask_user missing");
+    await expect(
+      execOf(ask)("call-q3", { questions: [] }, new AbortController().signal, () => {}),
+    ).rejects.toThrow(/at least one valid question/);
+    expect(approvalEvents(events)).toEqual([]);
+  });
+});
