@@ -141,6 +141,8 @@
     "chat_url": "Chat endpoint URL: {{url}}",
     "models_url": "Model list URL: {{url}}",
     "response_api_desc": "When enabled, the chat endpoint switches to /responses",
+    "chat_completions_path_label": "Chat Completions Path",
+    "responses_path_label": "Responses Path",
     "history_reasoning_title": "Echo historical reasoning",
     "history_reasoning_desc": "Newer models (e.g. DeepSeek V4) require reasoning_content to be echoed back. When enabled, the reasoning_content of past assistant messages is sent with each request; models that don't need it ignore the field silently. Turn this off if a provider rejects requests over the unrecognized field.",
     "prompt_cache_title": "Claude prompt caching",

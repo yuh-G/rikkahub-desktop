@@ -37,6 +37,21 @@ describe("endpointFor URL 拼接", () => {
     expect(
       endpointFor(make({ id: "o2", name: "O", baseUrl: "https://api.openai.com/v1", useResponseApi: true })),
     ).toBe("https://api.openai.com/v1/responses");
+    // §2.3 responsesPath:自定义路径生效(Azure/网关非标准 Responses 端点);空白回落 /responses。
+    expect(
+      endpointFor(
+        make({
+          id: "o2c",
+          name: "O",
+          baseUrl: "https://my.azure.com/openai/deployments/gpt5",
+          useResponseApi: true,
+          responsesPath: "/responses?api-version=2025-04-01-preview",
+        }),
+      ),
+    ).toBe("https://my.azure.com/openai/deployments/gpt5/responses?api-version=2025-04-01-preview");
+    expect(
+      endpointFor(make({ id: "o2d", name: "O", baseUrl: "https://api.openai.com/v1", useResponseApi: true, responsesPath: "   " })),
+    ).toBe("https://api.openai.com/v1/responses");
     expect(
       endpointFor(
         make({ id: "o3", name: "O", baseUrl: "https://x.example.com", chatCompletionsPath: "/api/chat" }),

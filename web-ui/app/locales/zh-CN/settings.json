@@ -141,6 +141,8 @@
     "chat_url": "聊天完整 URL：{{url}}",
     "models_url": "模型列表 URL：{{url}}",
     "response_api_desc": "开启后聊天端点自动切换为 /responses",
+    "chat_completions_path_label": "Chat Completions Path",
+    "responses_path_label": "Responses Path",
     "history_reasoning_title": "回传历史思考过程",
     "history_reasoning_desc": "新一代模型（例如 DeepSeek V4）要求回传 reasoning_content。开启后，历史 assistant 消息的 reasoning_content 字段将会随请求回传，不要求回传的模型会静默忽略该字段。若部分供应商不识别该字段而拒绝请求时，可手动关闭。",
     "prompt_cache_title": "Claude 提示缓存",

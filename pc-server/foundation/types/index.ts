@@ -40,6 +40,11 @@ export interface Provider {
   baseUrl: string;
   chatCompletionsPath?: string;
   useResponseApi?: boolean;
+  // 对齐安卓 ProviderSetting.responsesPath(commit §2.3):Responses API 的请求路径,
+  // 默认 /responses,仅 useResponseApi 开启时生效。Azure/自建网关把 Responses 挂在
+  // 非标准路径时由用户改这里;留空回落 /responses。与 chatCompletionsPath 同语义、
+  // 互斥生效(同一时刻只有一个路径被 endpointFor 采用)。
+  responsesPath?: string;
   // 对齐安卓 commit e63d017：OpenAI provider 是否在历史回放里把
   // assistant 的 reasoning_content 也回传给上游。默认 true（保持过去行为）；
   // 用户可以为某些代理/平台关闭，避免它们因为不识别这个字段而拒绝请求。
