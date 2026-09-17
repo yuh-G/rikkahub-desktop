@@ -327,8 +327,7 @@ describe("消息发送队列派发(收尾续跑)", () => {
       next.settings.assistants = [{ ...defaultAssistant(), id: "a1" }];
       next.settings.providers = [ourProvider];
       next.settings.chatModelId = ourModel.id;
-      next.settings.titleModelId = "";
-      next.settings.suggestionModelId = "";
+      next.settings.fastModelId = "";
       setState(next as State);
 
       await generateAnswer(conv); // 第一轮(期间入队)
@@ -379,8 +378,7 @@ describe("消息发送队列派发(收尾续跑)", () => {
       next.settings.assistants = [{ ...defaultAssistant(), id: "a1" }];
       next.settings.providers = [ourProvider];
       next.settings.chatModelId = ourModel.id;
-      next.settings.titleModelId = "";
-      next.settings.suggestionModelId = "";
+      next.settings.fastModelId = "";
       setState(next as State);
 
       // 首轮正常返回,但收尾时队列派发会请求第二轮——假上游剧本耗尽返回 500 → 失败分支 pause。

@@ -740,9 +740,8 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     updateSettings({
       ...state.settings,
       chatModelId: String(body.chatModelId ?? state.settings.chatModelId),
-      titleModelId: String(body.titleModelId ?? state.settings.titleModelId),
+      fastModelId: String(body.fastModelId ?? state.settings.fastModelId),
       translateModeId: String(body.translateModeId ?? state.settings.translateModeId),
-      suggestionModelId: String(body.suggestionModelId ?? state.settings.suggestionModelId),
       imageGenerationModelId: String(body.imageGenerationModelId ?? state.settings.imageGenerationModelId),
       ocrModelId: String(body.ocrModelId ?? state.settings.ocrModelId),
       compressModelId: String(body.compressModelId ?? state.settings.compressModelId),

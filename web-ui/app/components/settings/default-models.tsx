@@ -7,7 +7,6 @@ import {
   FileClock,
   FileImage,
   Globe,
-  MessageSquareText,
   NotebookText,
   RefreshCw,
   Settings2,
@@ -148,9 +147,8 @@ export function DefaultModelsSection({
     );
   type Draft = {
     chatModelId: string;
-    titleModelId: string;
+    fastModelId: string;
     translateModeId: string;
-    suggestionModelId: string;
     imageGenerationModelId: string;
     ocrModelId: string;
     compressModelId: string;
@@ -164,9 +162,8 @@ export function DefaultModelsSection({
   };
   type ModelKey =
     | "chatModelId"
-    | "titleModelId"
+    | "fastModelId"
     | "translateModeId"
-    | "suggestionModelId"
     | "imageGenerationModelId"
     | "ocrModelId"
     | "compressModelId"
@@ -180,9 +177,8 @@ export function DefaultModelsSection({
     | "promptOptimizePrompt";
   const [draft, setDraft] = React.useState({
     chatModelId: textValue(settings.chatModelId),
-    titleModelId: textValue(settings.titleModelId),
+    fastModelId: textValue(settings.fastModelId),
     translateModeId: textValue(settings.translateModeId),
-    suggestionModelId: textValue(settings.suggestionModelId),
     imageGenerationModelId: textValue(settings.imageGenerationModelId),
     ocrModelId: textValue(settings.ocrModelId),
     compressModelId: textValue(settings.compressModelId),
@@ -198,7 +194,17 @@ export function DefaultModelsSection({
   // 压缩 prompt 对话框的引擎标签(压缩 prompt 不是公共的:对话引擎可编辑,工作区
   // 引擎 pi 用原生 prompt 只读展示)。其余 prompt 无引擎差异,不显示标签。
   const [compressEngineTab, setCompressEngineTab] = React.useState<"chat" | "pi">("chat");
+  // 快速模型卡只有一个「编辑 Prompt」入口,但标题/建议是两条独立提示词 → 对话框内切换编辑,
+  // 与压缩 prompt 的分引擎切换同构。fastTab 只在编辑快速模型(promptKey=titlePrompt/suggestionPrompt)时生效。
+  const [fastTab, setFastTab] = React.useState<"title" | "suggestion">("title");
   const [piCompactionPrompt, setPiCompactionPrompt] = React.useState<string | null>(null);
+  // 对话框内实际编辑的 prompt 键:快速模型卡 → 跟随 fastTab;其余卡 → 卡自身的 promptKey。
+  const activePromptKey: PromptKey | null =
+    editingPrompt === "titlePrompt" || editingPrompt === "suggestionPrompt"
+      ? fastTab === "suggestion"
+        ? "suggestionPrompt"
+        : "titlePrompt"
+      : editingPrompt;
   React.useEffect(() => {
     // 懒加载:首次打开压缩 prompt 对话框才取 pi 原生 prompt(静态文本,取一次缓存)。
     if (editingPrompt !== "compressPrompt" || piCompactionPrompt !== null) return;
@@ -303,11 +309,11 @@ export function DefaultModelsSection({
       description: t("settings:models.feature.optimize.desc"),
     },
     {
-      modelKey: "titleModelId",
+      modelKey: "fastModelId",
       promptKey: "titlePrompt",
       icon: NotebookText,
-      title: t("settings:models.feature.title.title"),
-      description: t("settings:models.feature.title.desc"),
+      title: t("settings:models.feature.fast.title"),
+      description: t("settings:models.feature.fast.desc"),
     },
     {
       modelKey: "translateModeId",
@@ -315,13 +321,6 @@ export function DefaultModelsSection({
       icon: Globe,
       title: t("settings:models.feature.translate.title"),
       description: t("settings:models.feature.translate.desc"),
-    },
-    {
-      modelKey: "suggestionModelId",
-      promptKey: "suggestionPrompt",
-      icon: MessageSquareText,
-      title: t("settings:models.feature.suggestion.title"),
-      description: t("settings:models.feature.suggestion.desc"),
     },
     {
       modelKey: "compressModelId",
@@ -344,7 +343,7 @@ export function DefaultModelsSection({
       description: t("settings:models.feature.image.desc"),
     },
   ];
-  const activePrompt = editingPrompt ? promptMeta[editingPrompt] : null;
+  const activePrompt = activePromptKey ? promptMeta[activePromptKey] : null;
 
   return (
     <>
@@ -399,18 +398,19 @@ export function DefaultModelsSection({
           if (open) return;
           setEditingPrompt(null);
           setCompressEngineTab("chat");
+          setFastTab("title");
         }}
       >
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>{activePrompt?.title ?? "Prompt"}</DialogTitle>
             <DialogDescription>
-              {editingPrompt === "compressPrompt" && compressEngineTab === "pi"
+              {activePromptKey === "compressPrompt" && compressEngineTab === "pi"
                 ? t("settings:models.compress_engine.pi_note")
                 : `${t("settings:models.variables_label")}${activePrompt?.variables ?? ""}`}
             </DialogDescription>
           </DialogHeader>
-          {editingPrompt === "compressPrompt" ? (
+          {activePromptKey === "compressPrompt" ? (
             // 压缩 prompt 分引擎:对话引擎可编辑;工作区引擎(pi)原生内置、只读。
             // 其余 prompt 无引擎差异,不显示此切换。
             <div className="flex gap-1 rounded-lg border bg-muted/40 p-1 self-start">
@@ -427,8 +427,24 @@ export function DefaultModelsSection({
               ))}
             </div>
           ) : null}
-          {editingPrompt ? (
-            editingPrompt === "compressPrompt" && compressEngineTab === "pi" ? (
+          {editingPrompt === "titlePrompt" || editingPrompt === "suggestionPrompt" ? (
+            // 快速模型下标题/建议两条提示词:对话框内切换编辑(与压缩的分引擎切换同构)。
+            <div className="flex gap-1 rounded-lg border bg-muted/40 p-1 self-start">
+              {(["title", "suggestion"] as const).map((tab) => (
+                <Button
+                  key={tab}
+                  type="button"
+                  size="sm"
+                  variant={fastTab === tab ? "default" : "ghost"}
+                  onClick={() => setFastTab(tab)}
+                >
+                  {t(`settings:models.fast_tab.${tab}`)}
+                </Button>
+              ))}
+            </div>
+          ) : null}
+          {activePromptKey ? (
+            activePromptKey === "compressPrompt" && compressEngineTab === "pi" ? (
               <Textarea
                 value={piCompactionPrompt ?? "…"}
                 readOnly
@@ -436,19 +452,19 @@ export function DefaultModelsSection({
               />
             ) : (
               <Textarea
-                value={draft[editingPrompt]}
-                onChange={(event) => setDraft({ ...draft, [editingPrompt]: event.target.value })}
+                value={draft[activePromptKey]}
+                onChange={(event) => setDraft({ ...draft, [activePromptKey]: event.target.value })}
                 className="h-[420px] font-mono text-xs"
               />
             )
           ) : null}
           <DialogFooter>
-            {editingPrompt && !(editingPrompt === "compressPrompt" && compressEngineTab === "pi") ? (
+            {activePromptKey && !(activePromptKey === "compressPrompt" && compressEngineTab === "pi") ? (
               <Button
                 type="button"
                 variant="outline"
                 onClick={() =>
-                  setDraft({ ...draft, [editingPrompt]: promptMeta[editingPrompt].defaultValue })
+                  setDraft({ ...draft, [activePromptKey]: promptMeta[activePromptKey].defaultValue })
                 }
               >
                 <RefreshCw className="size-4" />
@@ -460,6 +476,7 @@ export function DefaultModelsSection({
               onClick={() => {
                 setEditingPrompt(null);
                 setCompressEngineTab("chat");
+                setFastTab("title");
               }}
             >
               {t("settings:models.done")}

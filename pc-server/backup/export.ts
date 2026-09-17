@@ -212,8 +212,13 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
         }
       }
     }
+    // 快速模型收敛:PC 内部统一用 fastModelId(对齐 APP)。导出前清掉 2.4.16 之前残留的
+    // titleModelId / suggestionModelId——新版 Android 的 Settings 数据类已删除这两个字段,
+    // 发未知键会被其序列化器拒收(state-load 正常路径已删,这里兜备份合并等异常残留)。
+    delete copy.titleModelId;
+    delete copy.suggestionModelId;
     // Fix empty-string UUID fields — Android's Uuid deserializer rejects ""
-    const uuidFields = ["chatModelId", "titleModelId", "translateModeId", "suggestionModelId", "imageGenerationModelId", "ocrModelId", "compressModelId", "assistantId", "selectedTTSProviderId", "selectedASRProviderId"];
+    const uuidFields = ["chatModelId", "fastModelId", "translateModeId", "imageGenerationModelId", "ocrModelId", "compressModelId", "assistantId", "selectedTTSProviderId", "selectedASRProviderId"];
     for (const field of uuidFields) {
       if (field in copy && (copy[field] === "" || copy[field] === null || copy[field] === undefined)) {
         copy[field] = crypto.randomUUID();

@@ -824,8 +824,7 @@ async function configure(useResponseApi: boolean) {
     method: "POST",
     body: JSON.stringify({
       chatModelId: modelId,
-      titleModelId: modelId,
-      suggestionModelId: "",
+      fastModelId: modelId,
       translateModeId: modelId,
       compressModelId: modelId,
     }),
@@ -836,8 +835,7 @@ async function configure(useResponseApi: boolean) {
       body: JSON.stringify({
         ...current,
         chatModelId: modelId,
-        titleModelId: modelId,
-        suggestionModelId: "",
+        fastModelId: modelId,
         translateModeId: modelId,
         compressModelId: modelId,
       }),
@@ -884,8 +882,7 @@ async function configureImageProvider(providerType: "openai" | "google") {
     method: "POST",
     body: JSON.stringify({
       chatModelId: settings.chatModelId,
-      titleModelId: settings.titleModelId,
-      suggestionModelId: settings.suggestionModelId,
+      fastModelId: settings.fastModelId,
       translateModeId: settings.translateModeId,
       compressModelId: settings.compressModelId,
       ocrModelId: settings.ocrModelId,

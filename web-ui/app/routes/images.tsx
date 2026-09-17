@@ -257,9 +257,8 @@ export default function ImagesPage() {
       setSettings(next);
       await api.post("settings/default-models", {
         chatModelId: settings.chatModelId,
-        titleModelId: settings.titleModelId,
+        fastModelId: settings.fastModelId,
         translateModeId: settings.translateModeId,
-        suggestionModelId: settings.suggestionModelId,
         imageGenerationModelId: modelId,
         ocrModelId: settings.ocrModelId,
         compressModelId: settings.compressModelId,

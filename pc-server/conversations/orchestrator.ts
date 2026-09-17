@@ -464,7 +464,7 @@ setOnQueuedGenerationDispatched((conversationId, item) => {
 
 async function runPostGenerationTasks(conversationId: string, snapshot: Conversation, assistantMessageId: string) {
   const liveConversation = () => getConversation(conversationId);
-  if (shouldAutoGenerateTitle(snapshot) && modelExists(state.settings.titleModelId)) {
+  if (shouldAutoGenerateTitle(snapshot) && modelExists(state.settings.fastModelId)) {
     try {
       const title = await generateTitleForConversation(snapshot);
       const live = liveConversation();
@@ -508,7 +508,7 @@ async function runPostGenerationTasks(conversationId: string, snapshot: Conversa
     }
   }
 
-  if (modelExists(state.settings.suggestionModelId)) {
+  if (modelExists(state.settings.fastModelId)) {
     try {
       const suggestions = await generateSuggestionsForConversation(snapshot);
       const live = liveConversation();

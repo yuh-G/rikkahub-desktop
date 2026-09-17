@@ -83,8 +83,8 @@ async function installUpstream(turns: FakeSseTurn[], opts?: { reasoningModel?: b
   }];
   next.settings.providers = [ourProvider];
   next.settings.chatModelId = ourModel.id;
-  next.settings.titleModelId = "";
-  next.settings.suggestionModelId = "";
+  // 关闭标题/建议等后台任务(快速模型置空),让测试只关注主生成路径。
+  next.settings.fastModelId = "";
   setState(next as State);
   return server;
 }

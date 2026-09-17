@@ -480,7 +480,7 @@
   },
   "models": {
     "title": "默认模型与提示词",
-    "subtitle": "为聊天、标题、翻译、建议、OCR、压缩等场景分别指定默认模型和 Prompt。",
+    "subtitle": "为聊天、快速模型、翻译、OCR、压缩等场景分别指定默认模型和 Prompt。",
     "note": "这里只显示已通过供应商测试的模型。标题、翻译、建议回复、OCR 和压缩 Prompt 均预置了合理的默认模板，点右侧工具按钮可查看和恢复默认值。",
     "not_set": "未设置",
     "autosaved": "已自动保存",
@@ -489,6 +489,10 @@
     "variables_label": "变量：",
     "reset_default": "恢复默认",
     "done": "完成",
+    "fast_tab": {
+      "title": "标题",
+      "suggestion": "建议回复"
+    },
     "compress_engine": {
       "chat": "对话引擎",
       "pi": "工作区引擎 (pi)",
@@ -519,17 +523,13 @@
         "title": "提示词优化",
         "desc": "对话输入框「优化提示词」按钮使用这个模型，把你的草稿改写得更清晰专业。"
       },
-      "title": {
-        "title": "标题生成",
-        "desc": "对话首次回复后读取最近消息自动生成会话标题。"
+      "fast": {
+        "title": "快速模型",
+        "desc": "标题生成、建议回复等轻量后台任务共用这个模型。点右上角可分别编辑标题与建议的 Prompt。"
       },
       "translate": {
         "title": "翻译",
         "desc": "AI 回复下方翻译按钮使用这个模型和 Prompt。"
-      },
-      "suggestion": {
-        "title": "建议回复",
-        "desc": "回复完成后生成 3 到 5 条用户可点选建议。"
       },
       "compress": {
         "title": "上下文压缩",

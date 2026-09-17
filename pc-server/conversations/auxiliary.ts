@@ -70,9 +70,9 @@ export async function generateTitleForConversation(conversation: Conversation) {
     locale: localeDisplayName(),
     content: selectedConversationMessages(conversation).slice(-4).map(summaryAsText).join("\n\n"),
   });
-  const text = await fetchAuxiliaryText(state.settings.titleModelId, prompt, "title", {
-    reasoningLevel: "off",
-  });
+  // 快速模型(对齐 APP fastModelId)。推理档不传 → 默认 auto:让模型自行决定是否思考,
+  // 不再硬编码 "off"(部分新模型思考不可关,硬关反而出错;APP 亦默认 AUTO)。
+  const text = await fetchAuxiliaryText(state.settings.fastModelId, prompt, "title");
   return limitAuxiliaryText(
     firstAuxiliaryLine(cleanAuxiliaryText(text, limitAuxiliaryText(firstText, TITLE_CHARACTER_LIMIT) || "New Conversation")),
     TITLE_CHARACTER_LIMIT,
@@ -386,9 +386,7 @@ export async function generateSuggestionsForConversation(conversation: Conversat
     locale: localeDisplayName(),
     content: selectedConversationMessages(conversation).slice(-8).map(summaryAsText).join("\n\n"),
   });
-  const text = await fetchAuxiliaryText(state.settings.suggestionModelId, prompt, "suggestion", {
-    reasoningLevel: "off",
-  });
+  const text = await fetchAuxiliaryText(state.settings.fastModelId, prompt, "suggestion");
   return uniqueStrings(
     text
       .split(/\r?\n/)
