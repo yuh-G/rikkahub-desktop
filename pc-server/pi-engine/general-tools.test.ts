@@ -21,7 +21,7 @@ const { defaultState } = await import("../app-config/defaults");
 // 注意:store.state 是 live binding,解构成局部 const 会拿到 import 时的旧值(undefined)。
 const store = await import("../persistence/json-store");
 
-import type { Assistant, Conversation, State } from "../foundation/types";
+import type { Assistant, Conversation, Model, State } from "../foundation/types";
 import type { GenerationEvent } from "../inference-engine/events";
 
 const priorState = store.state;
@@ -111,6 +111,20 @@ describe("工具面枚举", () => {
     const alpha = createPiGeneralTools(withMcp).find((tool) => tool.name === "mcp__alpha");
     expect(alpha?.description).toBe("Alpha tool");
     expect((alpha?.parameters as { properties?: Record<string, unknown> }).properties).toHaveProperty("q");
+  });
+
+  // 防双搜(对齐安卓 shouldUseExternalWebSearch):pi 引擎经同一注入源 openAiSearchTools
+  // 消费同一谓词。模型声明内置 search 时外挂 search_web/scrape_web 让位,与聊天引擎同闸。
+  test("模型带内置 search → 外挂搜索让位(防双搜同闸)", () => {
+    const { ctx } = fixture({ mcpServers: [] });
+    const builtIn = { ...ctx, model: { tools: ["search"] } as unknown as Model };
+    const names = createPiGeneralTools(builtIn).map((tool) => tool.name);
+    expect(names).not.toContain("search_web");
+    expect(names).not.toContain("scrape_web");
+
+    // 无内置搜索的模型(常态)→ 外挂照常,证明让位是内置 search 触发而非误伤。
+    const plain = { ...ctx, model: { tools: [] } as unknown as Model };
+    expect(createPiGeneralTools(plain).map((tool) => tool.name)).toContain("search_web");
   });
 });
 

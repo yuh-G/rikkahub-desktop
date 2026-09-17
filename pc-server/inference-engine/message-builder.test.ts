@@ -17,6 +17,7 @@ import {
   reasoningPayloadForProvider,
   responseApiContentFromUiParts,
   responseApiMessagesFromUiMessages,
+  shouldUseExternalWebSearch,
   supportsInputModality,
 } from "./message-builder";
 import type { MessagePart, Model, Provider } from "../foundation/types";
@@ -464,5 +465,35 @@ describe("responseApiMessagesFromUiMessages — 历史 reasoning 项方言（202
     const assistantTurn = items.find((item) => Array.isArray(item.tool_calls))!;
     const toolCalls = assistantTurn.tool_calls as Array<{ function: { arguments: string } }>;
     expect(toolCalls[0]!.function.arguments).toBe("{}");
+  });
+});
+
+// 防双搜裁决(对齐安卓 ChatToolFactory.kt:21):外挂 search_web 与模型内置搜索互斥。
+// 这是外挂搜索注入源(openAiSearchTools)的唯一门控,聊天/pi/未来引擎同口消费,
+// 谓词回归会直接打破 Responses 路的内置/外挂互斥 → 双搜。
+describe("shouldUseExternalWebSearch — 内置/外挂搜索互斥", () => {
+  const builtInSearchModel = { tools: ["search"] } as unknown as Model;
+  const builtInSearchObjModel = { tools: [{ type: "search" }] } as unknown as Model;
+  const plainModel = { tools: [] } as unknown as Model;
+
+  test("模型带内置 search(字符串或对象形态)→ 外挂让位,无视全局开关", () => {
+    expect(shouldUseExternalWebSearch(true, builtInSearchModel)).toBe(false);
+    expect(shouldUseExternalWebSearch(true, builtInSearchObjModel)).toBe(false);
+    // 大小写不敏感(与 hasBuiltInTool 同口径)。
+    expect(shouldUseExternalWebSearch(true, { tools: ["Search"] } as unknown as Model)).toBe(false);
+  });
+
+  test("模型无内置 search → 跟随全局开关", () => {
+    expect(shouldUseExternalWebSearch(true, plainModel)).toBe(true);
+    expect(shouldUseExternalWebSearch(false, plainModel)).toBe(false);
+    // 无 tools 字段 / null 模型 → 视为无内置搜索,不阻断外挂。
+    expect(shouldUseExternalWebSearch(true, {} as Model)).toBe(true);
+    expect(shouldUseExternalWebSearch(true, null)).toBe(true);
+    expect(shouldUseExternalWebSearch(true, undefined)).toBe(true);
+  });
+
+  test("全局开关关闭时,任何模型都不注入外挂", () => {
+    expect(shouldUseExternalWebSearch(false, builtInSearchModel)).toBe(false);
+    expect(shouldUseExternalWebSearch(false, null)).toBe(false);
   });
 });

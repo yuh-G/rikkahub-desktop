@@ -142,7 +142,7 @@ export async function callProvider(
     const messages = messagesForApi;
     const systemContent = messages.find((item) => item.role === "system")?.content;
     const functionTools = supportsAbility(picked.model, "TOOL")
-      ? conversationFunctionTools(assistant)
+      ? conversationFunctionTools(assistant, picked.model)
       : [];
     const claudeTools = claudeToolsFromOpenAiTools(functionTools, providerItem);
     const normalizedReasoning = reasoningLevelNormalized(assistant.reasoningLevel);
@@ -181,7 +181,7 @@ export async function callProvider(
 
   headers.Authorization = `Bearer ${providerItem.apiKey}`;
   if (providerItem.useResponseApi) {
-    const functionTools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant) : [];
+    const functionTools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant, picked.model) : [];
     const builtInTools = responseApiBuiltInTools(picked.model);
     const systemContent = conversationResponseApiInstructions(conversation, assistant);
     const reasoning = responseApiReasoningForProvider(providerItem, picked.model, assistant.reasoningLevel);
@@ -211,7 +211,7 @@ export async function callProvider(
     if (!body.tools.length) delete body.tools;
     return fetchText(url, headers, applyCustomBody(body, assistant, picked.model), providerItem, (raw) => raw.output_text ?? raw.output?.flatMap((item: any) => item.content ?? []).map((item: any) => item.text ?? "").join("\n"), signal);
   }
-  const tools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant) : [];
+  const tools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant, picked.model) : [];
   body = {
     model: selectedModel,
     messages: messagesForApi,
@@ -255,7 +255,7 @@ export async function callProviderStreaming(
     // 默认 true，仅当用户显式关闭时才不回传历史 reasoning_content。
     providerItem.type === "openai" ? providerItem.includeHistoryReasoning !== false : true,
   );
-  const tools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant) : [];
+  const tools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant, picked.model) : [];
   const hooks: StreamHooksWithSink = {
     message: assistantMessage,
     conversation,
@@ -667,7 +667,7 @@ async function runPiWorkspaceGeneration(
     resources,
     tools: [
       ...createPiWorkspaceTools({ conversation, assistant: deps.assistant, sink }),
-      ...createPiGeneralTools({ conversation, assistant: deps.assistant, sink, messageNodeId: assistantNode.id }),
+      ...createPiGeneralTools({ conversation, assistant: deps.assistant, sink, messageNodeId: assistantNode.id, model: deps.selectedModel }),
     ],
     sink,
     signal,

@@ -659,6 +659,22 @@ export function hasBuiltInTool(modelItem: Model, toolType: string) {
 }
 
 
+/** 防双搜唯一裁决(对齐安卓 ChatToolFactory.kt:21 shouldUseExternalWebSearch):
+ *  全局外挂搜索开关开 **且** 模型未声明内置 search 时,才允许注入外挂 search_web。
+ *  模型自带内置搜索(Google googleSearch / OpenAI Responses web_search)时,外挂必须
+ *  让位——否则同一轮模型手里同时攥着"服务端内置搜索"和"外挂 search_web"两套,可能
+ *  重复调用、结果打架。Google 路在 conversation-encoding 已天然互斥(内置优先整组
+ *  functionDeclarations 不发);本谓词补的是 OpenAI Responses 路(orchestrator 把
+ *  functionTools 与 responseApiBuiltInTools 并列发出)与一切未来引擎。
+ *
+ *  单源纪律:外挂 search_web 的唯一注入源 openAiSearchTools(tools/bound)经本谓词门控,
+ *  聊天引擎(conversationFunctionTools)与 pi 引擎(createPiGeneralTools)同口消费——
+ *  未来新引擎只要从同一注入源取外挂搜索,天然继承本闸,无需各自复刻判定。 */
+export function shouldUseExternalWebSearch(enableWebSearch: boolean, modelItem: Model | null | undefined) {
+  return enableWebSearch && !(modelItem && hasBuiltInTool(modelItem, "search"));
+}
+
+
 export function responseApiBuiltInTools(modelItem: Model) {
   const tools: Record<string, JsonValue>[] = [];
   if (hasBuiltInTool(modelItem, "search")) tools.push({ type: "web_search" });

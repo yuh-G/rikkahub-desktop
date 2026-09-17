@@ -25,7 +25,7 @@
 // 在引擎记忆里双写);仅当 entries 含图片/多条目时才带,桥按有无 app 标记选路。
 
 import type { ToolDefinition } from "../../pi/packages/coding-agent/src/core/extensions/types.ts";
-import type { Assistant, Conversation, JsonValue, ToolOutputEntry } from "../foundation/types";
+import type { Assistant, Conversation, JsonValue, Model, ToolOutputEntry } from "../foundation/types";
 import type { GenerationEventSink } from "../inference-engine/events";
 import { openAiLocalTools, openAiMcpTools, openAiSearchTools } from "../tools/bound";
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
@@ -44,6 +44,10 @@ export interface PiGeneralToolsContext {
   sink: GenerationEventSink;
   /** save_memory 待确认队列的来源标注(当前 ASSISTANT 节点,与聊天路径同口径)。 */
   messageNodeId?: string;
+  /** 生效模型。用于外挂 search_web 的防双搜门控(openAiSearchTools 单源谓词):模型
+   *  已声明内置 search 时外挂让位。pi 引擎当前不接内置搜索(只挂外挂),传它是为了与
+   *  聊天引擎同一注入源同一判定——未来 pi 接内置搜索或新引擎照抄时零成本继承。 */
+  model?: Model | null;
 }
 
 /** entries → pi AgentToolResult。模型面文本与聊天引擎 resolvedToolOutput 同源
@@ -142,7 +146,7 @@ function buildAskUserTool(
  *  这里天然为空——用户没启用 MCP 时 pi 会话零 MCP 工具(§3.2)。 */
 export function createPiGeneralTools(ctx: PiGeneralToolsContext): ToolDefinition[] {
   const declarations = [
-    ...openAiSearchTools(),
+    ...openAiSearchTools(ctx.model),
     ...openAiLocalTools(ctx.assistant).filter(
       (tool) => tool.function.name === "save_memory" || tool.function.name === ASK_USER_TOOL_NAME,
     ),
