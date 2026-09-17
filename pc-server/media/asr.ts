@@ -180,6 +180,16 @@ function asrPublishTranscript(session: AsrRealtimeSession) {
   asrSendClient(session, { type: "transcript", transcript });
 }
 
+/** 服务端 VAD 判停信号(语音模式专用):一句话说完、转写定稿时推一次。携带该句最终文本,
+ *  前端据此收尾当前 utterance 并触发发送。去抖——同一句只推一次(Volcengine definite 会随
+ *  累积全文重复到达;OpenAI/DashScope completed 本就一次)。 */
+function asrSendTurnEnd(session: AsrRealtimeSession, text: string) {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed === session.lastTurnEndText) return;
+  session.lastTurnEndText = trimmed;
+  asrSendClient(session, { type: "turn_end", transcript: trimmed });
+}
+
 function asrFail(session: AsrRealtimeSession, message: string) {
   if (session.finished) return;
   asrSendClient(session, { type: "error", error: message });
@@ -281,6 +291,8 @@ function handleTextAsrEvent(session: AsrRealtimeSession, text: string) {
       session.partialTranscripts.delete(itemId);
       if (transcript) session.completedTranscripts.push(transcript);
       asrPublishTranscript(session);
+      // 一句话定稿 = 服务端 VAD 判停;通知语音模式收尾(听写模式忽略此消息)。
+      if (transcript) asrSendTurnEnd(session, transcript);
       break;
     }
     case "error": {
@@ -347,6 +359,15 @@ function handleVolcAsrEvent(session: AsrRealtimeSession, data: ArrayBuffer) {
       session.lastText = text;
       asrSendClient(session, { type: "transcript", transcript: text });
     }
+    // 火山 VAD 判停:utterances[*].definite=true 表示该句经二遍纠错定稿。取定稿句文本推 turn_end;
+    // definite 句会随累积全文重复到达,靠 asrSendTurnEnd 的去抖(lastTurnEndText)只推一次。
+    const utterances = (raw.result?.utterances ?? []) as Array<Record<string, any>>;
+    const definiteText = utterances
+      .filter((u) => u?.definite === true)
+      .map((u) => String(u?.text ?? ""))
+      .join("")
+      .trim();
+    if (definiteText) asrSendTurnEnd(session, definiteText);
   } else if (messageType === 0x0f) {
     if (offset + 8 > buffer.length) return;
     offset += 4;
@@ -401,6 +422,7 @@ export function startAsrRealtimeSession(client: any, providerId?: string) {
     finished: false,
     startedAt: Date.now(),
     volcSequence: 1,
+    lastTurnEndText: "",
   };
   asrRealtimeSessions.set(client, session);
   const headers: Record<string, string> = provider.type === "volcengine"

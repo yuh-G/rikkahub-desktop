@@ -15,11 +15,13 @@ import type { MessagePart } from "../foundation/types";
 import { id } from "../foundation/utils";
 import { textFromParts } from "../foundation/utils";
 
-/** 单个排队项(引擎无关)。parts 即下一条 generateAnswer 的用户输入快照(入队时已不可变拷贝)。 */
+/** 单个排队项(引擎无关)。parts 即下一条 generateAnswer 的用户输入快照(入队时已不可变拷贝)。
+ *  waitingReply:语音模式标记——派发此项生成后,需把该轮 assistant 文本经回复通道交付等待方。 */
 export interface QueuedGeneration {
   id: string;
   parts: MessagePart[];
   createdAt: number;
+  waitingReply?: boolean;
 }
 
 interface QueueState {
@@ -44,6 +46,34 @@ export interface MessageQueueSnapshot {
 /** 会话级发送队列注册表(内存态,随 working-set 生命周期;不落库)。 */
 const queues = new Map<string, QueueState>();
 
+/** 语音模式回复通道:被派发排队的生成在收尾后,把该轮 assistant 文本 resolve 给等待方。
+ *  键 = `${conversationId}:${queuedItemId}`(以排队项 id 为唯一凭据,派发即确定,不受期间
+ *  其他消息影响)。仅语音模式注册;键盘走 SSE,不依赖此通道。值 null = 无回复可播报
+ *  (空回复/失败/stop/被移除/清队列),语音模式据此跳过播报、直接重开麦。 */
+const queuedReplyWaiters = new Map<string, (text: string | null) => void>();
+
+function replyKey(conversationId: string, queuedItemId: string): string {
+  return `${conversationId}:${queuedItemId}`;
+}
+
+/** 注册「等这条排队生成的回复文本」。返回 Promise,在收尾/移除/清队列时恰好 resolve 一次。 */
+export function waitForQueuedReply(conversationId: string, queuedItemId: string): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    // 单等待方语义:同键重复注册时先释放旧的(resolve null),防泄漏。
+    deliverQueuedReply(conversationId, queuedItemId, null);
+    queuedReplyWaiters.set(replyKey(conversationId, queuedItemId), resolve);
+  });
+}
+
+/** 收尾时交付回复文本(编排层成功路径调用);无等待方或重复交付皆幂等空操作。 */
+export function deliverQueuedReply(conversationId: string, queuedItemId: string, text: string | null): void {
+  const key = replyKey(conversationId, queuedItemId);
+  const resolve = queuedReplyWaiters.get(key);
+  if (!resolve) return;
+  queuedReplyWaiters.delete(key);
+  resolve(text && text.trim().length > 0 ? text : null);
+}
+
 function ensureQueue(conversationId: string): QueueState {
   let q = queues.get(conversationId);
   if (!q) {
@@ -54,8 +84,8 @@ function ensureQueue(conversationId: string): QueueState {
 }
 
 /** 入队一条待生成。parts 取不可变快照,防调用方后续改草稿污染队列(对齐 APP toList() 快照纪律)。 */
-export function enqueueMessage(conversationId: string, parts: MessagePart[]): QueuedGeneration {
-  const item: QueuedGeneration = { id: id(), parts: parts.map((p) => ({ ...p })), createdAt: Date.now() };
+export function enqueueMessage(conversationId: string, parts: MessagePart[], opts?: { waitingReply?: boolean }): QueuedGeneration {
+  const item: QueuedGeneration = { id: id(), parts: parts.map((p) => ({ ...p })), createdAt: Date.now(), waitingReply: opts?.waitingReply };
   ensureQueue(conversationId).items.push(item);
   return item;
 }
@@ -86,13 +116,15 @@ export function resumeMessageQueue(conversationId: string): void {
   if (q) q.paused = false;
 }
 
-/** 删除指定排队项;返回被删项(供调用方回收其不再被引用的附件),不存在返回 null。 */
+/** 删除指定排队项;返回被删项(供调用方回收其不再被引用的附件),不存在返回 null。
+ *  该项若有人在等回复(语音模式),resolve null —— 消息被撤回,无可播报。 */
 export function removeQueuedMessage(conversationId: string, itemId: string): QueuedGeneration | null {
   const q = queues.get(conversationId);
   if (!q) return null;
   const idx = q.items.findIndex((it) => it.id === itemId);
   if (idx < 0) return null;
   const [removed] = q.items.splice(idx, 1);
+  if (removed) deliverQueuedReply(conversationId, removed.id, null);
   return removed ?? null;
 }
 
@@ -105,9 +137,15 @@ export function editQueuedMessage(conversationId: string, itemId: string, parts:
   return true;
 }
 
-/** 清空会话队列(会话删除/导入作废时调用)。幂等。 */
+/** 清空会话队列(会话删除/导入作废时调用)。幂等。挂起的语音回复等待一并 resolve null。 */
 export function clearMessageQueue(conversationId: string): void {
   queues.delete(conversationId);
+  for (const [key, resolve] of Array.from(queuedReplyWaiters)) {
+    if (key.startsWith(`${conversationId}:`)) {
+      queuedReplyWaiters.delete(key);
+      resolve(null);
+    }
+  }
 }
 
 /** 预览文本:取首段可见文本截断;无文本(纯附件)回退占位,前端按 hasAttachments 渲染 chip。 */
@@ -133,4 +171,14 @@ export function queueSnapshotFor(conversationId: string): MessageQueueSnapshot |
     })),
     paused: q.paused,
   };
+}
+
+/** 排队项被派发生成时回调(编排层注入,用于登记「该生成源自哪个排队项」)。仅语音模式
+ *  走「排队 + 回复通道」需要;键盘排队不需要取回回复,回调可空。模块级单回调,避免循环依赖。 */
+let queuedDispatchListener: ((conversationId: string, item: QueuedGeneration) => void) | null = null;
+export function setOnQueuedGenerationDispatched(listener: ((conversationId: string, item: QueuedGeneration) => void) | null): void {
+  queuedDispatchListener = listener;
+}
+export function notifyQueuedGenerationDispatched(conversationId: string, item: QueuedGeneration): void {
+  queuedDispatchListener?.(conversationId, item);
 }

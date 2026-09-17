@@ -19,6 +19,7 @@ import { getConversationMeta } from "./read-queries";
 import { generateAnswer } from "./orchestrator";
 import {
   clearMessageQueue,
+  deliverQueuedReply,
   editQueuedMessage,
   enqueueMessage,
   hasQueuedMessages,
@@ -29,6 +30,7 @@ import {
   removeQueuedMessage,
   resumeMessageQueue,
   shiftNextQueued,
+  waitForQueuedReply,
 } from "./message-queue";
 
 const priorState = state;
@@ -137,6 +139,29 @@ describe("message-queue 状态机", () => {
     expect(queueSnapshotFor(cid)).toBeNull();
     expect(isQueuePaused(cid)).toBe(false);
     clearMessageQueue(cid); // 幂等
+  });
+
+  test("语音回复通道:等待方在交付时收到文本;移除/清队列兜底 null", async () => {
+    const cid = "q-reply";
+    const item = enqueueMessage(cid, [{ type: "text", text: "语音一句" }], { waitingReply: true });
+    expect(item.waitingReply).toBe(true);
+    // 交付正常文本。
+    const p1 = waitForQueuedReply(cid, item.id);
+    deliverQueuedReply(cid, item.id, "回复文本");
+    await expect(p1).resolves.toBe("回复文本");
+    // 重复交付/未注册项幂等空操作。
+    deliverQueuedReply(cid, item.id, "again");
+    deliverQueuedReply(cid, "nonexistent", "x");
+    // 移除排队项 → 等待方 resolve null(消息被撤回,无可播报)。
+    const item2 = enqueueMessage(cid, [{ type: "text", text: "将被移除" }], { waitingReply: true });
+    const p2 = waitForQueuedReply(cid, item2.id);
+    removeQueuedMessage(cid, item2.id);
+    await expect(p2).resolves.toBeNull();
+    // 清队列 → 挂起等待 resolve null。
+    const item3 = enqueueMessage(cid, [{ type: "text", text: "清队列" }], { waitingReply: true });
+    const p3 = waitForQueuedReply(cid, item3.id);
+    clearMessageQueue(cid);
+    await expect(p3).resolves.toBeNull();
   });
 });
 

@@ -35,7 +35,7 @@ import { DEFAULT_TRANSLATION_PROMPT } from "../../app-config/prompts";
 import { attachOcrToImageParts, compressConversation, englishLanguageName, fetchAuxiliaryText, generateTitleForConversation, isQwenMtModel, markOcrPendingParts } from "../../conversations/auxiliary";
 import { compactEngineConversation, dispatchMessageQueue, generateAnswer, resolveEngineForConversation } from "../../conversations/orchestrator";
 import { deleteConversationsById, ensureConversation, findAssistant, finishInterruptedPendingToolsInConversation, hasPendingToolApproval } from "../../conversations/helpers";
-import { editQueuedMessage, enqueueMessage, pauseMessageQueue, removeQueuedMessage, resumeMessageQueue } from "../../conversations/message-queue";
+import { editQueuedMessage, enqueueMessage, pauseMessageQueue, removeQueuedMessage, resumeMessageQueue, waitForQueuedReply } from "../../conversations/message-queue";
 import { awaitingApproval, compressing, generating } from "../../conversations/generation-state";
 import { getWorkspace } from "../../workspace";
 import { resolveToolApproval } from "../../inference-engine/approval-gate";
@@ -398,6 +398,60 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       if (!ok) return error("Queue item not found", 404);
       broadcastConversation(conversation);
       return json({ status: "updated" });
+    }
+    if (sub === "voice/send" && request.method === "POST") {
+      // 语音模式:发送一条语音转写消息,并把本轮 assistant 文本回传(供 TTS 播报)。
+      // 复用消息发送队列(台账「与语音模式共用 MessageQueue」):空闲=同 send 直发,占用=入队
+      // 由收尾派发。回复通道与队列绑定——派发该排队项时登记来源,收尾交付文本;直接发则生成后读取。
+      if (compressing.has(conversation.id)) {
+        return error("已有压缩正在进行，请稍候", 409, "compress_in_progress");
+      }
+      const body = await readJson<{ parts?: JsonValue[] }>(request);
+      const text = textFromParts((body.parts ?? []) as MessagePart[]).trim();
+      if (!text) return error("Empty utterance", 400);
+      const assistant = findAssistant(conversation.assistantId);
+      const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
+      const processedParts = applyInputRegexTransformParts((body.parts ?? []) as MessagePart[], assistant);
+
+      const idle = !generating.has(conversation.id);
+      let reply: string | null;
+      if (idle) {
+        // 空闲直发(与 send 同构):用户消息落库 → 点火 → 等待生成收尾后读本条 assistant 文本。
+        const userMessage = message("USER", markOcrPendingParts(processedParts, picked.model));
+        bumpAnalyticsMsgCount();
+        const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
+        conversation.messages.push(userNode);
+        conversation.chatSuggestions = [];
+        conversation.updateAt = Date.now();
+        if (!conversation.title) conversation.title = "New Conversation";
+        persistConversation(conversation);
+        broadcastConversation(conversation);
+        reply = await (async () => {
+          checkoutConversation(conversation.id);
+          try {
+            userMessage.parts = await attachOcrToImageParts(userMessage.parts, picked.model);
+            if (getConversation(conversation.id) !== conversation) return null;
+            conversation.updateAt = Date.now();
+            persistConversation(conversation);
+            broadcastNodeUpdate(conversation, userNode);
+            await generateAnswer(conversation);
+            if (getConversation(conversation.id) !== conversation) return null;
+            // 读刚才生成的 assistant 消息(最后一条);abort/失败/空回复由文本为空兜成 null。
+            const lastNode = conversation.messages[conversation.messages.length - 1];
+            const assistantMsg = lastNode?.messages?.[lastNode.selectIndex];
+            const replyText = assistantMsg?.role === "ASSISTANT" ? textFromParts(assistantMsg.parts).trim() : "";
+            return replyText.length > 0 ? replyText : null;
+          } finally {
+            releaseConversation(conversation.id);
+          }
+        })();
+      } else {
+        // 生成中:入队(waitingReply 标记),等收尾派发 → 生成 → 回复通道交付文本。
+        const item = enqueueMessage(conversation.id, processedParts, { waitingReply: true });
+        broadcastConversation(conversation);
+        reply = await waitForQueuedReply(conversation.id, item.id);
+      }
+      return json({ status: "ok", reply });
     }
     if (sub === "regenerate-title" && request.method === "POST") {
       try {

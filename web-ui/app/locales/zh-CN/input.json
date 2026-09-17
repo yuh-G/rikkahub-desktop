@@ -165,6 +165,20 @@
     "start": "语音识别",
     "stop": "停止语音识别"
   },
+  "voice": {
+    "start": "语音模式",
+    "title": "语音模式",
+    "end": "结束",
+    "retry": "重试",
+    "connecting": "正在连接…",
+    "listening": "正在聆听，说完自动发送",
+    "transcribing": "正在整理识别结果…",
+    "speaking": "正在朗读回复，结束后继续聆听",
+    "error_title": "语音模式已暂停",
+    "not_configured": "请先在设置中选择支持实时识别的语音服务",
+    "mic_denied": "无法访问麦克风，请检查系统权限",
+    "connect_failed": "语音识别连接失败"
+  },
   "workspace_permission": {
     "title": "工作区权限",
     "confirm_each": "询问批准",

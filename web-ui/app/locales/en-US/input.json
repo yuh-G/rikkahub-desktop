@@ -165,6 +165,20 @@
     "start": "Voice input",
     "stop": "Stop voice input"
   },
+  "voice": {
+    "start": "Voice mode",
+    "title": "Voice mode",
+    "end": "End",
+    "retry": "Retry",
+    "connecting": "Connecting…",
+    "listening": "Listening; your message sends when you finish speaking",
+    "transcribing": "Finalizing transcription…",
+    "speaking": "Reading the reply aloud; listening resumes afterward",
+    "error_title": "Voice mode paused",
+    "not_configured": "Select a realtime-capable speech service in Settings first",
+    "mic_denied": "Cannot access the microphone; check system permission",
+    "connect_failed": "Speech recognition connection failed"
+  },
   "workspace_permission": {
     "title": "Workspace permissions",
     "confirm_each": "Ask to approve",

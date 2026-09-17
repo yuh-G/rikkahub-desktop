@@ -1,6 +1,7 @@
 import * as React from "react";
 
-import { ArrowUp, File, FileDown, Image, LoaderCircle, Mic, Plus, Scissors, Sparkles, Square, TriangleAlert, Undo2, Video, X, Zap } from "lucide-react";
+import { ArrowUp, File, FileDown, Image, LoaderCircle, Mic, PhoneCall, Plus, Scissors, Sparkles, Square, TriangleAlert, Undo2, Video, X, Zap } from "lucide-react";
+import { startMicCapture } from "~/lib/voice/mic-capture";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -43,6 +44,10 @@ export interface ChatInputProps {
   onSuggestionClick?: (suggestion: string) => void;
   onExportConversation?: (includeReasoning: boolean) => void;
   onCompressConversation?: () => void;
+  /** 语音模式切换(仅当选中的 ASR 服务支持 server-VAD 时由父级传入;否则不显示入口)。 */
+  onToggleVoiceMode?: () => void;
+  /** 语音模式是否激活(控制入口高亮)。 */
+  voiceModeActive?: boolean;
   /** 斜杠指令:当前环境可用清单(服务端 GET /api/commands 权威判定;缺省/空 =
    *  指令面整体关闭,推荐列表/染色/拦截均不生效)。 */
   slashCommands?: SlashCommandDto[];
@@ -63,8 +68,6 @@ const IMAGE_UPLOAD_ACCEPT = "image/*";
 const SLASH_MENU_ID = "chat-slash-command-menu";
 const EMPTY_SLASH_COMMANDS: SlashCommandDto[] = [];
 
-const ASR_FRAME_SIZE = 4096;
-
 function websocketApiUrl(path: string) {
   const base =
     typeof window === "undefined"
@@ -72,31 +75,6 @@ function websocketApiUrl(path: string) {
       : window.location.origin.replace(/^http/i, "ws");
   // WebSocket 无法携带 Authorization header，启用 web 鉴权时 token 走 access_token query
   return `${base}${appendWebAuthQuery(`/api/${path.replace(/^\/+/, "")}`)}`;
-}
-
-function resampleLinear(input: Float32Array, inputRate: number, outputRate: number) {
-  if (inputRate === outputRate) return input;
-  const ratio = inputRate / outputRate;
-  const outputLength = Math.max(1, Math.round(input.length / ratio));
-  const output = new Float32Array(outputLength);
-  for (let i = 0; i < outputLength; i++) {
-    const sourceIndex = i * ratio;
-    const left = Math.floor(sourceIndex);
-    const right = Math.min(input.length - 1, left + 1);
-    const weight = sourceIndex - left;
-    output[i] = input[left] * (1 - weight) + input[right] * weight;
-  }
-  return output;
-}
-
-function floatToPcm16(input: Float32Array) {
-  const buffer = new ArrayBuffer(input.length * 2);
-  const view = new DataView(buffer);
-  for (let i = 0; i < input.length; i++) {
-    const sample = Math.max(-1, Math.min(1, input[i]));
-    view.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-  }
-  return buffer;
 }
 
 function partLabel(part: UIMessagePart, t: (key: string) => string): string {
@@ -276,6 +254,8 @@ function ChatInputInner({
   onSuggestionClick,
   onExportConversation,
   onCompressConversation,
+  onToggleVoiceMode,
+  voiceModeActive = false,
   slashCommands,
   onSlashCommand,
   getOptimizeContext,
@@ -360,12 +340,8 @@ function ChatInputInner({
   const [error, setError] = React.useState<string | null>(null);
   const [asrListening, setAsrListening] = React.useState(false);
   const asrSocketRef = React.useRef<WebSocket | null>(null);
-  const asrAudioContextRef = React.useRef<AudioContext | null>(null);
-  const asrSourceRef = React.useRef<MediaStreamAudioSourceNode | null>(null);
-  const asrProcessorRef = React.useRef<ScriptProcessorNode | null>(null);
-  const asrStreamRef = React.useRef<MediaStream | null>(null);
-  const asrFrameRef = React.useRef<Int16Array[]>([]);
-  const asrFrameSamplesRef = React.useRef(0);
+  // 麦克风采集由共享 mic-capture 承担(与语音模式同一实现),这里只持有其清理句柄。
+  const asrCaptureRef = React.useRef<{ stop: () => void } | null>(null);
   // 提示词优化:点击后把输入框原文发给"提示词优化模型",返回的优化版直接替换输入框。
   // 优化成功后在优化按钮旁显示常驻"撤销"按钮(不走 toast —— toast 几秒就消失,用户来不及点
   // 或事后想反悔就没机会了)。originalBeforeOptimize 保存原文,点撤销即恢复;重新优化 / 发送
@@ -431,16 +407,8 @@ function ChatInputInner({
   const actionDisabled = submitting || uploading || (!canStop && !canSend);
 
   const releaseAsrResources = React.useCallback(() => {
-    asrProcessorRef.current?.disconnect();
-    asrProcessorRef.current = null;
-    asrSourceRef.current?.disconnect();
-    asrSourceRef.current = null;
-    void asrAudioContextRef.current?.close().catch(() => undefined);
-    asrAudioContextRef.current = null;
-    asrStreamRef.current?.getTracks().forEach((track) => track.stop());
-    asrStreamRef.current = null;
-    asrFrameRef.current = [];
-    asrFrameSamplesRef.current = 0;
+    asrCaptureRef.current?.stop();
+    asrCaptureRef.current = null;
   }, []);
 
   React.useEffect(() => {
@@ -599,18 +567,13 @@ function ChatInputInner({
         toast.error(t("asr.not_configured"));
         return;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
       const socket = new WebSocket(websocketApiUrl("asr/realtime"));
       socket.binaryType = "arraybuffer";
       asrSocketRef.current = socket;
-      asrStreamRef.current = stream;
+      const targetSampleRate = Math.max(
+        8000,
+        Number(provider.sampleRate || (provider.type === "openai_realtime" ? 24000 : 16000)),
+      );
       const baseText = value;
       let latestTranscript = "";
       const applyTranscript = (transcript: string) => {
@@ -623,48 +586,19 @@ function ChatInputInner({
       };
       socket.onopen = async () => {
         socket.send(JSON.stringify({ type: "start", providerId: provider.id }));
-        const AudioContextCtor =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        const audioContext = new AudioContextCtor();
-        const source = audioContext.createMediaStreamSource(stream);
-        const processor = audioContext.createScriptProcessor(4096, 1, 1);
-        asrAudioContextRef.current = audioContext;
-        asrSourceRef.current = source;
-        asrProcessorRef.current = processor;
-        const targetSampleRate = Math.max(
-          8000,
-          Number(provider.sampleRate || (provider.type === "openai_realtime" ? 24000 : 16000)),
-        );
-        processor.onaudioprocess = (event) => {
-          if (socket.readyState !== WebSocket.OPEN) return;
-          const channel = event.inputBuffer.getChannelData(0);
-          const pcmBuffer = floatToPcm16(
-            resampleLinear(channel, audioContext.sampleRate, targetSampleRate),
-          );
-          const chunk = new Int16Array(pcmBuffer);
-          asrFrameRef.current.push(chunk);
-          asrFrameSamplesRef.current += chunk.length;
-          while (asrFrameSamplesRef.current >= ASR_FRAME_SIZE) {
-            const frame = new Int16Array(ASR_FRAME_SIZE);
-            let offset = 0;
-            while (offset < ASR_FRAME_SIZE) {
-              const head = asrFrameRef.current[0];
-              const take = Math.min(head.length, ASR_FRAME_SIZE - offset);
-              frame.set(head.subarray(0, take), offset);
-              offset += take;
-              if (take === head.length) {
-                asrFrameRef.current.shift();
-              } else {
-                asrFrameRef.current[0] = head.subarray(take);
-              }
-              asrFrameSamplesRef.current -= take;
-            }
-            socket.send(frame.buffer);
-          }
-        };
-        source.connect(processor);
-        processor.connect(audioContext.destination);
+        try {
+          // 采集与 PCM 编码走共享实现(与语音模式同一份),帧直接推进本 socket。
+          const capture = await startMicCapture(targetSampleRate, (frame) => {
+            if (socket.readyState === WebSocket.OPEN) socket.send(frame);
+          });
+          asrCaptureRef.current = capture;
+        } catch (captureError) {
+          const message =
+            captureError instanceof Error ? captureError.message : t("asr.mic_denied");
+          setError(message);
+          toast.error(message);
+          stopAsr();
+        }
       };
       socket.onmessage = (event) => {
         if (typeof event.data !== "string") return;
@@ -1044,6 +978,24 @@ function ChatInputInner({
                 disabled={!canUseQuickMessage}
                 onSelect={handleQuickMessageSelect}
               />
+              {onToggleVoiceMode ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={onToggleVoiceMode}
+                  className={cn(
+                    "size-8 rounded-full toolbar-btn",
+                    voiceModeActive
+                      ? "bg-[var(--ds-brand-primary)]/15 text-[var(--ds-brand-primary)]"
+                      : "text-[var(--ds-icon)] hover:text-foreground",
+                  )}
+                  title={t("voice.start")}
+                  aria-pressed={voiceModeActive}
+                >
+                  <PhoneCall className="size-4" />
+                </Button>
+              ) : null}
               <SearchPickerButton disabled={!canSwitchModel} />
               <ExtensionPickerButton disabled={!canSwitchModel} />
               <WorkspaceFilesButton />

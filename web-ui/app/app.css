@@ -1751,4 +1751,78 @@
   box-shadow: var(--ds-menu-shadow-inset);
   pointer-events: none;
 }
+
+/* ── 语音模式(Siri 风)────────────────────────────────────────────── */
+/* 胶囊玻璃材质:在 --ds-pill-bg 之上叠真玻璃模糊,四角细高光,动态岛质感。
+   性能加固:@supports 门控——不支持 backdrop-filter 的老 GPU/浏览器退化为半透明
+   纯色底(无模糊采样,零 GPU 合成压力),视觉仍成立。 */
+.vm-pill {
+  background-color: var(--ds-pill-bg);
+  background-image: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.06),
+    transparent 40%
+  );
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .vm-pill {
+    background-color: color-mix(in srgb, var(--ds-pill-bg) 55%, transparent);
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  }
+}
+.dark .vm-pill {
+  background-image: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.08),
+    transparent 45%
+  );
+}
+
+/* 聆听声纹:五根细条按相位错落弹跳(复用 cpd 声纹的呼吸节奏,色随阶段)。 */
+.vm-wave-bar {
+  width: 2px;
+  height: 100%;
+  border-radius: 999px;
+  background-color: currentColor;
+  transform-origin: center;
+  animation: vm-wave 1s ease-in-out infinite;
+}
+.vm-wave-bar:nth-child(1) { height: 6px; }
+.vm-wave-bar:nth-child(2) { height: 13px; }
+.vm-wave-bar:nth-child(3) { height: 16px; }
+.vm-wave-bar:nth-child(4) { height: 13px; }
+.vm-wave-bar:nth-child(5) { height: 6px; }
+@keyframes vm-wave {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+
+/* 朗读声环:两圈由内向外扩散消隐的柔波。 */
+.vm-ripple {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1.5px solid var(--ds-brand-primary);
+  opacity: 0;
+  animation: vm-ripple 1.6s ease-out infinite;
+}
+@keyframes vm-ripple {
+  0% { transform: scale(0.5); opacity: 0.7; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* 连接/转写呼吸点:缓慢明暗,表达"在准备/在整理"。 */
+.vm-breathe {
+  animation: vm-breathe 1.4s ease-in-out infinite;
+}
+@keyframes vm-breathe {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vm-wave-bar, .vm-ripple, .vm-breathe { animation: none; }
+}
+
 }

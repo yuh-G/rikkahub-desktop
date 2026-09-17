@@ -175,7 +175,15 @@
     "not_selected": "Not selected",
     "waiting_seconds": "Waiting {{seconds}}s",
     "cancel": "Cancel",
-    "cancelled": "Generation cancelled"
+    "cancelled": "Generation cancelled",
+    "select": "Select",
+    "selected_count": "{{count}} selected",
+    "select_all": "Select all",
+    "download_selected": "Download selected",
+    "delete_selected": "Delete selected",
+    "delete_selected_confirm": "Delete the selected {{count}} images? This cannot be undone.",
+    "delete_selected_done": "Deleted {{count}} images",
+    "download_started": "Downloading {{count}} images"
   },
   "web_auth_gate": {
     "title": "Web API is locked",

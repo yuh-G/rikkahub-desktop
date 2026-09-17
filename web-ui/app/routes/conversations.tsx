@@ -11,6 +11,8 @@ import { ConversationSidebar } from "~/components/conversation-sidebar";
 import { ConversationEmptyState } from "~/components/extended/conversation";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatInput } from "~/components/input/chat-input";
+import { VoiceModeBanner } from "~/components/input/voice-mode-banner";
+import { useVoiceModeState, voiceMode } from "~/lib/voice/voice-mode";
 import { MessageQueuePanel } from "~/components/input/message-queue-panel";
 import { GlobalDropZone } from "~/components/global-drop-zone";
 import { ChatMessage } from "~/components/message/chat-message";
@@ -568,6 +570,9 @@ interface ChatInputAreaProps {
   onStop?: () => Promise<void> | void;
   onExportConversation?: (includeReasoning: boolean) => void;
   onCompressConversation?: () => void;
+  /** 语音模式开关(仅当选中的 ASR 服务支持 server-VAD 时传入;否则输入区不显示入口)。 */
+  onToggleVoiceMode?: () => void;
+  voiceModeActive?: boolean;
   slashCommands?: SlashCommandDto[];
   onSlashCommand?: (name: string, argument: string) => Promise<boolean | void> | boolean | void;
   getOptimizeContext?: () => string;
@@ -586,6 +591,8 @@ const ChatInputArea = React.memo(function ChatInputArea({
   onStop,
   onExportConversation,
   onCompressConversation,
+  onToggleVoiceMode,
+  voiceModeActive,
   slashCommands,
   onSlashCommand,
   getOptimizeContext,
@@ -640,6 +647,8 @@ const ChatInputArea = React.memo(function ChatInputArea({
       onStop={onStop}
       onExportConversation={onExportConversation}
       onCompressConversation={onCompressConversation}
+      onToggleVoiceMode={onToggleVoiceMode}
+      voiceModeActive={voiceModeActive}
       slashCommands={slashCommands}
       onSlashCommand={onSlashCommand}
       getOptimizeContext={getOptimizeContext}
@@ -1829,6 +1838,31 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
     await api.post<{ status: string }>(`conversations/${activeId}/stop`);
   }, [activeId]);
 
+  // 语音模式(台账 §1.3):免提对话循环。入口在输入区,横幅在队列面板之上。
+  // 仅当选中的 ASR 服务支持 server-VAD(realtime)时可用——一次性 HTTP 识别只能做输入框听写。
+  const voiceState = useVoiceModeState();
+  const voiceActive = voiceState.phase !== "off";
+  const selectedAsrProvider = React.useMemo(
+    () => settings?.asrProviders?.find((item) => item.id === settings?.selectedASRProviderId) ?? null,
+    [settings],
+  );
+  const voiceCapable = Boolean(settings?.selectedASRProviderId && selectedAsrProvider);
+  const handleToggleVoiceMode = React.useCallback(() => {
+    if (voiceActive) {
+      voiceMode.stop();
+      return;
+    }
+    if (!activeId) return;
+    if (!settings?.selectedASRProviderId || !selectedAsrProvider) {
+      toast.error(t("input:voice.not_configured"));
+      return;
+    }
+    const sampleRate = Number(
+      selectedAsrProvider.sampleRate || (selectedAsrProvider.type === "openai_realtime" ? 24000 : 16000),
+    );
+    voiceMode.start(activeId, selectedAsrProvider.id, sampleRate);
+  }, [voiceActive, activeId, settings?.selectedASRProviderId, selectedAsrProvider, t]);
+
   const handleSaveConversationSystemPrompt = React.useCallback(async () => {
     if (!activeId || activeAssistantForConversation?.allowConversationSystemPrompt !== true) return;
     await api.post<{ status: string }>(`conversations/${activeId}/system-prompt`, {
@@ -2040,6 +2074,10 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
           {focused ? <TtsPlayBar /> : null}
           {/* pi 引擎瞬态状态条(P5):按窗格各自订阅本会话状态,分栏互不串扰。 */}
           <EngineStatusBar conversationId={activeId} />
+          {/* 语音模式横幅(免提对话循环;关闭时不渲染)。 */}
+          {voiceActive && activeId ? (
+            <VoiceModeBanner onEnd={() => voiceMode.stop()} onRetry={handleToggleVoiceMode} />
+          ) : null}
           {/* 消息发送队列面板(生成中补发排队;队空不渲染)。 */}
           {activeId ? (
             <MessageQueuePanel
@@ -2081,6 +2119,8 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
             }
             onCompressConversation={hasMessages ? handleCompressConversation : undefined}
             getOptimizeContext={getOptimizeContext}
+            onToggleVoiceMode={voiceCapable || voiceActive ? handleToggleVoiceMode : undefined}
+            voiceModeActive={voiceActive}
           />
         </div>
       </div>

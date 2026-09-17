@@ -5,11 +5,38 @@ import type { AsrProvider, TtsProvider } from "../../foundation/types";
 import { saveState, state } from "../../persistence/json-store";
 import { friendlyRequestError } from "../../foundation/net";
 import { cancelAllSystemTts } from "../../tools/platform";
+import { unlinkSync } from "node:fs";
 import { callImageGeneration } from "../../media/image-gen";
 import { defaultAsrProvider, normalizeAsrProviders, transcribeAudioWithAsrProvider } from "../../media/asr";
 import { DEFAULT_SYSTEM_TTS_ID, defaultTtsProvider, generateSpeechWithTtsProvider, normalizeTtsProviders } from "../../media/tts";
+import { extractedTextPath } from "../../files/index";
 import { error, json, readJson } from "../request";
 import { updateSettings } from "../../app-config";
+
+/**
+ * 删除一组生成图(账本 generatedImages + 关联 StoredFile + 磁盘字节 + 抽取旁车)。
+ * 修复既有缺口:原单删只摘 generatedImages 条目,文件字节与 files 账本永久残留(磁盘泄漏)。
+ * 与 files.ts 删除纪律一致:历史去重条目共享同一路径时,仅当无其余引用才删字节。
+ * 返回实际删除的图片数(已不存在的幂等跳过)。
+ */
+function deleteGeneratedImagesById(ids: string[]): number {
+  const idSet = new Set(ids.map(String));
+  const targets = state.generatedImages.filter((image) => idSet.has(image.id));
+  if (targets.length === 0) return 0;
+  state.generatedImages = state.generatedImages.filter((image) => !idSet.has(image.id));
+  for (const target of targets) {
+    if (target.fileId == null) continue;
+    // 先取路径再摘账本条目——顺序反了会查不到路径,字节就删不掉。
+    const filePath = state.files.find((file) => file.id === target.fileId)?.path;
+    state.files = state.files.filter((file) => file.id !== target.fileId);
+    if (filePath && !state.files.some((file) => file.path === filePath)) {
+      try { unlinkSync(filePath); } catch { /* 不存在/被锁,忽略 */ }
+    }
+    try { unlinkSync(extractedTextPath(target.fileId)); } catch { /* 无旁车 */ }
+  }
+  saveState();
+  return targets.length;
+}
 
 export async function handleMediaRoutes(request: Request, _url: URL, path: string): Promise<Response | null> {
   if (path === "settings/asr-provider/detail" && request.method === "POST") {
@@ -166,11 +193,19 @@ export async function handleMediaRoutes(request: Request, _url: URL, path: strin
       return error(friendlyRequestError(err, state.settings.proxyConfig), 502);
     }
   }
+  // 批量删除(图片多选):一次请求一次 saveState,原子;逐张删与单删同纪律(账本+字节+旁车)。
+  if (path === "images/batch-delete" && request.method === "POST") {
+    const body = await readJson<{ ids?: unknown }>(request);
+    const ids = Array.isArray(body.ids) ? body.ids.map(String).filter((s) => s.trim().length > 0) : [];
+    if (ids.length === 0) return error("ids required", 400);
+    const deleted = deleteGeneratedImagesById(ids);
+    return json({ status: "deleted", deleted });
+  }
   const generatedImageDelete = path.match(/^images\/([^/]+)$/);
   if (generatedImageDelete && request.method === "DELETE") {
     const imageId = decodeURIComponent(generatedImageDelete[1]);
-    state.generatedImages = state.generatedImages.filter((image) => image.id !== imageId);
-    saveState();
+    const deleted = deleteGeneratedImagesById([imageId]);
+    if (deleted === 0) return error("Image not found", 404);
     return json({ status: "deleted" });
   }
   return null;

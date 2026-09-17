@@ -609,4 +609,7 @@ export interface AsrRealtimeSession {
   finished: boolean;
   startedAt: number;
   volcSequence: number;
+  /** 语音模式去抖:上一个已发 turn_end 的 utterance 文本。Volcengine 的 definite=true 会随
+   *  累积 full-text 重复到达,凭此只在文本真正前进时才推一次「这句说完了」,防重复入队。 */
+  lastTurnEndText: string;
 }

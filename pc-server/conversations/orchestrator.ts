@@ -78,7 +78,7 @@ import { checkoutConversation, releaseConversation } from "./working-set";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
 import { awaitingApproval, generating } from "./generation-state";
-import { isQueuePaused, pauseMessageQueue, shiftNextQueued } from "./message-queue";
+import { deliverQueuedReply, isQueuePaused, notifyQueuedGenerationDispatched, pauseMessageQueue, setOnQueuedGenerationDispatched, shiftNextQueued } from "./message-queue";
 import {
   appendTextPart,
   canResumeToolExecution,
@@ -434,6 +434,8 @@ function dispatchQueuedHead(conversationId: string) {
   broadcastConversation(conversation);
   // 队列状态已变(少一条),面板立即刷新。
   broadcastQueueState(conversationId);
+  // 语音模式回复通道:登记本条生成源自哪个排队项(经 message-queue 回调,仅 waitingReply 项生效)。
+  notifyQueuedGenerationDispatched(conversationId, next);
   // 点火下一条。generateAnswer 入口自带「先中止旧流」不变式,但此处旧流已收尾(generating
   // 登记刚被 completeConversationGeneration 清除),它登记新 controller 并正常驱动。
   void generateAnswer(conversation);
@@ -449,6 +451,16 @@ export function dispatchMessageQueue(conversationId: string) {
   if (isQueuePaused(conversationId)) return;
   dispatchQueuedHead(conversationId);
 }
+
+/** 语音模式回复通道:登记「当前正在跑的排队生成」的源排队项 id。值仅存于内存,随收尾结算
+ *  后删除;并发安全靠 generateAnswer 的「先 abort 再接管」不变式(同会话同一时刻只跑一条)。 */
+const queuedGenerationSource = new Map<string, string>();
+/** 已交付回复的排队项 id(防同消息被接管重跑时重复交付)。键同排队项生命周期,交付后即弃。 */
+const deliveredQueuedGenerations = new Set<string>();
+// 排队项被派发即登记来源。回复等待只在语音模式注册(waitingReply),键盘排队不触发回复通道。
+setOnQueuedGenerationDispatched((conversationId, item) => {
+  if (item.waitingReply) queuedGenerationSource.set(conversationId, item.id);
+});
 
 async function runPostGenerationTasks(conversationId: string, snapshot: Conversation, assistantMessageId: string) {
   const liveConversation = () => getConversation(conversationId);
@@ -973,6 +985,13 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     });
     const snapshot = cloneConversation(conversation);
     void runPostGenerationTasks(conversation.id, snapshot, currentMessage.id);
+    // 语音模式回复通道:本条若源自「等回复的排队生成」,把该轮 assistant 文本交付等待方。
+    // 空正文交付 null(语音模式据此跳过播报)。已交付集合防「同消息被接管重跑」重复交付。
+    const replySourceId = queuedGenerationSource.get(conversation.id);
+    if (replySourceId && !deliveredQueuedGenerations.has(replySourceId)) {
+      deliveredQueuedGenerations.add(replySourceId);
+      deliverQueuedReply(conversation.id, replySourceId, textFromParts(currentMessage.parts));
+    }
   } catch (err) {
     if (!conversationStillExists(conversation.id)) {
       completeConversationGeneration(conversation.id, controller);
@@ -1019,6 +1038,13 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
       currentMessage.annotations.push({ type: "model_call_error", message: failureText });
     });
   } finally {
+    // 语音模式回复通道兜底:成功路径已交付;走到 finally 仍未交付 = 本条排队生成以
+    // abort/失败/被接管收尾(均无可播报回复),交付 null 让语音模式跳过播报、直接重开麦。
+    const replySourceId = queuedGenerationSource.get(conversation.id);
+    if (replySourceId && !deliveredQueuedGenerations.has(replySourceId)) {
+      deliveredQueuedGenerations.add(replySourceId);
+      deliverQueuedReply(conversation.id, replySourceId, null);
+    }
     // 消息发送队列:本条流彻底收尾后派发下一条。接管判据——generateAnswer 入口/set()前的
     // 中止、stop 端点、删会话都先把 generating delete 成空,故「登记为空」语义含糊(既可能是
     // 本流刚收尾,也可能是被 stop/删后本流仍在跑 finally)。真正的接管信号是「登记在册的是
