@@ -50,22 +50,30 @@ function messageTimestamp(msg: Message): Date | undefined {
   return Number.isFinite(parsed) ? new Date(parsed) : undefined;
 }
 
+// 间隔超过该阈值才在 USER 消息前补时间提醒(首条恒提醒)。刻意硬编码不开放给用户:
+// 这是感知类节奏阈值,用户无需感知;10min 对齐桌面 IM 场景(APP 出厂默认 60min 偏久,
+// 间隔 10min~1h 的回来接着聊才是桌面高频)。可调则必须补分钟级文案分支。
+const TIME_REMINDER_GAP_THRESHOLD_SECONDS = 10 * 60;
+
 function timeReminderContent(current: Message, previous?: Message) {
   const currentTime = new Date(current.createdAt);
   const weekday = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(currentTime);
   const timeText = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(currentTime);
   if (!previous) return `<time_reminder>Current time: ${weekday}, ${timeText}</time_reminder>`;
   const gapSeconds = Math.floor((Date.parse(current.createdAt) - Date.parse(previous.createdAt)) / 1000);
-  // createdAt 不可解析时 gapSeconds 为 NaN(NaN<=3600 为 false),原实现会输出 "NaN d",
-  // 用否定式条件一并挡掉;间隔 <=1h 不提醒,故不存在分钟级分支。
-  if (!(gapSeconds > 3600)) return "";
-  const gapText = gapSeconds < 86400
-    ? `${Math.floor(gapSeconds / 3600)} h`
-    : `${Math.floor(gapSeconds / 86400)} d`;
+  // createdAt 不可解析时 gapSeconds 为 NaN(NaN<=阈值 为 false),原实现会输出 "NaN d",
+  // 用否定式条件一并挡掉。三档文案与 APP TimeReminderTransformer.formatGap 一致(min/h/d)。
+  if (!(gapSeconds > TIME_REMINDER_GAP_THRESHOLD_SECONDS)) return "";
+  const gapText =
+    gapSeconds < 3600
+      ? `${Math.floor(gapSeconds / 60)} min`
+      : gapSeconds < 86400
+        ? `${Math.floor(gapSeconds / 3600)} h`
+        : `${Math.floor(gapSeconds / 86400)} d`;
   return `<time_reminder>Current time: ${weekday}, ${timeText} (${gapText} since last message)</time_reminder>`;
 }
 
-/** 在 USER 消息前插时间提醒(首条 USER 恒提醒,后续间隔 >1h 提醒)。
+/** 在 USER 消息前插时间提醒(首条 USER 恒提醒,后续间隔 >10min 提醒)。
  *  previousUserMessage: 调用方若已把 system 等前缀拼在序列前,传最后一条非 USER
  *  消息作为"首条 USER 的前一条"基准,保持与聊天引擎原语义(首条提醒看 gap)一致。
  *  返回新数组;提醒消息是新对象,调用方经 EnrichResult.syntheticIds 识别。 */

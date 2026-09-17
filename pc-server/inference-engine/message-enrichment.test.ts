@@ -123,21 +123,24 @@ describe("message-enrichment", () => {
     expect(result.messages[0].parts[0]).toMatchObject({ type: "text", text: "User said: hello" });
   });
 
-  test("时间提醒:首条 USER 恒提醒,间隔 >1h 再提醒,<1h 不提醒", () => {
+  test("时间提醒:首条 USER 恒提醒,间隔 >10min 再提醒,<10min 不提醒", () => {
     const a = assistant({ enableTimeReminder: true });
     const base = [
       userMessage("first", "2026-08-22T10:00:00Z"),
       assistantMessage("reply", "2026-08-22T10:01:00Z"),
-      userMessage("second", "2026-08-22T10:30:00Z"), // 30min 后,不提醒
-      assistantMessage("reply2", "2026-08-22T10:31:00Z"),
-      userMessage("third", "2026-08-22T12:00:00Z"), // 1.5h 后,提醒
+      userMessage("second", "2026-08-22T10:05:00Z"), // 5min 后,不提醒
+      assistantMessage("reply2", "2026-08-22T10:06:00Z"),
+      userMessage("third", "2026-08-22T10:30:00Z"), // 24min 后,提醒(分钟级文案)
+      assistantMessage("reply3", "2026-08-22T10:31:00Z"),
+      userMessage("fourth", "2026-08-22T12:00:00Z"), // 1.5h 后,提醒(小时级文案)
     ];
     const result = enrichMessages(base, { conversation: conversation(), assistant: a, model });
     const reminders = result.messages.filter((msg) => result.syntheticIds.has(msg.id));
-    expect(reminders).toHaveLength(2);
-    expect(reminders[0].parts[0]).toMatchObject({ type: "text" });
+    expect(reminders).toHaveLength(3);
     expect(String((reminders[0].parts[0] as { text: string }).text)).toContain("<time_reminder>");
-    expect(String((reminders[1].parts[0] as { text: string }).text)).toContain("since last message");
+    expect(String((reminders[0].parts[0] as { text: string }).text)).not.toContain("since last message");
+    expect(String((reminders[1].parts[0] as { text: string }).text)).toContain("24 min since last message");
+    expect(String((reminders[2].parts[0] as { text: string }).text)).toContain("1 h since last message");
   });
 
   test("滞回截断:contextMessageLimit 超限按步长量化前移", () => {
