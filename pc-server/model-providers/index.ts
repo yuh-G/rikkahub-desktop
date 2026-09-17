@@ -5,14 +5,14 @@ import type { Assistant, JsonValue, Model, Provider } from "../foundation/types"
 import { id, isRecord, mergeObjects, uniqueStrings } from "../foundation/utils";
 import { hostOfProvider } from "../inference-engine/message-builder";
 import { state } from "../persistence/json-store";
-import { isKimiReasoningModel } from "./request-dialect";
+import { isKimiK3Model, isKimiReasoningModel } from "./request-dialect";
 
 export const DEFAULT_AUTO_MODEL_ID = "b7055fb4-39f9-4042-a88a-0d80ed76cf08";
 
 export function inferModelAbilities(modelId: string): string[] {
   const name = modelId.toLowerCase();
   const abilities: string[] = [];
-  if (/(^|[/:_-])(gpt-[45]|o[134]|claude|gemini|deepseek|qwen|qwq|qvq|glm|kimi|moonshot|doubao|hunyuan|grok|llama|mistral|mixtral|command|sonar|perplexity|mimo)/i.test(modelId)) {
+  if (/(^|[/:_-])(gpt-[4-6]|o[134]|claude|gemini|deepseek|qwen|qwq|qvq|glm|kimi|moonshot|doubao|hunyuan|hy[3-9]|grok|llama|mistral|mixtral|command|sonar|perplexity|mimo|minimax|longcat|step|muse)/i.test(modelId) || isKimiK3Model(modelId)) {
     abilities.push("TOOL");
   }
   // Reasoning detection mirrors Android's ModelRegistry. Note that Claude family names like
@@ -22,7 +22,7 @@ export function inferModelAbilities(modelId: string): string[] {
   // Kimi 代际走方言谓词(K2.5 起全系支持思考;正则无 kimi 模式曾致能力位缺失,
   // UI 推理选项不显示、两引擎思考链路未激活)。存量模型由启动时 enrichModel 并集自愈。
   if (
-    /(gpt-5|^o[134]|[/:_-]o[134]|reason|reasoning|thinking|deepseek-r1|deepseek-reasoner|deepseek-v4|deepseek.*v4|qwq|qvq|qwen3|glm-[45]|glm-z1|hunyuan-a13b|mimo-v2|claude-3[.-]7|claude-4|claude-(opus|sonnet|haiku)-(3[.-]7|[4-9]|\d{2,})|gemini-2[.-]5|gemini-3|grok-4)/i.test(
+    /(gpt-[56]|^o[134]|[/:_-]o[134]|reason|reasoning|thinking|deepseek-r1|deepseek-reasoner|deepseek-v4|deepseek.*v4|deepseek-flash|qwq|qvq|qwen3|glm-[45]|glm-z1|hunyuan-a13b|[/:_-]hy[3-9]|^hy[3-9]|mimo-v2|mimo-v3|minimax[-/_]?m[-._]?3|longcat|step[-._]?3|muse|claude-3[.-]7|claude-4|claude-(opus|sonnet|haiku)-(3[.-]7|[4-9]|\d{2,})|gemini-2[.-]5|gemini-3|grok-4)/i.test(
       name,
     ) ||
     isKimiReasoningModel(name)
@@ -49,7 +49,12 @@ export function inferInputModalities(modelId: string, raw?: any): string[] {
     ...(Array.isArray(raw?.inputModalities) ? raw.inputModalities : []),
   ].map((item) => String(item).toUpperCase());
   if (declared.length) return uniqueStrings(declared);
-  return /(vision|visual|vl|omni|gpt-4o|gpt-4\.1|gemini|claude-3|claude-4|qwen.*vl|glm-4v|grok-vision|llava|pixtral|mimo[-_./:]?v?2[-_./:]?5|mimo[-_./:]?v?2[-_./:]?omni)/i.test(modelId)
+  // 视觉(图像输入)登记,逐家对齐安卓 ModelRegistry 的 visionInput()(2026-09-17 核对行号):
+  //   deepseek-flash/v4.1(多模态,L311/318)、step-3 系(L454/460)、minimax-m3(L528)、
+  //   mimo-v2.5/v3 系(L544/555/561)、longcat-2.0(L582)、qwen3.7/3.8 非 Max(L362/368)、
+  //   gpt-5.6/gpt-6(经 gpt-4o 同款 token 命中,补 gpt-5/gpt-6)、glm-4v/5.3-flash。
+  //   纯文本(刻意不收):hy3/hy4、qwen3.7/3.8-max、glm-5.2/5.3 普通版——安卓同样无 visionInput。
+  return /(vision|visual|vl|omni|gpt-4o|gpt-4\.1|gpt-5|gpt-6|gemini|claude-3|claude-4|qwen.*vl|qwen3[.-]?[78](?!.*max)|glm-4v|glm-5[.-]3[.-]?flash|deepseek.*(flash|v[-._]?4)|step[-._]?3|minimax[-._/]?m[-._]?3|longcat|mimo[-_./:]?v?2[-_./:]?5|mimo[-_./:]?v?2[-_./:]?omni|mimo[-_./:]?v?3|muse|grok-vision|llava|pixtral)/i.test(modelId) || isKimiK3Model(modelId)
     ? ["TEXT", "IMAGE"]
     : ["TEXT"];
 }

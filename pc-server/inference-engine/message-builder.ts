@@ -15,6 +15,7 @@ import {
   isKimiK26Model,
   isKimiK27Model,
   isKimiK3Model,
+  isMiMoOfficialHost,
   isSamplingLockedModel,
   isSiliconFlowEffortModel,
   isZhipuEffortModel,
@@ -996,6 +997,10 @@ export function reasoningPayloadForProvider(providerItem: Provider, modelItem: M
     return { reasoning_effort: normalized };
   }
   if (host === "chat.intern-ai.org.cn") return { thinking_mode: enabled };
+  // 小米 MiMo 官方(api.xiaomimimo.com 及 token-plan-cn 子域):思考开关走 thinking:{type},
+  // 无 effort/keep(对齐安卓 ChatCompletionsAPI L354-360);此前缺分支会落兜底 reasoning_effort,
+  // 端点不识该字段。pi 引擎经 openAiThinkingSwitchProtocol 同判 thinking-type-object。
+  if (isMiMoOfficialHost(host)) return { thinking: { type: enabled ? "enabled" : "disabled" } };
   // issue10:Gemini 经 OpenAI 兼容层(官方 /openai 端点及各类中转网关)时,思维链必须用
   // extra_body.google.thinking_config 显式请求 include_thoughts,否则模型即使思考也不回传
   // 思维内容(对齐 Cherry Studio;安卓端此场景同样缺失,属 PC 端补强)。字段区分与原生

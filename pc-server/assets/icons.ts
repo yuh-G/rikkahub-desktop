@@ -25,6 +25,8 @@ const iconRules: Array<[RegExp, string]> = [
   [/claude/i, "claude-color.svg"],
   [/anthropic/i, "anthropic.svg"],
   [/deepseek/i, "deepseek-color.svg"],
+  // muse-spark/glimmer(Meta 系,对齐 APP PATTERN_META)落 meta 标。
+  [/meta\b|(?<!o)llama|muse/i, "meta-color.svg"],
   [/grok/i, "grok.svg"],
   [/qwen|qwq|qvq/i, "qwen-color.svg"],
   // 豆包:label 是中文"豆包",APP 模式为 doubao|豆包|火山;火山由下方 bytedance 规则兜住,
@@ -33,8 +35,9 @@ const iconRules: Array<[RegExp, string]> = [
   [/openrouter/i, "openrouter.svg"],
   [/zhipu|智谱|glm/i, "zhipu-color.svg"],
   [/mistral/i, "mistral-color.svg"],
-  [/meta\b|(?<!o)llama/i, "meta-color.svg"],
-  [/hunyuan|tencent|腾讯混元/i, "hunyuan-color.svg"],
+  // 腾讯混元:新旗舰官方 modelId 为裸小写 hy3/hy4(-preview),不含 hunyuan 字串,补词边界
+  // 判定接住(防误伤别家带 hy 的名字);APP 端对 hy3/hy4 无专属图标落 fallback,PC 用混元标更贴。
+  [/hunyuan|tencent|腾讯混元|\bhy[3-9]\b/i, "hunyuan-color.svg"],
   [/gemma/i, "gemma-color.svg"],
   [/perplexity/i, "perplexity-color.svg"],
   [/aliyun|阿里云|百炼/i, "alibabacloud-color.svg"],

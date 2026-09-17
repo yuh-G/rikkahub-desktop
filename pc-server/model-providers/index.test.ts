@@ -1,7 +1,7 @@
 // model-providers/index 纯函数单测:能力推断(Kimi 代际经方言谓词——回归锁)。
 import { describe, expect, it } from "bun:test";
 
-import { SUNSET_PROVIDER_IDS, builtinProviderRank, defaultProviders, inferModelAbilities } from "./index";
+import { SUNSET_PROVIDER_IDS, builtinProviderRank, defaultProviders, inferInputModalities, inferModelAbilities } from "./index";
 
 describe("inferModelAbilities", () => {
   it("Kimi K2.5+ 全系推理(方言谓词;曾因正则无 kimi 模式致能力位缺失:UI 无推理选项、两引擎思考链路未激活)", () => {
@@ -29,6 +29,32 @@ describe("inferModelAbilities", () => {
     }
     for (const id of ["gpt-4o", "gemini-2.0-flash", "llama-3.3-70b"]) {
       expect(inferModelAbilities(id)).not.toContain("REASONING");
+    }
+  });
+
+  it("2026-09 新注册模型能力:腾讯 hy3/hy4 等新命中 TOOL+REASONING;裸名/常规模型不误伤", () => {
+    // 对齐 APP ModelRegistry:hy3/hy4、mimo-v3、minimax-m3、longcat、step-3.7、muse、裸 k3 均 toolReasoningAbility()。
+    for (const id of ["hy3", "hy4-preview", "mimo-v3", "minimax-m3", "longcat-2.0", "step-3.7-flash", "qwen3.8-max", "gpt-5.6", "gpt-6-astra", "muse-spark", "muse-glimmer", "k3", "deepseek-flash"]) {
+      const abilities = inferModelAbilities(id);
+      expect(abilities).toContain("TOOL");
+      expect(abilities).toContain("REASONING");
+    }
+    // 误伤面:别的词含 hy/mimo 子串不该升级(词边界/锚点守卫);gpt-4o 本就有 TOOL(既有行为),
+    // 但它不该被新规则误升 REASONING。
+    for (const id of ["mystic-hy", "shyte"]) {
+      expect(inferModelAbilities(id)).not.toContain("TOOL");
+    }
+    expect(inferModelAbilities("gpt-4o")).not.toContain("REASONING");
+  });
+
+  it("2026-09 新模型视觉:对齐 APP visionInput() 登记;纯文本型号不收", () => {
+    // 有 visionInput() 的(APP 行号见 index.ts 注释):含裸 k3(KIMI_K3_ALIAS)与 muse 系。
+    for (const id of ["deepseek-flash", "deepseek-v4.1-flash", "step-3.7-flash", "minimax-m3", "mimo-v3", "mimo-v2.5", "longcat-2.0", "qwen3.8", "glm-5.3-flash", "gpt-5.6", "gpt-6-astra", "k3", "muse-spark"]) {
+      expect(inferInputModalities(id)).toContain("IMAGE");
+    }
+    // 无 visionInput() 的纯文本(APP 同样不收):hy3/hy4、qwen3.7/3.8-max、glm-5.2/5.3 普通版。
+    for (const id of ["hy3", "hy4", "qwen3.8-max", "qwen3.7-max", "glm-5.2", "glm-5.3"]) {
+      expect(inferInputModalities(id)).not.toContain("IMAGE");
     }
   });
 });

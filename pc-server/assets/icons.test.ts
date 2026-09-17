@@ -43,4 +43,18 @@ describe("iconForName", () => {
     expect(iconForName("MiniMax")).toBe("minimax-color.svg");
     expect(iconForName("MIMO")).toBe("xiaomimimo.svg");
   });
+
+  test("腾讯混元新旗舰 hy3/hy4:裸小写 id 命中混元标(词边界防误伤)", () => {
+    expect(iconForName("hy3")).toBe("hunyuan-color.svg");
+    expect(iconForName("hy4-preview")).toBe("hunyuan-color.svg");
+    expect(iconForName("hunyuan-t1")).toBe("hunyuan-color.svg");
+    // 误伤面:别家带 hy 子串但无词边界的不命中混元。
+    expect(iconForName("shy")).not.toBe("hunyuan-color.svg");
+  });
+
+  test("Meta 系 muse-spark/glimmer:命中 meta 标(对齐 APP PATTERN_META)", () => {
+    expect(iconForName("muse-spark")).toBe("meta-color.svg");
+    expect(iconForName("muse-glimmer")).toBe("meta-color.svg");
+    expect(iconForName("meta-llama-3")).toBe("meta-color.svg");
+  });
 });
