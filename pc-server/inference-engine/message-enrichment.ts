@@ -176,6 +176,57 @@ export function truncationStartFor(messageCount: number, contextLimit: number): 
   return Math.floor((messageCount - contextLimit) / step) * step;
 }
 
+/** 已执行工具 = 有 output(与安卓 UIMessagePart.Tool.isExecuted 同义:output.isNotEmpty())。 */
+function toolPartExecuted(part: MessagePart): boolean {
+  return part.type === "tool" && Array.isArray(part.output) && part.output.length > 0;
+}
+
+/** 截断起点回退到安全边界,避免把 tool call 与其 result 拆散、或让上下文从半截工具
+ *  调用开始——对齐安卓 limitContext 的 alignContextStart。滞回/锚点起点是纯算术,不看
+ *  消息内容,可能恰好压在一对工具中间;一旦切开,编码侧会把"无对应 call 的 tool result"
+ *  发给上游,OpenAI/Claude 直接 400,且因前缀稳定会连续多轮 400。
+ *
+ *  只向前(下标减小)调整,因此不破坏"最多保留 limit 条"的下界;调整只依赖 [0,start)
+ *  区间,这部分对追加消息稳定。判定规则(与安卓一致):
+ *   R1 起点消息含已执行 tool → 其 call 在更早处已被切掉,往前找到那条"尚未执行(纯 call)"
+ *      的消息作为新起点(即这次调用真正的发起处)。
+ *   R2 起点消息含未执行 tool(纯 call) → 它是某次工具链的发起,往前归并到触发它的最近
+ *      一条 USER(工具链入口)。 */
+export function alignContextStart(messages: Message[], start: number): number {
+  let adjusted = Math.min(start, messages.length);
+  const visited = new Set<number>();
+  let needsAdjustment = true;
+  while (needsAdjustment && adjusted > 0) {
+    needsAdjustment = false;
+    if (visited.has(adjusted)) break; // 防御:环则停(正常路径不会触发)
+    visited.add(adjusted);
+    const current = messages[adjusted];
+    if (!current) break;
+    const tools = current.parts.filter((p): p is Extract<MessagePart, { type: "tool" }> => p.type === "tool");
+    // R1:当前含已执行 tool → 往前找对应的纯 call(未执行 tool)
+    if (tools.some((t) => toolPartExecuted(t))) {
+      for (let i = adjusted - 1; i >= 0; i--) {
+        if (messages[i].parts.some((p) => p.type === "tool" && !toolPartExecuted(p))) {
+          adjusted = i;
+          needsAdjustment = true;
+          break;
+        }
+      }
+    }
+    // R2:当前含未执行 tool(纯 call) → 往前归并到最近的 USER(工具链入口)
+    if (messages[adjusted].parts.some((p) => p.type === "tool" && !toolPartExecuted(p))) {
+      for (let i = adjusted - 1; i >= 0; i--) {
+        if (messages[i].role === "USER") {
+          adjusted = i;
+          needsAdjustment = true;
+          break;
+        }
+      }
+    }
+  }
+  return adjusted;
+}
+
 // ---- 主编排:富化管线(两引擎共用) ----
 
 export interface EnrichOptions {
@@ -219,7 +270,10 @@ export function enrichMessages(baseMessages: Message[], options: EnrichOptions):
   const anchorIndex = options.windowStartMessageId
     ? baseMessages.findIndex((msg) => msg.id === options.windowStartMessageId)
     : -1;
-  const start = Math.max(hysteresisStart, anchorIndex >= 0 ? anchorIndex : 0);
+  // 算术起点再经 alignContextStart 回退:保证切点不劈开任何 tool call/result 配对
+  // (对齐安卓 limitContext),否则编码侧会发出"无 call 的孤儿 result"触发上游 400。
+  const rawStart = Math.max(hysteresisStart, anchorIndex >= 0 ? anchorIndex : 0);
+  const start = alignContextStart(baseMessages, rawStart);
   const windowed = start > 0 ? baseMessages.slice(start) : baseMessages;
 
   // 2. 模板/占位符逐消息渲染(一次到位:pi 编码器与聊天编码器吃同一份渲染产物)。

@@ -8,7 +8,7 @@ import { describe, expect, test, beforeAll } from "bun:test";
 import type { Assistant, Conversation, Message, State } from "../foundation/types";
 import { message } from "../foundation/utils";
 import { setState } from "../persistence/json-store";
-import { enrichMessages, encodableMessages, truncationStartFor } from "./message-enrichment";
+import { enrichMessages, encodableMessages, truncationStartFor, alignContextStart } from "./message-enrichment";
 
 beforeAll(() => {
   setState({
@@ -97,6 +97,23 @@ function userMessage(text: string, createdAt: string): Message {
 
 function assistantMessage(text: string, createdAt: string): Message {
   const msg = message("ASSISTANT", [{ type: "text", text }], "m1");
+  msg.createdAt = createdAt;
+  return msg;
+}
+
+/** 工具消息:executed=true 表示"已执行"(带 output 的 result),false 表示"纯 call"(无 output)。
+ *  与安卓 UIMessagePart.Tool.isExecuted = output.isNotEmpty() 对齐。 */
+function toolMessage(executed: boolean, createdAt: string, role: "ASSISTANT" | "TOOL" = "ASSISTANT"): Message {
+  const msg = message(role, [
+    {
+      type: "tool",
+      toolCallId: `call-${createdAt}`,
+      toolName: "get_weather",
+      input: "{}",
+      output: executed ? [{ type: "text", text: "晴 25°" }] : [],
+      approvalState: { type: "auto" },
+    },
+  ]);
   msg.createdAt = createdAt;
   return msg;
 }
@@ -234,5 +251,93 @@ describe("message-enrichment", () => {
     expect(encodable).toHaveLength(1);
     expect(encodable[0].parts[0]).toMatchObject({ type: "text", text: "Q: hello" });
     expect(encodableMessages(enriched.messages, new Set()).length).toBeGreaterThan(1); // 不剥则含提醒
+  });
+});
+
+describe("alignContextStart(对齐安卓 limitContext 工具对对齐)", () => {
+  const t = (s: number) => `2026-08-22T10:${String(s).padStart(2, "0")}:00Z`;
+
+  test("起点落在已执行 tool(result)上 → 回退到对应的纯 call", () => {
+    // m0 user | c1 纯call | r2 result | m3 user —— 起点=2 落在 result,会切出孤儿 result。
+    const base = [
+      userMessage("m0", t(0)),
+      toolMessage(false, t(1)), // c1 纯 call
+      toolMessage(true, t(2)), // r2 result(已执行)
+      userMessage("m3", t(3)),
+    ];
+    // R1:从 2 回退到 1(纯 call);R2:1 是纯 call 再归并到 USER m0。
+    expect(alignContextStart(base, 2)).toBe(0);
+  });
+
+  test("起点落在纯 call 上 → 归并到最近的 USER(工具链入口)", () => {
+    const base = [
+      userMessage("m0", t(0)),
+      assistantMessage("a1", t(1)),
+      toolMessage(false, t(2)), // 纯 call,起点落这里
+      userMessage("m3", t(3)),
+    ];
+    // R2:纯 call → 归并到最近 USER m0(下标 0)。
+    expect(alignContextStart(base, 2)).toBe(0);
+  });
+
+  test("起点在普通文本上 → 不动", () => {
+    const base = [
+      userMessage("m0", t(0)),
+      assistantMessage("a1", t(1)),
+      userMessage("m2", t(2)),
+      assistantMessage("a3", t(3)),
+    ];
+    expect(alignContextStart(base, 2)).toBe(2);
+    expect(alignContextStart(base, 0)).toBe(0);
+  });
+
+  test("已执行 tool 但更早处找不到纯 call → 不再回退(防御:不无限退)", () => {
+    // 只有 result 没有 call(数据异常):R1 找不到纯 call,保持原起点。
+    const base = [
+      userMessage("m0", t(0)),
+      assistantMessage("a1", t(1)),
+      toolMessage(true, t(2)), // result,无对应纯 call
+    ];
+    expect(alignContextStart(base, 2)).toBe(2);
+  });
+
+  test("enrichMessages 集成:滞回起点劈开工具对时被回退,窗口不含孤儿 result", () => {
+    // limit=3 → step=1;N=5 → 滞回起点=2,恰好落在 result(idx2)上。
+    const a = assistant({ contextMessageLimit: 3 });
+    const base = [
+      userMessage("m0", t(0)), // idx0 USER(工具链入口)
+      toolMessage(false, t(1)), // idx1 纯 call
+      toolMessage(true, t(2)), // idx2 result(滞回起点算到这里)
+      userMessage("m3", t(3)),
+      assistantMessage("a4", t(4)),
+    ];
+    const result = enrichMessages(base, { conversation: conversation(), assistant: a, model });
+    // R1:起点 2(result)→ 回退到纯 call idx1;R2:idx1 是纯 call → 归并到 USER idx0。
+    // 最终从 idx0 起全保留,工具对完整。
+    expect(alignContextStart(base, 2)).toBe(0);
+    expect(result.messages).toHaveLength(5);
+    // 关键不变量:窗口内每个 result 都有对应 call(无孤儿)。纯 call 与 result 各一。
+    const toolParts = result.messages.flatMap((msg) => msg.parts.filter((p) => p.type === "tool"));
+    const executed = toolParts.filter((p) => p.type === "tool" && Array.isArray(p.output) && p.output.length > 0);
+    const calls = toolParts.filter((p) => p.type === "tool" && Array.isArray(p.output) && p.output.length === 0);
+    expect(executed).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    // 窗口首条是 USER,不是孤儿 result。
+    expect(result.messages[0].role).toBe("USER");
+  });
+
+  test("enrichMessages 集成:工具对完整落在窗口内时起点不回退", () => {
+    // limit=3 → step=1;N=4 → 滞回起点=1,落在纯 call(idx1)。
+    const a = assistant({ contextMessageLimit: 3 });
+    const base = [
+      userMessage("m0", t(0)),
+      toolMessage(false, t(1)), // idx1 纯 call(起点)
+      toolMessage(true, t(2)), // idx2 result
+      userMessage("m3", t(3)),
+    ];
+    // 起点=1 是纯 call:R2 归并到 USER idx0(工具链入口),窗口全保留,call/result 成对。
+    expect(alignContextStart(base, 1)).toBe(0);
+    const result = enrichMessages(base, { conversation: conversation(), assistant: a, model });
+    expect(result.messages).toHaveLength(4);
   });
 });
