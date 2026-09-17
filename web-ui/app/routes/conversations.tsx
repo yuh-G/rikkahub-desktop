@@ -11,6 +11,7 @@ import { ConversationSidebar } from "~/components/conversation-sidebar";
 import { ConversationEmptyState } from "~/components/extended/conversation";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatInput } from "~/components/input/chat-input";
+import { MessageQueuePanel } from "~/components/input/message-queue-panel";
 import { GlobalDropZone } from "~/components/global-drop-zone";
 import { ChatMessage } from "~/components/message/chat-message";
 import { CompactionDivider } from "~/components/message/compaction-divider";
@@ -443,6 +444,7 @@ function useDraftInputController({
   activeId,
   isHomeRoute,
   homeDraftId,
+  isConversationGenerating,
   setHomeDraftId,
   setActiveId,
   navigate,
@@ -453,6 +455,9 @@ function useDraftInputController({
   activeId: string | null;
   isHomeRoute: boolean;
   homeDraftId: string;
+  /** 当前会话是否在生成(服务端权威,SSE 驱动)。生成中发送 = 走队列端点(FIFO 排队),
+   *  而非 messages(后者会中止在跑流)。 */
+  isConversationGenerating: boolean;
   setHomeDraftId: React.Dispatch<React.SetStateAction<string>>;
   setActiveId: React.Dispatch<React.SetStateAction<string | null>>;
   navigate: ReturnType<typeof useNavigate>;
@@ -474,7 +479,12 @@ function useDraftInputController({
     if (parts.length === 0) return;
 
     if (activeId) {
-      await api.post<{ status: string }>(`conversations/${activeId}/messages`, { parts });
+      // 消息发送队列:生成中走队列端点(服务端 FIFO,当前流收尾后续跑),不打断在跑生成;
+      // 空闲时走 messages 立即点火。两者服务端同源,队列端点在空闲时行为与 messages 一致。
+      const endpoint = isConversationGenerating
+        ? `conversations/${activeId}/queue/enqueue`
+        : `conversations/${activeId}/messages`;
+      await api.post<{ status: string }>(endpoint, { parts });
       clearDraft(draftKey);
       return;
     }
@@ -504,6 +514,7 @@ function useDraftInputController({
     container,
     draftKey,
     getSubmitParts,
+    isConversationGenerating,
     navigate,
     refreshList,
     setActiveId,
@@ -1424,6 +1435,10 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
   const conversationIsGenerating = useConversationStore((state) =>
     activeId ? (state.entries[activeId]?.detail?.isGenerating ?? false) : false,
   );
+  // 消息发送队列快照(SSE 直通,队空为 null):队列面板据此渲染。
+  const conversationMessageQueue = useConversationStore((state) =>
+    activeId ? (state.entries[activeId]?.detail?.messageQueue ?? null) : null,
+  );
   const hasDetail = useConversationStore((state) =>
     activeId ? state.entries[activeId]?.detail != null : false,
   );
@@ -1460,6 +1475,7 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
     activeId,
     isHomeRoute: paneIsHome,
     homeDraftId,
+    isConversationGenerating: conversationIsGenerating,
     setHomeDraftId,
     setActiveId,
     navigate,
@@ -2024,6 +2040,15 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
           {focused ? <TtsPlayBar /> : null}
           {/* pi 引擎瞬态状态条(P5):按窗格各自订阅本会话状态,分栏互不串扰。 */}
           <EngineStatusBar conversationId={activeId} />
+          {/* 消息发送队列面板(生成中补发排队;队空不渲染)。 */}
+          {activeId ? (
+            <MessageQueuePanel
+              conversationId={activeId}
+              queue={conversationMessageQueue}
+              isGenerating={conversationIsGenerating}
+              onStop={handleStop}
+            />
+          ) : null}
           <ChatInputArea
             draftKey={draftKey}
             slashCommands={slashCommands}

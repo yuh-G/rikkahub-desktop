@@ -126,7 +126,24 @@
     "parsing_send_blocked": "附件解析中，完成后即可发送",
     "extraction_failed": "解析失败：发送时将无法附带此文件的正文",
     "extraction_empty": "未能提取出文本（可能是扫描件或不支持的格式）",
-    "stop_generating": "停止生成"
+    "stop_generating": "停止生成",
+    "queue_send": "发送并排队（不打断当前回复）",
+    "command_queue_blocked": "指令需在当前回复完成后使用"
+  },
+  "queue": {
+    "title": "排队中",
+    "count": "{{count}} 条排队",
+    "paused": "已暂停",
+    "resume": "继续发送",
+    "pause": "暂停",
+    "stop_generating": "停止生成",
+    "edit": "编辑",
+    "remove": "移除",
+    "edit_title": "编辑排队消息",
+    "save": "保存",
+    "cancel": "取消",
+    "empty_message": "消息不能为空",
+    "attachment": "附件"
   },
   "resize_handle": "拖动调整输入框大小",
   "compress_history": "压缩对话历史",

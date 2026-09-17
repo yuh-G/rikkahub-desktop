@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { Database } from "bun:sqlite";
 import { conversationsDbPath, dataDir } from "../foundation/paths";
 import { checkoutConversation, configureWorkingSet, peekConversation, releaseConversation, startWorkingSetSweep } from "./working-set";
+import { hasQueuedMessages } from "./message-queue";
 import { getConversationMeta } from "./read-queries";
 import { generating } from "./generation-state";
 import type { Conversation, ConversationListDto, JsonValue, Message, MessageNode, MessageNodeDto, PcConversationRow, PcMessageNodeRow, PcWorkspaceRow } from "../foundation/types";
@@ -299,6 +300,8 @@ export function initConversationsRuntime(): void {
     isGenerating: (convId) => generating.has(convId),
     hasSseClients: (convId) => hasSseClientsGuard(convId),
     hasDirty: hasConvDirtyState,
+    // 队列非空即驻留:生成派发链跨"当前流结束→下条点火"空窗持有会话,防 sweep 逐出致队列孤儿化。
+    hasQueuedMessages: (convId) => hasQueuedMessages(convId),
   });
   startWorkingSetSweep();
 }

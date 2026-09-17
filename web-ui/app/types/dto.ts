@@ -18,6 +18,8 @@ export type {
   ExtractionStatusDto,
   MessageDto,
   MessageNodeDto,
+  MessageQueueItemDto,
+  MessageQueueSnapshotDto,
   MessageSearchResultDto,
   PagedResult,
   UploadedFileDto,

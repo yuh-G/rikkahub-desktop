@@ -78,6 +78,7 @@ import { checkoutConversation, releaseConversation } from "./working-set";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
 import { awaitingApproval, generating } from "./generation-state";
+import { isQueuePaused, pauseMessageQueue, shiftNextQueued } from "./message-queue";
 import {
   appendTextPart,
   canResumeToolExecution,
@@ -409,6 +410,44 @@ function conversationStillExists(conversationId: string) {
   // DB-first 批1:直查活库。新建会话即时落库(ensureConversation 1.2.6 起),无漏检窗口。
   const db = getConversationsDb();
   return db ? conversationExistsInDb(db, conversationId) : false;
+}
+
+/** 队列快照变化 → 会话 SSE 重广播(前端队列面板即据此刷新)。低频事件,不走合帧热路径。 */
+function broadcastQueueState(conversationId: string) {
+  const conv = getConversation(conversationId);
+  if (conv) broadcastConversation(conv);
+}
+
+/** 队首派发核心(前置:调用方已确认空闲且未暂停)。 */
+function dispatchQueuedHead(conversationId: string) {
+  const conversation = getConversation(conversationId);
+  if (!conversation) return;
+  const next = shiftNextQueued(conversationId);
+  if (!next) return;
+  // 把队首的用户消息本体落库进历史(与 send 入口同构;parts 入队时已做正则变换),再基于最新历史点火下一条。
+  const userMessage = message("USER", next.parts.map((p) => ({ ...p })));
+  const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
+  conversation.messages.push(userNode);
+  conversation.chatSuggestions = [];
+  conversation.updateAt = Date.now();
+  persistConversation(conversation);
+  broadcastConversation(conversation);
+  // 队列状态已变(少一条),面板立即刷新。
+  broadcastQueueState(conversationId);
+  // 点火下一条。generateAnswer 入口自带「先中止旧流」不变式,但此处旧流已收尾(generating
+  // 登记刚被 completeConversationGeneration 清除),它登记新 controller 并正常驱动。
+  void generateAnswer(conversation);
+}
+
+/**
+ * 消息发送队列派发(跨引擎统一):空闲 && 未暂停 && 队非空时,从队首取下一条待生成并点火。
+ * 触发点:generateAnswer 收尾(经 stillMine 快照判「未被接管」后调用)+ queue/resume 端点(空闲时)。
+ * 队列对引擎种类无感——它只调 generateAnswer,而那是聊天/pi 唯一注册生成的入口,新增引擎自动继承。
+ */
+export function dispatchMessageQueue(conversationId: string) {
+  if (generating.has(conversationId)) return; // 占用中:不打断,等当前流收尾续跑。
+  if (isQueuePaused(conversationId)) return;
+  dispatchQueuedHead(conversationId);
 }
 
 async function runPostGenerationTasks(conversationId: string, snapshot: Conversation, assistantMessageId: string) {
@@ -965,6 +1004,11 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     // P2-1(N-7 归宿):失败文本除了落在消息注解上(仅会话内可见),还上报全局通道——
     // 用户不在该会话页时也能收到通知(批2 接前端 toast)。
     reportError("provider", "error", failureText, err);
+    // 消息发送队列:失败自动暂停(保留全部排队项,待用户手动 resume 续跑)。对齐 APP
+    // onGenerationFinished(cause != null) → pause。仅真失败暂停——用户主动 stop/中止在上面
+    // 已 return,不会到这;故 stop 不会暂停队列,只停在「无下一条自动点火」。
+    pauseMessageQueue(conversation.id);
+    broadcastQueueState(conversation.id);
     finalizeOutcome(() => {
       // 错误零污染正文(对齐 Android addError):失败详情只活在 model_call_error 注解的
       // message 字段,由前端错误卡呈现;正文保留半截真实产出。既无正文也无错误的流
@@ -975,8 +1019,11 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
       currentMessage.annotations.push({ type: "model_call_error", message: failureText });
     });
   } finally {
-    releaseConversation(conversation.id);
-    completeConversationGeneration(conversation.id, controller);
+    // 消息发送队列:本条流彻底收尾后派发下一条。接管判据——generateAnswer 入口/set()前的
+    // 中止、stop 端点、删会话都先把 generating delete 成空,故「登记为空」语义含糊(既可能是
+    // 本流刚收尾,也可能是被 stop/删后本流仍在跑 finally)。真正的接管信号是「登记在册的是
+    // 另一个 controller」;仅此时不派发(由接管方收尾续跑),其余(本流正常/中止/失败收尾)都续跑。
+    const takenOver = generating.has(conversation.id) && generating.get(conversation.id) !== controller;
     // P5:生成终局兜底清引擎状态条——压缩/重试进行中 abort/失败时,end 事件可能永远
     // 不来,不清会挂死"压缩中"。幂等,聊天引擎路径广播空集合无副作用。T1:判定改读
     // resumeSemantics——只有 run-and-suspend 引擎(pi)会发瞬态状态条,聊天引擎不发。
@@ -985,9 +1032,15 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     // 这里是"生成终局但审批仍挂着"的防御(引擎 run 因故结束而 execute 未走到注销)。
     // 幂等(delete 不存在键无副作用),与 busy:false 同点收口。
     awaitingApproval.delete(conversation.id);
-    if (!conversationStillExists(conversation.id)) return;
-    broadcastNodeUpdate(conversation, assistantNode);
-    broadcastConversation(conversation);
+    if (conversationStillExists(conversation.id)) {
+      broadcastNodeUpdate(conversation, assistantNode);
+      broadcastConversation(conversation);
+    }
+    completeConversationGeneration(conversation.id, controller);
+    releaseConversation(conversation.id);
+    // 生成真正结束(登记已清)→ 派发队列下一条。失败已在 catch 里 pause,dispatchMessageQueue
+    // 的 paused 门控让它自动停稳;abort/正常收尾则接续点火。被接管时跳过(接管方自会续跑)。
+    if (!takenOver) dispatchMessageQueue(conversation.id);
   }
 }
 

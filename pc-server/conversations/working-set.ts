@@ -25,6 +25,9 @@ export interface WorkingSetGuards {
   isGenerating: (conversationId: string) => boolean;
   hasSseClients: (conversationId: string) => boolean;
   hasDirty: (conversationId: string) => boolean;
+  /** 有排队待发消息(消息发送队列非空)——生成派发链会跨"当前流结束→下条点火"的空窗持有会话,
+   *  此窗口 refs/generating 都可能为 0,不挡则队列孤儿化、下一条永远点不燃。缺省 = 无队列。 */
+  hasQueuedMessages?: (conversationId: string) => boolean;
 }
 
 const IDLE_GRACE_MS = 60_000;
@@ -106,6 +109,7 @@ export function sweepWorkingSet(now = Date.now()): number {
     if (guards.isGenerating(conversationId)) continue;
     if (guards.hasSseClients(conversationId)) continue;
     if (guards.hasDirty(conversationId)) continue;
+    if (guards.hasQueuedMessages?.(conversationId)) continue;
     if (now - entry.lastAccess <= IDLE_GRACE_MS) continue;
     entries.delete(conversationId);
     removed += 1;

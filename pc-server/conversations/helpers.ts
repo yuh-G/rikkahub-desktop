@@ -8,6 +8,7 @@ import { broadcastList, dropConversationSse } from "../api/sse";
 import { deletePcConversations, flushConvDirtyNow, getConversation, persistConversation, selectedConversationMessages } from "./index";
 import { registerConversation, removeConversations } from "./working-set";
 import { generating } from "./generation-state";
+import { clearMessageQueue } from "./message-queue";
 import { findAssistant as findAssistantCore } from "../assistants";
 import { fillContextLimit } from "../inference-engine/providers";
 
@@ -34,6 +35,8 @@ export function deleteConversationsById(ids: Set<string>) {
     abortConversationGeneration(conversationId);
     // R2-4+R2-6:close 详情流 + 清待发节点广播(见 dropConversationSse 注释)
     dropConversationSse(conversationId);
+    // 会话删除即清其发送队列(纯内存态,孤儿队列只是泄漏,顺手清)。
+    clearMessageQueue(conversationId);
   }
   // P7:引擎会话状态(压缩记录)在会话行内(engine_compactions 列),随行删除天然级联,
   // 无文件生命周期可管——P2 的 jsonl 收集/删除逻辑随层退役。

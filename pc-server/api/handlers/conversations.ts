@@ -33,8 +33,9 @@ import {
 import { bumpAnalyticsMsgCount } from "../../app-config/analytics";
 import { DEFAULT_TRANSLATION_PROMPT } from "../../app-config/prompts";
 import { attachOcrToImageParts, compressConversation, englishLanguageName, fetchAuxiliaryText, generateTitleForConversation, isQwenMtModel, markOcrPendingParts } from "../../conversations/auxiliary";
-import { compactEngineConversation, generateAnswer, resolveEngineForConversation } from "../../conversations/orchestrator";
+import { compactEngineConversation, dispatchMessageQueue, generateAnswer, resolveEngineForConversation } from "../../conversations/orchestrator";
 import { deleteConversationsById, ensureConversation, findAssistant, finishInterruptedPendingToolsInConversation, hasPendingToolApproval } from "../../conversations/helpers";
+import { editQueuedMessage, enqueueMessage, pauseMessageQueue, removeQueuedMessage, resumeMessageQueue } from "../../conversations/message-queue";
 import { awaitingApproval, compressing, generating } from "../../conversations/generation-state";
 import { getWorkspace } from "../../workspace";
 import { resolveToolApproval } from "../../inference-engine/approval-gate";
@@ -328,6 +329,75 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       persistConversation(conversation);
       broadcastConversation(conversation);
       return json({ status: "stopped" });
+    }
+    // ── 消息发送队列(生成中补发不打断,FIFO 排队)─────────────────────────
+    // 跨引擎统一:队列只压「待触发的生成」,派发由编排层在 generateAnswer 收尾时驱动,
+    // 聊天/pi 共用同一队列与同一派发点。入队的用户消息本体已随 send 落库,这里只操作队列。
+    if (sub === "queue/enqueue" && request.method === "POST") {
+      if (compressing.has(conversation.id)) {
+        return error("已有压缩正在进行，请稍候", 409, "compress_in_progress");
+      }
+      const body = await readJson<{ parts?: JsonValue[] }>(request);
+      const assistant = findAssistant(conversation.assistantId);
+      const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
+      const processedParts = applyInputRegexTransformParts((body.parts ?? []) as MessagePart[], assistant);
+      const idle = !generating.has(conversation.id);
+      if (idle) {
+        // 空闲:与 send 同构——用户消息本体落库进历史并直接点火,不经队列(队列只压「因占用而待发」的)。
+        const userMessage = message("USER", markOcrPendingParts(processedParts, picked.model));
+        bumpAnalyticsMsgCount();
+        const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
+        conversation.messages.push(userNode);
+        conversation.chatSuggestions = [];
+        conversation.updateAt = Date.now();
+        if (!conversation.title) conversation.title = "New Conversation";
+        persistConversation(conversation);
+        broadcastConversation(conversation);
+        void (async () => {
+          checkoutConversation(conversation.id);
+          try {
+            userMessage.parts = await attachOcrToImageParts(userMessage.parts, picked.model);
+            if (getConversation(conversation.id) !== conversation) return;
+            conversation.updateAt = Date.now();
+            persistConversation(conversation);
+            broadcastNodeUpdate(conversation, userNode);
+            void generateAnswer(conversation);
+          } finally {
+            releaseConversation(conversation.id);
+          }
+        })();
+        return json({ status: "accepted", queued: false }, { status: 202 });
+      }
+      // 生成中:只入队 FIFO(用户消息本体由派发时落库,不预先追加,防重复)。当前流收尾时编排层派发。
+      const item = enqueueMessage(conversation.id, processedParts);
+      broadcastConversation(conversation);
+      return json({ status: "queued", queued: true, id: item.id }, { status: 202 });
+    }
+    if (sub === "queue/pause" && request.method === "POST") {
+      pauseMessageQueue(conversation.id);
+      broadcastConversation(conversation);
+      return json({ status: "paused" });
+    }
+    if (sub === "queue/resume" && request.method === "POST") {
+      resumeMessageQueue(conversation.id);
+      broadcastConversation(conversation);
+      // 恢复即尝试点火:若当前空闲,立即派发队首。
+      if (!generating.has(conversation.id)) dispatchMessageQueue(conversation.id);
+      return json({ status: "resumed" });
+    }
+    const queueItem = sub.match(/^queue\/([^/]+)$/);
+    if (queueItem && request.method === "DELETE") {
+      const removed = removeQueuedMessage(conversation.id, decodeURIComponent(queueItem[1]));
+      if (!removed) return error("Queue item not found", 404);
+      broadcastConversation(conversation);
+      return json({ status: "deleted" });
+    }
+    if (queueItem && request.method === "POST") {
+      const body = await readJson<{ parts?: JsonValue[] }>(request);
+      const ok = editQueuedMessage(conversation.id, decodeURIComponent(queueItem[1]), (body.parts ?? []) as MessagePart[]);
+      if (!ok) return error("Queue item not found", 404);
+      broadcastConversation(conversation);
+      return json({ status: "updated" });
     }
     if (sub === "regenerate-title" && request.method === "POST") {
       try {

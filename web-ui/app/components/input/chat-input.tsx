@@ -419,7 +419,9 @@ function ChatInputInner({
   const canStop = ready && Boolean(onStop) && isGenerating && !disabled;
   // 域9-1:解析中门禁并入 canSend——canSend=false 时 actionDisabled 让发送按钮置灰,
   // handlePrimaryAction 顶部 return 短路键盘路径;canStop(停止生成)不受附件解析影响。
-  const canSend = ready && !isGenerating && !disabled && !isEmpty && !hasParsingAttachments;
+  // 消息发送队列:生成中仍允许发送——此时发送=把消息排入队列(服务端 FIFO,当前流收尾后续跑),
+  // 不再打断在跑的生成。故 canSend 不再以 !isGenerating 为门。
+  const canSend = ready && !disabled && !isEmpty && !hasParsingAttachments;
   // 生成中允许上传:用户常在模型输出时准备下一轮的 prompt 和附件,加文件到草稿和打字
   // 一样都不打断当前生成。submitting(发送的一瞬间)和 uploading 仍保留互斥。
   const canUpload = ready && !disabled && !uploading && !submitting;
@@ -456,16 +458,18 @@ function ChatInputInner({
     setError(null);
 
     try {
-      if (canStop) {
-        await onStop?.();
-        return;
-      }
-
+      // 消息发送队列:输入非空时优先「发送(=生成中则排队)」,只有空输入才退到「停止生成」。
+      // 用户打着字时的意图是「补一句」,不是「停掉当前」;停止键在空输入时仍独占(红色)。
       if (canSend) {
-        // 斜杠指令拦截:完整指令不作为消息发送,清空输入框交执行器(方案 §3.5)。
-        // 域5-1(3F):执行器返回 false / 抛错 = 未受理(如压缩占用),把原始指令文本回填
-        // 输入框,用户键入的参数不丢。受理(默认 true)则维持"已清空"。
+        // 斜杠指令是即时动作(压缩/清空等),不可排队:生成中禁用并提示,等当前流收尾再用。
         if (parsedCommand && onSlashCommand) {
+          if (isGenerating) {
+            toast.info(t("chat.command_queue_blocked"));
+            return;
+          }
+          // 完整指令不作为消息发送,清空输入框交执行器(方案 §3.5)。
+          // 域5-1(3F):执行器返回 false / 抛错 = 未受理(如压缩占用),把原始指令文本回填
+          // 输入框,用户键入的参数不丢。受理(默认 true)则维持"已清空"。
           const { command, argument } = parsedCommand;
           const originalText = value;
           onValueChange("");
@@ -479,6 +483,12 @@ function ChatInputInner({
         }
         setOriginalBeforeOptimize(null);
         await onSend();
+        return;
+      }
+
+      if (canStop) {
+        await onStop?.();
+        return;
       }
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : t("chat.send_failed");
@@ -486,7 +496,7 @@ function ChatInputInner({
     } finally {
       setSubmitting(false);
     }
-  }, [actionDisabled, canSend, canStop, onSend, onSlashCommand, onStop, onValueChange, parsedCommand, t, value]);
+  }, [actionDisabled, canSend, canStop, isGenerating, onSend, onSlashCommand, onStop, onValueChange, parsedCommand, t, value]);
 
   const handleOptimize = React.useCallback(async () => {
     const original = value.trim();
@@ -729,7 +739,6 @@ function ChatInputInner({
       }
 
       if (event.key !== "Enter") return;
-      if (isGenerating) return;
       if (event.nativeEvent.isComposing) return;
 
       // 镜像逻辑：
@@ -1082,7 +1091,8 @@ function ChatInputInner({
               ) : null}
               <ModelList disabled={!canSwitchModel} className="max-w-56" />
               {/* NewMax cpd-action-btn:语音/发送合一——空文本=麦克风(常驻底色),有文本=
-                  品牌色上箭头,录音=红底声纹条,生成中=红底停止。状态切换带宽度/配色过渡。 */}
+                  品牌色上箭头,录音=红底声纹条,生成中=红底停止。状态切换带宽度/配色过渡。
+                  消息发送队列:生成中且有文本 → 上箭头=「发送并排队」(不打断当前流);仅空文本才落红停止。 */}
               <Button
                 type="button"
                 variant="ghost"
@@ -1092,7 +1102,9 @@ function ChatInputInner({
                 }
                 title={
                   isGenerating
-                    ? t("chat.stop_generating")
+                    ? isEmpty
+                      ? t("chat.stop_generating")
+                      : t("chat.queue_send")
                     : asrListening
                       ? t("asr.stop")
                       : isEmpty
@@ -1107,7 +1119,7 @@ function ChatInputInner({
                 }}
                 className={cn(
                   "cpd-action-btn size-8 rounded-full",
-                  isGenerating
+                  isGenerating && isEmpty
                     ? "cpd-action-btn--send !bg-destructive !text-white"
                     : asrListening
                       ? "cpd-action-btn--recording"
@@ -1118,7 +1130,7 @@ function ChatInputInner({
               >
                 {submitting || uploading ? (
                   <LoaderCircle className="size-4 animate-spin" />
-                ) : isGenerating ? (
+                ) : isGenerating && isEmpty ? (
                   <span className="cpd-icon-enter" key="stop">
                     <Square className="size-4" />
                   </span>
