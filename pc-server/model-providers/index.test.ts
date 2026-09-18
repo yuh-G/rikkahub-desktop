@@ -122,6 +122,14 @@ describe("会话身份头(§7.4)", () => {
     expect(noArg["X-Session-ID"]).not.toBe(empty["X-Session-ID"]);
   });
 
+  it("缺省时 opencode.ai 的 x-opencode-session 也吃随机兜底(连通性测试/OCR 场景)", () => {
+    // OpenCode Zen 对这个头硬校验(#1902);辅助调用不传 conversationId 也必须发出去。
+    const oc = applyModelRequestHeaders({}, at("https://opencode.ai/zen/v1"), model);
+    expect(oc["x-opencode-session"]).toMatch(/^[0-9a-f-]{36}$/);
+    // 两个头同值(Android 同语义:opencode 只验非空,内容随意)。
+    expect(oc["x-opencode-session"]).toBe(oc["X-Session-ID"]);
+  });
+
   it("opencode.ai 追加 x-opencode-session;其它 host 不追加", () => {
     const oc = applyModelRequestHeaders({}, at("https://opencode.ai/zen/v1"), model, "conv-9");
     expect(oc["X-Session-ID"]).toBe("conv-9");
