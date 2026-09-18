@@ -319,6 +319,44 @@ export const TTS_PROVIDER_REGISTRY: Record<OnlineTtsType, TtsProviderSpec> = {
     parse: (_p, response) => parseWholeBuffer(response),
     mime: (p) => `audio/${p.format || "mp3"}`,
   },
+
+  // volcengine(豆包语音 V3 单向 SSE,对齐 Android VolcengineTTSProvider):
+  // 每事件 data 是整帧 JSON {code,message,data},code 20000000=末帧;音频为 base64 MP3。
+  // X-Api-Request-Id 每次合成必须换新 UUID(火山按请求 ID 幂等,复用会被去重吞帧);
+  // X-Api-Resource-Id 与控制台开通的服务绑定,填错是 403 的最常见来源。
+  volcengine: {
+    endpoint: (p) => `${trimBase(p.baseUrl)}/api/v3/tts/unidirectional/sse`,
+    headers: (p) => ({
+      Accept: "text/event-stream",
+      "Content-Type": "application/json",
+      "X-Api-Key": p.apiKey.trim(),
+      "X-Api-Resource-Id": (p.resourceId || "seed-tts-2.0").trim(),
+      "X-Api-Request-Id": crypto.randomUUID(),
+    }),
+    body: (p, text) => ({
+      user: { uid: p.id },
+      req_params: {
+        text,
+        speaker: (p.speaker || "zh_female_vv_uranus_bigtts").trim(),
+        audio_params: {
+          format: "mp3",
+          // 火山语速刻度:0=正常,-50=半速,100=两倍速(对齐 Android coerceIn)。
+          speech_rate: Math.max(-50, Math.min(100, Math.round(Number(p.speechRate ?? 0)))),
+        },
+      },
+    }),
+    parse: (_p, response) =>
+      collectSseAudio(response, (data) => {
+        if (data === "[DONE]") return null;
+        const raw = JSON.parse(data || "{}") as { code?: number; message?: string; data?: string };
+        if (raw.code !== 0 && raw.code !== 20000000) {
+          throw new Error(`Volcengine TTS error ${raw.code}: ${raw.message ?? ""}`);
+        }
+        const encoded = raw.data ?? "";
+        return encoded ? Buffer.from(encoded, "base64") : null;
+      }),
+    mime: () => "audio/mpeg",
+  },
 };
 
 // type 单源:media/tts.ts 的 normalize 与 api/handlers/media.ts 的 detail 路由都消费它,

@@ -44,7 +44,7 @@ export function defaultTtsProvider(type: TtsProvider["type"] = "system"): TtsPro
       name: "MiniMax TTS",
       apiKey: "",
       baseUrl: "https://api.minimaxi.com/v1",
-      model: "speech-2.6-turbo",
+      model: "speech-2.8-hd",
       voiceId: "female-shaonv",
       // Empty string == "自动" in the UI dropdown == omit the `emotion` field entirely from
       // the request body so MiniMax picks an emotion based on the text. Switching the default
@@ -147,6 +147,18 @@ export function defaultTtsProvider(type: TtsProvider["type"] = "system"): TtsPro
       latency: "normal",
     };
   }
+  if (type === "volcengine") {
+    return {
+      type,
+      id: id(),
+      name: "Volcengine TTS",
+      apiKey: "",
+      baseUrl: "https://openspeech.bytedance.com",
+      resourceId: "seed-tts-2.0",
+      speaker: "zh_female_vv_uranus_bigtts",
+      speechRate: 0,
+    };
+  }
   return {
     type: "system",
     id: DEFAULT_SYSTEM_TTS_ID,
@@ -194,6 +206,12 @@ function migrateMimoProvider(item: Record<string, unknown>): Record<string, unkn
   return String(item.model ?? "") === "mimo-v2-tts" ? { ...item, model: "mimo-v2.5-tts" } : item;
 }
 
+// MiniMax 默认 model 2.6-turbo → 2.8-hd(对齐 Android 5078ce19,2.5.2)。协议同族
+// (t2a_v2 接口),仅升级默认;同样只迁「等于旧默认」的存量,自定义 model 不动。
+function migrateMinimaxProvider(item: Record<string, unknown>): Record<string, unknown> {
+  return String(item.model ?? "") === "speech-2.6-turbo" ? { ...item, model: "speech-2.8-hd" } : item;
+}
+
 export function normalizeTtsProviders(value: unknown): TtsProvider[] {
   const defaults = defaultTtsProviders();
   const raw = Array.isArray(value) ? value.filter(isRecord) : [];
@@ -203,7 +221,13 @@ export function normalizeTtsProviders(value: unknown): TtsProvider[] {
       : "system";
     const base = defaultTtsProvider(type);
     // §4.5 破坏性升级的存量迁移在 spread 前做,保证用户显式字段仍覆盖默认值。
-    const source = type === "qwen" ? migrateQwenProvider(item) : type === "mimo" ? migrateMimoProvider(item) : item;
+    const source = type === "qwen"
+      ? migrateQwenProvider(item)
+      : type === "mimo"
+        ? migrateMimoProvider(item)
+        : type === "minimax"
+          ? migrateMinimaxProvider(item)
+          : item;
     return {
       ...base,
       ...source,

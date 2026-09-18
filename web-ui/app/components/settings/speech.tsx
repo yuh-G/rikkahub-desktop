@@ -169,6 +169,15 @@ function createTtsProvider(type: TtsProviderType = "system"): TtsProviderProfile
       normalize: true,
       latency: "normal",
     };
+  if (type === "volcengine")
+    return {
+      ...base,
+      name: "Volcengine TTS",
+      baseUrl: "https://openspeech.bytedance.com",
+      resourceId: "seed-tts-2.0",
+      speaker: "zh_female_vv_uranus_bigtts",
+      speechRate: 0,
+    };
   return {
     ...base,
     id: "026a01a2-c3a0-4fd5-8075-80e03bdef200",
@@ -565,6 +574,7 @@ function TtsSettingsPanel({
               <SelectItem value="elevenlabs">ElevenLabs</SelectItem>
               <SelectItem value="step">Step</SelectItem>
               <SelectItem value="fish-audio">Fish Audio</SelectItem>
+              <SelectItem value="volcengine">Volcengine</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -1086,6 +1096,42 @@ function TtsSettingsPanel({
                         checked={draft.normalize ?? true}
                         onCheckedChange={(checked) => patchDraft({ normalize: checked })}
                       />
+                    </div>
+                  </>
+                ) : null}
+                {draft.type === "volcengine" ? (
+                  <>
+                    <div className="space-y-2 md:col-span-2">
+                      <div className="text-sm font-medium">Resource ID</div>
+                      <Input
+                        value={draft.resourceId ?? ""}
+                        onChange={(event) => patchDraft({ resourceId: event.target.value })}
+                        placeholder="seed-tts-2.0"
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        {t("settings:speech.volc_resource_desc")}
+                      </div>
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <div className="text-sm font-medium">{t("settings:speech.volc_speaker_label")}</div>
+                      <Input
+                        value={draft.speaker ?? ""}
+                        onChange={(event) => patchDraft({ speaker: event.target.value })}
+                        placeholder="zh_female_vv_uranus_bigtts"
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        {t("settings:speech.volc_speaker_desc")}
+                      </div>
+                    </div>
+                    <div className="md:col-span-2">
+                      {numericInput(
+                        "speechRate",
+                        t("settings:speech.volc_rate_label"),
+                        t("settings:speech.volc_rate_desc"),
+                        -50,
+                        100,
+                        1,
+                      )}
                     </div>
                   </>
                 ) : null}

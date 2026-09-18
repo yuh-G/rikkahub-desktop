@@ -758,6 +758,11 @@
     "fish_topp_desc": "核采样 Top-P。",
     "fish_speed_desc": "语速，1 为正常。",
     "fish_normalize_desc": "文本规范化（数字/标点朗读）。",
+    "volc_resource_desc": "需与控制台已开通的服务和音色匹配，默认 seed-tts-2.0；注意是豆包语音控制台的 API Key，不是火山方舟的。",
+    "volc_speaker_label": "音色 ID",
+    "volc_speaker_desc": "填写控制台中的音色 ID，默认使用 VV 音色。",
+    "volc_rate_label": "语速",
+    "volc_rate_desc": "范围 -50～100，0 为正常语速，-50 为半速，100 为两倍速。",
     "system_rate_desc": "系统语音语速，1 为默认。",
     "system_pitch_desc": "系统语音当前不支持直接调整音高，此设置仅会随配置导出。",
     "select_tts": "请选择或新增 TTS 服务。"

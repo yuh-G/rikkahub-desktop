@@ -181,7 +181,7 @@ export interface TtsProvider {
   // 新增取值必须逐字等于 Android TTSProviderSetting 的 @SerialName（§4.5）。
   type:
     | "system" | "openai" | "gemini" | "minimax" | "qwen" | "groq" | "xai" | "mimo"
-    | "elevenlabs" | "step" | "fish-audio";
+    | "elevenlabs" | "step" | "fish-audio" | "volcengine";
   id: string;
   name: string;
   apiKey: string;
@@ -214,6 +214,9 @@ export interface TtsProvider {
   chunkLength?: number;
   normalize?: boolean;
   latency?: string;
+  // volcengine(豆包语音;speaker=音色 ID,resourceId 与开通服务绑定)
+  speaker?: string;
+  resourceId?: string;
 }
 
 export interface Message {
@@ -627,6 +630,9 @@ export interface AuxiliaryTextOptions {
   onDelta?: (text: string) => void;
   /** 取消信号（压缩等可被用户中止的辅助调用）：中止立即撕底层连接，不空耗轮次。 */
   signal?: AbortSignal;
+  /** 会话身份（§7.4/#1902）：标题/压缩等有会话上下文的调用传真实 conversationId；
+   *  缺省时注入层兜底随机 UUID（OpenCode Zen 拒收无会话头请求）。 */
+  conversationId?: string;
 }
 
 export interface AsrRealtimeSession {

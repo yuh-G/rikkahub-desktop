@@ -61,8 +61,9 @@ describe("既有 provider 行为字节级锁定(重构前后一致)", () => {
     const p = provider("minimax", { emotion: "" });
     expect(spec.endpoint(p)).toBe("https://api.minimaxi.com/v1/t2a_v2");
     const body = spec.body(p, TEXT);
+    // 默认 model 计划内升级 2.6-turbo → 2.8-hd(对齐 Android 2.5.2),存量迁移见 normalize 用例。
     expect(body).toEqual({
-      model: "speech-2.6-turbo", text: TEXT, stream: true, output_format: "hex",
+      model: "speech-2.8-hd", text: TEXT, stream: true, output_format: "hex",
       stream_options: { exclude_aggregated_audio: true },
       voice_setting: { voice_id: "female-shaonv", speed: 1 },
     });
@@ -159,6 +160,43 @@ describe("§4.5 新增三家(逐字对齐 Android)", () => {
     const body = TTS_PROVIDER_REGISTRY["fish-audio"].body(provider("fish-audio", { referenceId: "abc123" }), TEXT);
     expect(body.reference_id).toBe("abc123");
   });
+
+  test("volcengine: v3 单向 SSE 端点 + 三头 + uid/speaker/audio_params,resourceId 空回落默认", () => {
+    const spec = TTS_PROVIDER_REGISTRY.volcengine;
+    const p = provider("volcengine");
+    expect(spec.endpoint(p)).toBe("https://openspeech.bytedance.com/api/v3/tts/unidirectional/sse");
+    const headers = spec.headers(p);
+    expect(headers["X-Api-Key"]).toBe("sk-test");
+    expect(headers["X-Api-Resource-Id"]).toBe("seed-tts-2.0");
+    expect(headers.Accept).toBe("text/event-stream");
+    // 请求 ID 每次合成必须是新 UUID(火山按其幂等去重)。
+    expect(headers["X-Api-Request-Id"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(spec.headers(p)["X-Api-Request-Id"]).not.toBe(headers["X-Api-Request-Id"]);
+    expect(spec.body(p, TEXT)).toEqual({
+      user: { uid: p.id },
+      req_params: {
+        text: TEXT,
+        speaker: "zh_female_vv_uranus_bigtts",
+        audio_params: { format: "mp3", speech_rate: 0 },
+      },
+    });
+    expect(spec.mime(p)).toBe("audio/mpeg");
+  });
+
+  test("volcengine: 自定义 speaker/resourceId/speechRate 透传,语速钳制 -50..100", () => {
+    const spec = TTS_PROVIDER_REGISTRY.volcengine;
+    const p = provider("volcengine", { speaker: "zh_male_chaoxiao_Mars", resourceId: "seed-tts-2.5", speechRate: 999 });
+    const headers = spec.headers(p);
+    expect(headers["X-Api-Resource-Id"]).toBe("seed-tts-2.5");
+    expect(spec.body(p, TEXT).req_params).toEqual({
+      text: TEXT,
+      speaker: "zh_male_chaoxiao_Mars",
+      audio_params: { format: "mp3", speech_rate: 100 },
+    });
+    expect(
+      (spec.body(provider("volcengine", { speechRate: -100 }), TEXT).req_params as Record<string, { speech_rate: number }>).audio_params.speech_rate,
+    ).toBe(-50);
+  });
 });
 
 describe("qwen-audio-3.0 升级(§4.5)", () => {
@@ -220,6 +258,31 @@ describe("normalize 存量迁移(千万别让老用户 400)", () => {
     expect(custom.model).toBe("mimo-custom");
   });
 
+  test("minimax 旧默认 speech-2.6-turbo → speech-2.8-hd(2.5.2),自定义不动", () => {
+    const [upgraded] = normalizeTtsProviders([{
+      type: "minimax", id: "mm1", name: "MM", apiKey: "k",
+      baseUrl: "https://api.minimaxi.com/v1", model: "speech-2.6-turbo", voiceId: "female-shaonv",
+    }]);
+    expect(upgraded.model).toBe("speech-2.8-hd");
+    const [custom] = normalizeTtsProviders([{
+      type: "minimax", id: "mm2", name: "MM", apiKey: "k",
+      baseUrl: "https://api.minimaxi.com/v1", model: "speech-2.5-hd-preview", voiceId: "female-shaonv",
+    }]);
+    expect(custom.model).toBe("speech-2.5-hd-preview");
+  });
+
+  test("volcengine type 归一化保留,字段齐全", () => {
+    const [v] = normalizeTtsProviders([{
+      type: "volcengine", id: "v1", name: "V", apiKey: "k",
+      baseUrl: "https://openspeech.bytedance.com",
+      resourceId: "seed-tts-2.0", speaker: "zh_female_vv_uranus_bigtts", speechRate: 10,
+    }]);
+    expect(v.type).toBe("volcengine");
+    expect(v.resourceId).toBe("seed-tts-2.0");
+    expect(v.speaker).toBe("zh_female_vv_uranus_bigtts");
+    expect(v.speechRate).toBe(10);
+  });
+
   test("新增三家 type 归一化保留,未知 type 落 system", () => {
     const list = normalizeTtsProviders([
       { type: "elevenlabs", id: "e1", name: "E", apiKey: "k", baseUrl: "https://api.elevenlabs.io" },
@@ -240,7 +303,7 @@ describe("type 单源(Global Verify Sync)", () => {
     for (const key of Object.keys(TTS_PROVIDER_REGISTRY)) {
       expect(TTS_PROVIDER_TYPES).toContain(key as TtsProvider["type"]);
     }
-    // 11 家(1 system + 10 在线),与安卓 Types 列表一致。
-    expect(TTS_PROVIDER_TYPES.length).toBe(11);
+    // 12 家(1 system + 11 在线),与安卓 Types 列表一致(2.5.2 增 volcengine)。
+    expect(TTS_PROVIDER_TYPES.length).toBe(12);
   });
 });

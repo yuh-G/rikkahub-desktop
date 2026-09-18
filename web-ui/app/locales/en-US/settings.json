@@ -758,6 +758,11 @@
     "fish_topp_desc": "Nucleus sampling Top-P.",
     "fish_speed_desc": "Speech rate, 1 is normal.",
     "fish_normalize_desc": "Text normalization (numbers/punctuation read aloud).",
+    "volc_resource_desc": "Must match the service and voice enabled in the console; default seed-tts-2.0. Note: use the Doubao Speech console API key, not the Volcano Ark one.",
+    "volc_speaker_label": "Voice ID",
+    "volc_speaker_desc": "Fill in the voice ID from the console; defaults to the VV voice.",
+    "volc_rate_label": "Speech Rate",
+    "volc_rate_desc": "Range -50 to 100; 0 is normal, -50 half speed, 100 double speed.",
     "system_rate_desc": "System voice rate, 1 is default.",
     "system_pitch_desc": "System voice pitch can't be adjusted directly; this setting is exported with the config only.",
     "select_tts": "Select or add a TTS service."
