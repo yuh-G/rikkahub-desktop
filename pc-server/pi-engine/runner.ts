@@ -121,7 +121,7 @@ function captureRoundCompactions(
 
 export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
   if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
-  const mapped = mapProviderModelToPi(ctx.provider, ctx.model, ctx.modelLimits);
+  const mapped = mapProviderModelToPi(ctx.provider, ctx.model, ctx.modelLimits, ctx.conversationId);
   if (!mapped.ok) throw new Error(`该模型无法在工作区引擎使用：${mapped.reason}`);
   const { runtime, model } = await createPiModelRuntime(mapped.mapping);
 
@@ -267,7 +267,7 @@ const PI_COMPACT_ERRORS: Record<string, { errorCode: string; message: string }> 
  */
 export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompactionResult> {
   if (ctx.signal?.aborted) throw new DOMException("Compaction cancelled", "AbortError");
-  const mapped = mapProviderModelToPi(ctx.provider, ctx.model, ctx.modelLimits);
+  const mapped = mapProviderModelToPi(ctx.provider, ctx.model, ctx.modelLimits, ctx.conversationId);
   if (!mapped.ok) throw new Error(`该模型无法在工作区引擎使用：${mapped.reason}`);
   const { runtime, model } = await createPiModelRuntime(mapped.mapping);
 

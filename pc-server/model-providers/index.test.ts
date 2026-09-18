@@ -1,7 +1,15 @@
 // model-providers/index 纯函数单测:能力推断(Kimi 代际经方言谓词——回归锁)。
 import { describe, expect, it } from "bun:test";
 
-import { SUNSET_PROVIDER_IDS, builtinProviderRank, defaultProviders, inferInputModalities, inferModelAbilities } from "./index";
+import {
+  SUNSET_PROVIDER_IDS,
+  applyModelRequestHeaders,
+  applyRequestHeaders,
+  builtinProviderRank,
+  defaultProviders,
+  inferInputModalities,
+  inferModelAbilities,
+} from "./index";
 
 describe("inferModelAbilities", () => {
   it("Kimi K2.5+ 全系推理(方言谓词;曾因正则无 kimi 模式致能力位缺失:UI 无推理选项、两引擎思考链路未激活)", () => {
@@ -90,5 +98,63 @@ describe("预置供应商(对齐 APP)", () => {
     for (const sunsetId of SUNSET_PROVIDER_IDS) {
       expect(ids.has(sunsetId)).toBe(false);
     }
+  });
+});
+
+// 台账 §7.4 会话身份头(对齐安卓 configureSessionHeaders)。行为锁:注入是可选的、按 host
+// 加特例、不覆盖用户显式头;两汇聚函数(会话流 applyRequestHeaders / pi 引擎+辅助
+// applyModelRequestHeaders)同一注入点,新引擎复用即继承。applySessionHeaders 对 Provider
+// 只读 baseUrl,测试用最小对象即可。
+describe("会话身份头(§7.4)", () => {
+  const assistant = {} as any;
+  const model = {} as any;
+  const at = (baseUrl: string) => ({ baseUrl }) as any;
+
+  it("有会话 ID 才注入 X-Session-ID;缺省/空串不注入(辅助调用不发明 ID)", () => {
+    const withId = applyRequestHeaders({}, assistant, at("https://api.openai.com/v1"), model, "conv-123");
+    expect(withId["X-Session-ID"]).toBe("conv-123");
+
+    const noArg = applyRequestHeaders({}, assistant, at("https://api.openai.com/v1"), model);
+    expect("X-Session-ID" in noArg).toBe(false);
+    const empty = applyRequestHeaders({}, assistant, at("https://api.openai.com/v1"), model, "");
+    expect("X-Session-ID" in empty).toBe(false);
+  });
+
+  it("opencode.ai 追加 x-opencode-session;其它 host 不追加", () => {
+    const oc = applyModelRequestHeaders({}, at("https://opencode.ai/zen/v1"), model, "conv-9");
+    expect(oc["X-Session-ID"]).toBe("conv-9");
+    expect(oc["x-opencode-session"]).toBe("conv-9");
+
+    const plain = applyModelRequestHeaders({}, at("https://api.openai.com/v1"), model, "conv-9");
+    expect(plain["X-Session-ID"]).toBe("conv-9");
+    expect("x-opencode-session" in plain).toBe(false);
+  });
+
+  it("用户显式自定义头优先(??=):不被会话头覆盖", () => {
+    const withCustom = applyRequestHeaders(
+      { "X-Session-ID": "user-set" },
+      assistant,
+      at("https://api.openai.com/v1"),
+      model,
+      "conv-123",
+    );
+    expect(withCustom["X-Session-ID"]).toBe("user-set");
+  });
+
+  it("两汇聚函数同注入点:pi 引擎注册头与会话流一致", () => {
+    const viaModel = applyModelRequestHeaders({}, at("https://api.deepseek.com/v1"), model, "conv-x");
+    const viaRequest = applyRequestHeaders({}, assistant, at("https://api.deepseek.com/v1"), model, "conv-x");
+    expect(viaModel["X-Session-ID"]).toBe("conv-x");
+    expect(viaRequest["X-Session-ID"]).toBe("conv-x");
+  });
+
+  it("主机特例不回归:openrouter 仍打 X-Title/HTTP-Referer,aihubmix 仍打 APP-Code", () => {
+    const or = applyRequestHeaders({}, assistant, at("https://openrouter.ai/api/v1"), model, "c1");
+    expect(or["X-Title"]).toBe("RikkaHub");
+    expect(or["HTTP-Referer"]).toBe("https://rikka-ai.com");
+    expect(or["X-Session-ID"]).toBe("c1");
+    const aih = applyModelRequestHeaders({}, at("https://aihubmix.com/v1"), model, "c2");
+    expect(aih["APP-Code"]).toBe("DKHA9468");
+    expect(aih["X-Session-ID"]).toBe("c2");
   });
 });

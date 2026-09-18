@@ -338,21 +338,57 @@ export function customHeaderRecords(assistant: Assistant, modelItem?: Model) {
   ].filter(isRecord);
 }
 
+// 会话身份头(台账 §7.4,对齐安卓 configureSessionHeaders):给每条 LLM 请求带当前会话 ID,
+// 让能识别的上游(网关/聚合商)做会话亲和——前缀缓存更可能命中(更省钱更快)、请求关联与
+// 限流分桶;不识别的上游静默忽略,无害。安卓对全 provider 发 X-Session-ID、opencode 另发
+// x-opencode-session。
+//
+// 注入纪律(三条,缺一不可):
+//  ① 只在拿到会话 ID 时注入:conversationId 为空(标题/翻译/压缩摘要/测试连接等辅助调用,
+//     它们不属于任何用户会话)整条不加——不发明 ID、不给上游发空会话信号。
+//  ② ??= 而非 =:用户在 助手/模型自定义头 里显式配的同名头优先(与下方 X-Title/HTTP-Referer
+//     同纪律)——我们不静默覆盖用户意图。
+//  ③ 这是唯一注入点:applyRequestHeaders(会话流)与 applyModelRequestHeaders(pi 引擎注册头 +
+//     辅助/测试)都过它;新引擎只要复用这两个汇聚函数之一就自动继承,无需各自记得加。
+function applySessionHeaders(
+  headers: Record<string, string>,
+  baseUrl: string,
+  conversationId: string | null | undefined,
+) {
+  if (!conversationId) return;
+  headers["X-Session-ID"] ??= conversationId;
+  if (hostOfProvider({ baseUrl } as Provider) === "opencode.ai") {
+    headers["x-opencode-session"] ??= conversationId;
+  }
+}
+
 export function modelCustomHeaderRecords(modelItem?: Model) {
   return (Array.isArray(modelItem?.customHeaders) ? modelItem.customHeaders : []).filter(isRecord);
 }
 
-export function applyModelRequestHeaders(headers: Record<string, string>, providerItem: Provider, modelItem?: Model) {
-  for (const header of modelCustomHeaderRecords(modelItem)) {
-    const name = String(header.name ?? header.key ?? "").trim();
-    if (name) headers[name] = String(header.value ?? "");
-  }
+// 主机特例(对齐安卓 configureReferHeaders):applyModelRequestHeaders/applyRequestHeaders
+// 共用这一份,不再两处各写一遍。
+function applyHostSpecialHeaders(headers: Record<string, string>, providerItem: Provider) {
   const host = hostOfProvider(providerItem);
   if (host === "aihubmix.com") headers["APP-Code"] ??= "DKHA9468";
   if (host === "openrouter.ai") {
     headers["X-Title"] ??= "RikkaHub";
     headers["HTTP-Referer"] ??= "https://rikka-ai.com";
   }
+}
+
+export function applyModelRequestHeaders(
+  headers: Record<string, string>,
+  providerItem: Provider,
+  modelItem?: Model,
+  sessionId?: string | null,
+) {
+  for (const header of modelCustomHeaderRecords(modelItem)) {
+    const name = String(header.name ?? header.key ?? "").trim();
+    if (name) headers[name] = String(header.value ?? "");
+  }
+  applyHostSpecialHeaders(headers, providerItem);
+  applySessionHeaders(headers, providerItem.baseUrl, sessionId);
   return headers;
 }
 
@@ -361,17 +397,14 @@ export function applyRequestHeaders(
   assistant: Assistant,
   providerItem: Provider,
   modelItem?: Model,
+  sessionId?: string | null,
 ) {
   for (const header of customHeaderRecords(assistant, modelItem)) {
     const name = String(header.name ?? header.key ?? "").trim();
     if (name) headers[name] = String(header.value ?? "");
   }
-  const host = hostOfProvider(providerItem);
-  if (host === "aihubmix.com") headers["APP-Code"] ??= "DKHA9468";
-  if (host === "openrouter.ai") {
-    headers["X-Title"] ??= "RikkaHub";
-    headers["HTTP-Referer"] ??= "https://rikka-ai.com";
-  }
+  applyHostSpecialHeaders(headers, providerItem);
+  applySessionHeaders(headers, providerItem.baseUrl, sessionId);
   return headers;
 }
 

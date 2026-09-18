@@ -113,7 +113,7 @@ export async function callProvider(
   const providerItem = picked.provider;
   const selectedModel = picked.model.modelId === "auto" ? "gpt-4o-mini" : picked.model.modelId;
   const url = endpointFor(providerItem);
-  const headers = applyRequestHeaders({ "Content-Type": "application/json" }, assistant, providerItem, picked.model);
+  const headers = applyRequestHeaders({ "Content-Type": "application/json" }, assistant, providerItem, picked.model, conversation.id);
   // 对齐 e63d017：OpenAI 路径才让 includeHistoryReasoning 生效；
   // claude/google 不走 OpenAI assistant 序列化，一律保持 true。
   const includeHistoryReasoning =
@@ -180,6 +180,11 @@ export async function callProvider(
   }
 
   headers.Authorization = `Bearer ${providerItem.apiKey}`;
+  // 台账 §7.4,对齐安卓 ChatCompletionsAPI.kt:262 —— OpenRouter 在请求体发 session_id(非
+  // 头;网关据此把同会话路由到同一上游实例,前缀缓存更可能命中)。仅 chat-completions 形态
+  // 有此事;responses 形态安卓无对应。conversation.id 即会话身份(与 prompt_cache_key 同物)。
+  const openRouterSessionId =
+    hostOfProvider(providerItem) === "openrouter.ai" ? conversation.id : undefined;
   if (providerItem.useResponseApi) {
     const functionTools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant, picked.model) : [];
     const builtInTools = responseApiBuiltInTools(picked.model);
@@ -225,6 +230,7 @@ export async function callProvider(
     tools: tools.length ? tools : undefined,
     tool_choice: tools.length ? "auto" : undefined,
     ...(providerItem.promptCacheKey === true ? { prompt_cache_key: conversation.id } : {}),
+    ...(openRouterSessionId ? { session_id: openRouterSessionId } : {}),
   };
   return fetchOpenAiText(url, headers, applyCustomBody(body, assistant, picked.model), providerItem, assistant, signal, hooks);
 }
@@ -247,7 +253,10 @@ export async function callProviderStreaming(
     assistant,
     providerItem,
     picked.model,
+    conversation.id,
   );
+  const openRouterSessionId =
+    hostOfProvider(providerItem) === "openrouter.ai" ? conversation.id : undefined;
   const messagesForApi = conversationMessagesForApi(
     conversation,
     assistant,
@@ -308,6 +317,7 @@ export async function callProviderStreaming(
     tools: tools.length ? tools : undefined,
     tool_choice: tools.length ? "auto" : undefined,
     ...(providerItem.promptCacheKey === true ? { prompt_cache_key: conversation.id } : {}),
+    ...(openRouterSessionId ? { session_id: openRouterSessionId } : {}),
     stream: true,
     stream_options: hostOfProvider(providerItem) === "api.mistral.ai" ? undefined : { include_usage: true },
   }, assistant, picked.model);

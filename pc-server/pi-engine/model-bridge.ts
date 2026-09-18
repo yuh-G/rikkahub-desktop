@@ -280,8 +280,10 @@ function piThinkingOverridesFor(
   return { thinkingLevelMap: { xhigh: "xhigh", max: "max" } };
 }
 
-/** 映射不到时给用户看的原因（模型选择器过滤面与错误提示共用，方案"诚实披露，不硬塞"）。 */
-export function mapProviderModelToPi(provider: Provider, model: Model, limits?: PiModelLimits): PiMappingResult {
+/** 映射不到时给用户看的原因（模型选择器过滤面与错误提示共用，方案"诚实披露，不硬塞"）。
+ *  sessionId:会话身份头(台账 §7.4;X-Session-ID + opencode 特例)经注册头带进 pi 的每轮
+ *  请求——主会话与压缩会话都传 ctx.conversationId;缺省(纯测试/冒烟)不注入,不发明 ID。 */
+export function mapProviderModelToPi(provider: Provider, model: Model, limits?: PiModelLimits, sessionId?: string): PiMappingResult {
   const api = piApiFor(provider);
   if (!api) {
     return {
@@ -294,9 +296,9 @@ export function mapProviderModelToPi(provider: Provider, model: Model, limits?: 
   }
   if (!model.modelId) return { ok: false, reason: "模型缺少 modelId，无法映射到 pi 引擎" };
 
-  // 复用聊天引擎的请求头语义（模型级自定义头 + 主机特例），保证两个引擎行为逐字一致。
+  // 复用聊天引擎的请求头语义（模型级自定义头 + 主机特例 + 会话身份头），保证两个引擎行为逐字一致。
   const headers: Record<string, string> = {};
-  applyModelRequestHeaders(headers, provider, model);
+  applyModelRequestHeaders(headers, provider, model, sessionId);
   const compatOverrides = piCompatOverridesFor(provider, api);
   // 思考开关翻译按协议分派:openai-completions 走厂商方言矩阵(K3 判定在函数内,
   // 模型级跨渠道);anthropic-messages 镜像聊天引擎 adaptive 方言(见函数头注);

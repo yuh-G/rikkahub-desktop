@@ -312,6 +312,17 @@ describe("mapProviderModelToPi", () => {
     expect(result.mapping.config.headers?.["X-Proxy-Token"]).toBe("t1");
   });
 
+  it("会话身份头经注册头带进 pi 请求(§7.4);不传 sessionId 则不注入", () => {
+    const provider = makeProvider({ id: "p1", name: "P", baseUrl: "https://api.openai.com/v1" });
+    const withSession = mapProviderModelToPi(provider, model("gpt-4.1"), undefined, "conv-pi");
+    if (!withSession.ok) throw new Error(withSession.reason);
+    expect(withSession.mapping.config.headers?.["X-Session-ID"]).toBe("conv-pi");
+    // 缺省(纯测试/冒烟)不注入,不发明 ID。
+    const noSession = mapProviderModelToPi(provider, model("gpt-4.1"));
+    if (!noSession.ok) throw new Error(noSession.reason);
+    expect(noSession.mapping.config.headers?.["X-Session-ID"]).toBeUndefined();
+  });
+
   it("无法映射时给出可读原因(诚实过滤面)", () => {
     const result = mapProviderModelToPi(
       makeProvider({ id: "p1", name: "P", baseUrl: "https://x", chatCompletionsPath: "/api/v3/chat" }),
