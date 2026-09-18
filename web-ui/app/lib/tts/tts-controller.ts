@@ -4,13 +4,18 @@
  * Exact 1:1 replication of Android's architecture:
  *   - TextChunker splits text (≤160 chars per chunk, split on punctuation/newlines)
  *   - Worker loop: pull chunk from queue → await synthesis → play audio → advance
- *   - Prefetch window of 4 chunks ahead (cache: chunkId → Promise<Blob>)
+ *   - Prefetch window of 2 chunks ahead (cache: chunkId → Promise<Blob>)
  *   - Pause: set isPaused flag + audio.pause(); worker spins in delay(80) loop
  *   - Resume: clear isPaused + audio.play(); worker exits spin naturally
  *   - Stop: cancel everything, kill all audio, clear cache
  *   - Speed: audio.playbackRate (applies immediately to current + future chunks)
  *   - SeekBy: audio.currentTime += ms/1000 (within current chunk only)
  *   - PlaybackState mirrors Android's exactly: positionMs/durationMs/speed/currentChunkIndex/totalChunks
+ *
+ * 稳定性/自动重试(§4.3):分片合成在服务端 synthesize 层按 HTTP 语义重试(408/429/5xx/网络
+ * 瞬断退避,400/401 立即失败),客户端这里只取最终结果。配合两件事对齐 Android:
+ *   - 预取窗口 2(同 Android prefetchCount=2):用户只听前几句就停时不白烧后段 API 额度。
+ *   - 失败分片从缓存剔除:带 reject 的 Promise 不可复用,否则同一分片永远拿同一个失败。
  *
  * All providers (system + online) now return audio bytes from the server. System TTS uses
  * SetOutputToWaveFile on the server side (mirrors Android's synthesizeToFile), so the
@@ -22,7 +27,7 @@ import { initialPlaybackState } from "./playback-state";
 import { TextChunker, type TtsChunk } from "./text-chunker";
 import { appendWebAuthQuery } from "~/services/api";
 
-const PREFETCH_COUNT = 4;
+const PREFETCH_COUNT = 2;
 const CHUNK_DELAY_MS = 120;
 const POSITION_POLL_MS = 100;
 
@@ -295,7 +300,14 @@ class TtsControllerImpl {
       pending = this.synthesizeChunk(chunk);
       this.cache.set(chunk.id, pending);
     }
-    return await pending.promise;
+    try {
+      return await pending.promise;
+    } catch (err) {
+      // 失败分片从缓存剔除(§4.3):带 reject 的 Promise 不可复用,留着会让同一分片永远拿同一个
+      // 失败。剔除后若该分片再次被请求会重新合成。(对齐 Android awaitOrCreate 的 cache.remove。)
+      if (this.cache.get(chunk.id) === pending) this.cache.delete(chunk.id);
+      throw err;
+    }
   }
 
   private playBlob(blob: Blob, sessionId: string): Promise<void> {

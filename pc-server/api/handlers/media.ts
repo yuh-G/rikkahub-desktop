@@ -10,6 +10,7 @@ import { callImageGeneration } from "../../media/image-gen";
 import { defaultAsrProvider, normalizeAsrProviders, transcribeAudioWithAsrProvider } from "../../media/asr";
 import { DEFAULT_SYSTEM_TTS_ID, defaultTtsProvider, generateSpeechWithTtsProvider, normalizeTtsProviders } from "../../media/tts";
 import { TTS_PROVIDER_TYPES } from "../../media/tts-providers/registry";
+import { RetryableHttpError } from "../../foundation/retry";
 import { extractedTextPath } from "../../files/index";
 import { error, json, readJson } from "../request";
 import { updateSettings } from "../../app-config";
@@ -154,7 +155,11 @@ export async function handleMediaRoutes(request: Request, _url: URL, path: strin
         },
       });
     } catch (err) {
-      return error(err instanceof Error ? err.message : String(err), 502);
+      // §4.3:透传真实状态码(408/429/5xx…),客户端据此区分可重试错;非 HTTP 错误回落 502。
+      const status = err instanceof RetryableHttpError && err.statusCode >= 400 && err.statusCode <= 599
+        ? err.statusCode
+        : 502;
+      return error(err instanceof Error ? err.message : String(err), status);
     }
   }
 

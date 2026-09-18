@@ -238,7 +238,7 @@ describe("type 单源(Global Verify Sync)", () => {
   test("TTS_PROVIDER_TYPES = system + 注册表全部键", () => {
     expect(TTS_PROVIDER_TYPES).toContain("system");
     for (const key of Object.keys(TTS_PROVIDER_REGISTRY)) {
-      expect(TTS_PROVIDER_TYPES).toContain(key);
+      expect(TTS_PROVIDER_TYPES).toContain(key as TtsProvider["type"]);
     }
     // 11 家(1 system + 10 在线),与安卓 Types 列表一致。
     expect(TTS_PROVIDER_TYPES.length).toBe(11);

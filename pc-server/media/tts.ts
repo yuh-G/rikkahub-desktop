@@ -4,6 +4,7 @@
 
 import type { TtsProvider } from "../foundation/types";
 import { fetchWithTimeout } from "../foundation/net";
+import { RetryableHttpError, withRetry } from "../foundation/retry";
 import { id, isRecord, mergeById } from "../foundation/utils";
 import { state } from "../persistence/json-store";
 import { jsonBody, textBody } from "../model-providers";
@@ -254,30 +255,55 @@ export async function generateSpeechWithTtsProvider(text: string, providerId?: s
   const headers = spec.headers(provider);
   const body = spec.body(provider, text);
   const mime = spec.mime(provider);
-  const response = await fetchWithTimeout(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    timeoutMs: 120_000, // 长文本合成分钟级,30s 默认会误杀
-  });
-  const audio = response.ok
-    ? await spec.parse(provider, response)
-    : Buffer.from(await response.arrayBuffer());
-  addLog({
-    providerId: provider.id,
-    providerName: provider.name,
-    url: endpoint,
-    ok: response.ok,
-    status: response.status,
-    kind: "provider:tts",
-    durationMs: Date.now() - started,
-    method: "POST",
-    requestHeaders: headers,
-    responseHeaders: Object.fromEntries(response.headers.entries()),
-    requestBody: jsonBody(body),
-    responseBody: response.ok ? `${audio.length} bytes ${mime}` : textBody(audio.toString("utf8")),
-    error: response.ok ? undefined : textBody(audio.toString("utf8")),
-  });
-  if (!response.ok) throw new Error(`TTS request failed: ${response.status} ${audio.toString("utf8").slice(0, 500)}`);
-  return { audio, mime, provider };
+  const requestBody = jsonBody(body);
+  // 稳定性/自动重试(§4.3,对齐 Android synthesizeWithRetry):408/429/5xx/网络瞬断按指数
+  // 退避重试(500→1000ms,共 3 次),400/401 等确定性错误立即抛。重试只记最终一条 addLog
+  // (每次尝试污染 100 条环形日志会把一次朗读刷成 N 行);最终状态码经 RetryableHttpError
+  // 透传给 /api/tts/speech 路由,供客户端按 Android 同款规则二次分类。
+  const logOnce = (ok: boolean, status: number, durationStart: number, audio: Buffer | null, errorText?: string) => {
+    addLog({
+      providerId: provider.id,
+      providerName: provider.name,
+      url: endpoint,
+      ok,
+      status,
+      kind: "provider:tts",
+      durationMs: Date.now() - durationStart,
+      method: "POST",
+      requestHeaders: headers,
+      requestBody,
+      responseBody: ok && audio ? `${audio.length} bytes ${mime}` : textBody(errorText ?? ""),
+      error: ok ? undefined : (errorText ?? "unknown"),
+    });
+  };
+  const synthesize = async (): Promise<Buffer> => {
+    const response = await fetchWithTimeout(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      timeoutMs: 120_000, // 长文本合成分钟级,30s 默认会误杀
+    });
+    if (!response.ok) {
+      // 失败也要把响应体读出(供错误信息),再以 RetryableHttpError 抛给重试层分类。
+      const errText = (await response.text().catch(() => "")).slice(0, 500);
+      throw new RetryableHttpError(`TTS request failed: ${response.status} ${errText}`, response.status);
+    }
+    return spec.parse(provider, response);
+  };
+  const synthStart = Date.now();
+  try {
+    const audio = await withRetry(synthesize, {
+      onRetry: ({ attempt, delayMs, error }) => {
+        // 重试不刷屏日志,但留一行 console 便于排查(对齐 Android Log.w)。
+        const status = error instanceof RetryableHttpError ? error.statusCode : "network";
+        console.warn(`[tts] ${provider.name} 合成第 ${attempt} 次重试(上次 ${status},退避 ${delayMs}ms)`);
+      },
+    });
+    logOnce(true, 200, synthStart, audio);
+    return { audio, mime, provider };
+  } catch (err) {
+    const status = err instanceof RetryableHttpError ? err.statusCode : 502;
+    logOnce(false, status, synthStart, null, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
 }
