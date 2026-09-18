@@ -789,6 +789,22 @@ export function ToolPart({
     tool.approvalState.type === "denied" ? (tool.approvalState.reason ?? "") : "";
   const isExecuted = tool.output.length > 0;
 
+  // 决策③④(7.2):MCP 工具失败的结构化诊断——解析 output 里 {error} 载荷的
+  //  MCP_TOOL_FAILURE 头,渲染成内联失败块(不打断对话)。非 MCP 失败(无该前缀)为 null。
+  const mcpFailure = React.useMemo(() => {
+    for (const part of tool.output) {
+      if (part.type !== undefined) continue; // 只认历史契约的 {error} 裸载荷
+      const text = (part as { error?: unknown }).error;
+      if (typeof text !== "string" || !text.startsWith("MCP_TOOL_FAILURE ")) continue;
+      const head = text.slice(0, text.indexOf("\n") === -1 ? undefined : text.indexOf("\n"));
+      const get = (k: string) => new RegExp(`${k}=([^\\s]+)`).exec(head)?.[1];
+      const kind = get("kind") ?? "unknown";
+      const server = (() => { try { return JSON.parse(get("server") ?? `""`) as string; } catch { return ""; } })();
+      return { kind, server, retryable: get("retryable") === "true" };
+    }
+    return null;
+  }, [tool.output]);
+
   const hasExtraContent =
     (tool.toolName === TOOL_NAMES.MEMORY &&
       (memoryAction === MEMORY_ACTIONS.CREATE || memoryAction === MEMORY_ACTIONS.EDIT) &&
@@ -798,6 +814,7 @@ export function ToolPart({
         getArrayField(outputContent, "items").length > 0)) ||
     (tool.toolName === TOOL_NAMES.SCRAPE_WEB && Boolean(getStringField(args, "url"))) ||
     isDenied ||
+    mcpFailure !== null ||
     hasMediaOutput;
 
   const canOpenDrawer = isPending || isExecuted;
@@ -893,6 +910,18 @@ export function ToolPart({
                 {deniedReason
                   ? t("tool_part.denied_with_reason", { reason: deniedReason })
                   : t("tool_part.denied")}
+              </div>
+            )}
+
+            {mcpFailure !== null && (
+              <div className="flex items-center gap-1.5 text-destructive text-xs">
+                <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
+                <span>
+                  {t(`tool_part.mcp_failed_${mcpFailure.kind}`, {
+                    server: mcpFailure.server,
+                    defaultValue: t("tool_part.mcp_failed_unknown", { server: mcpFailure.server }),
+                  })}
+                </span>
               </div>
             )}
 

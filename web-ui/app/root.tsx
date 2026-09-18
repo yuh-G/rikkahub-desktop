@@ -11,7 +11,7 @@ import i18n from "~/i18n";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Route } from "./+types/root";
-import { useSettingsStore, useSettingsSubscription, useMemorySubscription, useAppErrorsSubscription } from "~/stores";
+import { useSettingsStore, useSettingsSubscription, useMemorySubscription, useAppErrorsSubscription, useMcpHealthSubscription } from "~/stores";
 import { useHotkeys } from "~/hooks/use-hotkeys";
 import "./app.css";
 import "./i18n";
@@ -191,6 +191,7 @@ function AppContent() {
   useSettingsSubscription();
   useMemorySubscription();
   useAppErrorsSubscription();
+  useMcpHealthSubscription();
   // 域4-1(交互审查 2A):审批等待的桌面通知(窗口不可见时),琥珀点外显在侧栏/标签条。
   useApprovalNotifications();
   useHotkeys();

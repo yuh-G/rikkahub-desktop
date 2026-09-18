@@ -189,6 +189,21 @@ export function broadcastMemoryUpdate() {
   broadcastTo(appClients, sseFrame("memory", memoryStore.getSnapshot()));
 }
 
+// mcp_health 事件(7.2):推送 MCP 连接健康快照(McpHealthSnapshot)给前端设置页状态灯。
+// 与 settings 分开——健康是内存态运行时数据,不属于配置(混入会让每次探活触发全量
+// settings 重渲染 + saveState 全量落盘)。快照由 mcp-health Supervisor 注入(见 initSseWiring
+// 同款注入模式),避免 sse → tools/mcp-health 的反向依赖。
+let mcpHealthSnapshotProvider: () => JsonValue = () => ({});
+export function initMcpHealthBroadcast(provider: () => JsonValue): void {
+  mcpHealthSnapshotProvider = provider;
+}
+export function broadcastMcpHealth() {
+  broadcastTo(appClients, sseFrame("mcp_health", mcpHealthSnapshotProvider()));
+}
+export function mcpHealthSnapshotFrame(): [string, JsonValue | object] {
+  return ["mcp_health", mcpHealthSnapshotProvider()];
+}
+
 export function broadcastList() {
   const payload: ConversationListInvalidateEventDto = { type: "invalidate", assistantId: state.settings.assistantId, timestamp: Date.now() };
   broadcastTo(appClients, sseFrame("invalidate", payload));

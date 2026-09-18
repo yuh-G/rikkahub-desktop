@@ -581,6 +581,22 @@
     "status_off": "Disabled",
     "status_error": "Connection error",
     "status_connected": "Connected",
+    "status_reconnecting": "Reconnecting",
+    "health": {
+      "ready": "Ready",
+      "reconnecting": "Connection lost, reconnecting in background (attempt {{attempt}}/{{max}})…",
+      "reconnect_now": "Reconnect now",
+      "kind_auth_expired": "Authorization expired — please re-authorize",
+      "kind_config_error": "Invalid server URL — please check the configuration",
+      "kind_server_unavailable": "Server is persistently unreachable — try again later or check the service",
+      "kind_network_transient": "Network connection issue",
+      "kind_unknown": "Connection failed"
+    },
+    "health_notify": {
+      "auth_expired": "MCP server authorization expired — re-authorize it in Settings",
+      "config_error": "MCP server misconfigured — check it in Settings",
+      "server_unavailable": "MCP server is persistently unreachable — check the service"
+    },
     "oauth": {
       "title": "OAuth Authorization",
       "desc": "Some MCP servers require OAuth 2.1 sign-in. Authorization happens in your system browser; tokens are stored locally only.",

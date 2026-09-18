@@ -11,7 +11,7 @@ import { findModel } from "../../model-providers";
 import { contextWindowFor } from "../../model-providers/model-limits";
 import { error, json, readJson } from "../request";
 import { isLoopbackRequest } from "../net-context";
-import { appClients, openSse } from "../sse";
+import { appClients, mcpHealthSnapshotFrame, openSse } from "../sse";
 import { memoryStore } from "../../memory/index";
 import { recentAppErrors } from "../../observability/app-errors";
 import { computeStats } from "../../conversations/stats";
@@ -42,6 +42,7 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
         ["memory", memoryStore.getSnapshot()],
         ["app_errors_snapshot", { type: "snapshot", errors: recentAppErrors() }],
         ["invalidate", { type: "invalidate", assistantId: state.settings.assistantId, timestamp: Date.now() }],
+        mcpHealthSnapshotFrame(),
       ],
       (controller) => {
         appClients.add(controller);

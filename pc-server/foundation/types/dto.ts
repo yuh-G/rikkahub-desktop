@@ -229,6 +229,32 @@ export type AppErrorPushEventDto = {
   error: AppErrorDto;
 };
 
+// ── MCP 连接健康(7.2)───────────────────────────────────────────────
+
+/** MCP 故障分类(与 tools/mcp-health.ts McpFailureKind 对齐;前端按它渲染人话)。 */
+export type McpFailureKindDto =
+  | "network_transient"
+  | "auth_expired"
+  | "server_unavailable"
+  | "config_error"
+  | "unknown";
+
+/** 单台 MCP 服务器的健康快照(mcp_health 事件 + /api/events 初始帧的元素)。 */
+export type McpHealthEntryDto =
+  | { status: "ready" }
+  | { status: "reconnecting"; attempt: number; maxAttempts: number }
+  | {
+      status: "failed";
+      kind: McpFailureKindDto;
+      retryable: boolean;
+      message: string;
+      consecutiveFailures: number;
+      checkedAt: number;
+    };
+
+/** mcp_health 事件载荷:serverId → 健康项。只含"被启用且被某助手选中"的服务器(决策①)。 */
+export type McpHealthSnapshotDto = Record<string, McpHealthEntryDto>;
+
 // ── SSE 事件载荷 ───────────────────────────────────────────────────
 
 /** 会话列表 SSE:invalidate 事件(前端收到后重拉列表)。 */

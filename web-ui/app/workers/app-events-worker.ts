@@ -17,7 +17,7 @@
 //
 // 快照重放:与页内 app-events 一致,快照类事件缓存最新一帧;新页面(或 bfcache 复活的
 // 页面)接入时立即补发,消除"晚接入错过首帧"的时序耦合。
-const REPLAY_EVENTS = new Set(["settings", "memory", "app_errors_snapshot", "invalidate"]);
+const REPLAY_EVENTS = new Set(["settings", "memory", "app_errors_snapshot", "invalidate", "mcp_health"]);
 /** 3 次心跳未见(页面崩溃/被杀,pagehide 没来得及发 bye)即判死摘除。 */
 const PORT_STALE_MS = 45_000;
 /** R6-1:SSE 连接活性看门狗。服务端每 15s 发 `: heartbeat` 注释帧;45s(3×心跳)无字节

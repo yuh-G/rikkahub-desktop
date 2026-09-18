@@ -29,7 +29,8 @@ import { openExternal } from "~/lib/external-link";
 import { cn } from "~/lib/utils";
 import api, { appendWebAuthQuery } from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
-import type { AssistantProfile, Settings } from "~/types";
+import { useMcpHealthStore } from "~/stores";
+import type { AssistantProfile, McpHealthEntryDto, Settings } from "~/types";
 import {
   clone,
   moveItem,
@@ -209,14 +210,24 @@ function mcpName(server: Record<string, unknown>) {
   return textValue(common.name) || "MCP Server";
 }
 
-function mcpStatus(server: Record<string, unknown>) {
+/** 状态灯(决策①克制口径):健康快照驱动,而非 lastSyncError 化石。
+ *  离线兜底——健康快照尚未到达(刚启动/后端旧版)时回退到 settings 的 connected 字段,
+ *  避免首屏闪烁。idle(未启用/未被任何助手选中)永不标红。 */
+function mcpStatusKey(server: Record<string, unknown>, health?: McpHealthEntryDto): { ok: boolean; key: string } {
   const common =
     server.commonOptions && typeof server.commonOptions === "object"
       ? (server.commonOptions as Record<string, unknown>)
       : {};
   if (common.enable === false) return { ok: false, key: "off" };
-  if (common.connected === false || textValue(common.lastSyncError))
-    return { ok: false, key: "error" };
+  if (health) {
+    switch (health.status) {
+      case "ready": return { ok: true, key: "connected" };
+      case "reconnecting": return { ok: true, key: "reconnecting" };
+      case "failed": return { ok: false, key: "error" };
+    }
+  }
+  // 离线兜底(健康快照未达):沿用旧逻辑
+  if (common.connected === false || textValue(common.lastSyncError)) return { ok: false, key: "error" };
   return { ok: true, key: "connected" };
 }
 
@@ -230,6 +241,7 @@ function McpServerEditor({
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
+  const mcpHealth = useMcpHealthStore((s) => s.health);
   const servers = (settings.mcpServers ?? []) as Array<Record<string, unknown>>;
   const [selectedId, setSelectedId] = React.useState(textValue(servers[0]?.id));
   const selected =
@@ -380,6 +392,19 @@ function McpServerEditor({
       : null;
   const oauthAuthorized = Boolean(liveOauth && textValue(liveOauth.accessToken));
   const [oauthBusy, setOauthBusy] = React.useState(false);
+  // 决策①③:当前服务器的实时健康项(状态灯/重连按钮的数据源)。
+  const liveHealth = useMcpHealthStore((s) => s.health[String(draft.id ?? "")]);
+  const [reconnectBusy, setReconnectBusy] = React.useState(false);
+  const reconnectNow = async () => {
+    setReconnectBusy(true);
+    try {
+      await api.post("settings/mcp-server/reconnect", { serverId: String(draft.id) });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReconnectBusy(false);
+    }
+  };
   const startOAuth = async () => {
     // 先把在飞的草稿落盘:授权依赖服务端已保存的 URL。
     setOauthBusy(true);
@@ -444,11 +469,20 @@ function McpServerEditor({
       onMove={reorder}
       titleOf={mcpName}
       renderItem={(item) => {
-        const status = mcpStatus(item);
+        const status = mcpStatusKey(item, mcpHealth[String(item.id ?? "")]);
         return (
           <div className="flex min-w-0 items-center gap-2 text-left">
             <span
-              className={`size-2 shrink-0 rounded-full ${status.ok ? "bg-success" : "bg-destructive"}`}
+              className={cn(
+                "size-2 shrink-0 rounded-full",
+                status.key === "reconnecting"
+                  ? "animate-pulse bg-amber-500"
+                  : status.ok
+                    ? "bg-success"
+                    : status.key === "off"
+                      ? "bg-muted-foreground/40"
+                      : "bg-destructive",
+              )}
               title={t(`settings:mcp.status_${status.key}`)}
             />
             <span className="truncate">{mcpName(item)}</span>
@@ -530,6 +564,42 @@ function McpServerEditor({
             {t("settings:mcp.server.url_desc")}
           </span>
         </label>
+        {/* 决策①③:实时健康状态行——只在"已启用"时显示;故障给人话原因 + 立即重连/重新授权。 */}
+        {common.enable !== false && liveHealth ? (
+          <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                className={cn(
+                  "size-2 shrink-0 rounded-full",
+                  liveHealth.status === "ready"
+                    ? "bg-success"
+                    : liveHealth.status === "reconnecting"
+                      ? "animate-pulse bg-amber-500"
+                      : "bg-destructive",
+                )}
+              />
+              <span className="truncate text-xs text-muted-foreground">
+                {liveHealth.status === "ready"
+                  ? t("settings:mcp.health.ready")
+                  : liveHealth.status === "reconnecting"
+                    ? t("settings:mcp.health.reconnecting", { attempt: liveHealth.attempt, max: liveHealth.maxAttempts })
+                    : t(`settings:mcp.health.kind_${liveHealth.kind}`, { defaultValue: liveHealth.message })}
+              </span>
+            </div>
+            {liveHealth.status === "failed" ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={reconnectBusy}
+                onClick={() => void reconnectNow()}
+              >
+                {reconnectBusy ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                {liveHealth.kind === "auth_expired" ? t("settings:mcp.oauth.reauthorize") : t("settings:mcp.health.reconnect_now")}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         <label className="space-y-1">
           <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.server.headers_json")}</span>
           <Textarea

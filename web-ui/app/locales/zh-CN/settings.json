@@ -581,6 +581,22 @@
     "status_off": "已关闭",
     "status_error": "连接异常",
     "status_connected": "已连接",
+    "status_reconnecting": "重连中",
+    "health": {
+      "ready": "已就绪",
+      "reconnecting": "连接中断，正在后台重连(第 {{attempt}}/{{max}} 次)…",
+      "reconnect_now": "立即重连",
+      "kind_auth_expired": "授权已过期，请重新授权",
+      "kind_config_error": "服务器地址配置有误，请检查",
+      "kind_server_unavailable": "服务器持续无响应，请稍后再试或检查服务",
+      "kind_network_transient": "网络连接异常",
+      "kind_unknown": "连接失败"
+    },
+    "health_notify": {
+      "auth_expired": "MCP 服务器授权已过期，请前往设置重新授权",
+      "config_error": "MCP 服务器配置有误，请前往设置检查",
+      "server_unavailable": "MCP 服务器持续无响应，请检查服务状态"
+    },
     "oauth": {
       "title": "OAuth 授权",
       "desc": "部分 MCP 服务器要求 OAuth 2.1 登录授权。授权在系统浏览器中完成，令牌只保存在本机。",

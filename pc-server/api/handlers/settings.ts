@@ -23,6 +23,7 @@ import { firstProviderModel } from "../../model-providers/index";
 import { loadModelsDev } from "../../inference-engine/providers";
 import { syncMcpServerTools } from "../../tools/mcp";
 import { clearMcpOAuth, completeMcpOAuth, ensureFreshMcpToken, startMcpOAuth } from "../../tools/mcp-oauth";
+import { retryMcpServerNow } from "../../tools/mcp-health";
 import { listSkills } from "../../tools/skills";
 import { testSearchService } from "../../search/index";
 import { callImageGeneration } from "../../media/image-gen";
@@ -518,6 +519,12 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
     } catch (err) {
       return error(err instanceof Error ? err.message : String(err), 404);
     }
+    return json({ status: "ok" });
+  }
+  // 设置页"立即重连"按钮(7.2):清失败计数并立即重探一次,绕开重连退避等待。
+  if (path === "settings/mcp-server/reconnect" && request.method === "POST") {
+    const body = await readJson<{ serverId: string }>(request);
+    retryMcpServerNow(String(body.serverId ?? ""));
     return json({ status: "ok" });
   }
   // 浏览器重定向目标(GET,无鉴权 token —— 在 api/auth.ts 白名单豁免)。state 一次性校验 +
