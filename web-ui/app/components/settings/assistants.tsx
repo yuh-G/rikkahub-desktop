@@ -736,7 +736,8 @@ export function AssistantsSection({
               {[
                 ["time_info", t("settings:assistants.tools.time_info.title"), t("settings:assistants.tools.time_info.desc")],
                 ["clipboard", t("settings:assistants.tools.clipboard.title"), t("settings:assistants.tools.clipboard.desc")],
-                ["tts", t("settings:assistants.tools.tts.title"), t("settings:assistants.tools.tts.desc")],
+                // 语音播报(tts)暂不展示:后端工具与定义保留(预备),只是不在设置里开放开关。
+                // 若未来要把 AI 主动朗读做成卖点再恢复此卡片,i18n key(tools.tts)仍在。
                 ["ask_user", t("settings:assistants.tools.ask_user.title"), t("settings:assistants.tools.ask_user.desc")],
               ].map(([type, label, desc]) => {
                 const enabled =
