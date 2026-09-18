@@ -1,4 +1,4 @@
-From fe2d0c5606c3f12d4511f10869b0d3c7ecf6bc0c Mon Sep 17 00:00:00 2001
+From 5c19420c33ae8c1f65068ec37f184a587860866d Mon Sep 17 00:00:00 2001
 From: Mirsky <gyh88077515@163.com>
 Date: Sat, 5 Sep 2026 12:13:41 +0800
 Subject: [PATCH] =?UTF-8?q?patch(ai):=20thinking-budget=20xhigh/max=20?=
@@ -175,7 +175,7 @@ index 2a30265ad..c66dc78b7 100644
  	return budgets[level]!;
  }
 diff --git a/packages/ai/src/types.ts b/packages/ai/src/types.ts
-index d35a48b84..1d5c93727 100644
+index fe318fe42..23b19fdd9 100644
 --- a/packages/ai/src/types.ts
 +++ b/packages/ai/src/types.ts
 @@ -102,6 +102,11 @@ export interface ThinkingBudgets {

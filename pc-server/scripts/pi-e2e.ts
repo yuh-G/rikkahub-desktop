@@ -9,12 +9,21 @@ import { join } from "node:path";
 
 import { createAgentSession } from "../../pi/packages/coding-agent/src/core/sdk.ts";
 import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
+import { installProxyFetchInterceptor, primeSystemProxyCache, applyEffectiveProxy } from "../foundation/net";
 import { statePath } from "../foundation/paths";
 import type { Model, Provider } from "../foundation/types";
 import { createPiModelRuntime, mapProviderModelToPi } from "../pi-engine/model-bridge";
 
+// 与生产(bootstrap.ts)同款:出站 fetch 走用户代理配置 + 品牌 UA。不装的话 Google 等
+// 需代理端点在脚本里裸连超时,验证的不是真实链路。
+function readState(): { settings: { providers: Provider[]; proxyConfig?: unknown } } {
+	return JSON.parse(readFileSync(statePath, "utf-8")) as {
+		settings: { providers: Provider[]; proxyConfig?: unknown };
+	};
+}
+
 function pickTarget(wanted: string | undefined): { provider: Provider; model: Model } {
-	const state = JSON.parse(readFileSync(statePath, "utf-8")) as { settings: { providers: Provider[] } };
+	const state = readState();
 	const providers = state.settings.providers.filter((p) => p.enabled);
 	if (wanted) {
 		// 与 model-providers findModel 同款匹配(id 或 modelId;另放宽显示名方便手工调用)。
@@ -46,6 +55,13 @@ function applyOverwrite(providerItem: Provider, modelItem: Model): { provider: P
 }
 
 async function main(): Promise<void> {
+	// 先装代理拦截器再选目标(镜像生产 bootstrap 时序:拦截器→系统代理预热→应用生效
+	// 代理):后续 pi SDK 的所有出站 fetch 自动继承用户代理配置与品牌 UA。
+	const proxyConfig = readState().settings.proxyConfig as import("../foundation/types").ProxyConfig;
+	installProxyFetchInterceptor(() => proxyConfig);
+	await primeSystemProxyCache();
+	applyEffectiveProxy(proxyConfig);
+
 	const { provider, model } = pickTarget(process.argv[2]);
 	console.log(`[pi-e2e] provider: ${provider.name} (type=${provider.type}, baseUrl=${provider.baseUrl})`);
 	console.log(`[pi-e2e] model: ${model.modelId} (${model.displayName})`);

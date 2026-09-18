@@ -1,5 +1,5 @@
 // Adapted from pi (https://github.com/badlogic/pi-mono), MIT © Mario Zechner
-// 来源:packages/coding-agent/src/core/tools/bash.ts(v0.83.0)。schema/description/execute
+// 来源:packages/coding-agent/src/core/tools/bash.ts(v0.85.1)。schema/description/execute
 // 逐字保留(timeout 语义、OutputAccumulator 有界累积、100ms onUpdate 节流、截断落盘
 // 提示文案、abort/timeout 错误文案、非零退出码报错);TUI 渲染弃用。
 // PC 适配:
@@ -160,7 +160,7 @@ const BASH_UPDATE_THROTTLE_MS = 100;
 const BASH_SCHEMA = {
   type: "object",
   properties: {
-    command: { type: "string", description: "Bash command to execute" },
+    command: { type: "string", description: "Shell command to execute" },
     timeout: { type: "number", description: "Timeout in seconds (optional, no default timeout)" },
   },
   required: ["command"],
