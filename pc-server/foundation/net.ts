@@ -12,6 +12,27 @@ let actualServingPort: number | undefined;
 export function setActualServingPort(port: number) { actualServingPort = port; }
 export function getActualServingPort(): number | undefined { return actualServingPort; }
 
+// ── 品牌 User-Agent(台账 §7.3)─────────────────────────────────────────────
+// 此前所有不带显式 UA 的出站请求发的是 Bun 运行时默认 "Bun/<version>",上游把客户端认成
+// 命令行脚本而非应用。改为品牌 UA。
+//
+// 为什么惰性解析而不在模块顶层算:APP_VERSION 单源在 updates/index.ts,而后者顶层
+// import 本模块(fetchWithTimeout)。net 顶层若急切引用 APP_VERSION,会撞上 ESM 循环的
+// TDZ(updates 模块体先跑→触发 net 顶层→APP_VERSION 尚未初始化)。惰性 getter 首次被调
+// 时(首个出站请求)两模块早已初始化完毕,彻底绕开。版本在进程内不变,缓存一次即可。
+import { APP_VERSION } from "../updates/index";
+let cachedDefaultUserAgent: string | undefined;
+export function getDefaultUserAgent(): string {
+  return (cachedDefaultUserAgent ??= `RikkaHub-Desktop/${APP_VERSION}`);
+}
+
+/** 生效 UA:用户在 设置→网络 配了自定义 UA 用它(去空白),否则品牌默认。对齐安卓
+ *  DataSourceModule 拦截器:userAgent.trim().ifEmpty { 默认 }。 */
+export function resolveUserAgent(cfg: ProxyConfig | undefined | null): string {
+  const custom = cfg?.userAgent?.trim();
+  return custom ? custom : getDefaultUserAgent();
+}
+
 export function parseProxyServerValue(value: string): string | undefined {
   if (!value) return undefined;
   // `ProxyServer` can be either a single endpoint ("127.0.0.1:7890") or per-protocol
@@ -316,18 +337,29 @@ export function installProxyFetchInterceptor(getProxyConfig: () => ProxyConfig):
       ? ({ ...(init as RequestInit), timeout: 0 } as RequestInit & { timeout: number })
       : init;
 
-    // ── SSE 请求统一禁用压缩(accept-encoding: identity)──────────────────────────
-    // 内测反馈(Kimi 流式"停住数秒→哗啦一大段"):Bun fetch 默认协商 gzip/br,上游或
-    // 中间层若对 SSE 响应启用块压缩,解压端必须攒满一个压缩块才能吐出明文——逐事件
-    // flush 的流被切成一段段批量到达。SSE 语义上就不该压缩,对声明 Accept:
-    // text/event-stream 的请求显式要求 identity,禁止压缩协商。
-    // 收口哲学同上方 timeout:0:凡走 globalThis.fetch 的流式请求(pi 引擎在内)自动
-    // 免疫,新引擎零负担。护栏:调用方已显式传 accept-encoding 则尊重;Request 对象
-    // 输入跳过(理由同护栏 2)。
-    if (!(input instanceof Request) && effectiveInit?.headers) {
-      const headers = new Headers(effectiveInit.headers as HeadersInit);
+    // ── 请求头收口:SSE 禁压缩 + 品牌/自定义 User-Agent ────────────────────────
+    // 两件事情共享同一护栏与收口哲学(同上方 timeout:0):凡走 globalThis.fetch 的出站请求
+    // 自动免疫,新引擎零负担。护栏:Request 对象输入跳过(理由同上);各子项均"调用方显式
+    // 传值则尊重不覆盖"(??= 语义)。
+    //   1. SSE 禁压缩(accept-encoding: identity)——内测反馈(Kimi 流式"停住→哗啦一大段"):
+    //      上游/中间层若对 SSE 启用块压缩,解压端须攒满压缩块才能吐明文,逐事件 flush 失效。
+    //      SSE 语义上就不该压缩,对声明 Accept: text/event-stream 的请求显式要求 identity。
+    //   2. User-Agent(台账 §7.3)——不带显式 UA 的请求发的是 Bun 默认 "Bun/<version>",上游
+    //      把客户端认成脚本而非应用。注入生效 UA(自定义优先,否则品牌默认 RikkaHub-Desktop/
+    //      <version>)。对齐安卓:请求已自带 UA 不覆盖(某些上游对特定 UA 敏感),空设置回落默认。
+    const isRequestObject = input instanceof Request;
+    if (!isRequestObject) {
+      const headers = new Headers(effectiveInit?.headers as HeadersInit | undefined);
+      let headersMutated = false;
       if ((headers.get("accept") ?? "").includes("text/event-stream") && !headers.has("accept-encoding")) {
         headers.set("accept-encoding", "identity");
+        headersMutated = true;
+      }
+      if (!headers.has("user-agent")) {
+        headers.set("user-agent", resolveUserAgent(getProxyConfig()));
+        headersMutated = true;
+      }
+      if (headersMutated) {
         effectiveInit = { ...(effectiveInit as RequestInit), headers } as typeof effectiveInit;
       }
     }
@@ -410,6 +442,8 @@ export function proxyStatusPayload(cfg: ProxyConfig) {
     containerMode: RUNNING_IN_CONTAINER,
     // 实际运行端口（顺延后可能与 preferredPort 不同），前端口 Card 显示
     runningPort: actualServingPort ?? null,
+    // 品牌默认 UA,前端 UA 输入框占位符/重置目标(设置留空即此值)。
+    defaultUserAgent: getDefaultUserAgent(),
   };
 }
 
@@ -419,6 +453,7 @@ export function normalizeProxyConfig(value: unknown): ProxyConfig {
   const username = String(raw.username ?? "");
   const password = String(raw.password ?? "");
   const bypassRules = String(raw.bypassRules ?? "").trim();
+  const userAgent = String(raw.userAgent ?? "").trim();
   const rawMode = raw.mode;
   let mode: ProxyMode;
   if (rawMode === "auto" || rawMode === "manual" || rawMode === "direct" || rawMode === "env") {
@@ -430,7 +465,7 @@ export function normalizeProxyConfig(value: unknown): ProxyConfig {
     else if (RUNNING_IN_CONTAINER) mode = "env";
     else mode = "auto";
   }
-  return { mode, url, username, password, bypassRules };
+  return { mode, url, username, password, bypassRules, userAgent };
 }
 
 // Port setting: integer in [1, 65535] or null (auto). Anything out of range / wrong type

@@ -303,7 +303,7 @@ const { server, port } = (() => {
   // 跳过该设置)——正确出路是排查镜像内进程或调整宿主机 docker -p 映射,文案必须指对方向。
   const exhaustedMessage = RUNNING_IN_CONTAINER
     ? `容器内端口 ${preferredPort} 被占用(容器端口固定,不做重试)。请检查镜像内是否有其他进程占用;如需换宿主机端口,用 docker run -p <宿主机端口>:${preferredPort} 调整映射即可,无需改容器内端口。`
-    : `端口 ${preferredPort}-${top} 全部被其他程序占用。请关闭占用这些端口的程序,或在 设置 → 代理与端口 中更换端口后重新启动。`;
+    : `端口 ${preferredPort}-${top} 全部被其他程序占用。请关闭占用这些端口的程序,或在 设置 → 网络 中更换端口后重新启动。`;
   emitStartupFatal(2, exhaustedMessage);
   console.error(`[rikkahub-server] ${exhaustedMessage}`);
   process.exit(2);

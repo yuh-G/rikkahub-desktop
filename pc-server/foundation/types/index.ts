@@ -102,6 +102,11 @@ export interface ProxyConfig {
   // 例 "*.internal.corp,10.0.0.0/8,git.company.com"。localhost/127.0.0.1/::1 永远 bypass(硬编码)。
   // 仅 mode=auto/manual 生效; env(Docker) / direct 忽略。
   bypassRules: string;
+  // 自定义 User-Agent(对齐安卓 networkSetting.userAgent)。空串 = 用品牌默认
+  // RikkaHub-Desktop/<version>(resolveUserAgent)。仅填了才覆盖默认值。
+  // 备份面:随 proxyConfig 走——给安卓的 settings.json 剥离 proxyConfig(其 userAgent 在
+  // networkSetting 下,本就不透传);pc-backup.json 完整保留(PC→PC 跨机恢复带上,合理)。
+  userAgent?: string;
 }
 
 export interface Assistant {
