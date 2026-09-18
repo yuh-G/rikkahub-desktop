@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Mic, Square, Trash2, Volume2 } from "lucide-react";
+import { Check, Mic, Quote, Square, Trash2, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -383,6 +383,18 @@ function TtsSettingsPanel({
     [onSettings, providers, settings],
   );
 
+  // 朗读过滤开关(台账 §4.1)直写 displaySetting —— 与 provider 无关的全局朗读行为,
+  // 不走 provider autosave。范式同 general.tsx 的 patchDisplay。
+  const display = settings.displaySetting;
+  const patchDisplay = React.useCallback(
+    async (patch: Record<string, unknown>) => {
+      const nextDisplay = { ...settings.displaySetting, ...patch };
+      await api.post("settings/display", nextDisplay);
+      onSettings({ ...settings, displaySetting: nextDisplay });
+    },
+    [onSettings, settings],
+  );
+
   const selectProvider = React.useCallback(
     async (providerId: string) => {
       setSelectedId(providerId);
@@ -493,7 +505,47 @@ function TtsSettingsPanel({
   };
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+    <div className="space-y-4">
+      {/* 朗读过滤(台账 §4.1):朗读前对文本做正则预处理,角色扮演只念台词/跳过注释。 */}
+      <div className="rounded-lg border bg-card p-5">
+        <div className="flex items-center gap-2">
+          <Quote className="size-4 text-muted-foreground" />
+          <h3 className="text-sm font-medium">{t("settings:speech.read_filter_title")}</h3>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t("settings:speech.read_filter_desc")}
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <label className="flex items-start justify-between gap-4 rounded-md border px-3 py-3">
+            <div className="min-w-0">
+              <div className="text-sm">{t("settings:speech.only_read_quoted")}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {t("settings:speech.only_read_quoted_desc")}
+              </div>
+            </div>
+            <Switch
+              checked={display.ttsOnlyReadQuoted === true}
+              onCheckedChange={(checked) => void patchDisplay({ ttsOnlyReadQuoted: checked })}
+            />
+          </label>
+          <label className="flex items-start justify-between gap-4 rounded-md border px-3 py-3">
+            <div className="min-w-0">
+              <div className="text-sm">{t("settings:speech.skip_brackets")}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {t("settings:speech.skip_brackets_desc")}
+              </div>
+            </div>
+            <Switch
+              checked={display.ttsOnlyReadOutsideBrackets === true}
+              onCheckedChange={(checked) =>
+                void patchDisplay({ ttsOnlyReadOutsideBrackets: checked })
+              }
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
       <div className="rounded-lg border bg-card">
         <div className="flex items-center justify-between gap-3 border-b p-3">
           <div className="text-sm font-medium">{t("settings:speech.tts_services")}</div>
@@ -1065,6 +1117,7 @@ function TtsSettingsPanel({
           {t("settings:speech.select_tts")}
         </div>
       )}
+      </div>
     </div>
   );
 }

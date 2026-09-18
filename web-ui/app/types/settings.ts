@@ -64,6 +64,10 @@ export interface DisplaySetting {
   chatFontFamilyCjkCss?: string;
   pasteLongTextAsFile: boolean;
   pasteLongTextThreshold: number;
+  /** 朗读过滤:只读引号内台词(跳过旁白/动作)。byte-match Android displaySetting。 */
+  ttsOnlyReadQuoted?: boolean;
+  /** 朗读过滤:跳过中英文括号内的注释/语气说明。byte-match Android displaySetting。 */
+  ttsOnlyReadOutsideBrackets?: boolean;
   /** User-resizable chat input min-height in px (null = default). PC-only. */
   chatInputHeight?: number | null;
   /** 专题8:UI 主题与语言的权威存储(原在 localStorage,按 origin 隔离,改端口即丢)。

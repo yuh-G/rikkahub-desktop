@@ -77,6 +77,10 @@ export function defaultSettings(): Settings {
       uiFontSize: null,
       pasteLongTextAsFile: false,
       pasteLongTextThreshold: 1000,
+      // 朗读过滤开关(台账 §4.1):字段名 byte-match Android displaySetting,跨端备份透传。
+      // 默认关 —— 角色扮演用户按需开「只读引号内」只念台词、「不读括号」跳过注释。
+      ttsOnlyReadQuoted: false,
+      ttsOnlyReadOutsideBrackets: false,
       // User-resizable chat input height in px (null = default min). Persisted across
       // restarts via displaySetting. PC-only — stripped before syncing to Android.
       chatInputHeight: null,

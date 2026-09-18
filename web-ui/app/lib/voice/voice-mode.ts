@@ -10,6 +10,8 @@
 
 import api, { appendWebAuthQuery } from "~/services/api";
 import { ttsController } from "~/lib/tts/tts-controller";
+import { prepareSpeechText } from "~/lib/tts/text-filter";
+import { useAppStore } from "~/stores/app-store";
 import { startMicCapture, type MicCaptureHandle } from "./mic-capture";
 
 export type VoicePhase = "off" | "connecting" | "listening" | "transcribing" | "speaking" | "error";
@@ -272,7 +274,17 @@ class VoiceModeController {
           done();
         }
       });
-      ttsController.speak(text, "voice-mode", true);
+      // 朗读过滤(台账 §4.1):与消息朗读同一条链,reply 是后端直回的纯文本,客户端补过滤。
+      const display = useAppStore.getState().settings?.displaySetting;
+      const filtered = prepareSpeechText(text, {
+        onlyReadQuoted: display?.ttsOnlyReadQuoted === true,
+        readOutsideBrackets: display?.ttsOnlyReadOutsideBrackets === true,
+      });
+      if (!filtered) {
+        done();
+        return;
+      }
+      ttsController.speak(filtered, "voice-mode", true);
     });
   }
 }
