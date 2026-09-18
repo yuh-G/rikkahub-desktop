@@ -56,7 +56,9 @@
   --font-mono:
     "Spline Sans Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
     "Courier New", monospace;
-  /* 默认代码字体:优先尝试本机安装的现代等宽字体,未安装则回退系统等宽栈。 */
+  /* 默认代码字体:优先尝试本机安装的现代等宽字体,未安装则回退系统等宽栈。
+     栈内字体(Maple/JetBrains Mono/Fira Code 等)默认开连字——代码渲染统一由下方
+     code 选择器声明 font-feature-settings 关闭(=>、!= 合成单字形读代码碍眼)。 */
   --rikkahub-code-font:
     "Maple Mono", "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", ui-monospace,
     SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -1369,8 +1371,9 @@
   background: var(--muted) !important;
   color: var(--primary) !important;
   padding: 0.1rem 0.32rem !important;
-  /* 默认代码字体栈,可被 --rikkahub-code-font 覆盖 */
+  /* 默认代码字体栈,可被 --rikkahub-code-font 覆盖;禁用连字(见变量处注释) */
   font-family: var(--rikkahub-code-font) !important;
+  font-feature-settings: "calt" 0, "liga" 0, "clig" 0 !important;
   font-size: 0.95em !important;
 }
 
@@ -1386,6 +1389,7 @@
 [data-message-role] .message-markdown .code-block-content pre,
 [data-message-role] .message-markdown .code-block-content pre code {
   font-family: var(--rikkahub-code-font) !important;
+  font-feature-settings: "calt" 0, "liga" 0, "clig" 0 !important;
 }
 
 /* 语言标签跟随对话字体,与块 UI 文字观感一致。 */

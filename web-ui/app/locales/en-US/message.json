@@ -14,7 +14,7 @@
     "copy_audio": "Audio",
     "copy_document": "Document",
     "copy_tool": "Tool",
-    "regenerate_from_user_confirm": "Regenerate from this user message and continue?",
+    "regenerate_from_user_confirm": "Regenerate from this user message? All messages below it will be cleared.",
     "action_failed": "Action failed, please try again",
     "delete_confirm": "Delete this message?",
     "copy_message": "Copy message",
