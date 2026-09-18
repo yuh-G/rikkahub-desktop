@@ -9,6 +9,7 @@ import { unlinkSync } from "node:fs";
 import { callImageGeneration } from "../../media/image-gen";
 import { defaultAsrProvider, normalizeAsrProviders, transcribeAudioWithAsrProvider } from "../../media/asr";
 import { DEFAULT_SYSTEM_TTS_ID, defaultTtsProvider, generateSpeechWithTtsProvider, normalizeTtsProviders } from "../../media/tts";
+import { TTS_PROVIDER_TYPES } from "../../media/tts-providers/registry";
 import { extractedTextPath } from "../../files/index";
 import { error, json, readJson } from "../request";
 import { updateSettings } from "../../app-config";
@@ -87,7 +88,7 @@ export async function handleMediaRoutes(request: Request, _url: URL, path: strin
 
   if (path === "settings/tts-provider/detail" && request.method === "POST") {
     const body = await readJson<Partial<TtsProvider>>(request);
-    const type = ["system", "openai", "gemini", "minimax", "qwen", "groq", "xai", "mimo"].includes(String(body.type)) ? body.type as TtsProvider["type"] : "system";
+    const type = TTS_PROVIDER_TYPES.includes(String(body.type) as TtsProvider["type"]) ? body.type as TtsProvider["type"] : "system";
     const base = defaultTtsProvider(type);
     const providerItem = normalizeTtsProviders([{ ...base, ...body, type, id: String(body.id ?? base.id) }])[0];
     const exists = state.settings.ttsProviders.some((item) => item.id === providerItem.id);

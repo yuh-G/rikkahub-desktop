@@ -177,7 +177,11 @@ export interface AsrProvider {
 }
 
 export interface TtsProvider {
-  type: "system" | "openai" | "gemini" | "minimax" | "qwen" | "groq" | "xai" | "mimo";
+  // type 是跨端共享枚举：PC 导出的备份会被 Android kotlinx.serialization 反序列化，
+  // 新增取值必须逐字等于 Android TTSProviderSetting 的 @SerialName（§4.5）。
+  type:
+    | "system" | "openai" | "gemini" | "minimax" | "qwen" | "groq" | "xai" | "mimo"
+    | "elevenlabs" | "step" | "fish-audio";
   id: string;
   name: string;
   apiKey: string;
@@ -187,11 +191,29 @@ export interface TtsProvider {
   voiceName?: string;
   voiceId?: string;
   language?: string;
+  // languageType 仅旧版 qwen3-tts 使用;qwen-audio-3.0 起改用 format/sampleRate,字段保留防丢数据。
   languageType?: string;
   emotion?: string;
   speed?: number;
   speechRate?: number;
   pitch?: number;
+  // qwen-audio-3.0 / fish-audio / step 的音频格式与采样率。
+  format?: string;
+  sampleRate?: number;
+  // elevenlabs
+  stability?: number;
+  similarityBoost?: number;
+  // step(camelCase 协议; instruction 仅 stepaudio-2.5-tts 生效)
+  responseFormat?: string;
+  volume?: number;
+  instruction?: string;
+  // fish-audio(referenceId=克隆音色; prosody 用 speed)
+  referenceId?: string;
+  temperature?: number;
+  topP?: number;
+  chunkLength?: number;
+  normalize?: boolean;
+  latency?: string;
 }
 
 export interface Message {

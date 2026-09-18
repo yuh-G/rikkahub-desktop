@@ -9,6 +9,7 @@ import { Input } from "~/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { Separator } from "~/components/ui/separator";
 import { Slider } from "~/components/ui/slider";
+import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
@@ -99,10 +100,12 @@ function createTtsProvider(type: TtsProviderType = "system"): TtsProviderProfile
     return {
       ...base,
       name: "Qwen TTS",
-      baseUrl: "https://dashscope.aliyuncs.com/api/v1",
-      model: "qwen3-tts-flash",
-      voice: "Cherry",
-      languageType: "Auto",
+      // qwen-audio-3.0(§4.5):baseUrl 含 {WorkspaceId} 占位符,用户须替换为阿里云百炼业务空间 ID。
+      baseUrl: "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1",
+      model: "qwen-audio-3.0-tts-flash",
+      voice: "longanhuan_v3.6",
+      format: "wav",
+      sampleRate: 24000,
     };
   if (type === "groq")
     return {
@@ -125,8 +128,46 @@ function createTtsProvider(type: TtsProviderType = "system"): TtsProviderProfile
       ...base,
       name: "MiMo TTS",
       baseUrl: "https://api.xiaomimimo.com/v1",
-      model: "mimo-v2-tts",
+      model: "mimo-v2.5-tts",
       voice: "mimo_default",
+    };
+  if (type === "elevenlabs")
+    return {
+      ...base,
+      name: "ElevenLabs TTS",
+      baseUrl: "https://api.elevenlabs.io",
+      model: "eleven_multilingual_v2",
+      voiceId: "JBFqnCBsd6RMkjVDRZzb",
+      stability: 0.5,
+      similarityBoost: 0.75,
+    };
+  if (type === "step")
+    return {
+      ...base,
+      name: "Step TTS",
+      baseUrl: "https://api.stepfun.com",
+      model: "step-tts-mini",
+      voice: "elegantgentle-female",
+      responseFormat: "mp3",
+      speed: 1,
+      volume: 1,
+      sampleRate: 24000,
+      instruction: "",
+    };
+  if (type === "fish-audio")
+    return {
+      ...base,
+      name: "Fish Audio TTS",
+      baseUrl: "https://api.fish.audio",
+      model: "s2.1-pro",
+      referenceId: "",
+      temperature: 0.7,
+      speed: 1,
+      format: "mp3",
+      topP: 0.7,
+      chunkLength: 300,
+      normalize: true,
+      latency: "normal",
     };
   return {
     ...base,
@@ -143,33 +184,6 @@ function createTtsProvider(type: TtsProviderType = "system"): TtsProviderProfile
 // Lists are taken verbatim from the Android source as of v2.2.5.
 const TTS_VOICES_OPENAI = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"] as const;
 const TTS_VOICES_GROQ = ["austin", "natalie", "kailin"] as const;
-const TTS_VOICES_QWEN = [
-  "Cherry",
-  "Serene",
-  "Ethan",
-  "Chelsie",
-  "Momo",
-  "Vivian",
-  "Moon",
-  "Maia",
-  "Kai",
-  "Nofish",
-  "Bella",
-  "Jennifer",
-  "Ryan",
-  "Katerina",
-  "Aiden",
-  "Eldric Sage",
-  "Mia",
-  "Mochi",
-  "Bellona",
-  "Vincent",
-  "Bunny",
-  "Neil",
-  "Elias",
-  "Arthur",
-  "Nini",
-] as const;
 const TTS_VOICES_XAI = ["eve", "ara", "rex", "sal", "leo"] as const;
 const TTS_VOICES_MINIMAX = [
   "male-qn-qingse",
@@ -193,7 +207,75 @@ const TTS_EMOTIONS_MINIMAX = [
   "disgusted",
   "surprised",
 ] as const;
-const TTS_LANGUAGE_TYPES_QWEN = ["Auto", "Chinese", "English", "Japanese", "Korean"] as const;
+// qwen-audio-3.0(§4.5):音色按 model 分两组,对齐安卓 TTSProviderConfigure.kt:591 的 when 分支。
+const TTS_VOICES_QWEN_BY_MODEL: Record<string, readonly string[]> = {
+  "qwen-audio-3.0-tts-plus": ["longanlingxin", "longanlufeng"],
+  "qwen-audio-3.0-tts-flash": [
+    "longanfengyue",
+    "longanyuanfei",
+    "longanlingxi",
+    "longanxiaoxin",
+    "longanhuan_v3.6",
+    "longjielidou_v3.6",
+    "longpaopao_v3.6",
+    "longhuohuo_v3.6",
+    "longchuanshu_v3.6",
+    "loongmary",
+    "loongeva_v3.6",
+    "loongjohn",
+  ],
+};
+const TTS_FORMATS_QWEN = ["wav", "mp3", "pcm", "opus"] as const;
+const TTS_SAMPLE_RATES_QWEN = [8000, 16000, 22050, 24000, 44100, 48000] as const;
+const TTS_VOICES_MIMO = [
+  "mimo_default",
+  "冰糖",
+  "茉莉",
+  "苏打",
+  "白桦",
+  "Mia",
+  "Chloe",
+  "Milo",
+  "Dean",
+] as const;
+// step(阶跃)31 个音色,中文标签 + voice-id,对齐安卓 TTSProviderConfigure.kt:1108。
+const TTS_VOICES_STEP: { value: string; label: string }[] = [
+  { value: "elegantgentle-female", label: "气质温婉 (elegantgentle-female)" },
+  { value: "livelybreezy-female", label: "活力轻快 (livelybreezy-female)" },
+  { value: "energeticconfident-female", label: "活力自信 (energeticconfident-female)" },
+  { value: "jingdiannvsheng", label: "经典女声 (jingdiannvsheng)" },
+  { value: "wenroushunv", label: "温柔熟女 (wenroushunv)" },
+  { value: "tianmeinvsheng", label: "甜美女声 (tianmeinvsheng)" },
+  { value: "qingchunshaonv", label: "清纯少女 (qingchunshaonv)" },
+  { value: "wenrounvsheng", label: "温柔女声 (wenrounvsheng)" },
+  { value: "ruanmengnvsheng", label: "软萌女生 (ruanmengnvsheng)" },
+  { value: "youyanvsheng", label: "优雅女生 (youyanvsheng)" },
+  { value: "lengyanyujie", label: "冷艳御姐 (lengyanyujie)" },
+  { value: "shuangkuaijiejie", label: "爽快姐姐 (shuangkuaijiejie)" },
+  { value: "wenjingxuejie", label: "文静学姐 (wenjingxuejie)" },
+  { value: "linjiajiejie", label: "邻家姐姐 (linjiajiejie)" },
+  { value: "linjiameimei", label: "邻家妹妹 (linjiameimei)" },
+  { value: "zhixingjiejie", label: "知性姐姐 (zhixingjiejie)" },
+  { value: "cixingnansheng", label: "磁性男声 (cixingnansheng)" },
+  { value: "wenrounansheng", label: "温柔男声 (wenrounansheng)" },
+  { value: "yuanqinansheng", label: "元气男声 (yuanqinansheng)" },
+  { value: "zhengpaiqingnian", label: "正派青年 (zhengpaiqingnian)" },
+  { value: "ruyananshi", label: "儒雅男士 (ruyananshi)" },
+  { value: "boyinnansheng", label: "播音男声 (boyinnansheng)" },
+  { value: "shenchennanyin", label: "深沉男音 (shenchennanyin)" },
+  { value: "shuangkuainansheng", label: "爽快男声 (shuangkuainansheng)" },
+  { value: "ganliannvsheng", label: "干练女声 (ganliannvsheng)" },
+  { value: "qinhenvsheng", label: "亲切女声 (qinhenvsheng)" },
+  { value: "huolinvsheng", label: "活力女声 (huolinvsheng)" },
+  { value: "jilingshaonv", label: "机灵少女 (jilingshaonv)" },
+  { value: "yuanqishaonv", label: "元气少女 (yuanqishaonv)" },
+  { value: "wenrougongzi", label: "温柔公子 (wenrougongzi)" },
+  { value: "qingniandaxuesheng", label: "青年大学生 (qingniandaxuesheng)" },
+];
+const TTS_FORMATS_STEP = ["mp3", "wav", "pcm", "opus", "flac"] as const;
+const TTS_SAMPLE_RATES_STEP = [8000, 16000, 22050, 24000] as const;
+const TTS_FORMATS_FISH_AUDIO = ["mp3", "wav", "pcm", "opus"] as const;
+const TTS_LATENCY_FISH_AUDIO = ["normal", "balanced"] as const;
 const TTS_LANGUAGES_XAI: { value: string; label: string }[] = [
   { value: "auto", label: "Auto-detect" },
   { value: "en", label: "English" },
@@ -428,6 +510,9 @@ function TtsSettingsPanel({
               <SelectItem value="groq">Groq</SelectItem>
               <SelectItem value="xai">xAI</SelectItem>
               <SelectItem value="mimo">MiMo</SelectItem>
+              <SelectItem value="elevenlabs">ElevenLabs</SelectItem>
+              <SelectItem value="step">Step</SelectItem>
+              <SelectItem value="fish-audio">Fish Audio</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -624,7 +709,7 @@ function TtsSettingsPanel({
                     </Select>
                   </div>
                 ) : null}
-                {draft.type === "openai" || draft.type === "qwen" || draft.type === "groq" ? (
+                {draft.type === "openai" || draft.type === "groq" ? (
                   <div className="space-y-2">
                     <div className="text-sm font-medium">Voice</div>
                     <Select
@@ -635,12 +720,7 @@ function TtsSettingsPanel({
                         <SelectValue placeholder={t("settings:speech.select_voice")} />
                       </SelectTrigger>
                       <SelectContent>
-                        {(draft.type === "openai"
-                          ? TTS_VOICES_OPENAI
-                          : draft.type === "qwen"
-                            ? TTS_VOICES_QWEN
-                            : TTS_VOICES_GROQ
-                        ).map((voice) => (
+                        {(draft.type === "openai" ? TTS_VOICES_OPENAI : TTS_VOICES_GROQ).map((voice) => (
                           <SelectItem key={voice} value={voice}>
                             {voice}
                           </SelectItem>
@@ -649,31 +729,79 @@ function TtsSettingsPanel({
                     </Select>
                   </div>
                 ) : null}
+                {draft.type === "qwen" ? (
+                  // qwen-audio-3.0(§4.5):音色按 model 分两组,旧 language_type 字段已废(改 format/sample_rate)。
+                  <>
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Voice</div>
+                      <Select
+                        value={draft.voice ?? ""}
+                        onValueChange={(value) => patchDraft({ voice: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder={t("settings:speech.select_voice")} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(TTS_VOICES_QWEN_BY_MODEL[draft.model ?? ""] ?? TTS_VOICES_QWEN_BY_MODEL["qwen-audio-3.0-tts-flash"]).map((voice) => (
+                            <SelectItem key={voice} value={voice}>
+                              {voice}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Audio Format</div>
+                      <Select
+                        value={draft.format ?? "wav"}
+                        onValueChange={(value) => patchDraft({ format: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Format" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TTS_FORMATS_QWEN.map((format) => (
+                            <SelectItem key={format} value={format}>
+                              {format}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Sample Rate</div>
+                      <Select
+                        value={String(draft.sampleRate ?? 24000)}
+                        onValueChange={(value) => patchDraft({ sampleRate: Number(value) })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Hz" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TTS_SAMPLE_RATES_QWEN.map((rate) => (
+                            <SelectItem key={rate} value={String(rate)}>
+                              {rate} Hz
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </>
+                ) : null}
                 {draft.type === "mimo" ? (
-                  // Android keeps `mimo` voice as a free-text input — the provider exposes
-                  // an open-ended voice catalog (custom-trained voice IDs), not a fixed list.
                   <div className="space-y-2">
                     <div className="text-sm font-medium">Voice</div>
-                    <Input
-                      value={draft.voice ?? ""}
-                      onChange={(event) => patchDraft({ voice: event.target.value })}
-                    />
-                  </div>
-                ) : null}
-                {draft.type === "qwen" ? (
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">Language Type</div>
                     <Select
-                      value={draft.languageType ?? "Auto"}
-                      onValueChange={(value) => patchDraft({ languageType: value })}
+                      value={draft.voice ?? ""}
+                      onValueChange={(value) => patchDraft({ voice: value })}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder={t("settings:speech.select_lang_type")} />
+                        <SelectValue placeholder={t("settings:speech.select_voice")} />
                       </SelectTrigger>
                       <SelectContent>
-                        {TTS_LANGUAGE_TYPES_QWEN.map((lang) => (
-                          <SelectItem key={lang} value={lang}>
-                            {lang}
+                        {TTS_VOICES_MIMO.map((voice) => (
+                          <SelectItem key={voice} value={voice}>
+                            {voice}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -741,6 +869,171 @@ function TtsSettingsPanel({
                         2,
                         0.05,
                       )}
+                    </div>
+                  </>
+                ) : null}
+                {draft.type === "elevenlabs" ? (
+                  <>
+                    <div className="space-y-2 md:col-span-2">
+                      <div className="text-sm font-medium">Voice ID</div>
+                      <Input
+                        value={draft.voiceId ?? ""}
+                        onChange={(event) => patchDraft({ voiceId: event.target.value })}
+                        placeholder="JBFqnCBsd6RMkjVDRZzb"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      {numericInput("stability", "Stability", t("settings:speech.elevenlabs_stability_desc"), 0, 1)}
+                    </div>
+                    <div className="md:col-span-2">
+                      {numericInput("similarityBoost", "Similarity Boost", t("settings:speech.elevenlabs_similarity_desc"), 0, 1)}
+                    </div>
+                  </>
+                ) : null}
+                {draft.type === "step" ? (
+                  <>
+                    <div className="space-y-2 md:col-span-2">
+                      <div className="text-sm font-medium">Voice</div>
+                      <Select
+                        value={draft.voice ?? ""}
+                        onValueChange={(value) => patchDraft({ voice: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder={t("settings:speech.select_voice")} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TTS_VOICES_STEP.map((voice) => (
+                            <SelectItem key={voice.value} value={voice.value}>
+                              {voice.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Format</div>
+                      <Select
+                        value={draft.responseFormat ?? "mp3"}
+                        onValueChange={(value) => patchDraft({ responseFormat: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Format" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TTS_FORMATS_STEP.map((format) => (
+                            <SelectItem key={format} value={format}>
+                              {format}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Sample Rate</div>
+                      <Select
+                        value={String(draft.sampleRate ?? 24000)}
+                        onValueChange={(value) => patchDraft({ sampleRate: Number(value) })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Hz" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TTS_SAMPLE_RATES_STEP.map((rate) => (
+                            <SelectItem key={rate} value={String(rate)}>
+                              {rate} Hz
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="md:col-span-2">
+                      {numericInput("speed", "Speed", t("settings:speech.step_speed_desc"), 0.5, 2)}
+                    </div>
+                    <div className="md:col-span-2">
+                      {numericInput("volume", "Volume", t("settings:speech.step_volume_desc"), 0.1, 2)}
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <div className="text-sm font-medium">Instruction</div>
+                      <Textarea
+                        value={draft.instruction ?? ""}
+                        onChange={(event) => patchDraft({ instruction: event.target.value })}
+                        placeholder={t("settings:speech.step_instruction_ph")}
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        {t("settings:speech.step_instruction_desc")}
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+                {draft.type === "fish-audio" ? (
+                  <>
+                    <div className="space-y-2 md:col-span-2">
+                      <div className="text-sm font-medium">Reference ID</div>
+                      <Input
+                        value={draft.referenceId ?? ""}
+                        onChange={(event) => patchDraft({ referenceId: event.target.value })}
+                        placeholder="802e3bc2b27e49c2995d23ef70e6ac89"
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        {t("settings:speech.fish_reference_desc")}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Format</div>
+                      <Select
+                        value={draft.format ?? "mp3"}
+                        onValueChange={(value) => patchDraft({ format: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Format" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TTS_FORMATS_FISH_AUDIO.map((format) => (
+                            <SelectItem key={format} value={format}>
+                              {format}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Latency</div>
+                      <Select
+                        value={draft.latency ?? "normal"}
+                        onValueChange={(value) => patchDraft({ latency: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Latency" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TTS_LATENCY_FISH_AUDIO.map((latency) => (
+                            <SelectItem key={latency} value={latency}>
+                              {latency}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="md:col-span-2">
+                      {numericInput("temperature", "Temperature", t("settings:speech.fish_temperature_desc"), 0, 1)}
+                    </div>
+                    <div className="md:col-span-2">
+                      {numericInput("topP", "Top P", t("settings:speech.fish_topp_desc"), 0, 1)}
+                    </div>
+                    <div className="md:col-span-2">
+                      {numericInput("speed", "Speed", t("settings:speech.fish_speed_desc"), 0.5, 2)}
+                    </div>
+                    <div className="flex items-center justify-between gap-4 md:col-span-2">
+                      <div>
+                        <div className="text-sm font-medium">Normalize</div>
+                        <div className="text-xs text-muted-foreground">
+                          {t("settings:speech.fish_normalize_desc")}
+                        </div>
+                      </div>
+                      <Switch
+                        checked={draft.normalize ?? true}
+                        onCheckedChange={(checked) => patchDraft({ normalize: checked })}
+                      />
                     </div>
                   </>
                 ) : null}
