@@ -72,7 +72,9 @@ export async function generateTitleForConversation(conversation: Conversation) {
   });
   // 快速模型(对齐 APP fastModelId)。推理档不传 → 默认 auto:让模型自行决定是否思考,
   // 不再硬编码 "off"(部分新模型思考不可关,硬关反而出错;APP 亦默认 AUTO)。
-  const text = await fetchAuxiliaryText(state.settings.fastModelId, prompt, "title");
+  const text = await fetchAuxiliaryText(state.settings.fastModelId, prompt, "title", {
+    conversationId: conversation.id,
+  });
   return limitAuxiliaryText(
     firstAuxiliaryLine(cleanAuxiliaryText(text, limitAuxiliaryText(firstText, TITLE_CHARACTER_LIMIT) || "New Conversation")),
     TITLE_CHARACTER_LIMIT,
@@ -141,9 +143,16 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
       ? Object.entries(options.customBody).map(([key, value]) => ({ key, value }))
       : [],
   } as Assistant;
-  const headers = applyRequestHeaders({ "Content-Type": "application/json" }, assistant, providerItem, modelItem);
+  const headers = applyRequestHeaders(
+    { "Content-Type": "application/json" },
+    assistant,
+    providerItem,
+    modelItem,
+    options.conversationId,
+  );
   let endpoint = endpointFor(providerItem);
   let body: Record<string, any>;
+
   if (providerItem.type === "google") {
     // issue10:Gemini 鉴权统一走 x-goog-api-key 头,URL 不再带 ?key=(中转网关只认 header)。
     headers["x-goog-api-key"] = providerItem.apiKey;
@@ -386,7 +395,9 @@ export async function generateSuggestionsForConversation(conversation: Conversat
     locale: localeDisplayName(),
     content: selectedConversationMessages(conversation).slice(-8).map(summaryAsText).join("\n\n"),
   });
-  const text = await fetchAuxiliaryText(state.settings.fastModelId, prompt, "suggestion");
+  const text = await fetchAuxiliaryText(state.settings.fastModelId, prompt, "suggestion", {
+    conversationId: conversation.id,
+  });
   return uniqueStrings(
     text
       .split(/\r?\n/)
@@ -479,6 +490,7 @@ export async function compressConversation(conversation: Conversation, additiona
     summaries.push(cleanAuxiliaryText(await fetchAuxiliaryText(state.settings.compressModelId || state.settings.chatModelId, prompt, "compression", {
       stream: true,
       signal,
+      conversationId: conversation.id,
     })));
   }
   // R7-4:落库前最后一道闸——取消后 LLM 结果作废,绝不改写会话(压缩是破坏性替换,

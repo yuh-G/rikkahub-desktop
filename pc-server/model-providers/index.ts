@@ -344,8 +344,10 @@ export function customHeaderRecords(assistant: Assistant, modelItem?: Model) {
 // x-opencode-session。
 //
 // 注入纪律(三条,缺一不可):
-//  ① 只在拿到会话 ID 时注入:conversationId 为空(标题/翻译/压缩摘要/测试连接等辅助调用,
-//     它们不属于任何用户会话)整条不加——不发明 ID、不给上游发空会话信号。
+//  ① 每条请求都注入:conversationId 缺省时兜底随机 UUID(单次调用内稳定),不再是"辅助
+//     调用整条不发"——OpenCode Zen 对缺头请求直接 400 MissingSessionID(安卓 #1902,
+//     标题/翻译/压缩/OCR/连通性测试全中招;它只要求非空且稳定,不校验内容)。有会话
+//     上下文的辅助调用(标题/压缩)应传真实 conversationId,由调用方负责。
 //  ② ??= 而非 =:用户在 助手/模型自定义头 里显式配的同名头优先(与下方 X-Title/HTTP-Referer
 //     同纪律)——我们不静默覆盖用户意图。
 //  ③ 这是唯一注入点:applyRequestHeaders(会话流)与 applyModelRequestHeaders(pi 引擎注册头 +
@@ -355,10 +357,10 @@ function applySessionHeaders(
   baseUrl: string,
   conversationId: string | null | undefined,
 ) {
-  if (!conversationId) return;
-  headers["X-Session-ID"] ??= conversationId;
+  const sessionId = conversationId || crypto.randomUUID();
+  headers["X-Session-ID"] ??= sessionId;
   if (hostOfProvider({ baseUrl } as Provider) === "opencode.ai") {
-    headers["x-opencode-session"] ??= conversationId;
+    headers["x-opencode-session"] ??= sessionId;
   }
 }
 

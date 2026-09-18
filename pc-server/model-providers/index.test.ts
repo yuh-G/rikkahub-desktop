@@ -110,14 +110,16 @@ describe("会话身份头(§7.4)", () => {
   const model = {} as any;
   const at = (baseUrl: string) => ({ baseUrl }) as any;
 
-  it("有会话 ID 才注入 X-Session-ID;缺省/空串不注入(辅助调用不发明 ID)", () => {
+  it("有会话 ID 注入原值;缺省/空串兜底随机 UUID(#1902:OpenCode 拒收无会话头请求)", () => {
     const withId = applyRequestHeaders({}, assistant, at("https://api.openai.com/v1"), model, "conv-123");
     expect(withId["X-Session-ID"]).toBe("conv-123");
 
     const noArg = applyRequestHeaders({}, assistant, at("https://api.openai.com/v1"), model);
-    expect("X-Session-ID" in noArg).toBe(false);
+    expect(noArg["X-Session-ID"]).toMatch(/^[0-9a-f-]{36}$/);
     const empty = applyRequestHeaders({}, assistant, at("https://api.openai.com/v1"), model, "");
-    expect("X-Session-ID" in empty).toBe(false);
+    expect(empty["X-Session-ID"]).toMatch(/^[0-9a-f-]{36}$/);
+    // 兜底 ID 每次调用独立(不共享缓存),且不等于任何显式传入值。
+    expect(noArg["X-Session-ID"]).not.toBe(empty["X-Session-ID"]);
   });
 
   it("opencode.ai 追加 x-opencode-session;其它 host 不追加", () => {

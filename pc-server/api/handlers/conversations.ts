@@ -648,6 +648,7 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
             reasoningLevel: useQwenMt ? null : (state.settings.translateThinkingBudget ?? 0) > 0 ? "LOW" : null,
             temperature: useQwenMt ? 0.3 : null,
             topP: useQwenMt ? 0.95 : null,
+            conversationId: conversation.id,
             customBody: useQwenMt
               ? { translation_options: { source_lang: "auto", target_lang: englishLanguageName(targetLanguage) } }
               : undefined,
