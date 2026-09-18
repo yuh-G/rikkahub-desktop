@@ -426,10 +426,12 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
   if (type === "tavily") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
       const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+      // include_images 对齐安卓(TavilySearchService.kt:96):Tavily 顶层返回 images: string[],
+      // 与 Exa/豆包并列三大图源;不请求即恒空,模型拿到也无处引用(§3.1 缺口①)。
       const response = await fetchWithTimeout("https://api.tavily.com/search", {
         method: "POST",
         headers: requestHeaders,
-        body: JSON.stringify({ query, max_results: maxResults, search_depth: service.depth ?? "basic" }),
+        body: JSON.stringify({ query, max_results: maxResults, search_depth: service.depth ?? "basic", include_images: true }),
       });
       const raw = await response.json();
       addLog({
@@ -449,9 +451,13 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
         error: response.ok ? undefined : jsonBody(raw),
       });
       if (!response.ok) throwSearchStatus(response.status, JSON.stringify(raw).slice(0, 500));
+      const images = (Array.isArray(raw.images) ? raw.images : [])
+        .map((url: any) => String(url ?? "").trim())
+        .filter((url: string) => url.length > 0);
       return {
         query,
         service: "Tavily",
+        images,
         items: (raw.results ?? []).slice(0, maxResults).map((item: any, index: number) =>
           searchResult(index, { title: item.title, url: item.url, text: item.content ?? item.raw_content }),
         ),
