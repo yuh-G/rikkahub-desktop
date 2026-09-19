@@ -23,15 +23,24 @@ import {
   editQueuedMessage,
   enqueueMessage,
   hasQueuedMessages,
+  holdMessageQueue,
+  isQueueHeldByInterrupt,
   isQueuePaused,
   pauseMessageQueue,
   queueLength,
   queueSnapshotFor,
+  releaseMessageQueueHold,
   removeQueuedMessage,
   resumeMessageQueue,
   shiftNextQueued,
   waitForQueuedReply,
 } from "./message-queue";
+import {
+  clearSteeringChannel,
+  drainSteeringMessages,
+  pushSteeringMessage,
+  removeSteeringMessage,
+} from "./steering-channel";
 
 const priorState = state;
 
@@ -390,6 +399,286 @@ describe("消息发送队列派发(收尾续跑)", () => {
     } finally {
       await server.close();
       clearMessageQueue(conv.id);
+      setState(priorState);
+    }
+  });
+});
+
+// ── 终局三态(用户问题①,对齐 Codex ThreadIdleCause)──────────────────────
+// Interrupted(用户 stop/打断) → 队列冻结不点火;Failed(失败) → pause;Completed → 续跑。
+// 上述派发测试已锁 Completed/Failed,此处锁 Interrupted 的状态机与端到端行为。
+describe("终局三态:打断冻结", () => {
+  test("hold 保留全部项且快照呈现 paused;resume 一并解除", () => {
+    const cid = "q-hold";
+    enqueueMessage(cid, [{ type: "text", text: "待命" }]);
+    holdMessageQueue(cid);
+    expect(isQueueHeldByInterrupt(cid)).toBe(true);
+    expect(isQueuePaused(cid)).toBe(false); // 与失败暂停是两个标志位
+    expect(queueLength(cid)).toBe(1); // 冻结不丢项
+    // 快照统合呈现「待用户操作」:前端面板出「已暂停+继续」。
+    expect(queueSnapshotFor(cid)?.paused).toBe(true);
+    resumeMessageQueue(cid);
+    expect(isQueueHeldByInterrupt(cid)).toBe(false);
+    expect(queueSnapshotFor(cid)?.paused).toBe(false);
+    clearMessageQueue(cid);
+  });
+
+  test("hold 后再入队的新消息也被冻结住;release(直发入口)才解冻", () => {
+    const cid = "q-hold-2";
+    holdMessageQueue(cid);
+    enqueueMessage(cid, [{ type: "text", text: "后来的" }]);
+    expect(isQueueHeldByInterrupt(cid)).toBe(true);
+    // 显式解冻(空闲直发入口/voice 直发入口同款)。
+    releaseMessageQueueHold(cid);
+    expect(isQueueHeldByInterrupt(cid)).toBe(false);
+    clearMessageQueue(cid);
+  });
+
+  test("端到端:stop 打断在跑流 → 队列不接棒点火;resume 后才续跑", async () => {
+    const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
+    const { model, provider } = await import("../model-providers");
+    const { defaultState } = await import("../app-config/defaults");
+    const { defaultAssistant } = await import("../assistants");
+
+    const conv = makeConversation("c-q-stop");
+    persistConversation(conv);
+    registerConversation(conv);
+    conv.messages.push({
+      id: "c-q-stop-n1", selectIndex: 0,
+      messages: [{
+        id: "c-q-stop-m1", role: "USER", parts: [{ type: "text", text: "在跑" }],
+        annotations: [], createdAt: new Date().toISOString(), finishedAt: null, translation: null,
+      }],
+    } as never);
+    persistConversation(conv);
+
+    // 剧本:第一轮带工具调用,beforeRespond 挂起(生成确在进行、流未回)期间入队并
+    // 模拟用户停止——确定性制造「模型正在工作被打断」的窗口;之后的轮次若被请求到
+    // = 队列错误点火,是测试的失败信号。
+    const firstRespondGate = new Promise<void>(() => {});
+    let releaseFirstRespond = (_: void) => {};
+    void new Promise<void>((resolve) => { releaseFirstRespond = resolve; });
+    const server = await startFakeOpenAiSse([
+      {
+        content: "正在工作",
+        toolCalls: [{ id: "t1", name: "no_such_tool", arguments: "{}" }],
+        beforeRespond: async () => {
+          enqueueMessage(conv.id, [{ type: "text", text: "排队别跑" }]);
+          await firstRespondGate; // 等测试侧完成 stop 三连后才放行第一轮流
+        },
+      },
+      { content: "不该出现的第二轮" },
+    ]);
+    try {
+      const ourModel = model("fake-model", "Stop Test");
+      const ourProvider = provider({
+        id: crypto.randomUUID(), name: "Stop Provider", baseUrl: server.baseUrl,
+        apiKey: "sk-test", enabled: true, models: [ourModel],
+      });
+      const next = defaultState();
+      next.settings.assistantId = "a1";
+      next.settings.assistants = [{ ...defaultAssistant(), id: "a1" }];
+      next.settings.providers = [ourProvider];
+      next.settings.chatModelId = ourModel.id;
+      next.settings.fastModelId = "";
+      setState(next as State);
+
+      const gen = generateAnswer(conv); // 第一轮启动(卡在 beforeRespond 门上)
+      // 等首个请求抵达(生成确在进行),随后模拟用户按停止:stop 端点同款三连
+      // (abort → delete 登记 → holdMessageQueue)。
+      await new Promise<void>((resolve) => {
+        const timer = setInterval(() => {
+          if (server.requests.length >= 1) { clearInterval(timer); resolve(); }
+        }, 10);
+      });
+      const controller = generating.get(conv.id);
+      controller?.abort();
+      generating.delete(conv.id);
+      holdMessageQueue(conv.id);
+      releaseFirstRespond(); // 放行第一轮流——应立即被 abort 截断
+      await gen; // 中止分支收尾:hold 已就位,finally 的派发被门控拦下
+
+      // 队列原封不动:仍在、且被冻结。
+      expect(hasQueuedMessages(conv.id)).toBe(true);
+      expect(isQueueHeldByInterrupt(conv.id)).toBe(true);
+      // 上游没有收到第二个请求 = 队列没有接棒点火(核心断言)。
+      expect(server.requests.length).toBe(1);
+
+      // resume 解冻:用户显式继续,队首派发点火。
+      resumeMessageQueue(conv.id);
+      const { dispatchMessageQueue } = await import("./orchestrator");
+      dispatchMessageQueue(conv.id);
+      await new Promise<void>((resolve) => {
+        const timer = setInterval(() => {
+          if (server.requests.length >= 2) { clearInterval(timer); resolve(); }
+        }, 10);
+      });
+      expect(hasQueuedMessages(conv.id)).toBe(false); // 队首已派发出队
+    } finally {
+      await server.close();
+      clearMessageQueue(conv.id);
+      setState(priorState);
+    }
+  });
+});
+
+// ── steering(用户问题②,对齐 Codex pending_input)──────────────────────
+// 生成中补发的消息在「下一模型请求边界」(当前工具批结束)注入,不等整轮完成。
+describe("steering 轮边界注入", () => {
+  test("通道:push 幂等、drain 只取仍在 FIFO 的项、remove 按 id 剔除", () => {
+    const cid = "s-chan";
+    const a = enqueueMessage(cid, [{ type: "text", text: "a" }]);
+    const b = enqueueMessage(cid, [{ type: "text", text: "b" }]);
+    pushSteeringMessage(cid, a.id, [{ type: "text", text: "a" }]);
+    pushSteeringMessage(cid, b.id, [{ type: "text", text: "b" }]);
+    // 同 id 重复推送只留最新。
+    pushSteeringMessage(cid, a.id, [{ type: "text", text: "a改" }]);
+    // 撤回 b:drain 的 isStillQueued 过滤把它滤掉。
+    removeQueuedMessage(cid, b.id);
+    const drained = drainSteeringMessages(cid, (itemId) =>
+      (queueSnapshotFor(cid)?.items.some((it) => it.id === itemId)) ?? false);
+    expect(drained.map((it) => it.id)).toEqual([a.id]);
+    expect(drained[0]!.parts[0]).toMatchObject({ text: "a改" });
+    // 排水后通道为空(重复 drain 返回空)。
+    expect(drainSteeringMessages(cid, () => true)).toEqual([]);
+    // 编辑路径:push 后 remove 按 id 剔除。
+    const c = enqueueMessage(cid, [{ type: "text", text: "c" }]);
+    pushSteeringMessage(cid, c.id, [{ type: "text", text: "c" }]);
+    removeSteeringMessage(cid, c.id);
+    expect(drainSteeringMessages(cid, () => true)).toEqual([]);
+    clearMessageQueue(cid);
+    clearSteeringChannel(cid);
+  });
+
+  test("端到端:工具轮边界注入——第二个请求体里出现补发文本,队列同步移除", async () => {
+    const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
+    const { model, provider } = await import("../model-providers");
+    const { defaultState } = await import("../app-config/defaults");
+    const { defaultAssistant } = await import("../assistants");
+
+    const conv = makeConversation("c-q-steer");
+    persistConversation(conv);
+    registerConversation(conv);
+    conv.messages.push({
+      id: "c-q-steer-n1", selectIndex: 0,
+      messages: [{
+        id: "c-q-steer-m1", role: "USER", parts: [{ type: "text", text: "开始" }],
+        annotations: [], createdAt: new Date().toISOString(), finishedAt: null, translation: null,
+      }],
+    } as never);
+    persistConversation(conv);
+
+    // 剧本:第一轮发一个工具调用 → 工具批执行完后循环到达 steering 边界(注入发生),
+    // 第二轮作答。beforeRespond 在第一轮请求前入队+推送 steering(模拟生成中补发)。
+    const server = await startFakeOpenAiSse([
+      {
+        content: "先查一下",
+        toolCalls: [{ id: "t1", name: "no_such_tool", arguments: "{}" }],
+        beforeRespond: () => {
+          const item = enqueueMessage(conv.id, [{ type: "text", text: "补充:记得看最新版" }]);
+          pushSteeringMessage(conv.id, item.id, [{ type: "text", text: "补充:记得看最新版" }]);
+        },
+      },
+      { content: "好的,已结合补充看完" },
+    ]);
+    try {
+      const ourModel = model("fake-model", "Steer Test");
+      const ourProvider = provider({
+        id: crypto.randomUUID(), name: "Steer Provider", baseUrl: server.baseUrl,
+        apiKey: "sk-test", enabled: true, models: [ourModel],
+      });
+      const next = defaultState();
+      next.settings.assistantId = "a1";
+      next.settings.assistants = [{ ...defaultAssistant(), id: "a1" }];
+      next.settings.providers = [ourProvider];
+      next.settings.chatModelId = ourModel.id;
+      next.settings.fastModelId = "";
+      setState(next as State);
+
+      await generateAnswer(conv); // 全程跑完(两轮请求)
+
+      // 硬证据 1:第二个请求体的 messages 末尾有补发文本的 user turn(注入发生)。
+      expect(server.requests.length).toBe(2);
+      const secondBody = server.requests[1]! as { messages?: Array<{ role: string; content: string }> };
+      const messages = secondBody.messages ?? [];
+      const steerTurn = messages.find((m) => m.role === "user" && String(m.content).includes("记得看最新版"));
+      expect(steerTurn).toBeTruthy();
+      // 注入位:在工具结果(role:"tool")之后。
+      const lastToolIdx = messages.map((m) => m.role).lastIndexOf("tool");
+      const steerIdx = messages.indexOf(steerTurn!);
+      expect(steerIdx).toBeGreaterThan(lastToolIdx);
+
+      // 硬证据 2:补发消息已落库为 user 节点(对用户可见)。
+      const steerNode = conv.messages.find((n) =>
+        n.messages.some((m) => m.role === "USER" && JSON.stringify(m.parts).includes("记得看最新版")),
+      );
+      expect(steerNode).toBeTruthy();
+      // 硬证据 3:队列已移除该项(已注入≠待触发,收尾不再派发第三轮)。
+      expect(hasQueuedMessages(conv.id)).toBe(false);
+      expect(server.requests.length).toBe(2); // 没有第三轮
+    } finally {
+      await server.close();
+      clearMessageQueue(conv.id);
+      clearSteeringChannel(conv.id);
+      setState(priorState);
+    }
+  });
+
+  test("端到端:纯文本流无轮边界 → steering 不注入,FIFO 收尾派发兜底(零丢失)", async () => {
+    const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
+    const { model, provider } = await import("../model-providers");
+    const { defaultState } = await import("../app-config/defaults");
+    const { defaultAssistant } = await import("../assistants");
+
+    const conv = makeConversation("c-q-steer-noboundary");
+    persistConversation(conv);
+    registerConversation(conv);
+    conv.messages.push({
+      id: "c-q-steer-nb-n1", selectIndex: 0,
+      messages: [{
+        id: "c-q-steer-nb-m1", role: "USER", parts: [{ type: "text", text: "直接回答" }],
+        annotations: [], createdAt: new Date().toISOString(), finishedAt: null, translation: null,
+      }],
+    } as never);
+    persistConversation(conv);
+
+    const server = await startFakeOpenAiSse([
+      { content: "一轮答完", beforeRespond: () => {
+        const item = enqueueMessage(conv.id, [{ type: "text", text: "接着这条" }]);
+        pushSteeringMessage(conv.id, item.id, [{ type: "text", text: "接着这条" }]);
+      } },
+      { content: "兜底派发的第二轮" },
+    ]);
+    try {
+      const ourModel = model("fake-model", "NoBoundary Test");
+      const ourProvider = provider({
+        id: crypto.randomUUID(), name: "NoBoundary Provider", baseUrl: server.baseUrl,
+        apiKey: "sk-test", enabled: true, models: [ourModel],
+      });
+      const next = defaultState();
+      next.settings.assistantId = "a1";
+      next.settings.assistants = [{ ...defaultAssistant(), id: "a1" }];
+      next.settings.providers = [ourProvider];
+      next.settings.chatModelId = ourModel.id;
+      next.settings.fastModelId = "";
+      setState(next as State);
+
+      await generateAnswer(conv);
+      // 无工具轮 → 无 steering 边界 → 第一轮请求体不含补发(没注入)。
+      const firstBody = server.requests[0]! as { messages?: Array<{ role: string; content: string }> };
+      const injectedEarly = (firstBody.messages ?? []).some((m) => String(m.content).includes("接着这条"));
+      expect(injectedEarly).toBe(false);
+      // 收尾派发兜底:第二个请求照常发出,消息本体由派发落库。
+      await new Promise<void>((resolve) => {
+        const timer = setInterval(() => {
+          if (server.requests.length >= 2) { clearInterval(timer); resolve(); }
+        }, 10);
+      });
+      expect(hasQueuedMessages(conv.id)).toBe(false);
+    } finally {
+      await server.close();
+      clearMessageQueue(conv.id);
+      clearSteeringChannel(conv.id);
       setState(priorState);
     }
   });

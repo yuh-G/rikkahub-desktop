@@ -35,7 +35,8 @@ import { DEFAULT_TRANSLATION_PROMPT } from "../../app-config/prompts";
 import { attachOcrToImageParts, compressConversation, conversationModelIdFor, englishLanguageName, fetchAuxiliaryText, generateTitleForConversation, isQwenMtModel, markOcrPendingParts, modelExists, resolveFastModelId } from "../../conversations/auxiliary";
 import { compactEngineConversation, dispatchMessageQueue, generateAnswer, resolveEngineForConversation } from "../../conversations/orchestrator";
 import { deleteConversationsById, ensureConversation, findAssistant, finishInterruptedPendingToolsInConversation, hasPendingToolApproval } from "../../conversations/helpers";
-import { editQueuedMessage, enqueueMessage, pauseMessageQueue, removeQueuedMessage, resumeMessageQueue, waitForQueuedReply } from "../../conversations/message-queue";
+import { editQueuedMessage, enqueueMessage, holdMessageQueue, pauseMessageQueue, releaseMessageQueueHold, removeQueuedMessage, resumeMessageQueue, waitForQueuedReply } from "../../conversations/message-queue";
+import { pushSteeringMessage, removeSteeringMessage } from "../../conversations/steering-channel";
 import { awaitingApproval, compressing, generating } from "../../conversations/generation-state";
 import { getWorkspace } from "../../workspace";
 import { resolveToolApproval } from "../../inference-engine/approval-gate";
@@ -221,6 +222,9 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       generating.get(conversation.id)?.abort();
       generating.delete(conversation.id);
       finishInterruptedPendingToolsInConversation(conversation);
+      // 直发新消息 = 用户继续对话的明确意图:解除遗留的打断冻结(终局三态注释见
+      // queue/enqueue 空闲分支),新流收尾后队列恢复自动续跑。
+      releaseMessageQueueHold(conversation.id);
       const processedParts = applyInputRegexTransformParts((body.parts ?? []) as MessagePart[], assistant);
       const userMessage = message("USER", markOcrPendingParts(processedParts, picked.model));
       bumpAnalyticsMsgCount();
@@ -307,6 +311,12 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       const controller = generating.get(conversation.id);
       controller?.abort();
       generating.delete(conversation.id);
+      // 终局三态之 Interrupted(用户问题①,对齐 Codex):停止意图支配队列——正在排队的
+      // 消息不接棒点火(否则「打断一条又开始下一条」违背停止的本意),冻结保留等用户
+      // 显式 resume。generateAnswer 的中止分支会再 hold 一次(纵深防御),此处先置是为
+      // 了覆盖「流已不在跑、队列还挂着」的边缘态(stop 幂等连点)。
+      holdMessageQueue(conversation.id);
+      broadcastConversation(conversation);
       // 与新消息入口对齐：用户主动停止时，也把残留的 pending tool 标记成"用户取消"，
       // 否则下次重生成/继续时会基于一条 output 为空的 pending tool 节点继续。
       // 对齐安卓 commit 05c12488 把 finishInterruptedPendingTools 同时用在新消息
@@ -344,6 +354,9 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       const idle = !generating.has(conversation.id);
       if (idle) {
         // 空闲:与 send 同构——用户消息本体落库进历史并直接点火,不经队列(队列只压「因占用而待发」的)。
+        // 用户发新消息 = 明确要继续对话:解除此前 stop 遗留的打断冻结(heldByInterrupt)——
+        // 新流收尾走 Completed 终局,队列恢复自动续跑(对齐 Codex 新输入开 turn 后队列续跑)。
+        releaseMessageQueueHold(conversation.id);
         const userMessage = message("USER", markOcrPendingParts(processedParts, picked.model));
         bumpAnalyticsMsgCount();
         const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
@@ -368,8 +381,12 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         })();
         return json({ status: "accepted", queued: false }, { status: 202 });
       }
-      // 生成中:只入队 FIFO(用户消息本体由派发时落库,不预先追加,防重复)。当前流收尾时编排层派发。
+      // 生成中:入队 FIFO(事实源:改/撤/序都作用于它),同时推一份进 steering 通道——
+      // 引擎在下一个模型请求边界(当前工具批结束)注入,无需等整轮完成(用户问题②,
+      // 对齐 Codex pending_input)。注入成功时编排层会把该项移出队列;轮边界不存在
+      // (纯文本流)则残留作废,收尾派发兜底,零丢失。
       const item = enqueueMessage(conversation.id, processedParts);
+      pushSteeringMessage(conversation.id, item.id, processedParts);
       broadcastConversation(conversation);
       return json({ status: "queued", queued: true, id: item.id }, { status: 202 });
     }
@@ -394,8 +411,12 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
     }
     if (queueItem && request.method === "POST") {
       const body = await readJson<{ parts?: JsonValue[] }>(request);
-      const ok = editQueuedMessage(conversation.id, decodeURIComponent(queueItem[1]), (body.parts ?? []) as MessagePart[]);
+      const itemId = decodeURIComponent(queueItem[1]);
+      const ok = editQueuedMessage(conversation.id, itemId, (body.parts ?? []) as MessagePart[]);
       if (!ok) return error("Queue item not found", 404);
+      // 编辑使 steering 通道里的同 id 项失效(通道持的是旧内容快照)——移出通道,
+      // 编辑后的消息回到「收尾派发」路径(失去即时性,换内容正确性;对齐事实源纪律)。
+      removeSteeringMessage(conversation.id, itemId);
       broadcastConversation(conversation);
       return json({ status: "updated" });
     }
@@ -417,6 +438,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       let reply: string | null;
       if (idle) {
         // 空闲直发(与 send 同构):用户消息落库 → 点火 → 等待生成收尾后读本条 assistant 文本。
+        // 同 send/queue-enqueue 空闲分支:直发=继续对话,解除遗留打断冻结。
+        releaseMessageQueueHold(conversation.id);
         const userMessage = message("USER", markOcrPendingParts(processedParts, picked.model));
         bumpAnalyticsMsgCount();
         const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
@@ -447,6 +470,9 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         })();
       } else {
         // 生成中:入队(waitingReply 标记),等收尾派发 → 生成 → 回复通道交付文本。
+        // 刻意不推 steering 通道:语音模式要「这句话的专属回复」做 TTS 播报,轮边界
+        // 注入会把话并进在途任务、回复通道收 null(无可播报的独立回复)。语音的排队
+        // 语义 = 排队等下一轮,键盘的排队语义 = 及时注入——分道是产品语义不是遗漏。
         const item = enqueueMessage(conversation.id, processedParts, { waitingReply: true });
         broadcastConversation(conversation);
         reply = await waitForQueuedReply(conversation.id, item.id);

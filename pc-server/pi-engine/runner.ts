@@ -38,6 +38,7 @@ import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import type { PiSessionResources } from "./resources";
 import { seedPiSessionFromHistory, type EngineCompactionRecord } from "./context-encoder";
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
+import { reportError } from "../observability/app-errors";
 
 export interface PiGenerationContext {
   /** 生效 provider/model(调用方经 findModel 解析,providerOverwrite 已展开)。 */
@@ -75,6 +76,12 @@ export interface PiGenerationContext {
   /** 生成事件下沉(生产侧 = conversations/generation-apply 的应用器)。 */
   sink: GenerationEventSink;
   signal?: AbortSignal;
+  /** steering(用户问题②,对齐 Codex pending_input):生成中补发的用户消息取流。
+   *  runner 在 prompt 驱动期间轮询本回调,有新文本即调 pi 原生 session.steer()
+   *  (agent-loop 在「当前轮工具执行完、下一次 LLM 调用前」排水注入——语义与
+   *  Codex 逐字一致)。不传 = 无 steering 能力(消息留在 FIFO 队列收尾派发兜底)。
+   *  回调由编排层实现(落库/队列联动在编排层,runner 零副作用)。 */
+  pollSteering?: () => string[];
 }
 
 /** 压缩产物的 DB 侧映射(runner 返回;orchestrator 负责落 conversation.engineCompactions)。
@@ -167,6 +174,26 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     void session.abort();
   };
   ctx.signal?.addEventListener("abort", onAbort, { once: true });
+  // steering 轮询(用户问题②):补发消息经 queue/enqueue 端点随时到达,prompt 驱动期
+  // 每秒轮询一次编排层的排水回调,新文本交 pi 原生 steer()(入 pi steering 队列,
+  // agent-loop 在下一轮工具边界排水注入)。轮询粒度取 1s:补发到注入的最大延迟
+  // 远小于任何一轮工具执行/模型响应的时长,用户无感;事件驱动替代方案需要把
+  // 会话生命周期泄漏给 HTTP 层,得不偿失。
+  const steeringTimer = ctx.pollSteering
+    ? setInterval(() => {
+        for (const text of ctx.pollSteering!()) {
+          // steer() 内部会做 skill/模板展开——补发消息与首轮 prompt 同纪律,
+          // 经 _queueSteer 直排可绕开;但那是私有方法,公开面只有 steer()。
+          // expandPromptTemplates 已在 prompt 侧关闭,steer() 的展开作用于
+          // "/skill:" 前缀等命令形态——会话 UX 不产生该形态,展开为恒等。
+          void session.steer(text).catch(() => {
+            // 会话已收束(dispose 竞态)时 steer 拒绝:消息已在编排层落库并出队,
+            // FIFO 兜底路径不再持有它——按注入失败上报,排查线索进错误中心。
+            reportError("provider", "info", "补发消息注入工作区会话失败(会话可能已收束)", undefined, "pi_steer_failed");
+          });
+        }
+      }, 1_000)
+    : null;
   try {
     if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
@@ -179,6 +206,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
       }),
     );
   } finally {
+    if (steeringTimer) clearInterval(steeringTimer);
     ctx.signal?.removeEventListener("abort", onAbort);
     unsubscribe();
     session.dispose();

@@ -78,7 +78,8 @@ import { checkoutConversation, releaseConversation } from "./working-set";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
 import { awaitingApproval, generating } from "./generation-state";
-import { deliverQueuedReply, isQueuePaused, notifyQueuedGenerationDispatched, pauseMessageQueue, setOnQueuedGenerationDispatched, shiftNextQueued } from "./message-queue";
+import { deliverQueuedReply, holdMessageQueue, isQueueHeldByInterrupt, isQueuePaused, notifyQueuedGenerationDispatched, pauseMessageQueue, queueSnapshotFor, removeQueuedMessage, setOnQueuedGenerationDispatched, shiftNextQueued } from "./message-queue";
+import { clearSteeringChannel, drainSteeringMessages } from "./steering-channel";
 import {
   appendTextPart,
   canResumeToolExecution,
@@ -239,7 +240,7 @@ export async function callProviderStreaming(
   conversation: Conversation,
   assistantMessage: Message,
   assistantNode: MessageNode,
-  ctx: { signal?: AbortSignal; sink: GenerationEventSink; executeTool: ToolExecutor; snapshot?: GenerationSnapshot },
+  ctx: { signal?: AbortSignal; sink: GenerationEventSink; executeTool: ToolExecutor; snapshot?: GenerationSnapshot; onSteerBoundary?: () => string[] },
 ): Promise<string> {
   const assistant = ctx.snapshot?.assistant ?? findAssistant(conversation.assistantId);
   const picked = ctx.snapshot
@@ -271,6 +272,9 @@ export async function callProviderStreaming(
     node: assistantNode,
     sink: ctx.sink,
     executeTool: ctx.executeTool,
+    // steering 轮边界透传(用户问题②):协调器装配的排水回调直抵工具循环骨架,
+    // 引擎层零感知副作用。
+    onSteerBoundary: ctx.onSteerBoundary,
   };
   if (providerItem.type !== "openai") {
     // 把本函数已解析的快照透传，确保 claude/google 路径与 openai 路径读到同一代配置
@@ -434,6 +438,36 @@ function broadcastQueueState(conversationId: string) {
   if (conv) broadcastConversation(conv);
 }
 
+/**
+ * steering 轮边界(用户问题②,对齐 Codex pending_input):引擎在「工具批执行完、下一
+ * 模型请求构建前」调用。排水 steering 通道(只取仍在 FIFO 队列的项——被撤回/编辑的
+ * 不注入),逐条落库 user 节点(与 dispatchQueuedHead 同构:正则变换入队时已做)+ 从
+ * 队列移除(已注入≠待触发,防收尾再派发一次)+ 刷新面板,返回各消息文本供引擎编码。
+ * 副作用全部收在本协调器(落库/队列/广播),引擎只拿纯文本——层纪律与 executeTool 同。
+ * 语音回复通道:被注入项的等待方经 removeQueuedMessage 收 null(该轮回复涵盖全部
+ * 补发,无单条回复可播报),语音模式跳过播报直接重开麦。
+ */
+function steerBoundary(conversationId: string): string[] {
+  const conversation = getConversation(conversationId);
+  if (!conversation) return [];
+  const taken = drainSteeringMessages(conversationId, (itemId) => queueSnapshotFor(conversationId)?.items.some((it) => it.id === itemId) ?? false);
+  if (taken.length === 0) return [];
+  const texts: string[] = [];
+  for (const item of taken) {
+    const userMessage = message("USER", item.parts.map((p) => ({ ...p })));
+    const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
+    conversation.messages.push(userNode);
+    texts.push(textFromParts(item.parts));
+    removeQueuedMessage(conversationId, item.id);
+  }
+  conversation.chatSuggestions = [];
+  conversation.updateAt = Date.now();
+  persistConversation(conversation);
+  broadcastConversation(conversation);
+  broadcastQueueState(conversationId);
+  return texts.filter((t) => t.length > 0);
+}
+
 /** 队首派发核心(前置:调用方已确认空闲且未暂停)。 */
 function dispatchQueuedHead(conversationId: string) {
   const conversation = getConversation(conversationId);
@@ -458,13 +492,17 @@ function dispatchQueuedHead(conversationId: string) {
 }
 
 /**
- * 消息发送队列派发(跨引擎统一):空闲 && 未暂停 && 队非空时,从队首取下一条待生成并点火。
- * 触发点:generateAnswer 收尾(经 stillMine 快照判「未被接管」后调用)+ queue/resume 端点(空闲时)。
- * 队列对引擎种类无感——它只调 generateAnswer,而那是聊天/pi 唯一注册生成的入口,新增引擎自动继承。
+ * 消息发送队列派发(跨引擎统一):空闲 && 未暂停 && 未被打断冻结 && 队非空时,从队首
+ * 取下一条待生成并点火。触发点:generateAnswer 收尾(经 stillMine 快照判「未被接管」后
+ * 调用)+ queue/resume 端点(空闲时)。队列对引擎种类无感——它只调 generateAnswer,
+ * 而那是聊天/pi 唯一注册生成的入口,新增引擎自动继承。
+ * 终局三态门控(对齐 Codex ThreadIdleCause):heldByInterrupt(用户 stop/写入口接管
+ * 中止)时 return——打断意图支配派发,冻结的队列等用户显式 resume。
  */
 export function dispatchMessageQueue(conversationId: string) {
   if (generating.has(conversationId)) return; // 占用中:不打断,等当前流收尾续跑。
   if (isQueuePaused(conversationId)) return;
+  if (isQueueHeldByInterrupt(conversationId)) return;
   dispatchQueuedHead(conversationId);
 }
 
@@ -693,6 +731,9 @@ async function runPiWorkspaceGeneration(
     ],
     sink,
     signal,
+    // steering(用户问题②):编排层的轮边界回调直通 pi runner 的 steer 轮询(落库/
+    // 队列联动在 steerBoundary,runner 只拿文本喂 session.steer)。
+    pollSteering: ctx.onSteerBoundary,
   });
   applyCapturedEngineCompactions(conversation, result.capturedCompactions);
   return result.text;
@@ -707,6 +748,8 @@ const ENGINE_REGISTRY = createEngineRegistry({
       signal,
       sink,
       executeTool: ctx.executeTool,
+      // steering 轮边界(用户问题②):透传给聊天引擎的工具循环骨架。
+      onSteerBoundary: ctx.onSteerBoundary,
       // P1-4:generateAnswer 入口解析的 assistant/provider/model 贯穿本次生成,
       // callProviderStreaming 不再从可能已被替换的 state.settings 重新解析。
       snapshot: { assistant: ctx.assistant, provider: ctx.provider, model: ctx.model },
@@ -979,6 +1022,9 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
         provider: picked.provider,
         model: picked.model,
         executeTool,
+        // steering 轮边界(用户问题②):聊天引擎在工具循环轮边界调用;pi 引擎经
+        // runPiWorkspaceGeneration 装配为 pollSteering(见其 ctx 装配处)。
+        onSteerBoundary: () => steerBoundary(conversation.id),
         adapter,
       },
       sink,
@@ -1023,6 +1069,16 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     // 网络错误而非 AbortError,若走失败分支会给用户主动停止的回答追加"请求失败"+错误
     // 注解并弹全局错误。只要本流已被要求中止,一律按中止收尾。
     if (controller.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) {
+      // 终局三态之 Interrupted:本流以中止收尾。用户 stop/删会话 = 打断意图 → 冻结队列
+      // (对齐 Codex ThreadIdleCause::Interrupted 不派发);但「被新流接管」(send/regenerate/
+      // edit/重发的入口 abort 后立即点火新流)不算打断——新流代表用户继续对话的意图,
+      // 其收尾时队列照常派发(对齐 Codex 新输入开 turn 后 Completed 终局续跑队列)。
+      // 接管判据与 finally 的 takenOver 同源:登记在册的是另一个 controller。
+      const takenOverByAbort = generating.has(conversation.id) && generating.get(conversation.id) !== controller;
+      if (!takenOverByAbort) {
+        holdMessageQueue(conversation.id);
+        broadcastQueueState(conversation.id);
+      }
       finalizeOutcome(() => {
         // 批6复审 G4:中止若发生在首个 delta 之前,loading 占位没人摘(正常路径由首个
         // delta 摘,stop 端点手工摘,但删会话/接管等 abort 路径不经过 stop 端点),
@@ -1080,15 +1136,24 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     // 这里是"生成终局但审批仍挂着"的防御(引擎 run 因故结束而 execute 未走到注销)。
     // 幂等(delete 不存在键无副作用),与 busy:false 同点收口。
     awaitingApproval.delete(conversation.id);
+    // steering 通道残留清扫:生成收尾时仍未被注入的补发(引擎无轮边界可注入:纯文本
+    // 流无工具轮、pi 会话收束竞态等)直接作废——FIFO 队列仍持有同一条消息,上方
+    // dispatchMessageQueue 派发兜底,零丢失。不清扫会让残留漂到下一轮生成被误注入。
+    clearSteeringChannel(conversation.id);
     if (conversationStillExists(conversation.id)) {
       broadcastNodeUpdate(conversation, assistantNode);
       broadcastConversation(conversation);
     }
     completeConversationGeneration(conversation.id, controller);
     releaseConversation(conversation.id);
-    // 生成真正结束(登记已清)→ 派发队列下一条。失败已在 catch 里 pause,dispatchMessageQueue
-    // 的 paused 门控让它自动停稳;abort/正常收尾则接续点火。被接管时跳过(接管方自会续跑)。
-    if (!takenOver) dispatchMessageQueue(conversation.id);
+    // 生成真正结束(登记已清)→ 派发队列下一条。终局三态门控(对齐 Codex
+    // ThreadIdleCause):失败已在 catch 里 pause、用户中止已在 abort 分支 hold——
+    // dispatchMessageQueue 的两道门控让它们各自停稳;正常收尾则接续点火。被接管时
+    // 跳过(接管方自会续跑)。审批暂停(pause-resume 引擎的 pending 工具卡)也拦住:
+    // 审批中的 turn 在 Codex 语义里仍是 active turn(start_turn_if_idle 返回 NotIdle),
+    // 用户批准/拒绝后重触发的 generateAnswer 再走到这里时续派发。pi 引擎的审批在
+    // execute 内挂起(generating 仍在册),takenOver/generating 门已天然拦住,不到此判。
+    if (!takenOver && !hasPendingToolApproval(currentMessage)) dispatchMessageQueue(conversation.id);
   }
 }
 

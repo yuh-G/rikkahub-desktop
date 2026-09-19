@@ -150,6 +150,11 @@ export interface ProviderRoundAdapter {
   finishReasoningOnFinal: boolean;
   /** MAX_TOOL_STEPS 超限的报错文案（三家文案不同，冻结）。 */
   exhaustedError: string;
+  /** steering 注入(用户问题②,对齐 Codex pending_input):把「生成中补发」的用户消息
+   *  编码为 provider 特定的 user turn 追加进下一轮请求体(OpenAI messages / Responses
+   *  input / Claude messages / Google contents)。骨架在轮边界(工具批执行完、下一轮
+   *  fetch 前)调用;不实现 = 该 provider 无注入能力(消息留在 FIFO 队列收尾派发兜底)。 */
+  appendSteeringUserTurns?(body: Record<string, unknown>, texts: string[]): Record<string, unknown>;
   /** 专题9:助手"流式输出"开关关闭时的非流式请求体改造(对齐安卓 GenerationHandler 的
    *  stream = assistant.streamOutput)。三家均实现;与 nonStreamFallback(流式失败自动
    *  降级,仅 OpenAI)正交——本能力由用户显式选择,从第一轮起全程非流式。 */
@@ -387,6 +392,16 @@ export async function runStreamingToolLoop(
     }
 
     currentBody = adapter.encodeNextTurn(result, toolResults);
+    // steering 轮边界(用户问题②,对齐 Codex「Pending input is drained into history
+    // before building the next model request」):工具批已执行完、下一轮请求体已编码,
+    // 此刻向协调器要「生成中补发」的用户消息文本,由 adapter 编码成 user turn 追加。
+    // 协调器负责落库与 FIFO 队列联动(副作用不进引擎层);adapter 未实现注入能力或
+    // 无待注入消息时恒等返回。注入发生在本轮所有工具结果之后——与 Codex 的
+    // pending_input 排水位(assistant 轮回放 + 工具结果 + 用户补发)逐字对齐。
+    const steerTexts = hooks.onSteerBoundary?.() ?? [];
+    if (steerTexts.length > 0 && adapter.appendSteeringUserTurns) {
+      currentBody = adapter.appendSteeringUserTurns(currentBody, steerTexts);
+    }
   }
 
   throw new Error(adapter.exhaustedError);

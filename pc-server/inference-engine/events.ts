@@ -136,6 +136,11 @@ export type ToolExecutor = (toolCall: ToolCall, context?: ToolContext) => Promis
 export type StreamHooksWithSink = StreamHooks & {
   sink?: GenerationEventSink;
   executeTool?: ToolExecutor;
+  /** steering 轮边界(用户问题②,对齐 Codex pending_input):工具批执行完、下一轮模型
+   *  请求构建前由循环骨架调用。协调器实现 = 从 steering 通道排水仍有效的排队消息,
+   *  落库 user 节点 + 通知 FIFO 队列移除,返回各消息的文本数组(空数组 = 无注入)。
+   *  引擎只拿文本编码进请求体,落库/队列/广播全在协调器——副作用不进引擎层。 */
+  onSteerBoundary?: () => string[];
 };
 
 /** 工具调度上下文：在工具执行回调外再包一层 executeTool 引用，

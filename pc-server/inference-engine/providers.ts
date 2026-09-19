@@ -550,6 +550,24 @@ export async function streamClaudeChatWithTools(
     toolCardsCreatedInStream: true,
     finishReasoningOnFinal: true,
     exhaustedError: "Too many consecutive Claude tool calls without final assistant content",
+    // steering 注入(用户问题②):Claude 协议要求角色交替,上一条 encodeNextTurn 已以
+    // {role:"user", content:[tool_result...]} 收尾——补发文本并入该 user turn 的 content
+    // 末尾(块序:tool_result 块在前、text 块在后),而非另起 user turn(会被 400 拒)。
+    // 多条补发以空行并成一段文本。防御:末条不是 user turn(异常 body)时退化为追加
+    // 新 user turn,宁可协议风险也不丢消息(实际不可达——encodeNextTurn 恒以 user 收尾)。
+    appendSteeringUserTurns: (requestBody, texts) => {
+      const messagesArr = [...(Array.isArray(requestBody.messages) ? requestBody.messages : [])];
+      const last = messagesArr[messagesArr.length - 1] as { role?: string; content?: unknown } | undefined;
+      if (last && last.role === "user" && Array.isArray(last.content)) {
+        messagesArr[messagesArr.length - 1] = {
+          ...last,
+          content: [...last.content, { type: "text", text: texts.join("\n\n") }],
+        };
+      } else {
+        messagesArr.push({ role: "user", content: [{ type: "text", text: texts.join("\n\n") }] });
+      }
+      return { ...requestBody, messages: messagesArr, stream: true };
+    },
   };
   return runStreamingToolLoop(adapter, initialBody, assistant, signal, hooks);
 }
@@ -916,6 +934,20 @@ export async function streamGoogleChatWithTools(
     toolCardsCreatedInStream: true,
     finishReasoningOnFinal: true,
     exhaustedError: "Too many consecutive Gemini tool calls without final assistant content",
+    // steering 注入(用户问题②):Gemini 无严格交替约束,补发文本并入上一条 user
+    // turn(与 functionResponse 同 turn)的 parts 末尾——与 Claude 同位的语义选择:
+    // 补发是「用户对当前任务的中途插话」,不是独立新轮。多条补发以空行并成一段。
+    appendSteeringUserTurns: (requestBody, texts) => {
+      const contentsArr = [...(Array.isArray(requestBody.contents) ? requestBody.contents : [])] as Array<{ role?: string; parts?: unknown[] }>;
+      const last = contentsArr[contentsArr.length - 1];
+      const textPart = { text: texts.join("\n\n") };
+      if (last && last.role === "user" && Array.isArray(last.parts)) {
+        contentsArr[contentsArr.length - 1] = { ...last, parts: [...last.parts, textPart] };
+      } else {
+        contentsArr.push({ role: "user", parts: [textPart] });
+      }
+      return { ...requestBody, contents: contentsArr };
+    },
   };
   return runStreamingToolLoop(adapter, initialBody, assistant, signal, hooks);
 }
@@ -1862,6 +1894,19 @@ export async function fetchOpenAiTextStreaming(
     toolCardsCreatedInStream: false,
     finishReasoningOnFinal: false,
     exhaustedError: "Too many consecutive tool calls without final assistant content",
+    // steering 注入(用户问题②):user turn 追加进请求体消息序列。Responses 形态的
+    // input 条目用 {role:"user",content} 通用形状(官方 Responses 接受简写),chat
+    // completions 形态走 messages——两种形态都在工具结果之后,与 Codex pending_input
+    // 的排水位对齐。
+    appendSteeringUserTurns: (requestBody, texts) => {
+      const userTurns = texts.map((text) => ({ role: "user", content: text }));
+      if (useResponseInput) {
+        const input = [...(Array.isArray(requestBody.input) ? requestBody.input : []), ...userTurns];
+        return { ...requestBody, input };
+      }
+      const messagesArr = [...(Array.isArray(requestBody.messages) ? requestBody.messages : []), ...userTurns];
+      return { ...requestBody, messages: messagesArr };
+    },
     // 专题9:助手关闭"流式输出"时的整程非流式(与下方降级用同一改造)。
     makeNonStreamBody: (requestBody) => ({ ...requestBody, stream: false, stream_options: undefined }),
     nonStreamFallback: {

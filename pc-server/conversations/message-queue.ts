@@ -7,13 +7,23 @@
 //   - 跨引擎统一:队列对引擎种类完全无感。它只在 generateAnswer 完成时由编排层派发下一条,
 //     而 generateAnswer 是聊天/pi 唯一注册生成的入口——新增引擎自动继承,队列零改动。
 //
+// 终局三态(对齐 Codex ThreadIdleCause,2026-09-19 用户问题①):
+//   Completed(正常完成)/ Failed(请求失败) → 收尾续跑派发(Failed 已被 pause 门控拦住,
+//     语义=排队消息是失败恢复手段);Interrupted(用户 stop/打断) → 队列冻结(heldByInterrupt),
+//     不点火、不 pause、不清空——用户按下停止的意图是「让这轮停」,队列自动接棒重跑一轮违背
+//     该意图。恢复只有一个途径:用户显式操作(resume 端点/新消息/重新发送),对齐 Codex
+//     on_thread_idle 对 cause==Interrupted 直接 return 的门控。任何会话写入口的 abort 接管
+//     (send/regenerate/edit/删会话)同样 hold——它们都替换「用户主动打断当前流」的语义。
+//
 // 生命周期:入队/派发由编排层调 enqueueMessage / shiftNextQueued;失败自动 pause(保留全部项,
-//   待用户 resume);会话删除/导入作废经 clearMessageQueue(挂 deleteConversationsById 收口)清除。
+//   待用户 resume);用户打断自动 hold(保留全部项,resume 解除);会话删除/导入作废经
+//   clearMessageQueue(挂 deleteConversationsById 收口)清除。
 //   所有 mutation 由调用方负责随后 broadcastQueueState(SSE 快照直通,队列自身不发帧)。
 
 import type { MessagePart } from "../foundation/types";
 import { id } from "../foundation/utils";
 import { textFromParts } from "../foundation/utils";
+import { clearSteeringChannel } from "./steering-channel";
 
 /** 单个排队项(引擎无关)。parts 即下一条 generateAnswer 的用户输入快照(入队时已不可变拷贝)。
  *  waitingReply:语音模式标记——派发此项生成后,需把该轮 assistant 文本经回复通道交付等待方。 */
@@ -28,6 +38,10 @@ interface QueueState {
   items: QueuedGeneration[];
   /** 失败自动暂停:保留全部排队项,直到用户显式 resume。对齐 APP「失败自动暂停」。 */
   paused: boolean;
+  /** 用户打断冻结(终局三态之 Interrupted):不派发不清空,区别于 paused(失败暂停)——
+   *  快照对前端同一呈现(「已暂停,等用户操作」),但恢复语义分离:pause 等显式 resume,
+   *  hold 同样等显式 resume(或下一条新消息直发时自然解除)。见文件头「终局三态」。 */
+  heldByInterrupt: boolean;
 }
 
 /** 线上快照形状(SSE 帧 + 会话详情 DTO 共用;preview 由 parts 派生,前端直接渲染)。 */
@@ -77,7 +91,7 @@ export function deliverQueuedReply(conversationId: string, queuedItemId: string,
 function ensureQueue(conversationId: string): QueueState {
   let q = queues.get(conversationId);
   if (!q) {
-    q = { items: [], paused: false };
+    q = { items: [], paused: false, heldByInterrupt: false };
     queues.set(conversationId, q);
   }
   return q;
@@ -96,7 +110,29 @@ export function shiftNextQueued(conversationId: string): QueuedGeneration | unde
 }
 
 export function isQueuePaused(conversationId: string): boolean {
-  return queues.get(conversationId)?.paused ?? false;
+  const q = queues.get(conversationId);
+  return q?.paused ?? false;
+}
+
+/** 队列是否被「用户打断」冻结(终局三态之 Interrupted)。派发方门控用;
+ *  与 paused 正交(一个管失败暂停、一个管打断冻结,任一置位都不派发)。 */
+export function isQueueHeldByInterrupt(conversationId: string): boolean {
+  const q = queues.get(conversationId);
+  return q?.heldByInterrupt ?? false;
+}
+
+/** 用户打断当前生成时冻结队列(stop 端点/各写入口 abort 接管点调用)。保留全部排队项,
+ *  不清空不点火——对齐 Codex Interrupted 终局不派发。无队列时也登记冻结(ensure 语义):
+ *  stop 之后才入队的新消息同样被拦住——用户刚按下停止,静默期待不应被「后来的排队」
+ *  打破;解冻途径同下(显式 resume/空闲直发)。 */
+export function holdMessageQueue(conversationId: string): void {
+  ensureQueue(conversationId).heldByInterrupt = true;
+}
+
+/** 解除打断冻结(不动 paused——失败暂停的解除仍走 resumeMessageQueue,语义分离)。 */
+export function releaseMessageQueueHold(conversationId: string): void {
+  const q = queues.get(conversationId);
+  if (q) q.heldByInterrupt = false;
 }
 
 export function queueLength(conversationId: string): number {
@@ -113,7 +149,12 @@ export function pauseMessageQueue(conversationId: string): void {
 
 export function resumeMessageQueue(conversationId: string): void {
   const q = queues.get(conversationId);
-  if (q) q.paused = false;
+  if (q) {
+    q.paused = false;
+    // resume 是用户显式「继续」动作:失败暂停与打断冻结一并解除(对齐 Codex 队列
+    // resume 的单入口——用户按了继续,没有理由再区分是哪种原因停的)。
+    q.heldByInterrupt = false;
+  }
 }
 
 /** 删除指定排队项;返回被删项(供调用方回收其不再被引用的附件),不存在返回 null。
@@ -146,6 +187,9 @@ export function clearMessageQueue(conversationId: string): void {
       resolve(null);
     }
   }
+  // steering 通道同会话一并作废(事实源已清,残留项会在排水时被 isStillQueued 滤掉,
+  // 但直接清更干净——省一次必败的过滤)。
+  clearSteeringChannel(conversationId);
 }
 
 /** 预览文本:取首段可见文本截断;无文本(纯附件)回退占位,前端按 hasAttachments 渲染 chip。 */
@@ -158,7 +202,9 @@ function hasAttachments(parts: MessagePart[]): boolean {
   return parts.some((p) => p.type === "image" || p.type === "video" || p.type === "audio" || p.type === "document");
 }
 
-/** 生成线上快照(无队列返回 null,前端据此隐藏面板;不读则无副作用)。 */
+/** 生成线上快照(无队列返回 null,前端据此隐藏面板;不读则无副作用)。
+ *  paused 字段呈现「待用户操作」的统合态(失败暂停 ∨ 打断冻结)——前端提示语同为
+ *  「队列已暂停,可继续发送」,两种原因在 UI 呈现上无差别,恢复动作同为 resume。 */
 export function queueSnapshotFor(conversationId: string): MessageQueueSnapshot | null {
   const q = queues.get(conversationId);
   if (!q || q.items.length === 0) return null;
@@ -169,7 +215,7 @@ export function queueSnapshotFor(conversationId: string): MessageQueueSnapshot |
       hasAttachments: hasAttachments(it.parts),
       createdAt: it.createdAt,
     })),
-    paused: q.paused,
+    paused: q.paused || q.heldByInterrupt,
   };
 }
 

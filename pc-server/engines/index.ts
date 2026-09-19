@@ -41,6 +41,11 @@ export interface EngineRunContext {
   model: Model;
   /** 工具执行闭包(协调器注入,内部已挂生成级 signal 与部分输出回写)。 */
   executeTool: ToolExecutor;
+  /** steering 轮边界(用户问题②,对齐 Codex pending_input):引擎在「工具批执行完、
+   *  下一模型请求构建前」调用,取「生成中补发」的用户消息文本(协调器已同步落库并
+   *  通知 FIFO 队列移除)。返回空数组 = 无注入。引擎无注入位点则不调用(消息留在
+   *  队列,收尾派发兜底,零丢失)。 */
+  onSteerBoundary?: () => string[];
 }
 
 /** 引擎无关的压缩输入包(编排器压缩入口装配,与 EngineRunContext 同哲学:
