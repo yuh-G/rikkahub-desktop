@@ -4,11 +4,13 @@
 // 工具卡耗时(域3-1)与图像生成耗时(域10-2)需要同款能力。把"从起点时刻算秒数 +
 // 运行期每秒 tick"提炼到这里,三处共用——计时口径永远一致,不复制粘贴。
 //
-// 两种用法:
+// 三种用法:
 // - useElapsedSecondsSince(startIso) —— 自然走表:isostring 起点,运行中每秒 tick,
 //   起算不足 1 秒返回 null(与思维链"秒数静默登场"同习惯)。
 // - useElapsedSeconds(startIso, finishIso) —— 受控定格:finishedAt 到达后停 tick
 //   并定格终值(工具卡终局语义);缺 createdAt/finishedAt 未到等非法输入一律 null。
+// - useToolElapsedSeconds(tool) —— issue #59:工具卡自己的计时(建卡→结果落地),
+//   戳存 part.metadata(toolStartedAt/toolFinishedAt,无戳的历史数据回退消息级口径)。
 import * as React from "react";
 
 import { serverNow } from "~/lib/utils";
@@ -47,4 +49,21 @@ export function useElapsedSeconds(startIso: string | undefined, finishIso?: stri
   const seconds = Math.max(0, Math.round((end - start) / 1000));
   if (seconds <= 0) return finished ? 1 : null; // 定格不足 1 秒进位显示 1 秒;运行中不足 1 秒不显示
   return seconds;
+}
+
+/** 工具卡自己的耗时(issue #59):建卡(metadata.toolStartedAt)→终局结果
+ *  (metadata.toolFinishedAt)。无戳的历史数据(修复前落库的会话)回退消息级口径
+ *  (messageCreatedAt→messageFinishedAt),行为与旧版一致——只是旧数据语义本就
+ *  是消息级墙钟,新数据才是"这步工具自己跑了多久"。
+ *  bash 流式中间帧(partial)不落戳:输出还在长,秒数继续走表直到终局。 */
+export function useToolElapsedSeconds(
+  tool: { metadata?: Record<string, unknown> | null },
+  messageCreatedAt?: string,
+  messageFinishedAt?: string | null,
+): number | null {
+  const meta = tool.metadata;
+  const startedAt = typeof meta?.toolStartedAt === "string" ? meta.toolStartedAt : undefined;
+  const finishedAt = typeof meta?.toolFinishedAt === "string" ? meta.toolFinishedAt : null;
+  if (startedAt) return useElapsedSeconds(startedAt, finishedAt);
+  return useElapsedSeconds(messageCreatedAt, messageFinishedAt ?? null);
 }

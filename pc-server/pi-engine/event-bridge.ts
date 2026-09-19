@@ -311,7 +311,8 @@ export function createPiEventBridge() {
         entry.outputMode = "partial-result";
         const partial = event.partialResult as PiToolResultView | undefined;
         if (!partial?.content?.length) return [];
-        return [{ kind: "tool_result", toolCallId: event.toolCallId, output: mapPiToolResult(partial) }];
+        // partial 快照非终局:不落 toolFinishedAt(issue #59 每工具计时终点)。
+        return [{ kind: "tool_result", toolCallId: event.toolCallId, output: mapPiToolResult(partial), final: false }];
       }
       case "tool_execution_end": {
         executing.delete(event.toolCallId);
@@ -333,7 +334,8 @@ export function createPiEventBridge() {
         if (!entry.created || entry.outputMode === "partial-result") return [];
         entry.outputMode = "bash-delta";
         entry.bashText += event.delta;
-        return [{ kind: "tool_result", toolCallId: targetId, output: [{ type: "text", text: entry.bashText }] }];
+        // bash 流式增量非终局:执行还在跑,秒数继续走表(tool_execution_end 才定格)。
+        return [{ kind: "tool_result", toolCallId: targetId, output: [{ type: "text", text: entry.bashText }], final: false }];
       }
       // 引擎瞬态状态(P5):压缩/自动重试/摘要重试 → engine_status,协调器直通 SSE
       // 状态条,不落库不产 part。end/finished 一律回 busy:false(状态条即清)。

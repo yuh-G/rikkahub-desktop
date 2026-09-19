@@ -366,6 +366,12 @@ export async function resumeApprovedToolParts(
     }
     const normalized = await toolResultToParts(toolResult);
     part.output = await realizeToolResult(normalized);
+    // issue #59:审批恢复(批准后重跑/暂停后 resume)直写 output,不经应用器——每工具
+    // 计时终点在这里补戳(只补不覆盖)。denied 分支走 toolExecutionErrorPayload 的
+    // {error} 载荷语义,同样是被用户裁决的终局,一并定格。
+    if (!isRecord(part.metadata) || part.metadata.toolFinishedAt == null) {
+      part.metadata = { ...(isRecord(part.metadata) ? part.metadata : {}), toolFinishedAt: new Date().toISOString() };
+    }
     changed = true;
     toolMessages.push(
       useResponseInput
@@ -936,7 +942,7 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
       const raw = await executeToolCall(toolCall, assistant, {
         ...context,
         signal: controller.signal,
-        onToolPartialOutput: (output) => applyEvent({ kind: "tool_result", toolCallId: toolCall.id, output }),
+        onToolPartialOutput: (output) => applyEvent({ kind: "tool_result", toolCallId: toolCall.id, output, final: false }),
       });
       // ask_user / MCP 审批等 pending 状态直接作为单 output 载荷返回，让协调器走暂停路径。
       if (isRecord(raw) && "pending" in raw) {

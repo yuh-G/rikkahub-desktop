@@ -76,6 +76,11 @@ export function createGenerationEventApplier(target: GenerationApplyTarget): Gen
             input: event.input,
             output: [],
             approvalState: event.approvalState,
+            // issue #59:每工具计时起点。徽章此前用消息级 createdAt/finishedAt 计时,
+            // 工具完成后秒数随整条消息的流式墙钟继续涨("加载技能用时X秒一直增加")。
+            // 按契约纪律挂 metadata(不新增顶层字段,安卓端安全)。幂等重建(流内建卡
+            // 后终局再发建卡事件)不改写起点——首个时间戳即真实建卡时刻。
+            metadata: { toolStartedAt: new Date().toISOString() },
           });
         }
         touchStream(streamHooks as StreamHooksWithSink);
@@ -102,7 +107,22 @@ export function createGenerationEventApplier(target: GenerationApplyTarget): Gen
       case "tool_result":
         currentMessage.parts = currentMessage.parts.map((part) => {
           if (!isRecord(part) || part.type !== "tool" || part.toolCallId !== event.toolCallId) return part;
-          return { ...part, output: event.output };
+          // issue #59:终局结果(final 缺省视为终局)落每工具计时终点;partial 中间帧
+          // 只刷新 output 不动戳,流式输出期间秒数继续走表。只补不覆盖——已定格的
+          // 终点不因后续同 id 帧回退(审批恢复重发终局时保首次定格)。
+          if (event.final === false) return { ...part, output: event.output };
+          // pending 哨兵(ask_user/MCP 审批挂起)非终局:卡在等用户,秒数必须继续走,
+          // 真实结果由 resume 路径落地时才定格。
+          if (event.output.length === 1 && isRecord(event.output[0]) && "pending" in event.output[0]) {
+            return { ...part, output: event.output };
+          }
+          const meta = (isRecord(part.metadata) ? part.metadata : {}) as Record<string, JsonValue>;
+          if (meta.toolFinishedAt != null) return { ...part, output: event.output };
+          return {
+            ...part,
+            output: event.output,
+            metadata: { ...meta, toolFinishedAt: new Date().toISOString() },
+          };
         });
         touchStream(streamHooks as StreamHooksWithSink);
         break;

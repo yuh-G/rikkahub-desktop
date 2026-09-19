@@ -48,7 +48,7 @@ import {
   workspaceReadTitle,
   workspaceReconTitle,
 } from "./workspace-tool-part";
-import { useElapsedSeconds } from "~/hooks/use-elapsed-since";
+import { useToolElapsedSeconds } from "~/hooks/use-elapsed-since";
 import { AudioPart as AudioPartRenderer } from "./audio-part";
 import { ImagePart as ImagePartRenderer } from "./image-part";
 import { VideoPart as VideoPartRenderer } from "./video-part";
@@ -544,7 +544,7 @@ function AskUserToolStep({
   const isAnswered = tool.approvalState.type === "answered";
 
   // 域3-1:等待用户答复的时长同样入账(等待+执行=用户体感的"这步多久"),终局定格。
-  const elapsedSeconds = useElapsedSeconds(messageCreatedAt, messageFinishedAt ?? null);
+  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt);
 
   const firstQuestion = questions[0]?.question ?? "...";
   const title =
@@ -820,7 +820,8 @@ export function ToolPart({
   const canOpenDrawer = isPending || isExecuted;
   const Icon = getToolIcon(tool.toolName, memoryAction);
   // 域3-1:运行耗时(等待审批+执行=这步的真实时长),与工作区动作卡同一计时口径。
-  const elapsedSeconds = useElapsedSeconds(messageCreatedAt, messageFinishedAt ?? null);
+  // issue #59:优先用工具自己的戳(建卡→结果落地),历史数据回退消息级。
+  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt);
 
   const handleApprove = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -1065,7 +1066,7 @@ export function PendingToolAttentionCard({
   onToolApproval?: ToolPartProps["onToolApproval"];
 }) {
   const { t } = useTranslation("message");
-  const elapsedSeconds = useElapsedSeconds(messageCreatedAt, messageFinishedAt ?? null);
+  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt);
 
   // ask_user 已经有自己的专属醒目卡片（AskUserToolStep 内部的 pending 分支），
   // 不需要再多套一层 banner。
