@@ -64,9 +64,9 @@ export interface ChatInputProps {
    *  → 后端兜底全局默认聊天模型)。与 getOptimizeContext 同属"点击时才消费"的会话
    *  上下文,传静态值即可,不参与渲染。 */
   conversationId?: string | null;
-  /** 消息发送队列预览(生成中补发的排队项)。队空/无会话时父级传 null,输入卡内不渲染。
-   *  刻意作为 children 式插槽由父级构造:队列面板要贴在输入框卡片内顶端(共享宽度与
-   *  圆角),但它的数据源与 API 调用属于会话层,不该穿透进纯输入组件。 */
+  /** 消息发送队列预览(生成中补发的排队项)。队空/无会话时父级传 null,不渲染贴片。
+   *  刻意作为 children 式插槽由父级构造:队列面板渲染在输入卡上沿外侧的贴片层里
+   *  (见下方渲染处注释),但它的数据源与 API 调用属于会话层,不该穿透进纯输入组件。 */
   queueSlot?: React.ReactNode;
   className?: string;
 }
@@ -780,6 +780,19 @@ function ChatInputInner({
         >
           <div className="h-1 w-10 rounded-full bg-border/70 transition-colors hover:bg-primary/50" />
         </div>
+
+        {/* 消息发送队列贴片:Codex 同款「附着」形态——不属于输入框,而是贴在输入卡上沿
+            外侧的一层:mx-2 左右内缩、-mb-3 让卡片盖住贴片下沿,读作「卡片上方压了一张
+            便签」。--ds-queue-surface 半透明叠色负责与卡片/对话区的色差。必须在卡外而非
+            卡内:卡内满宽会读作「输入框自己长出一截」(用户反馈「与编辑框合为一体」的
+            根因)。父级仅在队列非空时给出插槽(空插槽会留下一条空贴片),面板自身的队空
+            守卫是第二道防线。 */}
+        {queueSlot ? (
+          <div className="mx-2 -mb-3 rounded-t-[var(--ds-chat-composer-radius)] bg-[var(--ds-queue-surface)] px-3 pb-4.5 pt-1.5">
+            {queueSlot}
+          </div>
+        ) : null}
+
         {/* @container/composer:输入卡自身作为容器查询基准。分栏时窗格变窄,工具条要按
             「卡片实际宽度」而非视口宽度收起标签——视口断点(sm:/lg:)在分栏下永远为真,
             正是「元素挤在一起」的根因(issue:分栏排版元素重叠)。 */}
@@ -799,6 +812,7 @@ function ChatInputInner({
           <div className="absolute -top-4 right-2 z-10">
             <MemoryBadge />
           </div>
+
           {isEditing ? (
             <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
               <span className="text-primary">{t("chat.editing_tip")}</span>
@@ -814,10 +828,6 @@ function ChatInputInner({
               </Button>
             </div>
           ) : null}
-
-          {/* 消息发送队列预览:卡内顶端,与输入框共享宽度/圆角(Codex PendingInputPreview
-              形态)。附件 chips 之上——排队的是「下一句要发的话」,语序上先于本次草稿的附件。 */}
-          {queueSlot}
 
           {uploading ? (
             <div className="flex flex-wrap gap-2 px-2 pt-1">

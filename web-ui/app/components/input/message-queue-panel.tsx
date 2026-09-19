@@ -1,8 +1,9 @@
 // components/input/message-queue-panel.tsx — 消息发送队列预览
 //
-// 形态(Codex `PendingInputPreview` 同构):嵌在输入框卡片内部顶端的轻量预览行,与输入框
-// 共享同一张卡的宽度/圆角/阴影——视觉上是「输入框长出来的一截」,而不是横贯对话区的独立
-// 横幅(旧形态满宽横幅把界面左右占满,与消息列宽度不一致)。
+// 形态:面板渲染进输入卡上沿外侧的一片「贴片」(贴片外壳在 chat-input.tsx——左右内缩、
+// 下沿探到卡片背后,Codex 的「附着在对话框上沿」形态),本体不带任何宽度/边框/背景类。
+// 竖向刻意只占薄薄一层:常态没有提示语;每条排队消息 truncate 成单行(超长 ... 省略),
+// 行距收紧(leading-4.5 + py-0.5);多条超出 max-h-32 时区内滚动。
 //
 // 操作语义(用户反馈「暂停/终止让人疑惑」后重定):
 //   - 排队项只有两个动作:改(就地编辑正文)、撤(移出队列)。这是用户对「我刚补的那句话」
@@ -93,9 +94,9 @@ export const MessageQueuePanel = React.memo(function MessageQueuePanel({
 
   return (
     <div className="flex flex-col gap-0.5" data-testid="message-queue-panel">
-      {/* 状态行:常态一句话说清排队语义;暂停(=上一条失败)才升格为警示 + 继续按钮。 */}
+      {/* 状态行:常态无提示(省竖向空间);暂停(=上一条失败)才出现,升格为警示 + 继续按钮。 */}
       {paused ? (
-        <div className="flex items-center gap-1.5 px-1 text-mini text-amber-600 dark:text-amber-400">
+        <div className="flex items-center gap-1.5 px-2 py-0.5 text-mini text-amber-600 dark:text-amber-400">
           <TriangleAlert className="size-3.5 shrink-0" />
           <span className="min-w-0 flex-1 truncate">{t("queue.paused_hint")}</span>
           <Button
@@ -110,13 +111,10 @@ export const MessageQueuePanel = React.memo(function MessageQueuePanel({
             {t("queue.resume")}
           </Button>
         </div>
-      ) : (
-        <div className="px-1 text-mini text-muted-foreground/80">
-          {t("queue.hint", { count: items.length })}
-        </div>
-      )}
+      ) : null}
 
-      {/* 列表:严格 FIFO(下标即发送次序)。单条时不显序号——没有次序歧义时序号是噪音。 */}
+      {/* 列表:严格 FIFO(下标即发送次序)。单条时不显序号——没有次序歧义时序号是噪音。
+          每条只有一行(truncate 省略,见下行);行距收紧为 leading-4.5 + py-0.5。 */}
       <ul className="flex max-h-32 flex-col overflow-y-auto">
         {items.map((item, index) => {
           const editing = editingId === item.id;
@@ -124,13 +122,21 @@ export const MessageQueuePanel = React.memo(function MessageQueuePanel({
             <li
               key={item.id}
               className={cn(
-                "group flex items-start gap-1.5 rounded-lg px-1 py-1 transition-colors",
+                "group flex gap-1.5 rounded-lg px-2 transition-colors",
+                editing ? "items-start py-1" : "items-center py-0.5",
                 !editing && "hover:bg-[var(--ds-on-surface)]",
               )}
             >
-              <CornerDownRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/60" />
+              <CornerDownRight
+                className={cn("size-3.5 shrink-0 text-muted-foreground/60", editing && "mt-1")}
+              />
               {items.length > 1 ? (
-                <span className="mt-px w-3 shrink-0 text-right text-mini tabular-nums text-muted-foreground/60">
+                <span
+                  className={cn(
+                    "w-3 shrink-0 text-right text-mini tabular-nums text-muted-foreground/60",
+                    editing && "mt-1",
+                  )}
+                >
                   {index + 1}
                 </span>
               ) : null}
@@ -163,13 +169,14 @@ export const MessageQueuePanel = React.memo(function MessageQueuePanel({
                 </div>
               ) : (
                 <>
-                  <p className="min-w-0 flex-1 truncate text-compact leading-5 text-muted-foreground">
+                  <p className="min-w-0 flex-1 truncate text-compact leading-4.5 text-muted-foreground">
                     {item.preview || (
                       <span className="italic">{t("queue.attachment")}</span>
                     )}
                   </p>
-                  {/* 动作只在悬停显示(常态是安静的预览);触屏/键盘经 focus-within 也能露出。 */}
-                  <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                  {/* 动作常态半透明可见(Codex 同款:排队项自带动作,不靠悬停发现)——
+                      贴片本身已是独立一层,再把动作藏起来就没人知道能改/能撤。 */}
+                  <div className="flex shrink-0 items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                     {/* 附件项不支持编辑(快照只带文本 preview,编辑契约=替换正文);只能撤回。 */}
                     {!item.hasAttachments ? (
                       <Tooltip>

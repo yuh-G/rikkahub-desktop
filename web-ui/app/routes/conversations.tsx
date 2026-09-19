@@ -2093,10 +2093,11 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
             draftKey={draftKey}
             slashCommands={slashCommands}
             onSlashCommand={handleSlashCommand}
-            /* 消息发送队列预览渲染进输入卡内顶端(与输入框同宽同圆角),不再是横贯
-               对话区的独立横幅。队空/无会话时为 null,卡内不占位。 */
+            /* 消息发送队列贴片:渲染在输入卡上沿外侧(左右内缩、下沿被卡片盖住,自带
+               叠色色差),读作「附着在输入框上的队列」而非输入框的一部分。条件带 items
+               长度——空队列不给插槽,否则输入卡上方会留一条空贴片。 */
             queueSlot={
-              activeId && conversationMessageQueue ? (
+              activeId && conversationMessageQueue && conversationMessageQueue.items.length > 0 ? (
                 <MessageQueuePanel conversationId={activeId} queue={conversationMessageQueue} />
               ) : null
             }

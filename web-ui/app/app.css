@@ -144,6 +144,11 @@
   --ds-icon: #7e7f7e;
   --ds-selection-bg: color-mix(in srgb, var(--primary) 85%, transparent);
   --ds-surface-input: var(--ds-surface-100);
+  /* 输入卡顶端「附着层」底色(排队消息贴片):刻意是**半透明前景叠色**而非与输入面
+     混出的实色——贴片盖在输入卡上沿,实色会挡掉卡片自身的 inset 描边(暗色/花色主题的
+     轮廓就是那道 inset 环),半透明则让它透出来。由 --foreground 派生,预置/自定义主题
+     自动适配,只有暗色需要更大比例(深底上等比例叠色的色差更弱)。 */
+  --ds-queue-surface: color-mix(in srgb, var(--foreground) 9%, transparent);
   --ds-popover: var(--popover);
   --ds-menu-bg: color-mix(in oklch, var(--popover) 96%, white);
   --ds-menu-shadow-plate: none;
@@ -241,6 +246,7 @@
   --ds-menu-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12), 0 0 9px -4px rgba(0, 0, 0, 0.5), 0 0 32px -8px rgba(0, 0, 0, 0.2);
   --ds-menu-shadow-inset: none;
   --ds-surface-input: var(--ds-surface-300);
+  --ds-queue-surface: color-mix(in srgb, var(--foreground) 12%, transparent);
   --ds-menu-bg: var(--ds-surface-400);
   --ds-overlay: rgba(0, 0, 0, 0.6);
 }
