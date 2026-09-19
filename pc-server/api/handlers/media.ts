@@ -201,6 +201,10 @@ export async function handleMediaRoutes(request: Request, _url: URL, path: strin
       if (err instanceof DOMException && err.name === "AbortError") {
         return error("Client cancelled", 499);
       }
+      // 未配置生图模型:400 引导去配置,不是上游故障(502 会误导用户以为服务坏了)。
+      if (err instanceof Error && err.message.includes("未配置图像生成模型")) {
+        return error(err.message, 400);
+      }
       return error(friendlyRequestError(err, state.settings.proxyConfig), 502);
     }
   }

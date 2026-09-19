@@ -15,9 +15,10 @@ import { appClients, mcpHealthSnapshotFrame, openSse } from "../sse";
 import { memoryStore } from "../../memory/index";
 import { recentAppErrors } from "../../observability/app-errors";
 import { computeStats } from "../../conversations/stats";
+import { getConversation } from "../../conversations";
 import { DEFAULT_PROMPT_OPTIMIZE_PROMPT, PROMPT_OPTIMIZE_OUTPUT_TOKENS } from "../../app-config/prompts";
 import { markUiActivity } from "../../app-config/analytics";
-import { fetchAuxiliaryText } from "../../conversations/auxiliary";
+import { conversationModelIdFor, fetchAuxiliaryText, modelExists } from "../../conversations/auxiliary";
 import { serveAIIcon } from "../../assets/icons";
 import { FONT_EXTENSIONS_SET, FONT_MIME, MAX_FONT_BYTES, fontCssName, fontExtension, isBareFileName, isFontFile, listBuiltinFonts, listCustomFonts, listSystemFonts, makeBundledFontEntry, resolveFontFile } from "../../assets/fonts";
 
@@ -206,14 +207,24 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
     // 用户在对话输入框点"优化提示词":把原文(+可选的最近几轮对话上下文)+ meta-prompt
     // 发给"提示词优化模型",返回优化后的文本由前端直接替换输入框内容。
     // 上下文让优化模型能理解"那个""上次的"等指代——首条消息或无对话时省略。
-    // 未配置模型时返回 400,前端引导去设置页。
-    const body = await readJson<{ text: string; context?: string }>(request);
+    // 未配置时回退当前会话的模型(与翻译/压缩同口径,用户拍板);仅在既没配又没有
+    // 会话上下文(新对话页,无会话可回退)时 400 引导去设置。
+    const body = await readJson<{ text: string; context?: string; conversationId?: string }>(request);
     const text = String(body.text ?? "").trim();
     if (!text) return error("没有可优化的文本", 400);
-    const modelId = state.settings.promptOptimizeModelId;
-    if (!modelId) {
+    const conversationId = String(body.conversationId ?? "").trim();
+    const conversation = conversationId ? getConversation(conversationId) : undefined;
+    if (!modelExists(state.settings.promptOptimizeModelId) && !conversation) {
       return error("未配置提示词优化模型,请在「设置 - 默认模型与提示词」中指定一个模型", 400);
     }
+    // 配置的模型存在用之;不存在回退会话模型;会话也拿不到(已被删/未传)时兜底全局
+    // chatModelId(conversationModelIdFor 对无助手覆盖的会话返回的就是它,最后一段只是
+    // 把"连会话都没有"的情况也归一到同一兜底,不再报错——新对话页也能用优化按钮)。
+    const modelId = modelExists(state.settings.promptOptimizeModelId)
+      ? state.settings.promptOptimizeModelId
+      : conversation
+        ? conversationModelIdFor(conversation)
+        : state.settings.chatModelId;
     const context = String(body.context ?? "").trim();
     let prompt = String(state.settings.promptOptimizePrompt ?? "").trim() || DEFAULT_PROMPT_OPTIMIZE_PROMPT;
     if (context) {
@@ -231,6 +242,8 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
       const optimized = await fetchAuxiliaryText(modelId, prompt, "prompt-optimize", {
         maxTokens: PROMPT_OPTIMIZE_OUTPUT_TOKENS,
         temperature: 0.5,
+        // 会话身份头(§7.4)只在真实会话上下文里注入;新对话页无会话,不发明 id。
+        ...(conversation ? { conversationId } : {}),
       });
       return json({ text: optimized });
     } catch (err) {

@@ -29,8 +29,24 @@ import api from "~/services/api";
 import type { Settings } from "~/types";
 import { SectionHeader, textValue } from "~/components/settings/shared";
 
-const DEFAULT_PROMPTS = {
-  titlePrompt: `I will give you some dialogue content in the \`<content>\` block.
+type ModelKey =
+  | "chatModelId"
+  | "fastModelId"
+  | "translateModeId"
+  | "imageGenerationModelId"
+  | "ocrModelId"
+  | "compressModelId"
+  | "promptOptimizeModelId";
+
+/** 兜底档:未设置时自动跟随会话模型(提示词优化/翻译/上下文压缩)。快速模型是静默档
+ *  (未设置=标题用首条消息文本、建议不生成),OCR/图像生成是报错档(未设置=功能不可用)。 */
+const FALLBACK_MODEL_KEYS = new Set<ModelKey>([
+  "promptOptimizeModelId",
+  "translateModeId",
+  "compressModelId",
+]);
+
+const DEFAULT_PROMPTS = {  titlePrompt: `I will give you some dialogue content in the \`<content>\` block.
 You need to summarize the conversation between user and assistant into a short title.
 1. The title language should be consistent with the user's primary language
 2. Do not use punctuation or other special symbols
@@ -160,14 +176,6 @@ export function DefaultModelsSection({
     ocrPrompt: string;
     compressPrompt: string;
   };
-  type ModelKey =
-    | "chatModelId"
-    | "fastModelId"
-    | "translateModeId"
-    | "imageGenerationModelId"
-    | "ocrModelId"
-    | "compressModelId"
-    | "promptOptimizeModelId";
   type PromptKey =
     | "titlePrompt"
     | "translatePrompt"
@@ -236,16 +244,37 @@ export function DefaultModelsSection({
   }, [draft]);
   const modelSelect = (key: ModelKey) => {
     const options = key === "imageGenerationModelId" ? imageModels : allModels;
+    // 「未设置」的含义按功能分三档(与后端行为一一对应,勿随意增删档位):
+    //   兜底档(优化/翻译/压缩)→ 跟随会话模型;静默档(快速模型)→ 标题用首条消息文本、
+    //   建议不生成;报错档(OCR/图像生成)→ 功能不可用,用时提示去配置。
+    // 下拉首项文案据此区分,免得用户以为「未设置=不工作」或反之。
+    const emptyLabel = FALLBACK_MODEL_KEYS.has(key)
+      ? t("settings:models.not_set_fallback")
+      : key === "fastModelId"
+        ? t("settings:models.not_set")
+        : t("settings:models.not_set_disabled");
+    // 当前值是否指向真实存在的模型 —— 与后端 modelExists 同口径(扫全部供应商,不限 enabled)。
+    // 存在但不在候选里(供应商被停用)时补一条禁用项照实显示,否则 SelectValue 渲染空白;
+    // 不存在(出厂 AUTO 哨兵 id / 模型已删除的残留 id)则归到首项,与后端"视作未配置"对齐。
+    const selected = settings.providers
+      .flatMap((provider) => (provider.models ?? []).map((model) => ({ model, provider })))
+      .find((entry) => entry.model.id === draft[key]);
+    const listed = options.some((model) => model.id === draft[key]);
     return (
       <Select
-        value={draft[key] || "__none"}
+        value={selected ? draft[key] : "__none"}
         onValueChange={(value) => setDraft({ ...draft, [key]: value === "__none" ? "" : value })}
       >
         <SelectTrigger className="w-full">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="__none">{t("settings:models.not_set")}</SelectItem>
+          <SelectItem value="__none">{emptyLabel}</SelectItem>
+          {selected && !listed ? (
+            <SelectItem value={draft[key]}>
+              {selected.provider.name} / {selected.model.displayName || selected.model.modelId}
+            </SelectItem>
+          ) : null}
           {options.map((model) => (
             <SelectItem key={`${key}-${model.id}`} value={model.id}>
               {model.providerName} / {model.displayName || model.modelId}

@@ -489,6 +489,8 @@
     "subtitle": "Pick a default model and prompt for chat, the fast model, translation, OCR, compression and more.",
     "note": "Only models that passed the provider test are shown here. Title, translation, suggestion, OCR and compression prompts ship with sensible defaults — click the tool button on the right to view or restore them.",
     "not_set": "Not set",
+    "not_set_fallback": "Not set (follows the conversation model)",
+    "not_set_disabled": "Not set (feature unavailable)",
     "autosaved": "Saved automatically",
     "autosave_failed": "Failed to auto-save default models",
     "edit_prompt": "Edit prompt",
@@ -527,27 +529,27 @@
       },
       "optimize": {
         "title": "Prompt optimization",
-        "desc": "The “Optimize prompt” button in the chat input uses this model to rewrite your draft more clearly and professionally."
+        "desc": "The “Optimize prompt” button in the chat input uses this model to rewrite your draft more clearly and professionally. When unset, it follows the current conversation's model."
       },
       "fast": {
         "title": "Fast model",
-        "desc": "Lightweight background tasks such as title generation and suggested replies share this model. Use the button at the top right to edit the title and suggestion prompts separately."
+        "desc": "Lightweight background tasks such as title generation and suggested replies share this model. When unset, titles fall back to the first message text and no suggestions are generated — no extra model usage. Use the button at the top right to edit the title and suggestion prompts separately."
       },
       "translate": {
         "title": "Translation",
-        "desc": "The translate button under an AI reply uses this model and prompt."
+        "desc": "The translate button under an AI reply uses this model and prompt. When unset, it follows the current conversation's model."
       },
       "compress": {
         "title": "Context compression",
-        "desc": "Keeps key context when compressing long conversations and writes it back."
+        "desc": "Keeps key context when compressing long conversations and writes it back. When unset, it follows the current conversation's model."
       },
       "ocr": {
         "title": "OCR",
-        "desc": "A fallback image-to-text channel for chat models without vision input."
+        "desc": "A fallback image-to-text channel for chat models without vision input. When unset, this channel is unavailable — plain-text chats are unaffected."
       },
       "image": {
         "title": "Image generation",
-        "desc": "Entry point for models with image generation capability."
+        "desc": "Entry point for models with image generation capability. Image generation is unavailable until a model is set."
       }
     }
   },
