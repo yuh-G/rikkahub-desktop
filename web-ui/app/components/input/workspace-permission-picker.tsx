@@ -69,15 +69,20 @@ export function WorkspacePermissionPicker({ className }: { className?: string })
           type="button"
           variant="ghost"
           size="sm"
-          // NewMax 权限模式胶囊:pill-bg 底 + 品牌色文字(skill-pill 类提供 hover 加深)
+          // NewMax 权限模式胶囊:pill-bg 底 + 品牌色文字(skill-pill 类提供 hover 加深)。
+          // 窄容器(分栏)下收起文字与箭头,只留盾牌图标——档位靠图形区分(ShieldAlert/
+          // Shield/ShieldCheck),信息不丢;文字标签在窄栏里会把工具条挤到元素重叠。
           className={cn(
-            "skill-pill h-8 gap-1.5 whitespace-nowrap rounded-full bg-[var(--ds-pill-bg)] px-2.5 !text-[var(--ds-brand-primary)]",
+            "skill-pill h-8 shrink gap-1.5 whitespace-nowrap rounded-full bg-[var(--ds-pill-bg)] px-2.5 !text-[var(--ds-brand-primary)] @max-2xl/composer:size-8 @max-2xl/composer:gap-0 @max-2xl/composer:px-0",
             className,
           )}
+          title={t(`workspace_permission.${current.value}`)}
         >
           <CurrentIcon className="size-4" strokeWidth={1.75} />
-          <span className="max-w-24 truncate text-xs font-medium">{t(`workspace_permission.${current.value}`)}</span>
-          <ChevronDown className="size-3 opacity-60" />
+          <span className="min-w-0 truncate text-xs font-medium @max-2xl/composer:hidden">
+            {t(`workspace_permission.${current.value}`)}
+          </span>
+          <ChevronDown className="size-3 opacity-60 @max-2xl/composer:hidden" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72">

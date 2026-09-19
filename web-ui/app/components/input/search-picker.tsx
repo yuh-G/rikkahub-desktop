@@ -237,7 +237,7 @@ export function SearchPickerButtonImpl({ disabled = false, className }: SearchPi
           ) : (
             <Earth className="size-4" />
           )}
-          <span className="hidden sm:block">
+          <span className="@max-2xl/composer:hidden">
             <ChevronDown className="size-3.5" />
           </span>
         </Button>

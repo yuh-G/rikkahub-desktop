@@ -1,11 +1,22 @@
-// components/input/message-queue-panel.tsx — 消息发送队列面板
+// components/input/message-queue-panel.tsx — 消息发送队列预览
 //
-// 生成中补发的消息在此排队(FIFO,服务端权威,经会话 SSE 快照直通)。面板提供
-// 编辑/移除/暂停恢复/停止生成;队空不渲染。仅操作服务端队列,本地不持有队列副本——
-// 编辑态(editingId/draft)是唯一本地状态,其余一律以 SSE 快照为准。
+// 形态(Codex `PendingInputPreview` 同构):嵌在输入框卡片内部顶端的轻量预览行,与输入框
+// 共享同一张卡的宽度/圆角/阴影——视觉上是「输入框长出来的一截」,而不是横贯对话区的独立
+// 横幅(旧形态满宽横幅把界面左右占满,与消息列宽度不一致)。
+//
+// 操作语义(用户反馈「暂停/终止让人疑惑」后重定):
+//   - 排队项只有两个动作:改(就地编辑正文)、撤(移出队列)。这是用户对「我刚补的那句话」
+//     唯一会有的两种意图。
+//   - 不提供手动「暂停队列」:排队即「当前回复结束后自动依次发送」,一句话说得清;要停就撤。
+//   - 不提供「终止生成」:那是输入框右下角发送键在空输入时的职责(红色停止钮),同一动作
+//     不该有两个入口。
+//   - 「已暂停」仍会出现,但只作为失败后的状态提示 + 一键「继续发送」——它是错误恢复,
+//     不是常规操作(服务端在生成失败时自动暂停,保住剩余排队项不被连带丢弃)。
+//
+// 数据面不变:服务端权威,经会话 SSE 快照直通;本地只持有编辑态。
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Layers, Pause, Pencil, Play, Square, Trash2 } from "lucide-react";
+import { CornerDownRight, Pencil, Play, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import api from "~/services/api";
@@ -18,16 +29,11 @@ interface MessageQueuePanelProps {
   conversationId: string;
   /** 队列快照(后端派生,经会话详情 SSE 到达;队空为 null,本组件不渲染)。 */
   queue: MessageQueueSnapshotDto;
-  /** 当前是否在生成(决定「停止生成」键显示与自动续跑语义)。 */
-  isGenerating: boolean;
-  onStop?: () => Promise<void> | void;
 }
 
 export const MessageQueuePanel = React.memo(function MessageQueuePanel({
   conversationId,
   queue,
-  isGenerating,
-  onStop,
 }: MessageQueuePanelProps) {
   const { t } = useTranslation("input");
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -86,72 +92,48 @@ export const MessageQueuePanel = React.memo(function MessageQueuePanel({
   if (!queue || items.length === 0) return null;
 
   return (
-    <div
-      className="mb-2 overflow-hidden rounded-2xl border border-border/60 bg-[var(--ds-pill-bg)]/60 shadow-sm backdrop-blur-sm"
-      data-testid="message-queue-panel"
-    >
-      {/* 头部:队列计数 + 全局控制(暂停/恢复 · 停止生成)。 */}
-      <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2">
-        <Layers className="size-3.5 shrink-0 text-[var(--ds-brand-primary)]" />
-        <span className="text-xs font-medium text-foreground">
-          {t("queue.count", { count: items.length })}
-        </span>
-        {paused ? (
-          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
-            {t("queue.paused")}
-          </span>
-        ) : null}
-        <div className="ml-auto flex items-center gap-1">
-          {isGenerating && onStop ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => void onStop()}
-                  className="flex size-6 items-center justify-center rounded-md text-destructive transition-colors hover:bg-destructive/10"
-                >
-                  <Square className="size-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>{t("queue.stop_generating")}</TooltipContent>
-            </Tooltip>
-          ) : null}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() =>
-                  void run(() =>
-                    api.post(`conversations/${conversationId}/queue/${paused ? "resume" : "pause"}`),
-                  )
-                }
-                className="flex size-6 items-center justify-center rounded-md text-[var(--ds-icon)] transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-              >
-                {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>{paused ? t("queue.resume") : t("queue.pause")}</TooltipContent>
-          </Tooltip>
+    <div className="flex flex-col gap-0.5" data-testid="message-queue-panel">
+      {/* 状态行:常态一句话说清排队语义;暂停(=上一条失败)才升格为警示 + 继续按钮。 */}
+      {paused ? (
+        <div className="flex items-center gap-1.5 px-1 text-mini text-amber-600 dark:text-amber-400">
+          <TriangleAlert className="size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 truncate">{t("queue.paused_hint")}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            disabled={busy}
+            className="h-5 shrink-0 gap-1 px-1.5 text-mini text-amber-600 hover:text-amber-700 dark:text-amber-400"
+            onClick={() => void run(() => api.post(`conversations/${conversationId}/queue/resume`))}
+          >
+            <Play className="size-3" />
+            {t("queue.resume")}
+          </Button>
         </div>
-      </div>
+      ) : (
+        <div className="px-1 text-mini text-muted-foreground/80">
+          {t("queue.hint", { count: items.length })}
+        </div>
+      )}
 
-      {/* 列表:严格 FIFO(下标即发送次序),逐项编辑/移除。 */}
-      <ul className="max-h-44 overflow-y-auto">
+      {/* 列表:严格 FIFO(下标即发送次序)。单条时不显序号——没有次序歧义时序号是噪音。 */}
+      <ul className="flex max-h-32 flex-col overflow-y-auto">
         {items.map((item, index) => {
           const editing = editingId === item.id;
           return (
             <li
               key={item.id}
               className={cn(
-                "group flex items-start gap-2.5 px-3 py-2 transition-colors",
-                index !== items.length - 1 && "border-b border-border/40",
-                !editing && "hover:bg-accent/40",
+                "group flex items-start gap-1.5 rounded-lg px-1 py-1 transition-colors",
+                !editing && "hover:bg-[var(--ds-on-surface)]",
               )}
             >
-              <span className="mt-0.5 w-4 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
-                {index + 1}
-              </span>
+              <CornerDownRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/60" />
+              {items.length > 1 ? (
+                <span className="mt-px w-3 shrink-0 text-right text-mini tabular-nums text-muted-foreground/60">
+                  {index + 1}
+                </span>
+              ) : null}
               {editing ? (
                 <div className="min-w-0 flex-1">
                   <textarea
@@ -168,28 +150,27 @@ export const MessageQueuePanel = React.memo(function MessageQueuePanel({
                       }
                     }}
                     rows={2}
-                    className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring/40"
+                    className="w-full resize-none rounded-md border border-border bg-background px-2 py-1 text-compact outline-none focus:ring-2 focus:ring-ring/40"
                   />
-                  <div className="mt-1.5 flex justify-end gap-1.5">
-                    <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={cancelEdit}>
+                  <div className="mt-1 flex justify-end gap-1">
+                    <Button size="xs" variant="ghost" className="text-mini" onClick={cancelEdit}>
                       {t("queue.cancel")}
                     </Button>
-                    <Button size="sm" className="h-6 px-2 text-xs" disabled={busy} onClick={commitEdit}>
+                    <Button size="xs" className="text-mini" disabled={busy} onClick={commitEdit}>
                       {t("queue.save")}
                     </Button>
                   </div>
                 </div>
               ) : (
                 <>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm leading-5 text-foreground/90">
-                      {item.preview || (
-                        <span className="italic text-muted-foreground">{t("queue.attachment")}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                    {/* 附件项不支持编辑(快照只带文本 preview,编辑契约=替换正文);只能移除。 */}
+                  <p className="min-w-0 flex-1 truncate text-compact leading-5 text-muted-foreground">
+                    {item.preview || (
+                      <span className="italic">{t("queue.attachment")}</span>
+                    )}
+                  </p>
+                  {/* 动作只在悬停显示(常态是安静的预览);触屏/键盘经 focus-within 也能露出。 */}
+                  <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                    {/* 附件项不支持编辑(快照只带文本 preview,编辑契约=替换正文);只能撤回。 */}
                     {!item.hasAttachments ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -197,9 +178,9 @@ export const MessageQueuePanel = React.memo(function MessageQueuePanel({
                             type="button"
                             disabled={busy}
                             onClick={() => startEdit(item.id, item.preview)}
-                            className="flex size-6 items-center justify-center rounded-md text-[var(--ds-icon)] transition-colors hover:bg-accent hover:text-foreground"
+                            className="flex size-5 items-center justify-center rounded text-[var(--ds-icon)] transition-colors hover:bg-accent hover:text-foreground"
                           >
-                            <Pencil className="size-3.5" />
+                            <Pencil className="size-3" />
                           </button>
                         </TooltipTrigger>
                         <TooltipContent>{t("queue.edit")}</TooltipContent>
@@ -215,9 +196,9 @@ export const MessageQueuePanel = React.memo(function MessageQueuePanel({
                               api.delete(`conversations/${conversationId}/queue/${encodeURIComponent(item.id)}`),
                             )
                           }
-                          className="flex size-6 items-center justify-center rounded-md text-[var(--ds-icon)] transition-colors hover:bg-destructive/10 hover:text-destructive"
+                          className="flex size-5 items-center justify-center rounded text-[var(--ds-icon)] transition-colors hover:bg-destructive/10 hover:text-destructive"
                         >
-                          <Trash2 className="size-3.5" />
+                          <Trash2 className="size-3" />
                         </button>
                       </TooltipTrigger>
                       <TooltipContent>{t("queue.remove")}</TooltipContent>

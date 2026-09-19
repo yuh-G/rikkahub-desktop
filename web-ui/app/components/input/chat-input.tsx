@@ -60,6 +60,14 @@ export interface ChatInputProps {
   // 提示词优化时,返回最近几轮对话的纯文本作为上下文(让优化模型理解模糊指代)。
   // 无对话(首条消息)时返回空串。只在用户点击"优化提示词"时调用。
   getOptimizeContext?: () => string;
+  /** 当前会话 id(提示词优化未配置专属模型时,后端回退此会话的模型;新对话页为 null
+   *  → 后端兜底全局默认聊天模型)。与 getOptimizeContext 同属"点击时才消费"的会话
+   *  上下文,传静态值即可,不参与渲染。 */
+  conversationId?: string | null;
+  /** 消息发送队列预览(生成中补发的排队项)。队空/无会话时父级传 null,输入卡内不渲染。
+   *  刻意作为 children 式插槽由父级构造:队列面板要贴在输入框卡片内顶端(共享宽度与
+   *  圆角),但它的数据源与 API 调用属于会话层,不该穿透进纯输入组件。 */
+  queueSlot?: React.ReactNode;
   className?: string;
 }
 
@@ -259,6 +267,8 @@ function ChatInputInner({
   slashCommands,
   onSlashCommand,
   getOptimizeContext,
+  conversationId,
+  queueSlot,
   className,
 }: ChatInputProps) {
   const { t } = useTranslation("input");
@@ -478,7 +488,8 @@ function ChatInputInner({
       const context = getOptimizeContext?.() ?? "";
       const res = await api.post<{ text: string }>(
         "prompt/optimize",
-        { text: value, context },
+        // conversationId:未配置优化模型时后端回退此会话的模型;新对话页可省略。
+        { text: value, context, ...(conversationId ? { conversationId } : {}) },
         { timeout: 60_000 },
       );
       const optimized = String(res.text ?? "").trim();
@@ -505,7 +516,7 @@ function ChatInputInner({
       setOptimizeHint(null);
       setOptimizing(false);
     }
-  }, [value, optimizing, onValueChange, getOptimizeContext]);
+  }, [value, optimizing, onValueChange, getOptimizeContext, conversationId]);
 
   const handleTextChange = React.useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -769,7 +780,10 @@ function ChatInputInner({
         >
           <div className="h-1 w-10 rounded-full bg-border/70 transition-colors hover:bg-primary/50" />
         </div>
-        <div className="chat-input-box relative flex flex-col gap-2 rounded-[var(--ds-chat-composer-radius)] bg-[var(--ds-surface-input)] p-3">
+        {/* @container/composer:输入卡自身作为容器查询基准。分栏时窗格变窄,工具条要按
+            「卡片实际宽度」而非视口宽度收起标签——视口断点(sm:/lg:)在分栏下永远为真,
+            正是「元素挤在一起」的根因(issue:分栏排版元素重叠)。 */}
+        <div className="chat-input-box @container/composer relative flex flex-col gap-2 rounded-[var(--ds-chat-composer-radius)] bg-[var(--ds-surface-input)] p-3">
           {/* 斜杠指令推荐列表:锚定输入卡片上方,随输入实时过滤(方案 §4.2)。 */}
           {slash.menuOpen ? (
             <SlashCommandMenu
@@ -800,6 +814,10 @@ function ChatInputInner({
               </Button>
             </div>
           ) : null}
+
+          {/* 消息发送队列预览:卡内顶端,与输入框共享宽度/圆角(Codex PendingInputPreview
+              形态)。附件 chips 之上——排队的是「下一句要发的话」,语序上先于本次草稿的附件。 */}
+          {queueSlot}
 
           {uploading ? (
             <div className="flex flex-wrap gap-2 px-2 pt-1">
@@ -904,8 +922,11 @@ function ChatInputInner({
               style={{ minHeight: `${inputMinHeight}px`, maxHeight: `${inputMaxHeight}px` }}
             />
           </div>
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-1">
+          {/* 工具条两组都允许收缩(min-w-0 + 各自 shrink):此前两组内的 Button 都带
+              shrink-0,窄容器下无人让位,右组被左组顶出去形成重叠(分栏排版 bug)。
+              收缩后由各控件自己的 @max-2xl/composer 变体收起文字标签,只留图标。 */}
+          <div className="flex items-center justify-between gap-1">
+            <div className="flex min-w-0 shrink items-center gap-1">
               <DropdownMenu open={uploadMenuOpen} onOpenChange={setUploadMenuOpen}>
                 <input
                   ref={fileInputRef}
@@ -1012,7 +1033,7 @@ function ChatInputInner({
               <WorkspaceFilesButton />
               <WorkspacePermissionPicker />
             </div>
-            <div className="relative flex items-center gap-1.5">
+            <div className="relative flex min-w-0 shrink items-center gap-1">
               {/* 优化较慢提示:浮在按钮组上方,绝对定位不挤占布局(原方案放底部会把整个输入区往下顶)。 */}
               {optimizeHint ? (
                 <span className="animate-pulse absolute -top-8 right-0 z-10 whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-mini text-muted-foreground shadow-sm">
@@ -1052,7 +1073,7 @@ function ChatInputInner({
                   {t("optimize.undo")}
                 </Button>
               ) : null}
-              <ModelList disabled={!canSwitchModel} className="max-w-56" />
+              <ModelList disabled={!canSwitchModel} />
               {/* NewMax cpd-action-btn:语音/发送合一——空文本=麦克风(常驻底色),有文本=
                   品牌色上箭头,录音=红底声纹条,生成中=红底停止。状态切换带宽度/配色过渡。
                   消息发送队列:生成中且有文本 → 上箭头=「发送并排队」(不打断当前流);仅空文本才落红停止。 */}

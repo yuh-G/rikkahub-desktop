@@ -32,7 +32,7 @@ import {
 } from "../sse";
 import { bumpAnalyticsMsgCount } from "../../app-config/analytics";
 import { DEFAULT_TRANSLATION_PROMPT } from "../../app-config/prompts";
-import { attachOcrToImageParts, compressConversation, englishLanguageName, fetchAuxiliaryText, generateTitleForConversation, isQwenMtModel, markOcrPendingParts } from "../../conversations/auxiliary";
+import { attachOcrToImageParts, compressConversation, conversationModelIdFor, englishLanguageName, fetchAuxiliaryText, generateTitleForConversation, isQwenMtModel, markOcrPendingParts, modelExists, resolveFastModelId } from "../../conversations/auxiliary";
 import { compactEngineConversation, dispatchMessageQueue, generateAnswer, resolveEngineForConversation } from "../../conversations/orchestrator";
 import { deleteConversationsById, ensureConversation, findAssistant, finishInterruptedPendingToolsInConversation, hasPendingToolApproval } from "../../conversations/helpers";
 import { editQueuedMessage, enqueueMessage, pauseMessageQueue, removeQueuedMessage, resumeMessageQueue, waitForQueuedReply } from "../../conversations/message-queue";
@@ -455,7 +455,12 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
     }
     if (sub === "regenerate-title" && request.method === "POST") {
       try {
-        const title = await generateTitleForConversation(conversation);
+        // 手动「重新生成标题」是用户显式点的一次动作:配了快速模型就用它,没配则回退
+        // 会话模型(而非像自动生成那样静默跳过——用户点了按钮就期待有个 AI 标题)。
+        const title = await generateTitleForConversation(
+          conversation,
+          resolveFastModelId() ?? conversationModelIdFor(conversation),
+        );
         // R7-4:客户端已取消/超时断开则结果作废,不改写标题(取消语义硬保证)。
         if (request.signal.aborted) return error("Client cancelled", 499);
         // 批6复审 G1:标题生成期间会话可能已被删除——下方 persistConversation 是无条件
@@ -634,7 +639,12 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         // R2-2:续体自持引用(流式翻译可长于 60s sweep 闲置期),理由同 messages POST 续体。
         checkoutConversation(conversation.id);
         try {
-          const pickedTranslationModel = findModel(state.settings.translateModeId || state.settings.chatModelId);
+          // 翻译模型未配置(AUTO 哨兵)或已删除 → 回退会话模型。同标题/建议的口径:
+          // 绝不把哨兵交给 findModel(它兜底猜 gpt-4o-mini,服务商不提供就必 400)。
+          const translationModelId = modelExists(state.settings.translateModeId)
+            ? state.settings.translateModeId
+            : conversationModelIdFor(conversation);
+          const pickedTranslationModel = findModel(translationModelId);
           const useQwenMt = isQwenMtModel(pickedTranslationModel.model.modelId);
           const prompt = useQwenMt
             ? sourceText
@@ -644,7 +654,7 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
               });
           let streamedTranslation = "";
           let lastNodeBroadcastAt = 0;
-          msg.translation = await fetchAuxiliaryText(state.settings.translateModeId, prompt, "translation", {
+          msg.translation = await fetchAuxiliaryText(translationModelId, prompt, "translation", {
             reasoningLevel: useQwenMt ? null : (state.settings.translateThinkingBudget ?? 0) > 0 ? "LOW" : null,
             temperature: useQwenMt ? 0.3 : null,
             topP: useQwenMt ? 0.95 : null,

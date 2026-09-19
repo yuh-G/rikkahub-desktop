@@ -18,6 +18,8 @@ function makeTarget() {
     createdAt: new Date().toISOString(),
     finishedAt: null,
     translation: null,
+    modelId: "m1",
+    usage: null,
   };
   const node: MessageNode = { id: "node-1", messages: [message], selectIndex: 0 };
   const conversation: Conversation = {
@@ -28,6 +30,8 @@ function makeTarget() {
     isPinned: false,
     createAt: Date.now(),
     updateAt: Date.now(),
+    systemPrompt: null,
+    chatSuggestions: [],
   };
   return { conversation, node, message };
 }

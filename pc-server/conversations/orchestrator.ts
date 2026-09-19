@@ -89,7 +89,7 @@ import {
   hasResumableToolParts,
   toolApprovalType,
 } from "./helpers";
-import { generateSuggestionsForConversation, generateTitleForConversation, limitAuxiliaryText, markCompactionBoundary, modelExists, shouldAutoGenerateTitle } from "./auxiliary";
+import { generateSuggestionsForConversation, generateTitleForConversation, limitAuxiliaryText, markCompactionBoundary, modelExists, resolveFastModelId, shouldAutoGenerateTitle } from "./auxiliary";
 
 /** 生成入口一次性解析的配置快照（P1-4）。流式生成横跨多个 await 点，用户中途改配置
  *  （换模型/改工具集/删助手）时，updateSettings 会整体替换 state.settings——持有入口
@@ -480,9 +480,13 @@ setOnQueuedGenerationDispatched((conversationId, item) => {
 
 async function runPostGenerationTasks(conversationId: string, snapshot: Conversation, assistantMessageId: string) {
   const liveConversation = () => getConversation(conversationId);
-  if (shouldAutoGenerateTitle(snapshot) && modelExists(state.settings.fastModelId)) {
+  // 快速模型解析一次,两个后台任务共用。null = 没配(空/出厂哨兵/指向已删模型)→ 两者
+  // 都静默跳过:标题退成首条消息文本,建议不生成,不弹任何失败提示,也不擅自拿主模型
+  // 跑(建议回复每轮一次,用主模型不划算)。用户想要 AI 标题就去设置里配快速模型。
+  const fastModelId = resolveFastModelId();
+  if (shouldAutoGenerateTitle(snapshot) && fastModelId) {
     try {
-      const title = await generateTitleForConversation(snapshot);
+      const title = await generateTitleForConversation(snapshot, fastModelId);
       const live = liveConversation();
       if (live && shouldAutoGenerateTitle(live)) {
         live.title = title;
@@ -499,7 +503,9 @@ async function runPostGenerationTasks(conversationId: string, snapshot: Conversa
         kind: "aux:title",
         error: titleError instanceof Error ? titleError.message : String(titleError),
       });
-      reportError("provider", "warn", "标题自动生成失败，已回退为首条消息文本", titleError, "title_generation_failed");
+      // info 级:标题只是便利功能,回退首条消息文本后用户无感损失。只进错误中心供排查,
+      // 不弹全局 toast——后台任务的失败不该打断用户手上的事。
+      reportError("provider", "info", "标题自动生成失败，已回退为首条消息文本", titleError, "title_generation_failed");
       // Title generation failed → fall back to first user message text (Android parity).
       const live = liveConversation();
       if (live && shouldAutoGenerateTitle(live)) {
@@ -511,7 +517,7 @@ async function runPostGenerationTasks(conversationId: string, snapshot: Conversa
       }
     }
   } else if (shouldAutoGenerateTitle(snapshot)) {
-    // No title model configured at all → still give it a sensible name from the first user message.
+    // 未配快速模型 → 不调任何模型,直接用首条用户消息文本命名(与 Android 同口径)。
     const live = liveConversation();
     if (live && shouldAutoGenerateTitle(live)) {
       const firstText = textFromParts(live.messages[0]?.messages[0]?.parts ?? []).trim();
@@ -524,22 +530,22 @@ async function runPostGenerationTasks(conversationId: string, snapshot: Conversa
     }
   }
 
-  if (modelExists(state.settings.fastModelId)) {
-    try {
-      const suggestions = await generateSuggestionsForConversation(snapshot);
-      const live = liveConversation();
-      const lastNode = live?.messages[live.messages.length - 1];
-      const lastMessage = lastNode?.messages[lastNode.selectIndex] ?? lastNode?.messages[0];
-      if (live && lastMessage?.id === assistantMessageId && !generating.has(live.id)) {
-        live.chatSuggestions = suggestions;
-        live.updateAt = Date.now();
-        persistConversation(live);
-        broadcastConversation(live);
-      }
-    } catch (suggestionError) {
-      // Suggestions are auxiliary;正文生成状态不应受影响。
-      reportError("provider", "warn", "会话建议生成失败", suggestionError, "suggestion_generation_failed");
+  if (!fastModelId) return;
+  try {
+    const suggestions = await generateSuggestionsForConversation(snapshot, fastModelId);
+    const live = liveConversation();
+    const lastNode = live?.messages[live.messages.length - 1];
+    const lastMessage = lastNode?.messages[lastNode.selectIndex] ?? lastNode?.messages[0];
+    if (live && lastMessage?.id === assistantMessageId && !generating.has(live.id)) {
+      live.chatSuggestions = suggestions;
+      live.updateAt = Date.now();
+      persistConversation(live);
+      broadcastConversation(live);
     }
+  } catch (suggestionError) {
+    // Suggestions are auxiliary;正文生成状态不应受影响。info 级同标题:少几个建议 chip
+    // 不构成需要打扰用户的故障。
+    reportError("provider", "info", "会话建议生成失败", suggestionError, "suggestion_generation_failed");
   }
 }
 

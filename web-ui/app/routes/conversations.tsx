@@ -576,6 +576,10 @@ interface ChatInputAreaProps {
   slashCommands?: SlashCommandDto[];
   onSlashCommand?: (name: string, argument: string) => Promise<boolean | void> | boolean | void;
   getOptimizeContext?: () => string;
+  /** 提示词优化回退用的当前会话 id(未配置优化模型时后端用它回退会话模型)。 */
+  conversationId?: string | null;
+  /** 队列预览插槽(由父级构造,渲染进输入卡片内顶端)。 */
+  queueSlot?: React.ReactNode;
 }
 
 const ChatInputArea = React.memo(function ChatInputArea({
@@ -596,6 +600,8 @@ const ChatInputArea = React.memo(function ChatInputArea({
   slashCommands,
   onSlashCommand,
   getOptimizeContext,
+  conversationId,
+  queueSlot,
 }: ChatInputAreaProps) {
   const setText = useChatInputStore((state) => state.setText);
   const addParts = useChatInputStore((state) => state.addParts);
@@ -652,6 +658,8 @@ const ChatInputArea = React.memo(function ChatInputArea({
       slashCommands={slashCommands}
       onSlashCommand={onSlashCommand}
       getOptimizeContext={getOptimizeContext}
+      conversationId={conversationId}
+      queueSlot={queueSlot}
     />
   );
 });
@@ -1123,7 +1131,10 @@ const ConversationTimeline = React.memo(
     );
 
     return (
-      <div className="relative flex-1 min-h-0">
+      // @container/timeline:消息区自身作为容器基准。分栏时窗格窄,右侧轮次跳转轨需要
+      // 在消息列(max-w-3xl)之外留出 gutter 才不压正文——视口断点(lg:)判不出单个窗格
+      // 的真实宽度,正是「轨道贴着消息叠在一起」的根因。
+      <div className="@container/timeline relative flex-1 min-h-0">
         {!activeId && !isHomeRoute ? (
           <ConversationEmptyState
             icon={<MessageSquare className="size-10" />}
@@ -2078,19 +2089,17 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
           {voiceActive && activeId ? (
             <VoiceModeBanner onEnd={() => voiceMode.stop()} onRetry={handleToggleVoiceMode} />
           ) : null}
-          {/* 消息发送队列面板(生成中补发排队;队空不渲染)。 */}
-          {activeId ? (
-            <MessageQueuePanel
-              conversationId={activeId}
-              queue={conversationMessageQueue}
-              isGenerating={conversationIsGenerating}
-              onStop={handleStop}
-            />
-          ) : null}
           <ChatInputArea
             draftKey={draftKey}
             slashCommands={slashCommands}
             onSlashCommand={handleSlashCommand}
+            /* 消息发送队列预览渲染进输入卡内顶端(与输入框同宽同圆角),不再是横贯
+               对话区的独立横幅。队空/无会话时为 null,卡内不占位。 */
+            queueSlot={
+              activeId && conversationMessageQueue ? (
+                <MessageQueuePanel conversationId={activeId} queue={conversationMessageQueue} />
+              ) : null
+            }
             isGenerating={conversationIsGenerating}
             disabled={detailLoading || Boolean(detailError)}
             isEditing={Boolean(editingSession)}
@@ -2119,6 +2128,7 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
             }
             onCompressConversation={hasMessages ? handleCompressConversation : undefined}
             getOptimizeContext={getOptimizeContext}
+            conversationId={activeId}
             onToggleVoiceMode={voiceCapable || voiceActive ? handleToggleVoiceMode : undefined}
             voiceModeActive={voiceActive}
           />
