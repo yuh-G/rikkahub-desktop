@@ -71,6 +71,33 @@ describe("终局判定(参数齐备,三档语义)", () => {
     expect(workspaceCallApprovalReason("write", "balanced", { path: "  " }, CTX)).toBeNull();
   });
 
+  test("§6.7 免审批可写前缀:balanced 档写入前缀内目录免审,前缀外仍审批", () => {
+    // 技能库与工作区边界根不同根(典型:pc-data/skills/ vs workspaces/<id>/files/)
+    const SKILLS = join(tmpdir(), "rkh-skills");
+    const ctxWithExempt = { ...CTX, approvalExemptWritePrefixes: [SKILLS] };
+    // 落在技能库内:即便越出工作区边界根也豁免
+    expect(workspaceCallApprovalReason("write", "balanced", { path: join(SKILLS, "my-skill", "SKILL.md") }, ctxWithExempt)).toBeNull();
+    expect(workspaceCallApprovalReason("edit", "balanced", { path: join(SKILLS, "my-skill", "notes.md") }, ctxWithExempt)).toBeNull();
+    // 前缀外的区外写入仍审批
+    expect(workspaceCallApprovalReason("write", "balanced", { path: join(tmpdir(), "elsewhere", "x.txt") }, ctxWithExempt)).toContain("Writes outside");
+    // 兄弟前缀不被误判(rkh-skills-evil 不在 rkh-skills 内)
+    expect(workspaceCallApprovalReason("write", "balanced", { path: join(tmpdir(), "rkh-skills-evil", "x.md") }, ctxWithExempt)).toContain("Writes outside");
+  });
+
+  test("§6.7 豁免只作用于 balanced 档 write/edit:confirm_each 恒审、bash 不查前缀", () => {
+    const SKILLS = join(tmpdir(), "rkh-skills");
+    const ctxWithExempt = { ...CTX, approvalExemptWritePrefixes: [SKILLS] };
+    // confirm_each 档不受豁免影响,仍恒审批
+    expect(workspaceCallApprovalReason("write", "confirm_each", { path: join(SKILLS, "SKILL.md") }, ctxWithExempt)).toBe("");
+    // bash 审批只看危险命令清单,与 write/edit 的前缀逻辑无关:同一条 bash 命令,
+    // 有无豁免前缀结果完全一致(前缀对 bash 不生效)。
+    const cmd = `rm -rf ${SKILLS}`;
+    expect(workspaceCallApprovalReason("bash", "balanced", { command: cmd }, ctxWithExempt))
+      .toBe(workspaceCallApprovalReason("bash", "balanced", { command: cmd }, CTX));
+    // 且该 tmp 目录的 rm -rf 本就不在危险清单(非系统目录/盘符根),两侧都是免审
+    expect(workspaceCallApprovalReason("bash", "balanced", { command: cmd }, ctxWithExempt)).toBeNull();
+  });
+
   test("单调性:下界为 pending 的组合终局必为 pending(卡永不降级)", () => {
     for (const tool of ["write", "edit", "bash"] as const) {
       const benign: Record<string, string> = tool === "bash" ? { command: "ls" } : { path: "a.txt" };
