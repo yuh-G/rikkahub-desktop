@@ -811,7 +811,9 @@ function ChatInputInner({
           ) : null}
 
           {attachments.length > 0 ? (
-            <div className="flex flex-wrap gap-2 px-2 pt-1">
+            // issue #51:附件多且文件名长时,无界 flex-wrap 把 textarea 挤出可视区。
+            // 限高两行 chip + 区内滚动,输入框本体高度不受附件数量影响。
+            <div className="flex max-h-[68px] flex-wrap gap-2 overflow-y-auto px-2 pt-1">
               {attachments.map((part, index) => {
                 const key = `${part.type}-${index}`;
                 return (
