@@ -7,7 +7,7 @@ import { friendlyRequestError } from "../../foundation/net";
 import { cancelAllSystemTts } from "../../tools/platform";
 import { unlinkSync } from "node:fs";
 import { callImageGeneration } from "../../media/image-gen";
-import { defaultAsrProvider, normalizeAsrProviders, transcribeAudioWithAsrProvider } from "../../media/asr";
+import { defaultAsrProvider, isPcKnownAsrType, normalizeAsrProviders, transcribeAudioWithAsrProvider } from "../../media/asr";
 import { DEFAULT_SYSTEM_TTS_ID, defaultTtsProvider, generateSpeechWithTtsProvider, normalizeTtsProviders } from "../../media/tts";
 import { TTS_PROVIDER_TYPES } from "../../media/tts-providers/registry";
 import { RetryableHttpError } from "../../foundation/retry";
@@ -43,11 +43,13 @@ function deleteGeneratedImagesById(ids: string[]): number {
 export async function handleMediaRoutes(request: Request, _url: URL, path: string): Promise<Response | null> {
   if (path === "settings/asr-provider/detail" && request.method === "POST") {
     const body = await readJson<Partial<AsrProvider>>(request);
-    const type = ["dashscope", "volcengine", "openai_realtime"].includes(String(body.type))
-      ? String(body.type) as AsrProvider["type"]
-      : "openai_realtime";
-    const base = defaultAsrProvider(type);
-    const providerItem = normalizeAsrProviders([{ ...base, ...body, type, id: String(body.id ?? base.id) }])[0];
+    // 新增/create 时归一化会套用默认模板,故必须收敛到本端已知类型(前端下拉只给 3 家);
+    // 编辑/save 时 body 携带完整对象,未知跨端类型(mimo/step)必须原样透传——
+    // 在此重置成 openai_realtime 会把用户在设置页的一次保存变成「配置被没收」(backup C4)。
+    const requested = String(body.type ?? "");
+    const type = isPcKnownAsrType(requested) ? requested : requested || "openai_realtime";
+    const base = isPcKnownAsrType(type) ? defaultAsrProvider(type) : ({} as Partial<AsrProvider>);
+    const providerItem = normalizeAsrProviders([{ ...base, ...body, type, id: String(body.id ?? (base as AsrProvider).id ?? "") }])[0];
     const exists = state.settings.asrProviders.some((item) => item.id === providerItem.id);
     updateSettings({
       ...state.settings,
@@ -89,9 +91,12 @@ export async function handleMediaRoutes(request: Request, _url: URL, path: strin
 
   if (path === "settings/tts-provider/detail" && request.method === "POST") {
     const body = await readJson<Partial<TtsProvider>>(request);
-    const type = TTS_PROVIDER_TYPES.includes(String(body.type) as TtsProvider["type"]) ? body.type as TtsProvider["type"] : "system";
-    const base = defaultTtsProvider(type);
-    const providerItem = normalizeTtsProviders([{ ...base, ...body, type, id: String(body.id ?? base.id) }])[0];
+    // 同 ASR:新增/create 收敛到本端已知类型套默认模板;编辑/save 时未知跨端类型原样透传,
+    // 不在此重置成 system(否则设置页一次保存即没收配置,backup C4)。
+    const requested = String(body.type ?? "");
+    const type = TTS_PROVIDER_TYPES.includes(requested as TtsProvider["type"]) ? requested : requested || "system";
+    const base = TTS_PROVIDER_TYPES.includes(type as TtsProvider["type"]) ? defaultTtsProvider(type as TtsProvider["type"]) : ({} as Partial<TtsProvider>);
+    const providerItem = normalizeTtsProviders([{ ...base, ...body, type, id: String(body.id ?? (base as TtsProvider).id ?? "") }])[0];
     const exists = state.settings.ttsProviders.some((item) => item.id === providerItem.id);
     updateSettings({
       ...state.settings,

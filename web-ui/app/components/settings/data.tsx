@@ -929,6 +929,36 @@ export function DataSection({
           <div className="mt-1 text-xs text-muted-foreground">
             {t("settings:data.chat_files_desc")}
           </div>
+          {/* B2:云端(WebDAV/S3)流式恢复无导入结果卡,把后端结构化降级报告
+              (settings.lastRestoreReport,经设置 SSE 推送)在此展示——「成功但跳过/降级了 N 项」可见。 */}
+          {settings.lastRestoreReport ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs dark:border-amber-800 dark:bg-amber-950">
+              <div className="font-medium">
+                {t("settings:data.restore_report_title")} ·{" "}
+                {new Date(settings.lastRestoreReport.finishedAt).toLocaleString()}
+              </div>
+              <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-muted-foreground">
+                {settings.lastRestoreReport.dbReadError ? (
+                  <li className="text-amber-700 dark:text-amber-300">
+                    {t("settings:data.restore_report_db_error", { error: settings.lastRestoreReport.dbReadError })}
+                  </li>
+                ) : null}
+                {settings.lastRestoreReport.messageNodesUnreadable > 0 ? (
+                  <li className="text-amber-700 dark:text-amber-300">
+                    {t("settings:data.restore_report_nodes_skipped", { count: settings.lastRestoreReport.messageNodesUnreadable })}
+                  </li>
+                ) : null}
+                {settings.lastRestoreReport.filesDeduped > 0 ? (
+                  <li>{t("settings:data.restore_report_files_deduped", { count: settings.lastRestoreReport.filesDeduped })}</li>
+                ) : null}
+                {!settings.lastRestoreReport.dbReadError &&
+                settings.lastRestoreReport.messageNodesUnreadable === 0 &&
+                settings.lastRestoreReport.filesDeduped === 0 ? (
+                  <li>{t("settings:data.restore_report_ok")}</li>
+                ) : null}
+              </ul>
+            </div>
+          ) : null}
         </div>
         <div className="rounded-lg border bg-card p-4">
           <div className="text-sm font-medium">{t("settings:data.web_service_title")}</div>

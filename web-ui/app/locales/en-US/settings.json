@@ -846,6 +846,11 @@
     "import_backup": "Import backup",
     "chat_files_title": "Chat file storage",
     "chat_files_desc": "Uploaded avatars and attachments are saved to the local data directory and served via /api/files.",
+    "restore_report_title": "Last cloud restore",
+    "restore_report_ok": "Nothing was skipped or downgraded",
+    "restore_report_db_error": "Conversation import failed: {{error}} (fell back to settings-only)",
+    "restore_report_nodes_skipped": "{{count}} messages were skipped due to corrupted data in the backup",
+    "restore_report_files_deduped": "{{count}} attachments matched existing content and were reused (no extra space used)",
     "web_service_title": "Web service",
     "web_service_desc": "Web JWT: {{status}}",
     "enabled": "enabled",
@@ -934,7 +939,8 @@
       "hygiene_legacy_snapshot_cleaned": "Data directory cleanup: removed a legacy migration snapshot",
       "orphan_stats": "Attachment stats: {{orphans}} entries no longer referenced (~{{orphanMb}} MB); {{untracked}} untracked files (~{{untrackedMb}} MB). Nothing is deleted automatically; back up first if you want to clean up",
       "hygiene_failed": "Data directory cleanup task failed; harmless, will retry on next launch",
-      "output_limit_unknown": "The maximum output length for {{model}} is unknown; sent the conservative default {{fallback}}. If this model rejects it with an invalid max_tokens error, set the max output length manually in the assistant settings"
+      "output_limit_unknown": "The maximum output length for {{model}} is unknown; sent the conservative default {{fallback}}. If this model rejects it with an invalid max_tokens error, set the max output length manually in the assistant settings",
+      "voice_provider_preserved": "Detected voice services from the mobile app ({{types}}) that this desktop app doesn't support yet. Their configuration is preserved as-is for round-trip and won't be lost"
     }
   },
   "model_edit": {

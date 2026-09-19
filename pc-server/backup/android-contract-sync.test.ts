@@ -11,12 +11,24 @@
 //   - 黑名单与安卓全集必须不相交(正是事故①:黑名单里出现安卓合法类型 = 静默丢数据);
 //   - 本机存在安卓仓库时,vendored 全集直接与 Kotlin 源码里的 @SerialName 比对,过期即红。
 // 任何一条红了,都说明有人改了契约面而没有做出兼容性决定。
+//
+// 安卓判别符全集的「单一事实源」在 foundation/types/android-contract.ts(导出降级层与
+// 本测试共享同一份);本文件负责强制分类 + 仓库在场时的腐化核对。
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { PC_MESSAGE_ANNOTATION_TYPES } from "../foundation/types/dto";
 import { PC_MESSAGE_PART_TYPES } from "../foundation/types/parts";
+import { PC_KNOWN_ASR_TYPES } from "../foundation/types";
+import {
+  ANDROID_ANNOTATION_TYPES,
+  ANDROID_ASR_PROVIDER_TYPES,
+  ANDROID_MESSAGE_PART_TYPES,
+  ANDROID_SEARCH_SERVICE_TYPES,
+  ANDROID_TTS_PROVIDER_TYPES,
+} from "../foundation/types/android-contract";
+import { TTS_PROVIDER_TYPES } from "../media/tts-providers/registry";
 import {
   PC_ONLY_ANNOTATION_TYPES,
   PC_ONLY_MESSAGE_PART_TYPES,
@@ -25,28 +37,13 @@ import {
 
 const repoRoot = join(import.meta.dir, "..", "..");
 
-// ── vendored 安卓判别符全集 ─────────────────────────────────────────────────
-// 来源(2026-07-28 同步):
-// - 搜索服务:Rikkahub-Android/search/src/main/java/me/rerere/search/SearchService.kt
-//   sealed class SearchServiceOptions 的全部 @SerialName。
-// - 消息 part / 注解:Rikkahub-Android/ai/src/main/java/me/rerere/ai/ui/Message.kt
-//   sealed class UIMessagePart / UIMessageAnnotation 的全部 @SerialName。
-// 安卓仓库在本机时,下方 "vendored 全集与安卓源码一致" 测试会自动核对这些清单。
-const ANDROID_SEARCH_SERVICE_TYPES = new Set([
-  "bing_local", "zhipu", "tavily", "exa", "searxng", "linkup", "brave", "metaso", "ollama",
-  "perplexity", "firecrawl", "jina", "bocha", "rikkahub", "grok", "tinyfish", "serper", "custom_js",
-  "doubao",
-]);
-const ANDROID_MESSAGE_PART_TYPES = new Set([
-  "text", "image", "video", "audio", "document", "reasoning", "search", "tool_call", "tool_result", "tool",
-]);
-const ANDROID_ANNOTATION_TYPES = new Set(["url_citation"]);
-
-function classify(label: string, pcTypes: readonly string[], androidKnown: Set<string>, pcOnly: ReadonlySet<string>) {
+/** 强制二选一分类:每个 PC 判别符必须是「安卓已知」或「PC-only 黑名单」之一;
+ *  且黑名单 ∩ 安卓全集 = ∅(黑名单里出现安卓合法类型 = 静默丢数据,custom_js 事故)。 */
+function classify(label: string, pcTypes: readonly string[], androidKnown: ReadonlySet<string>, pcOnly: ReadonlySet<string>) {
   for (const type of pcTypes) {
     expect(
       androidKnown.has(type) || pcOnly.has(type),
-      `${label} "${type}" 未分类:要么它是安卓已知类型(更新本文件 vendored 全集),要么是 PC-only(登记进导出过滤黑名单)。二选一,不许不选。`,
+      `${label} "${type}" 未分类:要么它是安卓已知类型(更新 foundation/types/android-contract.ts 的 vendored 全集),要么是 PC-only(登记进导出过滤黑名单)。二选一,不许不选。`,
     ).toBe(true);
   }
   for (const type of pcOnly) {
@@ -76,37 +73,85 @@ describe("PC 判别符 → 安卓兼容性分类(强制二选一)", () => {
     expect(creatable.length).toBeGreaterThanOrEqual(10);
     classify("搜索服务", creatable, ANDROID_SEARCH_SERVICE_TYPES, PC_ONLY_SEARCH_SERVICE_TYPES);
   });
+
+  // C2:TTS/ASR provider 类型此前裸奔(无任何哨兵)。TTS 单源 = 注册表;ASR 单源 =
+  // PC_KNOWN_ASR_TYPES。两者都必须是安卓已知(PC 不产出 APP 不认识的语音类型)。
+  // ASR 方向是「PC ⊆ APP」(缺 mimo/step),故 PC-only 黑名单为空集。
+  test("TTS provider:注册表全员为安卓已知", () => {
+    classify("TTS provider", TTS_PROVIDER_TYPES, ANDROID_TTS_PROVIDER_TYPES, new Set());
+  });
+
+  test("ASR provider:本端类型全员为安卓已知(PC 是 APP 子集)", () => {
+    classify("ASR provider", PC_KNOWN_ASR_TYPES, ANDROID_ASR_PROVIDER_TYPES, new Set());
+  });
 });
 
 // ── 安卓仓库在场时:vendored 全集直接与 Kotlin 源码比对 ─────────────────────
-const androidSearchKt = join(repoRoot, "Rikkahub-Android", "search", "src", "main", "java", "me", "rerere", "search", "SearchService.kt");
-const androidMessageKt = join(repoRoot, "Rikkahub-Android", "ai", "src", "main", "java", "me", "rerere", "ai", "ui", "Message.kt");
-const androidRepoPresent = existsSync(androidSearchKt) && existsSync(androidMessageKt);
+// C1:参考仓实际位于 <项目根>/Reference-project/Rikkahub-Android(此前误写 <根>/Rikkahub-Android,
+// 导致 androidRepoPresent 恒 false、本层常年沉睡,vendored 漏了 server_tool 都无人发现)。
+const androidRoot = join(repoRoot, "Reference-project", "Rikkahub-Android");
+const androidKt = {
+  search: join(androidRoot, "search", "src", "main", "java", "me", "rerere", "search", "SearchService.kt"),
+  messagePart: join(androidRoot, "ai", "src", "main", "java", "me", "rerere", "ai", "ui", "UIMessagePart.kt"),
+  messageAnnotation: join(androidRoot, "ai", "src", "main", "java", "me", "rerere", "ai", "ui", "UIMessageAnnotation.kt"),
+  tts: join(androidRoot, "speech", "src", "main", "java", "me", "rerere", "tts", "provider", "TTSProviderSetting.kt"),
+  asr: join(androidRoot, "speech", "src", "main", "java", "me", "rerere", "asr", "ASRProviderSetting.kt"),
+} as const;
+const androidRepoPresent = Object.values(androidKt).every((p) => existsSync(p));
+
+if (!androidRepoPresent) {
+  // C1 修复:不再「静默 skip 当绿灯」。仓库缺席时分类层(上方 describe)照常跑,这里打一条醒目
+  // 提示——「没核到」必须可见,而不是无声地让 CI 变绿。
+  console.warn(
+    "\n[android-contract-sync] ⚠️ 安卓参考仓缺席,跳过 vendored↔Kotlin 腐化核对" +
+    `(期望路径:${androidRoot})。消息 part/注解/搜索服务/TTS/ASR 的 vendored 全集本次未与源码比对。` +
+    "本机开发请保留 Reference-project/Rikkahub-Android;CI/分发环境可忽略此提示。\n",
+  );
+}
 
 function serialNamesIn(text: string): string[] {
   return [...text.matchAll(/@SerialName\("([^"]+)"\)/g)].map((m) => m[1]);
 }
 
-function sliceBetween(text: string, startMarker: string, endMarker: string): string {
-  const start = text.indexOf(startMarker);
-  const end = text.indexOf(endMarker, start);
-  if (start < 0 || end <= start) throw new Error(`Kotlin 源码结构变化:找不到 ${startMarker} … ${endMarker} 区段`);
-  return text.slice(start, end);
+/** 取「从 sealed class X 到 同级下一个 sealed/enum class 声明 或文件尾」的区段。用于把目标
+ *  密封类的 @SerialName 与同文件里的其它枚举/密封类隔开——例:UIMessagePart.kt 同时声明了
+ *  ToolApprovalState(auto/pending/…)、ServerToolStatus、ReasoningType;SearchService.kt 尾部还有
+ *  DoubaoSearchMode(global/custom)。不隔开会把这些误判成消息 part / 搜索服务判别符。 */
+function sealedBodyOf(text: string, sealedDecl: string): string {
+  const start = text.indexOf(sealedDecl);
+  if (start < 0) throw new Error(`Kotlin 源码结构变化:找不到声明「${sealedDecl}」`);
+  const rest = text.slice(start + sealedDecl.length);
+  const next = rest.search(/\n\s*(?:@\w+(?:\([^)]*\))?\s*\n\s*)*(?:sealed|enum)\s+class\s/);
+  return next < 0 ? rest : rest.slice(0, next);
 }
 
 describe.skipIf(!androidRepoPresent)("vendored 全集与安卓源码一致(仓库在场时自动核对)", () => {
   test("SearchServiceOptions 判别符全集", () => {
-    const fromSource = serialNamesIn(readFileSync(androidSearchKt, "utf8"));
+    const fromSource = serialNamesIn(sealedBodyOf(readFileSync(androidKt.search, "utf8"), "sealed class SearchServiceOptions"));
     expect(fromSource.length).toBeGreaterThanOrEqual(15);
-    expect(new Set(fromSource)).toEqual(ANDROID_SEARCH_SERVICE_TYPES);
+    expect(new Set(fromSource)).toEqual(new Set(ANDROID_SEARCH_SERVICE_TYPES));
   });
 
-  test("UIMessagePart / UIMessageAnnotation 判别符全集", () => {
-    const source = readFileSync(androidMessageKt, "utf8");
-    const partNames = serialNamesIn(sliceBetween(source, "sealed class UIMessagePart", "sealed class UIMessageAnnotation"));
+  test("UIMessagePart 判别符全集(含 server_tool)", () => {
+    const partNames = serialNamesIn(sealedBodyOf(readFileSync(androidKt.messagePart, "utf8"), "sealed class UIMessagePart"));
     expect(partNames.length).toBeGreaterThanOrEqual(8);
-    expect(new Set(partNames)).toEqual(ANDROID_MESSAGE_PART_TYPES);
-    const annotationNames = serialNamesIn(sliceBetween(source, "sealed class UIMessageAnnotation", "data class MessageChunk"));
-    expect(new Set(annotationNames)).toEqual(ANDROID_ANNOTATION_TYPES);
+    expect(new Set(partNames)).toEqual(new Set(ANDROID_MESSAGE_PART_TYPES));
+  });
+
+  test("UIMessageAnnotation 判别符全集", () => {
+    const annotationNames = serialNamesIn(sealedBodyOf(readFileSync(androidKt.messageAnnotation, "utf8"), "sealed class UIMessageAnnotation"));
+    expect(new Set(annotationNames)).toEqual(new Set(ANDROID_ANNOTATION_TYPES));
+  });
+
+  test("TTSProviderSetting 判别符全集(C2)", () => {
+    const fromSource = serialNamesIn(sealedBodyOf(readFileSync(androidKt.tts, "utf8"), "sealed class TTSProviderSetting"));
+    expect(fromSource.length).toBeGreaterThanOrEqual(12);
+    expect(new Set(fromSource)).toEqual(new Set(ANDROID_TTS_PROVIDER_TYPES));
+  });
+
+  test("ASRProviderSetting 判别符全集(C2)", () => {
+    const fromSource = serialNamesIn(sealedBodyOf(readFileSync(androidKt.asr, "utf8"), "sealed class ASRProviderSetting"));
+    expect(fromSource.length).toBeGreaterThanOrEqual(5);
+    expect(new Set(fromSource)).toEqual(new Set(ANDROID_ASR_PROVIDER_TYPES));
   });
 });

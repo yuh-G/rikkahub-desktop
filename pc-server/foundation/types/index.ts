@@ -160,8 +160,18 @@ export interface Assistant {
   allowConversationPromptInjection: boolean;
 }
 
+/** 桌面端原生支持的 ASR 判别符。ASR 无注册表,这是「本端认识且能跑」的单源;
+ *  android-contract-sync.test.ts 会核它与安卓 ASRProviderSetting 的交集不放肆扩张。 */
+export const PC_KNOWN_ASR_TYPES = ["openai_realtime", "dashscope", "volcengine"] as const;
+export type PcNativeAsrType = (typeof PC_KNOWN_ASR_TYPES)[number];
+
+/** ASR type 是跨端共享枚举(APP ASRProviderSetting 现有 openai_realtime/dashscope/volcengine
+ *  /mimo/step 5 家)。mimo/step 是 APP 独家的 HTTP 一次性识别,桌面端暂不实现;但导入/导出
+ *  往返必须在存储层原样保留它们的判别符(否则 PC 会把配置无声重置成 openai_realtime,见
+ *  media/asr.ts normalizeAsrProviders 头注)。故 type 放开为 string,识别与降级由运行时守卫
+ *  (PC_KNOWN_ASR_TYPES / transcribeAudioWithAsrProvider / startAsrRealtimeSession 的 else 分支)。 */
 export interface AsrProvider {
-  type: "openai_realtime" | "dashscope" | "volcengine";
+  type: PcNativeAsrType | (string & {});
   id: string;
   name: string;
   apiKey: string;
@@ -179,9 +189,14 @@ export interface AsrProvider {
 export interface TtsProvider {
   // type 是跨端共享枚举：PC 导出的备份会被 Android kotlinx.serialization 反序列化，
   // 新增取值必须逐字等于 Android TTSProviderSetting 的 @SerialName（§4.5）。
+  // 判别符放开为 string(取并字面量保留自动补全):移动端新增的类型 PC 尚未实现时,导入/导出
+  // 往返必须在存储层原样保留其判别符——若在 normalize 处收敛成 "system",用户配置会被无声改写,
+  // 重新导出回 APP 即崩(见 media/tts.ts normalizeTtsProviders 头注)。识别与降级由运行时守卫
+  // (tts-providers/registry 的 TTS_PROVIDER_TYPES / generateSpeechWithTtsProvider 的查表未命中)。
   type:
     | "system" | "openai" | "gemini" | "minimax" | "qwen" | "groq" | "xai" | "mimo"
-    | "elevenlabs" | "step" | "fish-audio" | "volcengine";
+    | "elevenlabs" | "step" | "fish-audio" | "volcengine"
+    | (string & {});
   id: string;
   name: string;
   apiKey: string;

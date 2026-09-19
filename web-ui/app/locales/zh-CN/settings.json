@@ -846,6 +846,11 @@
     "import_backup": "导入备份",
     "chat_files_title": "聊天文件储存",
     "chat_files_desc": "上传的头像和附件会保存到本地数据目录，并通过 /api/files 提供内容。",
+    "restore_report_title": "上次云端恢复",
+    "restore_report_ok": "未跳过或降级任何内容",
+    "restore_report_db_error": "对话历史导入失败：{{error}}（已降级为仅恢复设置）",
+    "restore_report_nodes_skipped": "{{count}} 条消息因备份内数据损坏被跳过",
+    "restore_report_files_deduped": "{{count}} 个附件与本机已有内容一致，已复用（未重复占用空间）",
     "web_service_title": "Web 服务",
     "web_service_desc": "当前 Web JWT：{{status}}",
     "enabled": "已启用",
@@ -934,7 +939,8 @@
       "hygiene_legacy_snapshot_cleaned": "数据目录清理：移除旧版迁移遗留快照",
       "orphan_stats": "附件目录统计：{{orphans}} 个条目已无引用，约 {{orphanMb}} MB；另有 {{untracked}} 个无记录文件，约 {{untrackedMb}} MB。不会自动删除，如需清理请先备份",
       "hygiene_failed": "数据目录清理任务失败，不影响运行，下次启动重试",
-      "output_limit_unknown": "模型 {{model}} 的最大输出长度未知，已按保守默认 {{fallback}} 发送。若该模型报「max_tokens 非法」，请在助手设置里手动指定最大输出长度"
+      "output_limit_unknown": "模型 {{model}} 的最大输出长度未知，已按保守默认 {{fallback}} 发送。若该模型报「max_tokens 非法」，请在助手设置里手动指定最大输出长度",
+      "voice_provider_preserved": "检测到来自移动端的语音服务（{{types}}），当前桌面端暂不支持，已原样保留配置以便回传，不会丢失"
     }
   },
   "model_edit": {

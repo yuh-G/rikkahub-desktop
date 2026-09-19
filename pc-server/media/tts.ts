@@ -10,6 +10,7 @@ import { state } from "../persistence/json-store";
 import { jsonBody, textBody } from "../model-providers";
 import { synthesizeSystemTtsToWav } from "../tools";
 import { addLog } from "../api/logs";
+import { reportError } from "../observability/app-errors";
 import { TTS_PROVIDER_REGISTRY, TTS_PROVIDER_TYPES, type OnlineTtsType } from "./tts-providers/registry";
 
 export const DEFAULT_SYSTEM_TTS_ID = "026a01a2-c3a0-4fd5-8075-80e03bdef200";
@@ -215,12 +216,25 @@ function migrateMinimaxProvider(item: Record<string, unknown>): Record<string, u
 export function normalizeTtsProviders(value: unknown): TtsProvider[] {
   const defaults = defaultTtsProviders();
   const raw = Array.isArray(value) ? value.filter(isRecord) : [];
+  // backup C4/B2 联动:存在「本端未实现、跨端保留」的类型时上报一次(warn),让用户在错误中心
+  // 看到「这个语音服务来自移动端,桌面端暂不支持」——保留 ≠ 静默。app-errors 的 30s 风暴合并
+  // 保证同一 type 每次启动只记一条,不会刷屏。
+  const preservedTypes = [...new Set(raw.map((i) => String(i.type ?? "")).filter((t) => t && !TTS_PROVIDER_TYPES.includes(t as TtsProvider["type"])))];
+  if (preservedTypes.length > 0) {
+    reportError("media", "warn", `检测到 ${preservedTypes.length} 类来自移动端的语音合成服务，桌面端暂不支持，已原样保留以便回传：${preservedTypes.join("、")}`, undefined, "voice_provider_preserved", { kind: "tts", types: preservedTypes.join(",") });
+  }
   const normalized = raw.map((item) => {
-    const type = TTS_PROVIDER_TYPES.includes(String(item.type) as TtsProvider["type"])
-      ? (String(item.type) as TtsProvider["type"])
-      : "system";
-    const base = defaultTtsProvider(type);
-    // §4.5 破坏性升级的存量迁移在 spread 前做,保证用户显式字段仍覆盖默认值。
+    const rawType = String(item.type ?? "");
+    // 跨端往返保真(backup C4):移动端先行新增的 TTS 类型,桌面端尚未实现时,存储层必须
+    // 原样保留判别符——若在此收敛成 "system",用户配置会被无声改写,重新导出回 APP 即崩。
+    // 保留后消费点显式降级(generateSpeechWithTtsProvider 查表未命中报错)。
+    const type = TTS_PROVIDER_TYPES.includes(rawType as TtsProvider["type"])
+      ? rawType
+      : rawType || "system";
+    const isKnown = (TTS_PROVIDER_TYPES as readonly string[]).includes(type);
+    const base = isKnown ? defaultTtsProvider(type as TtsProvider["type"]) : null;
+    // §4.5 破坏性升级的存量迁移只对「本端认识」的类型做(不认识的类型不套模板、不迁移,
+    // 字段原样透传待移动端取回)。
     const source = type === "qwen"
       ? migrateQwenProvider(item)
       : type === "mimo"
@@ -232,10 +246,10 @@ export function normalizeTtsProviders(value: unknown): TtsProvider[] {
       ...base,
       ...source,
       type,
-      id: String(source.id ?? base.id),
-      name: String(source.name ?? base.name),
+      id: String(source.id ?? base?.id ?? id()),
+      name: String(source.name ?? base?.name ?? type),
       apiKey: String(source.apiKey ?? ""),
-      baseUrl: String(source.baseUrl ?? base.baseUrl),
+      baseUrl: String(source.baseUrl ?? base?.baseUrl ?? ""),
     };
   });
   return mergeById(normalized, defaults);

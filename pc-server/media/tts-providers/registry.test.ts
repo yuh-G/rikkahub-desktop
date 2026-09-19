@@ -283,17 +283,30 @@ describe("normalize 存量迁移(千万别让老用户 400)", () => {
     expect(v.speechRate).toBe(10);
   });
 
-  test("新增三家 type 归一化保留,未知 type 落 system", () => {
+  test("新增三家 type 归一化保留;未知 type 原样保留不再收敛成 system(backup C4)", () => {
     const list = normalizeTtsProviders([
       { type: "elevenlabs", id: "e1", name: "E", apiKey: "k", baseUrl: "https://api.elevenlabs.io" },
       { type: "step", id: "s1", name: "S", apiKey: "k", baseUrl: "https://api.stepfun.com" },
       { type: "fish-audio", id: "f1", name: "F", apiKey: "k", baseUrl: "https://api.fish.audio" },
-      { type: "bogus", id: "b1", name: "B", apiKey: "k", baseUrl: "" },
+      // 移动端先行新增、桌面端未实现的类型:判别符必须原样保留(否则 PC→APP 往返会把它
+      // 改写成 system,回 APP 即崩/配置丢失)。缺省 id/name 字段补齐,但不套已知类型模板。
+      { type: "acme_future", id: "b1", name: "B", apiKey: "k", baseUrl: "https://api.acme.example" },
     ]);
     expect(list.find((p) => p.id === "e1")?.type).toBe("elevenlabs");
     expect(list.find((p) => p.id === "s1")?.type).toBe("step");
     expect(list.find((p) => p.id === "f1")?.type).toBe("fish-audio");
-    expect(list.find((p) => p.id === "b1")?.type).toBe("system");
+    const preserved = list.find((p) => p.id === "b1");
+    expect(preserved?.type).toBe("acme_future");
+    expect(preserved?.baseUrl).toBe("https://api.acme.example"); // 不套 system 模板
+  });
+
+  test("C4:未知类型缺 id 时补骨架 id,name 兜底为 type 串,字段不丢", () => {
+    const list = normalizeTtsProviders([{ type: "acme_future", apiKey: "k", baseUrl: "https://a.b" } as any]);
+    const item = list.find((p) => (p as any).type === "acme_future");
+    expect(item).toBeTruthy();
+    expect(typeof item!.id).toBe("string");
+    expect(item!.id.length).toBeGreaterThan(0);
+    expect(item!.apiKey).toBe("k");
   });
 });
 
