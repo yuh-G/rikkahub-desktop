@@ -8,6 +8,7 @@ import { initAppErrorBroadcast } from "../observability/app-errors";
 import type { Conversation, ConversationListInvalidateEventDto, ConversationNodeUpdateEventDto, ConversationSnapshotEventDto, ConversationTextDeltaEventDto, EngineStatusEventDto, JsonValue, MessageNode } from "../foundation/types";
 import { diffFingerprints, fingerprintNode, type NodeBroadcastFingerprint } from "./node-delta";
 import { conversationNegotiationToken } from "./snapshot-negotiation";
+import { stripAuthSecrets } from "./auth";
 import { nodeStamp, toSnapshotConversationDto } from "./snapshot-window";
 import { state } from "../persistence/json-store";
 import { sseHeaders } from "./request";
@@ -179,7 +180,8 @@ export function openSse(
 }
 
 export function broadcastSettings() {
-  broadcastTo(appClients, sseFrame("settings", state.settings));
+  // 剥认证敏感字段(webPasswordHash):SSE 是下发前端的暴露面,与 settings GET 同一净化纪律。
+  broadcastTo(appClients, sseFrame("settings", stripAuthSecrets(state.settings)));
 }
 
 // memory 事件(1.3.2):推送 MemorySnapshot 给前端记忆管理 UI + 待确认徽章。与 settings

@@ -1,5 +1,11 @@
 #  — Stage 0: System tools for runtime (unzip, zip) —
 # Use the same Debian version as distroless/base-debian12 (bookworm)
+#
+# 运行时依赖登记(distroless 极简,这些二进制/库不在基础镜像里,须显式 bund 或接受降级):
+#   - zip/unzip:备份导出 pc-server/backup/zip.ts:146 在非 Windows 平台 spawn `zip` CLI ——
+#     缺它导出即崩。本 Stage bund 进镜像(见下)。
+#   - fc-list(fontconfig):系统字体枚举 pc-server/assets/fonts.ts:176 —— 未 bund,缺失时
+#     静默回退内置兜底清单,PDF 导出可选字体变少,不致命。
 FROM debian:bookworm-slim AS tools
 RUN apt-get update && apt-get install -y --no-install-recommends unzip zip && \
     rm -rf /var/lib/apt/lists/*

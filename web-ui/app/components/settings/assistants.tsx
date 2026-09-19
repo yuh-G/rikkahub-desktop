@@ -15,6 +15,7 @@ import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import { UIAvatar } from "~/components/ui/ui-avatar";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
+import { createId } from "~/lib/id";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -134,7 +135,7 @@ export function AssistantsSection({
     const template = settings.assistants[0] as AssistantProfile | undefined;
     const created = {
       ...(template ? clone(template) : { tags: [] }),
-      id: crypto.randomUUID(),
+      id: createId(),
       name: t("settings:assistants.new_assistant_name"),
       avatar: { type: "dummy" },
       useAssistantAvatar: true,
@@ -520,7 +521,7 @@ export function AssistantsSection({
                     regexes: [
                       ...assistantRegexes,
                       {
-                        id: crypto.randomUUID(),
+                        id: createId(),
                         name: "",
                         enabled: true,
                         findRegex: "",

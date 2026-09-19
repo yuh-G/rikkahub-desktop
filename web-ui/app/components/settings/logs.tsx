@@ -8,6 +8,7 @@ import { Button } from "~/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "~/components/ui/dialog";
 import { JsonTree, tryParseJson } from "~/components/ui/json-tree";
 import { cn } from "~/lib/utils";
+import { copyTextToClipboard } from "~/lib/clipboard";
 import { SectionHeader } from "~/components/settings/shared";
 import { appErrorText, useAppErrorsStore } from "~/stores";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -199,7 +200,9 @@ function LogDetailDialog({ log, onClose }: { log: RequestLog | null; onClose: ()
   const copy = React.useCallback(
     async (text: string) => {
       if (!text) return;
-      await navigator.clipboard.writeText(text);
+      // 走共享 helper(非安全上下文自动回退 execCommand);裸 navigator.clipboard.writeText
+      // 在 Docker 裸 IP 部署下是 undefined,会静默失败。
+      await copyTextToClipboard(text);
       toast.success(t("settings:logs.copied", { title: "" }));
     },
     [t],

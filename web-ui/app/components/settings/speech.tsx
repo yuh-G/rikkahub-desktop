@@ -13,6 +13,7 @@ import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
+import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import type {
@@ -26,7 +27,7 @@ import { clone, moveItem, PasswordInput, SectionHeader, SortableRow } from "~/co
 
 function createAsrProvider(type: AsrProviderType = "openai_realtime"): AsrProviderProfile {
   const base = {
-    id: crypto.randomUUID(),
+    id: createId(),
     type,
     apiKey: "",
     language: "",
@@ -65,7 +66,7 @@ function createAsrProvider(type: AsrProviderType = "openai_realtime"): AsrProvid
 
 function createTtsProvider(type: TtsProviderType = "system"): TtsProviderProfile {
   const base = {
-    id: crypto.randomUUID(),
+    id: createId(),
     type,
     apiKey: "",
     baseUrl: "",

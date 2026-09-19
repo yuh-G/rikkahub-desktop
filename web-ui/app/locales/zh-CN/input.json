@@ -163,7 +163,8 @@
     "connect_failed": "语音识别连接失败",
     "mic_denied": "无法访问麦克风",
     "start": "语音识别",
-    "stop": "停止语音识别"
+    "stop": "停止语音识别",
+    "insecure_context": "语音输入需要 HTTPS 或 localhost 环境(当前为非安全上下文,浏览器禁用了麦克风)。"
   },
   "voice": {
     "start": "语音模式",

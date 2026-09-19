@@ -6,6 +6,7 @@ import rehypeKatex from "rehype-katex";
 import { cn } from "~/lib/utils";
 import { useSettingsStore } from "~/stores";
 import { CodeBlock } from "./code-block";
+import { MarkdownTable } from "./table";
 import {
   advanceFrozenPrefix,
   EMPTY_FROZEN_PREFIX,
@@ -201,6 +202,9 @@ export default function Markdown({
   >(
     () => ({
       pre: ({ children }) => <>{children}</>,
+      // 表格覆盖(issue #58):替换 Streamdown 内置表格(其复制走 navigator.clipboard.write,
+      // 非安全上下文不可用且无回退)。thead/tbody/tr/th/td 不覆盖,沿用 markdown.css 样式。
+      table: ({ children, className }) => <MarkdownTable className={className}>{children}</MarkdownTable>,
       code: ({ className, children, ...props }) => {
         const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
         const code = String(children).replace(/\n$/, "");

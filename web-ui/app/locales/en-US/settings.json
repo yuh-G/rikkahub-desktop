@@ -871,7 +871,17 @@
     "s3_title": "S3 backup",
     "s3_desc": "Standard AWS S3 and compatible endpoints (MinIO/R2/Tencent COS/Alibaba OSS, etc.). Backup contents match WebDAV.",
     "endpoint_label": "Endpoint (blank = official AWS)",
-    "prefix_path": "Prefix path"
+    "prefix_path": "Prefix path",
+    "web_password_current": "Current password",
+    "web_password_new": "New password",
+    "web_password_set": "Set an access password",
+    "web_password_change": "Change password",
+    "web_password_set_action": "Set",
+    "web_password_clear": "Clear password",
+    "web_password_saved": "Access password saved; reload to apply",
+    "web_password_cleared": "Access password cleared",
+    "web_password_failed": "Operation failed",
+    "web_password_locked": "The access password is managed by deployment config (--password / RIKKAHUB_PASSWORD); change it there."
   },
   "hotkeys": {
     "title": "Shortcuts",

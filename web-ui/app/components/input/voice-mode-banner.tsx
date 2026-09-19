@@ -45,7 +45,9 @@ export const VoiceModeBanner = React.memo(function VoiceModeBanner({ onEnd, onRe
 
   const subtitle =
     phase === "error"
-      ? t("voice.error_title")
+      ? state.error === "mic_insecure_context"
+        ? t("asr.insecure_context")
+        : t("voice.error_title")
       : phase === "connecting"
         ? t("voice.connecting")
         : phase === "listening"

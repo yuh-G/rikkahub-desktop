@@ -27,6 +27,7 @@ import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { openExternal } from "~/lib/external-link";
 import { cn } from "~/lib/utils";
+import { createId } from "~/lib/id";
 import api, { appendWebAuthQuery } from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import { useMcpHealthStore } from "~/stores";
@@ -798,7 +799,7 @@ function McpServerEditor({
 
 function createMcpServer(): Record<string, unknown> {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     type: "streamable_http",
     url: "",
     commonOptions: { enable: true, name: "MCP Server", headers: [], tools: [] },
@@ -853,7 +854,7 @@ function ModeInjectionEditor({
 
 function createModeInjection(): Record<string, unknown> {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     type: "mode",
     name: "提示词注入",
     enabled: true,
@@ -867,7 +868,7 @@ function createModeInjection(): Record<string, unknown> {
 
 function createLorebookEntry(): Record<string, unknown> {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     name: "",
     enabled: true,
     priority: 0,
@@ -1338,13 +1339,13 @@ function LorebookEditor({
 
 function createLorebook(): Record<string, unknown> {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     name: "世界书",
     description: "",
     enabled: true,
     entries: [
       {
-        id: crypto.randomUUID(),
+        id: createId(),
         name: "",
         enabled: true,
         priority: 0,
@@ -1374,7 +1375,7 @@ function QuickMessageEditor({
   const items = (settings.quickMessages ?? []) as unknown as Array<Record<string, unknown>>;
   const [selectedId, setSelectedId] = React.useState(textValue(items[0]?.id));
   const selected = items.find((item) => String(item.id) === selectedId) ??
-    items[0] ?? { id: crypto.randomUUID(), title: "", content: "" };
+    items[0] ?? { id: createId(), title: "", content: "" };
   const [draft, setDraft] = React.useState<Record<string, unknown>>(clone(selected));
   // R8-2:防抖自动保存统一走共享三件套 hook(保存窗口内键击不丢,语义见 hook 文件头)。
   const autosave = useAutosaveDraft(
@@ -1425,7 +1426,7 @@ function QuickMessageEditor({
         });
       }}
       onCreate={() => {
-        const next = { id: crypto.randomUUID(), title: t("settings:mcp.tab.quick"), content: "" };
+        const next = { id: createId(), title: t("settings:mcp.tab.quick"), content: "" };
         setSelectedId(String(next.id));
         setDraft(next);
         autosave.markDirty();
@@ -1466,7 +1467,7 @@ function QuickMessageEditor({
               await api.delete(`settings/quick-message/${draft.id}`);
               await pullSettings(onSettings);
               if (remaining.length) setSelectedId(String(remaining[0].id));
-              else setDraft({ id: crypto.randomUUID(), title: "", content: "" });
+              else setDraft({ id: createId(), title: "", content: "" });
             }}
           >
             <Trash2 className="size-4" />

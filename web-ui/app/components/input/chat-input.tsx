@@ -594,7 +594,11 @@ function ChatInputInner({
           asrCaptureRef.current = capture;
         } catch (captureError) {
           const message =
-            captureError instanceof Error ? captureError.message : t("asr.mic_denied");
+            captureError instanceof Error && captureError.message === "mic_insecure_context"
+              ? t("asr.insecure_context")
+              : captureError instanceof Error
+                ? captureError.message
+                : t("asr.mic_denied");
           setError(message);
           toast.error(message);
           stopAsr();
@@ -626,7 +630,12 @@ function ChatInputInner({
       };
       setAsrListening(true);
     } catch (asrError) {
-      const message = asrError instanceof Error ? asrError.message : t("asr.mic_denied");
+      const message =
+        asrError instanceof Error && asrError.message === "mic_insecure_context"
+          ? t("asr.insecure_context")
+          : asrError instanceof Error
+            ? asrError.message
+            : t("asr.mic_denied");
       setError(message);
       toast.error(message);
       stopAsr();

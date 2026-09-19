@@ -871,7 +871,17 @@
     "s3_title": "S3 备份",
     "s3_desc": "支持标准 AWS S3 与兼容 endpoint（MinIO/R2/腾讯云 COS/阿里云 OSS 等）。备份内容与 WebDAV 一致。",
     "endpoint_label": "Endpoint（留空使用 AWS 官方）",
-    "prefix_path": "前缀路径"
+    "prefix_path": "前缀路径",
+    "web_password_current": "当前密码",
+    "web_password_new": "新密码",
+    "web_password_set": "设置访问密码",
+    "web_password_change": "修改密码",
+    "web_password_set_action": "设置",
+    "web_password_clear": "清除密码",
+    "web_password_saved": "访问密码已保存,刷新生效",
+    "web_password_cleared": "访问密码已清除",
+    "web_password_failed": "操作失败",
+    "web_password_locked": "访问密码由部署配置(--password / RIKKAHUB_PASSWORD)管理,请在部署层修改。"
   },
   "hotkeys": {
     "title": "快捷键",

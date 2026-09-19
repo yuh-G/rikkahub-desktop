@@ -60,3 +60,23 @@ describe("流式前缀冻结(渲染级)", () => {
     expect(visibleText(html)).toContain("第19段");
   });
 });
+
+describe("表格覆盖(issue #58 治本)", () => {
+  const TABLE = "| 列A | 列B |\n| --- | --- |\n| 甲 | 乙 |";
+
+  test("表格走 MarkdownTable 覆盖:自带复制按钮在,Streamdown 内置 toolbar 不渲染", () => {
+    const html = render(TABLE, false);
+    // 内容仍在(可见文本含表头与单元格)
+    expect(visibleText(html)).toContain("列A");
+    expect(visibleText(html)).toContain("甲");
+    // 我们的覆盖组件用 code-block-icon-button 复制按钮…
+    expect(html).toContain("code-block-icon-button");
+    // …且 Streamdown 内置表格 toolbar(其复制走无回退的 navigator.clipboard.write)不再出现
+    expect(html).not.toContain('data-streamdown="table-wrapper"');
+  });
+
+  test("表格复制按钮在流式与完成态都存在", () => {
+    expect(render(TABLE, true)).toContain("code-block-icon-button");
+    expect(render(TABLE, false)).toContain("code-block-icon-button");
+  });
+});

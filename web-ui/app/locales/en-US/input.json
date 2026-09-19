@@ -163,7 +163,8 @@
     "connect_failed": "Speech recognition connection failed",
     "mic_denied": "Cannot access the microphone",
     "start": "Voice input",
-    "stop": "Stop voice input"
+    "stop": "Stop voice input",
+    "insecure_context": "Voice input requires HTTPS or localhost (the browser disables the microphone in this insecure context)."
   },
   "voice": {
     "start": "Voice mode",

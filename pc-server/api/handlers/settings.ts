@@ -7,6 +7,7 @@ import type { Assistant, JsonValue, Provider, ProxyConfig, SearchService } from 
 import type { Settings } from "../../foundation/types/settings";
 import { getStringArray, id, isRecord } from "../../foundation/utils";
 import { RUNNING_IN_CONTAINER } from "../../foundation/platform";
+import { handleSetWebPassword, handleWebAuthStatus, stripAuthSecrets } from "../auth";
 import { refreshShellAvailability } from "../../workspace/runtime";
 import { shellStatusPayload } from "./workspaces";
 import {
@@ -87,7 +88,7 @@ export function buildAssistantInjectionPatch(
 }
 
 export async function handleSettingsRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
-  if (path === "settings" && request.method === "GET") return json(state.settings);
+  if (path === "settings" && request.method === "GET") return json(stripAuthSecrets(state.settings));
   // 各引擎原生压缩 prompt(只读展示,设置页压缩 prompt 对话框的引擎切换标签)。
   // chat 引擎的 prompt 可编辑、走 settings.compressPrompt,不在此列;此端点只暴露
   // "引擎自带、不可编辑"的原生 prompt。数组形状留第三引擎拓展。
@@ -982,6 +983,15 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     updateSettings({ ...state.settings, proxyConfig });
     applyEffectiveProxy(state.settings.proxyConfig);
     return json({ status: "ok", config: proxyConfig, ...proxyStatusPayload(state.settings.proxyConfig) });
+  }
+  if (path === "web-auth/status" && request.method === "GET") {
+    // 只回布尔(enabled/configured/lockedByDeployment),不含哈希。供暴露横幅与设置页状态卡。
+    return handleWebAuthStatus();
+  }
+  if (path === "settings/web-password" && request.method === "POST") {
+    // 访问密码设/改/清(P1)。鉴权在 handler 内:部署者锁定(argv/env)→ 拒;已设密码 →
+    // 验 currentPassword;容器首设(无密码)→ 放行。改/清令旧 token 全失效。
+    return await handleSetWebPassword(request);
   }
   if (path === "settings/port" && request.method === "POST") {
     // D6(复查):容器内端口固定且启动时跳过该设置——静默接受会给用户"改了会生效"的

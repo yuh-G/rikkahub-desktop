@@ -12,6 +12,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { cn } from "~/lib/utils";
+import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { SearchServiceOption, Settings } from "~/types";
@@ -228,7 +229,7 @@ const DEFAULT_CUSTOM_JS_SCRAPE_SCRIPT = `async function scrape(urls) {
 
 function createSearchService(): Record<string, unknown> {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     type: "tavily",
     name: "Tavily",
     apiKey: "",
@@ -237,7 +238,7 @@ function createSearchService(): Record<string, unknown> {
 }
 
 function toSearchService(value: Record<string, unknown>): SearchServiceOption {
-  return { ...value, id: String(value.id ?? crypto.randomUUID()) } as SearchServiceOption;
+  return { ...value, id: String(value.id ?? createId()) } as SearchServiceOption;
 }
 
 export function SearchSection({

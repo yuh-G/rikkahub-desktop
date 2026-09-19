@@ -256,5 +256,10 @@
   "theme": {
     "custom": "Custom",
     "unnamed": "Untitled theme"
+  },
+  "exposed_banner": {
+    "message": "This server is reachable beyond your machine with no access password — anyone on the network can read your conversations and API keys.",
+    "action": "Set a password",
+    "dismiss": "Dismiss for now"
   }
 }

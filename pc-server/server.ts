@@ -10,7 +10,7 @@ import { getStartupStatus, isStartupReady, markStartupFailed, markStartupReady }
 import { DataDirLockedError, acquireDataDirLock, releaseDataDirLock } from "./persistence/instance-lock";
 import { runDataDirHygiene } from "./persistence/data-dir-hygiene";
 import { generating } from "./conversations/generation-state";
-import { handleAuthTokenRequest, isWebAuthAuthorized, warnIfExposedWithoutAuth } from "./api/auth";
+import { handleAuthTokenRequest, handleWebAuthStatus, isWebAuthAuthorized, warnIfExposedWithoutAuth } from "./api/auth";
 import { routeStatic } from "./api/static";
 import { routeApi } from "./api/router";
 import { hasProxyForwardHeaders, isLoopbackAddress, markRequestNetworkContext } from "./api/net-context";
@@ -221,6 +221,11 @@ const { server, port } = (() => {
               // 鉴权检查处理（它就是换 token 的入口）；其余 /api/* 一律要求有效 token。
               if (url.pathname === "/api/auth/token" && request.method === "POST") {
                 return await handleAuthTokenRequest(request);
+              }
+              // web-auth/status 只回布尔(enabled/configured/lockedByDeployment),不含机密;
+              // 暴露横幅在"无密码(无 token)"时必须能拿到它——放进鉴权闸内会永远 401,横幅失效。
+              if (url.pathname === "/api/web-auth/status" && request.method === "GET") {
+                return handleWebAuthStatus();
               }
               if (url.pathname.startsWith("/api/") && !isWebAuthAuthorized(request, url)) {
                 return error("Unauthorized", 401);

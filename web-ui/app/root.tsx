@@ -20,10 +20,12 @@ import { ThemeProvider } from "./components/theme-provider";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { UpdateDialog, type UpdateInfo } from "./components/update-dialog";
 import { WebAuthGate } from "./components/web-auth-gate";
+import { ExposedBanner } from "./components/exposed-banner";
 import { StartupGate } from "./components/startup-gate";
 import Logo from "./components/logo";
 import { FontFaceInjector } from "./components/font-face-injector";
 import { openExternal } from "./lib/external-link";
+import { createId } from "./lib/id";
 import {
   CHAT_CJK_OVERRIDE_FAMILY,
   composeFontChain,
@@ -327,7 +329,7 @@ function AppContent() {
       if (reason instanceof Error && reason.name === "AbortError") return;
       const message = reason instanceof Error ? reason.message : String(reason);
       const isNewEntry = useAppErrorsStore.getState().reportLocalError({
-        id: crypto.randomUUID(),
+        id: createId(),
         at: Date.now(),
         count: 1,
         severity: "error",
@@ -350,6 +352,7 @@ function AppContent() {
           成熟桌面应用的主区域切换均为即时切换 —— React 单次提交内旧页换新页,
           不存在中间帧,是唯一确定性零闪的形态。 */}
       <Outlet />
+      <ExposedBanner />
       <WebAuthGate />
       <StartupGate />
       <FontFaceInjector />

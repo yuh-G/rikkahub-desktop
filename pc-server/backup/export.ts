@@ -200,6 +200,9 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     delete copy.proxyConfig;
     delete copy.preferredPort;
     delete copy.keybindings;
+    // webPasswordHash 是 PC-only 敏感字段(访问密码派生哈希):APP 无此概念,且敏感值不该
+    // 进跨端备份。pc-backup(PC→PC)不剥,跨机恢复带上(见 api/auth.ts)。
+    delete copy.webPasswordHash;
     // shellPath 是机器级 bash 绝对路径,PC→APP/跨机恢复无意义;带到目标机反而因路径不存在
     // 锁死 bash(getShellConfig 对不存在的 customShellPath 抛错),故剥离,目标机走自动探测。
     delete copy.shellPath;

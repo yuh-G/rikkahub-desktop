@@ -46,6 +46,12 @@ export async function startMicCapture(
   targetSampleRate: number,
   onFrame: (frame: ArrayBuffer) => void,
 ): Promise<MicCaptureHandle> {
+  // 能力探测(P2,issue #55/#56 同源):getUserMedia 只在安全上下文(HTTPS/localhost)可用。
+  // Docker 裸 IP(http://<host>:8080)等非安全上下文下 navigator.mediaDevices 是 undefined,
+  // 裸调会抛浏览器黑话 TypeError。这里先探测、抛带码错误,让调用方给出人话提示而非崩。
+  if (typeof navigator === "undefined" || typeof navigator.mediaDevices?.getUserMedia !== "function") {
+    throw new Error("mic_insecure_context");
+  }
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       channelCount: 1,

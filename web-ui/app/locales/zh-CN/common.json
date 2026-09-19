@@ -256,5 +256,10 @@
   "theme": {
     "custom": "自定义",
     "unnamed": "未命名主题"
+  },
+  "exposed_banner": {
+    "message": "服务正对外暴露且未设访问密码：同一网络的任何人都能读取你的会话与 API Key。",
+    "action": "去设置密码",
+    "dismiss": "暂时关闭"
   }
 }

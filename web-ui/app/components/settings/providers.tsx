@@ -27,6 +27,7 @@ import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { cn } from "~/lib/utils";
 import { isBalanceResultPathValid } from "~/lib/json-expression";
+import { createId } from "~/lib/id";
 import { openExternal } from "~/lib/external-link";
 import api, { appendWebAuthQuery } from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -175,7 +176,7 @@ function modelListEndpointPreview(provider: ProviderProfile): string {
 
 function createProvider(): ProviderProfile {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     type: "openai",
     enabled: true,
     name: "自定义供应商",
@@ -689,10 +690,7 @@ export function ProvidersSection({
 
   const openAddModelDialog = () => {
     if (!draft) return;
-    const uuid =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const uuid = createId();
     setModelDialog({
       mode: "add",
       modelIdLocked: false,
