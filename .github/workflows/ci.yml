@@ -16,7 +16,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.4.0'
+          bun-version: '1.4.2'
 
       # pi/ 是 gitignore 的本地浅克隆(vendored 源码),不进仓库。pc-server 直接
       # import 其 TS 源码,缺它 tsc 报 57 个找不到模块。按 CLAUDE.md「pi vendor
@@ -75,7 +75,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.4.0'
+          bun-version: '1.4.2'
 
       - name: Install web-ui dependencies
         working-directory: web-ui

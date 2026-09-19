@@ -16,7 +16,7 @@ RUN mkdir -p /tools/bin && \
 #  — Stage 1: Build —
 # --platform=$BUILDPLATFORM ensures Bun runs natively (no QEMU emulation).
 # Cross-compilation to TARGETARCH is handled via Bun's --target flag below.
-FROM --platform=$BUILDPLATFORM docker.io/oven/bun:1.4.0 AS builder
+FROM --platform=$BUILDPLATFORM docker.io/oven/bun:1.4.2 AS builder
 ARG TARGETARCH
 
 WORKDIR /build
