@@ -42,11 +42,11 @@ const ITEM = { id: "q1", preview: "这份目录有意思吗", hasAttachments: fa
 describe("消息队列面板形态", () => {
   test("队空/null 不渲染", () => {
     expect(render(null)).toBe("");
-    expect(render({ items: [], paused: false })).toBe("");
+    expect(render({ items: [], held: null })).toBe("");
   });
 
   test("不自带宽度/外壳类:宽度由输入卡决定(不再是满宽横幅)", () => {
-    const html = render({ items: [ITEM], paused: false });
+    const html = render({ items: [ITEM], held: null });
     const rootClass = html.match(/^<div class="([^"]*)"/)?.[1] ?? "";
     expect(rootClass).not.toContain("rounded-2xl");
     expect(rootClass).not.toContain("border");
@@ -55,7 +55,7 @@ describe("消息队列面板形态", () => {
   });
 
   test("常态:无提示行(省竖向空间),无「暂停」「停止生成」入口", () => {
-    const html = render({ items: [ITEM], paused: false });
+    const html = render({ items: [ITEM], held: null });
     expect(html).toContain(ITEM.preview);
     // 常态提示行已删(用户拍板:贴片太长),i18n 键 queue.hint 一并删除——锁文案不再出现。
     expect(html).not.toContain("本次回复结束后");
@@ -65,24 +65,37 @@ describe("消息队列面板形态", () => {
   });
 
   test("多条时显序号(FIFO 次序),单条时不显", () => {
-    const single = render({ items: [ITEM], paused: false });
+    const single = render({ items: [ITEM], held: null });
     expect(single).not.toContain(">1<");
     const multi = render({
       items: [ITEM, { ...ITEM, id: "q2", preview: "第二句" }],
-      paused: false,
+      held: null,
     });
     expect(multi).toContain(">1<");
     expect(multi).toContain(">2<");
   });
 
-  test("暂停态=失败提示 + 继续发送(错误恢复,非常规操作)", () => {
-    const html = render({ items: [ITEM], paused: true });
-    expect(html).toContain(i18n.t("input:queue.paused_hint"));
-    expect(html).toContain(i18n.t("input:queue.resume"));
+  test("停摆分态:failed=警示色错误恢复;interrupted=中性色(用户自己停的,不渲染成出错)", () => {
+    const failed = render({ items: [ITEM], held: "failed" });
+    expect(failed).toContain(i18n.t("input:queue.held_failed"));
+    expect(failed).toContain(i18n.t("input:queue.resume"));
+    expect(failed).toContain('data-held="failed"');
+    expect(failed).toContain("text-amber-600");
+    expect(failed).toContain("lucide-triangle-alert");
+
+    const interrupted = render({ items: [ITEM], held: "interrupted" });
+    expect(interrupted).toContain(i18n.t("input:queue.held_interrupted"));
+    expect(interrupted).toContain(i18n.t("input:queue.resume"));
+    expect(interrupted).toContain('data-held="interrupted"');
+    expect(interrupted).not.toContain("text-amber-600");
+    expect(interrupted).not.toContain("lucide-triangle-alert");
+    expect(interrupted).toContain("lucide-pause");
+    // 两态文案不同——不是同一句话换个颜色。
+    expect(i18n.t("input:queue.held_failed")).not.toBe(i18n.t("input:queue.held_interrupted"));
   });
 
   test("每条排队消息单行省略(truncate)且行距收紧", () => {
-    const html = render({ items: [ITEM], paused: false });
+    const html = render({ items: [ITEM], held: null });
     // truncate = nowrap + ellipsis:超出贴片宽度的 prompt 以 ... 收尾,保证只占一行。
     expect(html).toContain("truncate");
     expect(html).toContain("leading-4.5");
@@ -93,20 +106,20 @@ describe("消息队列面板形态", () => {
     // 动作键的文案在 Tooltip 内(静态渲染时 tooltip 关闭、内容不出现),故按图标类名断言。
     const withAttachment = render({
       items: [{ ...ITEM, preview: "", hasAttachments: true }],
-      paused: false,
+      held: null,
     });
     expect(withAttachment).toContain(i18n.t("input:queue.attachment"));
     expect(withAttachment).not.toContain("lucide-pencil");
     expect(withAttachment).toContain("lucide-trash");
 
     // 纯文本项两个动作都在。
-    const textOnly = render({ items: [ITEM], paused: false });
+    const textOnly = render({ items: [ITEM], held: null });
     expect(textOnly).toContain("lucide-pencil");
     expect(textOnly).toContain("lucide-trash");
   });
 
   test("动作常态可见(不靠悬停发现),悬停只是加强", () => {
-    const html = render({ items: [ITEM], paused: false });
+    const html = render({ items: [ITEM], held: null });
     // opacity-0 = 完全隐藏,用户不知道排队项能改/能撤(Codex 的动作是常态露出的)。
     expect(html).not.toContain("opacity-0 ");
     expect(html).toContain("group-hover:opacity-100");

@@ -52,9 +52,16 @@ export interface MessageQueueSnapshotItem {
   createdAt: number;
 }
 
+/** 队列停摆原因(线上快照字段;前端据此分态提示):
+ *  - failed:上一条生成失败自动暂停——错误恢复语境,警示色 + 「继续发送」;
+ *  - interrupted:用户主动停止后的打断冻结——用户自己的决定,不是故障,中性提示 + 「继续发送」。
+ *  两者恢复动作同为 resume;paused(失败)优先呈现(需要用户知道出了错)。 */
+export type MessageQueueHoldReason = "failed" | "interrupted";
+
 export interface MessageQueueSnapshot {
   items: MessageQueueSnapshotItem[];
-  paused: boolean;
+  /** null = 正常排队中(当前回复结束后自动依次发送)。 */
+  held: MessageQueueHoldReason | null;
 }
 
 /** 会话级发送队列注册表(内存态,随 working-set 生命周期;不落库)。 */
@@ -203,8 +210,7 @@ function hasAttachments(parts: MessagePart[]): boolean {
 }
 
 /** 生成线上快照(无队列返回 null,前端据此隐藏面板;不读则无副作用)。
- *  paused 字段呈现「待用户操作」的统合态(失败暂停 ∨ 打断冻结)——前端提示语同为
- *  「队列已暂停,可继续发送」,两种原因在 UI 呈现上无差别,恢复动作同为 resume。 */
+ *  held 分态呈现停摆原因(见 MessageQueueHoldReason),恢复动作同为 resume。 */
 export function queueSnapshotFor(conversationId: string): MessageQueueSnapshot | null {
   const q = queues.get(conversationId);
   if (!q || q.items.length === 0) return null;
@@ -215,7 +221,7 @@ export function queueSnapshotFor(conversationId: string): MessageQueueSnapshot |
       hasAttachments: hasAttachments(it.parts),
       createdAt: it.createdAt,
     })),
-    paused: q.paused || q.heldByInterrupt,
+    held: q.paused ? "failed" : q.heldByInterrupt ? "interrupted" : null,
   };
 }
 

@@ -131,7 +131,8 @@
     "command_queue_blocked": "Commands are available once the current reply finishes"
   },
   "queue": {
-    "paused_hint": "The last message failed to send; the queue is paused",
+    "held_failed": "The last reply failed; queued messages are paused",
+    "held_interrupted": "Generation stopped; queued messages were not sent",
     "resume": "Resume",
     "edit": "Edit",
     "remove": "Discard",

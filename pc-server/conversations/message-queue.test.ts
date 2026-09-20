@@ -413,18 +413,22 @@ describe("消息发送队列派发(收尾续跑)", () => {
 // Interrupted(用户 stop/打断) → 队列冻结不点火;Failed(失败) → pause;Completed → 续跑。
 // 上述派发测试已锁 Completed/Failed,此处锁 Interrupted 的状态机与端到端行为。
 describe("终局三态:打断冻结", () => {
-  test("hold 保留全部项且快照呈现 paused;resume 一并解除", () => {
+  test("hold 保留全部项且快照分态呈现 interrupted;resume 一并解除", () => {
     const cid = "q-hold";
     enqueueMessage(cid, [{ type: "text", text: "待命" }]);
     holdMessageQueue(cid);
     expect(isQueueHeldByInterrupt(cid)).toBe(true);
     expect(isQueuePaused(cid)).toBe(false); // 与失败暂停是两个标志位
     expect(queueLength(cid)).toBe(1); // 冻结不丢项
-    // 快照统合呈现「待用户操作」:前端面板出「已暂停+继续」。
-    expect(queueSnapshotFor(cid)?.paused).toBe(true);
+    // 快照分态:打断冻结 = interrupted(用户自己的决定,前端中性提示 + 继续);
+    // 失败暂停 = failed(错误恢复,警示色);两者并存时 failed 优先(用户需要知道出了错)。
+    expect(queueSnapshotFor(cid)?.held).toBe("interrupted");
+    pauseMessageQueue(cid);
+    expect(queueSnapshotFor(cid)?.held).toBe("failed");
     resumeMessageQueue(cid);
     expect(isQueueHeldByInterrupt(cid)).toBe(false);
-    expect(queueSnapshotFor(cid)?.paused).toBe(false);
+    expect(isQueuePaused(cid)).toBe(false);
+    expect(queueSnapshotFor(cid)?.held).toBeNull();
     clearMessageQueue(cid);
   });
 
@@ -576,7 +580,7 @@ describe("终局三态:打断冻结", () => {
 
       expect(isQueueHeldByInterrupt(conv.id)).toBe(false);
       expect(isQueuePaused(conv.id)).toBe(false);
-      expect(queueSnapshotFor(conv.id)?.paused).toBe(false);
+      expect(queueSnapshotFor(conv.id)?.held).toBeNull();
       // 续跑归接管方:被 replaced 的旧流收尾不派发队首(否则会抢在接管方登记之前点火,
       // 把排队消息排到用户刚发的消息之前)。排队项原地等待,上游没有第二个请求。
       expect(hasQueuedMessages(conv.id)).toBe(true);

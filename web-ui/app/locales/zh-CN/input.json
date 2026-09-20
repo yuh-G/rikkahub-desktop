@@ -131,7 +131,8 @@
     "command_queue_blocked": "指令需在当前回复完成后使用"
   },
   "queue": {
-    "paused_hint": "上一条发送失败，队列已暂停",
+    "held_failed": "上一条回复失败，排队消息已暂停",
+    "held_interrupted": "已停止生成，排队消息未发送",
     "resume": "继续发送",
     "edit": "修改",
     "remove": "撤回",

@@ -81,10 +81,12 @@ export type MessageQueueItemDto = {
   createdAt: number;
 };
 
-/** 消息发送队列线上快照。纯内存态(不落库),随会话 SSE 快照直通;队空 = null(前端隐藏面板)。 */
+/** 消息发送队列线上快照。纯内存态(不落库),随会话 SSE 快照直通;队空 = null(前端隐藏面板)。
+ *  held:队列停摆原因——failed(上一条生成失败自动暂停,错误恢复语境)/ interrupted(用户主动
+ *  停止后的冻结,中性提示)/ null(正常排队,当前回复结束后自动依次发送)。恢复动作同为 resume。 */
 export type MessageQueueSnapshotDto = {
   items: MessageQueueItemDto[];
-  paused: boolean;
+  held: "failed" | "interrupted" | null;
 } | null;
 
 /** 会话详情:GET conversations/:id 响应与会话 SSE snapshot 载荷。

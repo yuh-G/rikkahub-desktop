@@ -11,13 +11,15 @@
 //   - 不提供手动「暂停队列」:排队即「当前回复结束后自动依次发送」,一句话说得清;要停就撤。
 //   - 不提供「终止生成」:那是输入框右下角发送键在空输入时的职责(红色停止钮),同一动作
 //     不该有两个入口。
-//   - 「已暂停」仍会出现,但只作为失败后的状态提示 + 一键「继续发送」——它是错误恢复,
-//     不是常规操作(服务端在生成失败时自动暂停,保住剩余排队项不被连带丢弃)。
+//   - 停摆提示只在两种情形出现,各带一键「继续发送」,视觉分态对齐用户心智:
+//       failed(上一条生成失败自动暂停)= 错误恢复语境,警示色 + 警示图标;
+//       interrupted(用户自己按了停止)= 用户的决定不是故障,中性色 + 暂停图标——
+//     不把用户的主动停止渲染成一条"出错了"。
 //
 // 数据面不变:服务端权威,经会话 SSE 快照直通;本地只持有编辑态。
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { CornerDownRight, Pencil, Play, Trash2, TriangleAlert } from "lucide-react";
+import { CornerDownRight, Pause, Pencil, Play, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import api from "~/services/api";
@@ -42,7 +44,7 @@ export const MessageQueuePanel = React.memo(function MessageQueuePanel({
   const [busy, setBusy] = React.useState(false);
 
   const items = queue?.items ?? [];
-  const paused = queue?.paused ?? false;
+  const held = queue?.held ?? null;
 
   // 队列被清空/目标项消失(派发走或被别处移除)时,收起悬挂的编辑态。
   React.useEffect(() => {
@@ -94,17 +96,29 @@ export const MessageQueuePanel = React.memo(function MessageQueuePanel({
 
   return (
     <div className="flex flex-col gap-0.5" data-testid="message-queue-panel">
-      {/* 状态行:常态无提示(省竖向空间);暂停(=上一条失败)才出现,升格为警示 + 继续按钮。 */}
-      {paused ? (
-        <div className="flex items-center gap-1.5 px-2 py-0.5 text-mini text-amber-600 dark:text-amber-400">
-          <TriangleAlert className="size-3.5 shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{t("queue.paused_hint")}</span>
+      {/* 状态行:常态无提示(省竖向空间);停摆才出现。failed 警示色,interrupted 中性色。 */}
+      {held ? (
+        <div
+          data-testid="message-queue-held"
+          data-held={held}
+          className={cn(
+            "flex items-center gap-1.5 px-2 py-0.5 text-mini",
+            held === "failed" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+          )}
+        >
+          {held === "failed" ? <TriangleAlert className="size-3.5 shrink-0" /> : <Pause className="size-3.5 shrink-0" />}
+          <span className="min-w-0 flex-1 truncate">
+            {held === "failed" ? t("queue.held_failed") : t("queue.held_interrupted")}
+          </span>
           <Button
             type="button"
             variant="ghost"
             size="xs"
             disabled={busy}
-            className="h-5 shrink-0 gap-1 px-1.5 text-mini text-amber-600 hover:text-amber-700 dark:text-amber-400"
+            className={cn(
+              "h-5 shrink-0 gap-1 px-1.5 text-mini",
+              held === "failed" ? "text-amber-600 hover:text-amber-700 dark:text-amber-400" : "text-foreground/80 hover:text-foreground",
+            )}
             onClick={() => void run(() => api.post(`conversations/${conversationId}/queue/resume`))}
           >
             <Play className="size-3" />
