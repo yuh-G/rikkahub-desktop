@@ -691,19 +691,19 @@ describe("steering 轮边界注入", () => {
     }
   });
 
-  test("端到端:纯文本流无轮边界 → steering 不注入,FIFO 收尾派发兜底(零丢失)", async () => {
+  test("端到端:纯文本流的最终轮也是边界——同一生成内续采样,不走收尾派发(Codex needs_follow_up)", async () => {
     const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
     const { model, provider } = await import("../model-providers");
     const { defaultState } = await import("../app-config/defaults");
     const { defaultAssistant } = await import("../assistants");
 
-    const conv = makeConversation("c-q-steer-noboundary");
+    const conv = makeConversation("c-q-steer-final");
     persistConversation(conv);
     registerConversation(conv);
     conv.messages.push({
-      id: "c-q-steer-nb-n1", selectIndex: 0,
+      id: "c-q-steer-final-n1", selectIndex: 0,
       messages: [{
-        id: "c-q-steer-nb-m1", role: "USER", parts: [{ type: "text", text: "直接回答" }],
+        id: "c-q-steer-final-m1", role: "USER", parts: [{ type: "text", text: "直接回答" }],
         annotations: [], createdAt: new Date().toISOString(), finishedAt: null, translation: null,
       }],
     } as never);
@@ -714,12 +714,12 @@ describe("steering 轮边界注入", () => {
         const item = enqueueMessage(conv.id, [{ type: "text", text: "接着这条" }]);
         pushSteeringMessage(conv.id, item.id, [{ type: "text", text: "接着这条" }]);
       } },
-      { content: "兜底派发的第二轮" },
+      { content: "续采样的第二轮" },
     ]);
     try {
-      const ourModel = model("fake-model", "NoBoundary Test");
+      const ourModel = model("fake-model", "FinalBoundary Test");
       const ourProvider = provider({
-        id: crypto.randomUUID(), name: "NoBoundary Provider", baseUrl: server.baseUrl,
+        id: crypto.randomUUID(), name: "FinalBoundary Provider", baseUrl: server.baseUrl,
         apiKey: "sk-test", enabled: true, models: [ourModel],
       });
       const next = defaultState();
@@ -731,17 +731,28 @@ describe("steering 轮边界注入", () => {
       setState(next as State);
 
       await generateAnswer(conv);
-      // 无工具轮 → 无 steering 边界 → 第一轮请求体不含补发(没注入)。
+      // 第一轮请求体不含补发(它在第一轮响应期间才到达)。
       const firstBody = server.requests[0]! as { messages?: Array<{ role: string; content: string }> };
-      const injectedEarly = (firstBody.messages ?? []).some((m) => String(m.content).includes("接着这条"));
-      expect(injectedEarly).toBe(false);
-      // 收尾派发兜底:第二个请求照常发出,消息本体由派发落库。
-      await new Promise<void>((resolve) => {
-        const timer = setInterval(() => {
-          if (server.requests.length >= 2) { clearInterval(timer); resolve(); }
-        }, 10);
-      });
+      expect((firstBody.messages ?? []).some((m) => String(m.content).includes("接着这条"))).toBe(false);
+      // 同一次 generateAnswer 内发出了第二个请求(await 已返回,两轮都在其中),且第二轮
+      // 请求体回放了第一轮 assistant 正文、其后紧跟补发 user turn——模型知道自己刚说过什么。
+      expect(server.requests.length).toBe(2);
+      const second = server.requests[1]! as { messages: Array<{ role: string; content: string; tool_calls?: unknown }> };
+      const replayIdx = second.messages.findIndex((m) => m.role === "assistant" && String(m.content).includes("一轮答完"));
+      const steerIdx = second.messages.findIndex((m) => m.role === "user" && String(m.content).includes("接着这条"));
+      expect(replayIdx).toBeGreaterThan(-1);
+      expect(steerIdx).toBe(replayIdx + 1);
+      expect("tool_calls" in second.messages[replayIdx]!).toBe(false); // 无工具的回放不带 tool_calls 键
+      // 数据序 [user_1, ai_1(定格), steer_user, ai_2],ai_2 正文恰为第二轮,队列已清,不再派发第三轮。
+      const roles = conv.messages.map((n) => n.messages[n.selectIndex]?.role);
+      expect(roles).toEqual(["USER", "ASSISTANT", "USER", "ASSISTANT"]);
+      expect(textFromParts(conv.messages[1]!.messages[0]!.parts)).toBe("一轮答完");
+      expect(textFromParts(conv.messages[3]!.messages[0]!.parts)).toBe("续采样的第二轮");
+      expect(conv.messages[1]!.messages[0]!.finishedAt).toBeTruthy();
+      expect(conv.messages[3]!.messages[0]!.finishedAt).toBeTruthy();
       expect(hasQueuedMessages(conv.id)).toBe(false);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(server.requests.length).toBe(2);
     } finally {
       await server.close();
       clearMessageQueue(conv.id);
