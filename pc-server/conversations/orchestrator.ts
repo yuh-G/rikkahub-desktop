@@ -46,6 +46,7 @@ import {
 import { contextWindowFor, requiredOutputCap } from "../model-providers/model-limits";
 import {
   finishReasoningParts,
+  isEmptyAssistantPlaceholder,
   setMessageLoading,
   streamStartedMessages,
 } from "../inference-engine/parts";
@@ -99,6 +100,29 @@ export interface GenerationSnapshot {
   assistant: Assistant;
   provider: Provider;
   model: Model;
+}
+
+/** 生成会话句柄（steer 边界节点分裂的统一管理核心，对齐 Codex transcript 逐项累积）。
+ *  generateAnswer 装配时创建一次、随本次生成存活。初始落点 = ai_1（ensureAssistantGenerationNode
+ *  给出的 assistant 节点）；steer 边界由 steerBoundary 调 retarget 把后续流式换绑进新开的
+ *  continuation 节点 ai_2——从而延续输出在数据层落在 steer user 之后（②模型层重答污染的治本）。
+ *  本句柄对引擎/adapter/tool-loop 完全透明：它们只发 sink 事件，落点统一由 session 管，
+ *  未来新引擎把 onSteerBoundary 指向同一 steerBoundary 即自动继承分裂能力，零新增代码。 */
+export interface GenerationSession {
+  node: MessageNode;
+  message: Message;
+  retarget(next: { node: MessageNode; message: Message }): void;
+}
+
+function createGenerationSession(initial: { node: MessageNode; message: Message }): GenerationSession {
+  return {
+    node: initial.node,
+    message: initial.message,
+    retarget(next) {
+      this.node = next.node;
+      this.message = next.message;
+    },
+  };
 }
 
 export async function callProvider(
@@ -439,19 +463,76 @@ function broadcastQueueState(conversationId: string) {
 }
 
 /**
- * steering 轮边界(用户问题②,对齐 Codex pending_input):引擎在「工具批执行完、下一
- * 模型请求构建前」调用。排水 steering 通道(只取仍在 FIFO 队列的项——被撤回/编辑的
- * 不注入),逐条落库 user 节点(与 dispatchQueuedHead 同构:正则变换入队时已做)+ 从
- * 队列移除(已注入≠待触发,防收尾再派发一次)+ 刷新面板,返回各消息文本供引擎编码。
- * 副作用全部收在本协调器(落库/队列/广播),引擎只拿纯文本——层纪律与 executeTool 同。
- * 语音回复通道:被注入项的等待方经 removeQueuedMessage 收 null(该轮回复涵盖全部
- * 补发,无单条回复可播报),语音模式跳过播报直接重开麦。
+ * steering 轮边界（用户问题②，对齐 Codex pending_input + transcript 逐项累积）：引擎在
+ * 「工具批执行完、下一模型请求构建前」调用。排水 steering 通道（只取仍在 FIFO 队列的项——
+ * 被撤回/编辑的不注入），逐条落库 steer user 节点（完整气泡 + `steered` 注解，与
+ * dispatchQueuedHead 同构：正则变换入队时已做）+ 从队列移除（已注入≠待触发，防收尾再派发
+ * 一次）+ 刷新面板，返回各消息文本供引擎编码。副作用全部收在本协调器（落库/队列/广播/
+ * 换绑），引擎只拿纯文本——层纪律与 executeTool 同。语音回复通道：被注入项的等待方经
+ * removeQueuedMessage 收 null（该轮回复涵盖全部补发，无单条回复可播报），语音模式跳过播报直接重开麦。
+ *
+ * Steer 边界节点分裂（v5 治本，对齐 Codex 数据序 [assistant_r1, user_steer, assistant_r2]）：
+ * 排水命中后，把当前 assistant 节点收口定格（finishReasoningParts + finishedAt），落库
+ * steer user，再新开一个空 continuation assistant 节点接管后续流式（session.retarget）。
+ * 于是延续输出在数据层落在 steer user 之后——模型与用户都不会把 steer user 误读为悬空未答。
+ * 若 session 当前节点还是无任何可见内容的空占位（isEmptyAssistantPlaceholder），不固化、
+ * 直接剔除，避免「空气泡 + 插话」难看形态（复用既有判定）。整批多条 steer 只分裂一次
+ * （一个 ai_2 接住这批之后的全部延续）。
  */
-function steerBoundary(conversationId: string): string[] {
+function steerBoundary(conversationId: string, session?: GenerationSession): string[] {
   const conversation = getConversation(conversationId);
   if (!conversation) return [];
   const taken = drainSteeringMessages(conversationId, (itemId) => queueSnapshotFor(conversationId)?.items.some((it) => it.id === itemId) ?? false);
   if (taken.length === 0) return [];
+
+  // 1) 收口/剔除当前 assistant 节点（仅当本次生成提供了 session；无 session 的调用方不存在——
+  //    目前唯一装配点 generateAnswer 恒传，防御性判空）。空占位剔除而非定格，避免空气泡。
+  if (session) {
+    const prevNode = session.node;
+    const prevMessage = session.message;
+    const nodeIndex = conversation.messages.findIndex((n) => n.id === prevNode.id);
+    if (nodeIndex >= 0) {
+      if (isEmptyAssistantPlaceholder(prevMessage)) {
+        // C2：steer 落在首轮模型尚未产出任何可见内容时——空占位剔除，steer user 顶上来。
+        conversation.messages.splice(nodeIndex, 1);
+      } else {
+        // 收口 ai_1：定格为一段已完成的「答复」。它留在 steer user 之前，观感=真的答完了。
+        finishReasoningParts(prevMessage);
+        prevMessage.finishedAt = new Date().toISOString();
+      }
+    }
+
+    // 2) 逐条落库 steer user 节点（完整气泡）。steered 注解是可选元数据（非功能依赖），
+    //    默认不做任何特殊渲染；PC→APP 导出经 PC_ONLY_ANNOTATION_TYPES 剥离。
+    const texts: string[] = [];
+    for (const item of taken) {
+      const userMessage = message("USER", item.parts.map((p) => ({ ...p })));
+      userMessage.annotations.push({ type: "steered" });
+      const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
+      conversation.messages.push(userNode);
+      texts.push(textFromParts(item.parts));
+      removeQueuedMessage(conversationId, item.id);
+    }
+
+    // 3) 新开 continuation assistant 节点 ai_2 接管后续流式（整批只开一个）。
+    const continuationMessage = message("ASSISTANT", [], prevMessage.modelId);
+    continuationMessage.finishedAt = null; // 新节点进入生成态
+    continuationMessage.annotations = [];
+    const continuationNode: MessageNode = { id: id(), messages: [continuationMessage], selectIndex: 0 };
+    conversation.messages.push(continuationNode);
+
+    conversation.chatSuggestions = [];
+    conversation.updateAt = Date.now();
+    persistConversation(conversation);
+    broadcastConversation(conversation);
+    broadcastQueueState(conversationId);
+
+    // 4) 换绑：之后所有 sink 事件落进 ai_2（引擎无感）。
+    session.retarget({ node: continuationNode, message: continuationMessage });
+    return texts.filter((t) => t.length > 0);
+  }
+
+  // 兜底（无 session）：保持旧行为——只落库 steer user 节点，不分裂（不可达于当前装配点）。
   const texts: string[] = [];
   for (const item of taken) {
     const userMessage = message("USER", item.parts.map((p) => ({ ...p })));
@@ -933,23 +1014,28 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     assistantNode = ensureAssistantGenerationNode(conversation, picked.model.id);
   }
   const currentMessage = assistantNode.messages[assistantNode.selectIndex];
+  // Steer 边界节点分裂：本次生成的流式落点句柄。初始 = ai_1；steer 边界由 steerBoundary
+  // 经 retarget 换绑到 ai_2。下方 sink/applyEvent/finalization/abort/失败/审批判定全部改读
+  // session 当前值，不再硬编码 assistantNode/currentMessage——steer 后延续输出自然落进新节点。
+  const session = createGenerationSession({ node: assistantNode, message: currentMessage });
   activeGenerationMessages.set(conversation.id, currentMessage);
   // P1-3:四条出口路径(pending/done/aborted/failed)的共同收尾序列。差异只在 parts 与
   // finishedAt 处理,由 applyParts 注入。completeConversationGeneration 幂等,finally 兜底。
+  // 落点读 session 当前值:无 steer 时=ai_1,有 steer 时=ai_2——四条路径同正确。
   const finalizeOutcome = (applyParts: () => void) => {
     // 批6复审 G2:接管守卫——被新流接管且新流复用同一消息对象时,旧流的收尾若继续执行,
     // 会对新流正在写的回答做 transforms/盖 finishedAt/写估算 usage,失败分支甚至把
     // "请求失败"文本和 model_call_error 注解追加进去。此时静默退出(消息已易主,由新流
     // 负责收尾);新流用的是新消息对象时,旧流仍照常收尾自己的消息,行为不变。
     const owner = generating.get(conversation.id);
-    if (owner && owner !== controller && activeGenerationMessages.get(conversation.id) === currentMessage) return;
-    applyOutputTransforms(currentMessage, assistant);
-    finishReasoningParts(currentMessage);
+    if (owner && owner !== controller && activeGenerationMessages.get(conversation.id) === session.message) return;
+    applyOutputTransforms(session.message, assistant);
+    finishReasoningParts(session.message);
     applyParts();
-    ensureUsage(currentMessage, conversation);
+    ensureUsage(session.message, conversation);
     conversation.updateAt = Date.now();
     completeConversationGeneration(conversation.id, controller);
-    broadcastNodeUpdate(conversation, assistantNode);
+    broadcastNodeUpdate(conversation, session.node);
     broadcastConversation(conversation);
   };
   // T1:续跑语义读 adapter 声明——仅 pause-resume 引擎(聊天)有"整批暂停→逐卡批准→
@@ -1003,7 +1089,18 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     };
     // P2(pi 引擎):内联 applyEvent 抽取为共享应用器(conversations/generation-apply.ts,
     // 逐字搬迁行为零变)——聊天引擎与 pi 事件桥共用同一份"事件→parts"写入字典。
-    const applyEvent = createGenerationEventApplier({ conversation, node: assistantNode, message: currentMessage });
+    // 落点经 session 现读:steer 换绑后,后续事件自动应用到 ai_2(应用器每次调用重读闭包)。
+    const applyEvent = createGenerationEventApplier({
+      get conversation() {
+        return conversation;
+      },
+      get node() {
+        return session.node;
+      },
+      get message() {
+        return session.message;
+      },
+    });
     const sink: GenerationEventSink = (event) => {
       // P5:引擎瞬态状态(压缩中/自动重试)不落库不产 part,直通会话 SSE 状态条;
       // 其余事件照走应用器。generateAnswer finally 兜底 busy:false,中途 abort 不挂条。
@@ -1023,42 +1120,43 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
         model: picked.model,
         executeTool,
         // steering 轮边界(用户问题②):聊天引擎在工具循环轮边界调用;pi 引擎经
-        // runPiWorkspaceGeneration 装配为 pollSteering(见其 ctx 装配处)。
-        onSteerBoundary: () => steerBoundary(conversation.id),
+        // runPiWorkspaceGeneration 装配为 pollSteering(见其 ctx 装配处)。传入 session
+        // 后 steerBoundary 可收口当前节点、落库 steer user、新开 continuation 节点并换绑。
+        onSteerBoundary: () => steerBoundary(conversation.id, session),
         adapter,
       },
       sink,
       controller.signal,
     );
     if (controller.signal.aborted) throw new DOMException("Generation stopped", "AbortError");
-    if (adapter.resumeSemantics === "pause-resume" && hasPendingToolApproval(currentMessage)) {
+    if (adapter.resumeSemantics === "pause-resume" && hasPendingToolApproval(session.message)) {
       // 注:hasPendingToolApproval 判定在 applyOutputTransforms 之前与旧实现一致——
       // 旧实现先 transform 再判定,但 transform 只改 text/reasoning parts,不触碰 tool
       // parts 的 approvalState,判定结果不受影响;两分支的 transform 都由 finalize 统一做。
       finalizeOutcome(() => {
-        currentMessage.finishedAt = null;
+        session.message.finishedAt = null;
       });
       return;
     }
     finalizeOutcome(() => {
-      if (currentMessage.parts.length === 0) {
-        finishMessage(currentMessage, [{ type: "text", text: content }]);
+      if (session.message.parts.length === 0) {
+        finishMessage(session.message, [{ type: "text", text: content }]);
       } else {
-        const hasText = textFromParts(currentMessage.parts).trim().length > 0;
+        const hasText = textFromParts(session.message.parts).trim().length > 0;
         if (!hasText && content && content !== "(empty response)") {
-          appendTextPart(currentMessage, content);
+          appendTextPart(session.message, content);
         }
-        currentMessage.finishedAt = new Date().toISOString();
+        session.message.finishedAt = new Date().toISOString();
       }
     });
     const snapshot = cloneConversation(conversation);
-    void runPostGenerationTasks(conversation.id, snapshot, currentMessage.id);
+    void runPostGenerationTasks(conversation.id, snapshot, session.message.id);
     // 语音模式回复通道:本条若源自「等回复的排队生成」,把该轮 assistant 文本交付等待方。
     // 空正文交付 null(语音模式据此跳过播报)。已交付集合防「同消息被接管重跑」重复交付。
     const replySourceId = queuedGenerationSource.get(conversation.id);
     if (replySourceId && !deliveredQueuedGenerations.has(replySourceId)) {
       deliveredQueuedGenerations.add(replySourceId);
-      deliverQueuedReply(conversation.id, replySourceId, textFromParts(currentMessage.parts));
+      deliverQueuedReply(conversation.id, replySourceId, textFromParts(session.message.parts));
     }
   } catch (err) {
     if (!conversationStillExists(conversation.id)) {
@@ -1083,8 +1181,8 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
         // 批6复审 G4:中止若发生在首个 delta 之前,loading 占位没人摘(正常路径由首个
         // delta 摘,stop 端点手工摘,但删会话/接管等 abort 路径不经过 stop 端点),
         // 前端"打字点"会永久残留在已完结消息上。与 stop 端点的手工摘除对齐。
-        currentMessage.parts = currentMessage.parts.filter((part) => !(isRecord(part) && part.type === "loading"));
-        currentMessage.finishedAt = new Date().toISOString();
+        session.message.parts = session.message.parts.filter((part) => !(isRecord(part) && part.type === "loading"));
+        session.message.finishedAt = new Date().toISOString();
       });
       return;
     }
@@ -1110,10 +1208,10 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
       // 错误零污染正文(对齐 Android addError):失败详情只活在 model_call_error 注解的
       // message 字段,由前端错误卡呈现;正文保留半截真实产出。既无正文也无错误的流
       // (中止/纯失败)不会走到这里——中止分支已先行返回。
-      currentMessage.finishedAt = new Date().toISOString();
+      session.message.finishedAt = new Date().toISOString();
       // R7-2:结构化错误标记——前端错误卡由它驱动,详情取注解的 message 字段,
       // 不再对正文做关键词正则(讨论 HTTP 状态码/超时的正常回答不误报)。
-      currentMessage.annotations.push({ type: "model_call_error", message: failureText });
+      session.message.annotations.push({ type: "model_call_error", message: failureText });
     });
   } finally {
     // 语音模式回复通道兜底:成功路径已交付;走到 finally 仍未交付 = 本条排队生成以
@@ -1141,7 +1239,7 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     // dispatchMessageQueue 派发兜底,零丢失。不清扫会让残留漂到下一轮生成被误注入。
     clearSteeringChannel(conversation.id);
     if (conversationStillExists(conversation.id)) {
-      broadcastNodeUpdate(conversation, assistantNode);
+      broadcastNodeUpdate(conversation, session.node);
       broadcastConversation(conversation);
     }
     completeConversationGeneration(conversation.id, controller);
@@ -1153,7 +1251,7 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     // 审批中的 turn 在 Codex 语义里仍是 active turn(start_turn_if_idle 返回 NotIdle),
     // 用户批准/拒绝后重触发的 generateAnswer 再走到这里时续派发。pi 引擎的审批在
     // execute 内挂起(generating 仍在册),takenOver/generating 门已天然拦住,不到此判。
-    if (!takenOver && !hasPendingToolApproval(currentMessage)) dispatchMessageQueue(conversation.id);
+    if (!takenOver && !hasPendingToolApproval(session.message)) dispatchMessageQueue(conversation.id);
   }
 }
 
