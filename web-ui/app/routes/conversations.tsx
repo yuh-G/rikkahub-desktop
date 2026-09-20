@@ -446,7 +446,6 @@ function useDraftInputController({
   activeId,
   isHomeRoute,
   homeDraftId,
-  isConversationGenerating,
   setHomeDraftId,
   setActiveId,
   navigate,
@@ -457,9 +456,6 @@ function useDraftInputController({
   activeId: string | null;
   isHomeRoute: boolean;
   homeDraftId: string;
-  /** 当前会话是否在生成(服务端权威,SSE 驱动)。生成中发送 = 走队列端点(FIFO 排队),
-   *  而非 messages(后者会中止在跑流)。 */
-  isConversationGenerating: boolean;
   setHomeDraftId: React.Dispatch<React.SetStateAction<string>>;
   setActiveId: React.Dispatch<React.SetStateAction<string | null>>;
   navigate: ReturnType<typeof useNavigate>;
@@ -481,12 +477,10 @@ function useDraftInputController({
     if (parts.length === 0) return;
 
     if (activeId) {
-      // 消息发送队列:生成中走队列端点(服务端 FIFO,当前流收尾后续跑),不打断在跑生成;
-      // 空闲时走 messages 立即点火。两者服务端同源,队列端点在空闲时行为与 messages 一致。
-      const endpoint = isConversationGenerating
-        ? `conversations/${activeId}/queue/enqueue`
-        : `conversations/${activeId}/messages`;
-      await api.post<{ status: string }>(endpoint, { parts });
+      // 单端点 StartOrSteer:占用与否由服务端裁决(空闲=落库点火;生成中=排队并在下一模型
+      // 请求边界注入,不打断在跑生成)。前端不再按 SSE 滞后的 isGenerating 选端点——快速连发
+      // 时那会误判空闲、掐掉自己刚点火的生成。
+      await api.post<{ status: string }>(`conversations/${activeId}/messages`, { parts });
       clearDraft(draftKey);
       return;
     }
@@ -516,7 +510,6 @@ function useDraftInputController({
     container,
     draftKey,
     getSubmitParts,
-    isConversationGenerating,
     navigate,
     refreshList,
     setActiveId,
@@ -1495,7 +1488,6 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
     activeId,
     isHomeRoute: paneIsHome,
     homeDraftId,
-    isConversationGenerating: conversationIsGenerating,
     setHomeDraftId,
     setActiveId,
     navigate,

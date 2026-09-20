@@ -184,7 +184,7 @@ describe("message-queue 状态机", () => {
   });
 });
 
-describe("queue/* 端点(单飞门控)", () => {
+describe("messages StartOrSteer + queue/* 端点", () => {
   async function postJson(conversationId: string, subPath: string, body: object): Promise<Response | null> {
     const url = new URL(`http://127.0.0.1/api/conversations/${conversationId}/${subPath}`);
     const request = new Request(url, {
@@ -199,33 +199,36 @@ describe("queue/* 端点(单飞门控)", () => {
     return handleConversationRoutes(new Request(url, { method: "DELETE" }), url, `conversations/${conversationId}/${subPath}`);
   }
 
-  test("生成中 enqueue → 入队(queued:true),不追加历史节点,不打断在跑流", async () => {
+  test("生成中 messages → 入队(queued:true),不追加历史节点,不中止在跑流(StartOrSteer 的 Steer 支)", async () => {
+    // 2026-09-20 用户测试 1 的治本:占用裁决在服务端,前端不再按滞后的 isGenerating 选端点。
+    // 此前 messages 在生成中会 abort 在跑流——快速连发把自己刚点火的生成掐掉。
     const conv = makeConversation("c-q-busy");
     registerConversation(conv);
     const controller = new AbortController();
     generating.set(conv.id, controller); // 模拟在跑流
     try {
-      const res = await postJson(conv.id, "queue/enqueue", { parts: [{ type: "text", text: "补一句" }] });
+      const res = await postJson(conv.id, "messages", { parts: [{ type: "text", text: "补一句" }] });
       expect(res!.status).toBe(202);
       const payload = (await res!.json()) as { queued: boolean; id: string };
       expect(payload.queued).toBe(true);
-      // 队列收到一条,且历史未预先追加(派发时才落库),在跑流未被中止。
+      // 队列收到一条,且历史未预先追加(注入/派发时才落库),在跑流未被中止、登记未被顶掉。
       expect(queueLength(conv.id)).toBe(1);
       expect(conv.messages.length).toBe(0);
       expect(controller.signal.aborted).toBe(false);
+      expect(generating.get(conv.id)).toBe(controller);
     } finally {
       generating.delete(conv.id);
       clearMessageQueue(conv.id);
     }
   });
 
-  test("空闲 enqueue → 直发(queued:false),用户消息本体落库,不入队", async () => {
+  test("空闲 messages → 直发(queued:false),用户消息本体落库,不入队(Start 支)", async () => {
     const conv = makeConversation("c-q-idle");
     // 直发路径会 persistConversation(需会话行在库),再经 generateAnswer 点火。
     const { persistConversation } = await import("./index");
     persistConversation(conv);
     registerConversation(conv);
-    const res = await postJson(conv.id, "queue/enqueue", { parts: [{ type: "text", text: "直接发" }] });
+    const res = await postJson(conv.id, "messages", { parts: [{ type: "text", text: "直接发" }] });
     expect(res!.status).toBe(202);
     const payload = (await res!.json()) as { queued: boolean };
     expect(payload.queued).toBe(false);
@@ -277,13 +280,13 @@ describe("queue/* 端点(单飞门控)", () => {
     }
   });
 
-  test("压缩进行中 enqueue 返回 409(与 send 同互斥,防压缩落库覆盖吞消息)", async () => {
+  test("压缩进行中 messages 返回 409(防压缩落库覆盖吞消息)", async () => {
     const conv = makeConversation("c-q-mutex");
     registerConversation(conv);
     const { compressing } = await import("./generation-state");
     compressing.set(conv.id, Date.now());
     try {
-      const res = await postJson(conv.id, "queue/enqueue", { parts: [{ type: "text", text: "x" }] });
+      const res = await postJson(conv.id, "messages", { parts: [{ type: "text", text: "x" }] });
       expect(res!.status).toBe(409);
       expect(((await res!.json()) as { errorCode?: string }).errorCode).toBe("compress_in_progress");
       expect(hasQueuedMessages(conv.id)).toBe(false);

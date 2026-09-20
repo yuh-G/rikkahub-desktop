@@ -215,19 +215,26 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       const body = messagesBody ?? {};
       const assistant = findAssistant(conversation.assistantId);
       const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
-      // 用户在 ask_user 等待中直接发新消息时，旧 generation 可能还在跑（不太常
-      // 见，因为 ask_user 通常会中止流并等待）也可能已经停了。无论如何先 abort
-      // 旧 controller，避免后续 race；然后把上一条 ASSISTANT 残留的 pending 工具
-      // 标记为"用户取消"，让历史回放时模型看到的是 denied tool 结果而不是空 output
-      // ——对齐安卓 commit 05c12488 finishInterruptedPendingTools 的修复目标。
-      // 意图 replaced:新消息代表继续对话,旧流收尾不冻结队列。
-      abortGeneration(conversation.id, "replaced");
-      generating.delete(conversation.id);
-      finishInterruptedPendingToolsInConversation(conversation);
-      // 直发新消息 = 用户继续对话的明确意图:解除遗留的打断冻结(终局三态注释见
-      // queue/enqueue 空闲分支),新流收尾后队列恢复自动续跑。
-      releaseMessageQueueHold(conversation.id);
       const processedParts = applyInputRegexTransformParts((body.parts ?? []) as MessagePart[], assistant);
+      // StartOrSteer(对齐 Codex start_or_steer_turn):占用与否由服务端裁决,前端永远只管
+      // 提交。此前前端按 SSE 滞后的 isGenerating 选端点,快速连发时误判空闲走到这里,
+      // 把自己刚点火的生成掐掉(2026-09-20 用户测试 1)。
+      if (generating.has(conversation.id)) {
+        // 生成中:入 FIFO(事实源:改/撤/序都作用于它)+ 推一份进 steering 通道——引擎在
+        // 下一个模型请求边界注入(对齐 Codex pending_input),编排层在同一时刻做数据层
+        // 分裂并把该项移出队列;引擎无边界可注入时它留在队列,收尾派发兜底,零丢失。
+        // 消息本体不落历史(注入/派发时才落),不中止在跑流。
+        const item = enqueueMessage(conversation.id, processedParts);
+        pushSteeringMessage(conversation.id, item.id, processedParts);
+        broadcastConversation(conversation);
+        return json({ status: "queued", queued: true, id: item.id }, { status: 202 });
+      }
+      // 空闲:落库用户消息并点火。上一条 ASSISTANT 若残留 pending 工具(聊天引擎审批
+      // 暂停后用户直接发新消息)标记为"用户取消",历史回放时模型看到 denied 结果而非空
+      // output——对齐安卓 commit 05c12488 finishInterruptedPendingTools。
+      finishInterruptedPendingToolsInConversation(conversation);
+      // 直发新消息 = 用户继续对话的明确意图:解除遗留的打断冻结,新流收尾后队列恢复自动续跑。
+      releaseMessageQueueHold(conversation.id);
       const userMessage = message("USER", markOcrPendingParts(processedParts, picked.model));
       bumpAnalyticsMsgCount();
       const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
@@ -253,13 +260,14 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
           conversation.updateAt = Date.now();
           persistConversation(conversation);
           broadcastNodeUpdate(conversation, userNode);
-          // generateAnswer 入口同步自持引用,续体无需 await 到生成结束
+          // generateAnswer 入口同步自持引用,续体无需 await 到生成结束。入口不变式「先中止
+          // 旧流再接管」兜住 OCR 窗口内的并发点火(两条空闲直发的续体先后触发时后到者胜)。
           void generateAnswer(conversation);
         } finally {
           releaseConversation(conversation.id);
         }
       })();
-      return json({ status: "accepted" }, { status: 202 });
+      return json({ status: "accepted", queued: false }, { status: 202 });
     }
     if (sub === "pin" && request.method === "POST") {
       conversation.isPinned = !conversation.isPinned;
@@ -341,55 +349,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       return json({ status: "stopped" });
     }
     // ── 消息发送队列(生成中补发不打断,FIFO 排队)─────────────────────────
-    // 跨引擎统一:队列只压「待触发的生成」,派发由编排层在 generateAnswer 收尾时驱动,
-    // 聊天/pi 共用同一队列与同一派发点。入队的用户消息本体已随 send 落库,这里只操作队列。
-    if (sub === "queue/enqueue" && request.method === "POST") {
-      if (compressing.has(conversation.id)) {
-        return error("已有压缩正在进行，请稍候", 409, "compress_in_progress");
-      }
-      const body = await readJson<{ parts?: JsonValue[] }>(request);
-      const assistant = findAssistant(conversation.assistantId);
-      const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
-      const processedParts = applyInputRegexTransformParts((body.parts ?? []) as MessagePart[], assistant);
-      const idle = !generating.has(conversation.id);
-      if (idle) {
-        // 空闲:与 send 同构——用户消息本体落库进历史并直接点火,不经队列(队列只压「因占用而待发」的)。
-        // 用户发新消息 = 明确要继续对话:解除此前 stop 遗留的打断冻结(heldByInterrupt)——
-        // 新流收尾走 Completed 终局,队列恢复自动续跑(对齐 Codex 新输入开 turn 后队列续跑)。
-        releaseMessageQueueHold(conversation.id);
-        const userMessage = message("USER", markOcrPendingParts(processedParts, picked.model));
-        bumpAnalyticsMsgCount();
-        const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
-        conversation.messages.push(userNode);
-        conversation.chatSuggestions = [];
-        conversation.updateAt = Date.now();
-        if (!conversation.title) conversation.title = "New Conversation";
-        persistConversation(conversation);
-        broadcastConversation(conversation);
-        void (async () => {
-          checkoutConversation(conversation.id);
-          try {
-            userMessage.parts = await attachOcrToImageParts(userMessage.parts, picked.model);
-            if (getConversation(conversation.id) !== conversation) return;
-            conversation.updateAt = Date.now();
-            persistConversation(conversation);
-            broadcastNodeUpdate(conversation, userNode);
-            void generateAnswer(conversation);
-          } finally {
-            releaseConversation(conversation.id);
-          }
-        })();
-        return json({ status: "accepted", queued: false }, { status: 202 });
-      }
-      // 生成中:入队 FIFO(事实源:改/撤/序都作用于它),同时推一份进 steering 通道——
-      // 引擎在下一个模型请求边界(当前工具批结束)注入,无需等整轮完成(用户问题②,
-      // 对齐 Codex pending_input)。注入成功时编排层会把该项移出队列;轮边界不存在
-      // (纯文本流)则残留作废,收尾派发兜底,零丢失。
-      const item = enqueueMessage(conversation.id, processedParts);
-      pushSteeringMessage(conversation.id, item.id, processedParts);
-      broadcastConversation(conversation);
-      return json({ status: "queued", queued: true, id: item.id }, { status: 202 });
-    }
+    // 跨引擎统一:队列只压「待触发的生成」,入队走 messages 端点的 StartOrSteer 裁决,派发由
+    // 编排层在 generateAnswer 收尾时驱动,聊天/pi 共用同一队列与同一派发点。
     if (sub === "queue/pause" && request.method === "POST") {
       pauseMessageQueue(conversation.id);
       broadcastConversation(conversation);
