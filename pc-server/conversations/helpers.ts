@@ -7,14 +7,15 @@ import { state } from "../persistence/json-store";
 import { broadcastList, dropConversationSse } from "../api/sse";
 import { deletePcConversations, flushConvDirtyNow, getConversation, persistConversation, selectedConversationMessages } from "./index";
 import { registerConversation, removeConversations } from "./working-set";
-import { generating } from "./generation-state";
+import { abortGeneration, generating } from "./generation-state";
 import { clearMessageQueue } from "./message-queue";
 import { findAssistant as findAssistantCore } from "../assistants";
 import { fillContextLimit } from "../inference-engine/providers";
 
+/** 删会话路径的中止(唯一调用方 deleteConversationsById):意图 deleted——队列随会话清除,
+ *  旧流收尾无事可做。 */
 export function abortConversationGeneration(conversationId: string) {
-  const wasGenerating = generating.has(conversationId);
-  generating.get(conversationId)?.abort();
+  const wasGenerating = abortGeneration(conversationId, "deleted");
   generating.delete(conversationId);
   // Mirror completeConversationGeneration: when the user manually stops generation,
   // the sidebar's per-conversation streaming indicator also needs to flip off, and

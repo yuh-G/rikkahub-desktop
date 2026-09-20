@@ -37,7 +37,7 @@ import { compactEngineConversation, dispatchMessageQueue, generateAnswer, resolv
 import { deleteConversationsById, ensureConversation, findAssistant, finishInterruptedPendingToolsInConversation, hasPendingToolApproval } from "../../conversations/helpers";
 import { editQueuedMessage, enqueueMessage, holdMessageQueue, pauseMessageQueue, releaseMessageQueueHold, removeQueuedMessage, resumeMessageQueue, waitForQueuedReply } from "../../conversations/message-queue";
 import { pushSteeringMessage, removeSteeringMessage } from "../../conversations/steering-channel";
-import { awaitingApproval, compressing, generating } from "../../conversations/generation-state";
+import { abortGeneration, awaitingApproval, compressing, generating } from "../../conversations/generation-state";
 import { getWorkspace } from "../../workspace";
 import { resolveToolApproval } from "../../inference-engine/approval-gate";
 import { stripLoadingPlaceholder } from "../../inference-engine/parts";
@@ -220,7 +220,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       // 旧 controller，避免后续 race；然后把上一条 ASSISTANT 残留的 pending 工具
       // 标记为"用户取消"，让历史回放时模型看到的是 denied tool 结果而不是空 output
       // ——对齐安卓 commit 05c12488 finishInterruptedPendingTools 的修复目标。
-      generating.get(conversation.id)?.abort();
+      // 意图 replaced:新消息代表继续对话,旧流收尾不冻结队列。
+      abortGeneration(conversation.id, "replaced");
       generating.delete(conversation.id);
       finishInterruptedPendingToolsInConversation(conversation);
       // 直发新消息 = 用户继续对话的明确意图:解除遗留的打断冻结(终局三态注释见
@@ -309,8 +310,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       // Abort the in-flight upstream fetch. Some providers take a moment to actually close the
       // socket after `controller.abort()` returns, so we proactively flush any throttled state
       // and broadcast immediately — the UI shouldn't have to wait for the next streaming chunk.
-      const controller = generating.get(conversation.id);
-      controller?.abort();
+      // 意图 interrupted:generateAnswer 的中止分支按它冻结队列。
+      abortGeneration(conversation.id, "interrupted");
       generating.delete(conversation.id);
       // 终局三态之 Interrupted(用户问题①,对齐 Codex):停止意图支配队列——正在排队的
       // 消息不接棒点火(否则「打断一条又开始下一条」违背停止的本意),冻结保留等用户
@@ -508,7 +509,7 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       // 2-1:对齐 send 入口——先中止进行中的旧流。否则 generateAnswer 的 generating.set
       // 直接顶掉旧 controller,旧流成为无主流:与新流同写一个节点,或对已摘除节点持续
       // touchStream 广播幽灵帧。UI 虽屏蔽流式中的按钮,但 API 层必须自带守卫。
-      generating.get(conversation.id)?.abort();
+      abortGeneration(conversation.id, "replaced");
       generating.delete(conversation.id);
       finishInterruptedPendingToolsInConversation(conversation);
       let regenerateAtNodeId: string | undefined;
@@ -597,7 +598,7 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       // 2-1:对齐 send 入口——先中止进行中的旧流。否则 generateAnswer 的 generating.set
       // 直接顶掉旧 controller,旧流成为无主流:与新流同写一个节点,或对已摘除节点持续
       // touchStream 广播幽灵帧。UI 虽屏蔽流式中的按钮,但 API 层必须自带守卫。
-      generating.get(conversation.id)?.abort();
+      abortGeneration(conversation.id, "replaced");
       generating.delete(conversation.id);
       finishInterruptedPendingToolsInConversation(conversation);
       const messageId = decodeURIComponent(messageEdit[1]);
@@ -730,7 +731,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       // 2-1:对齐 send 入口——先中止进行中的旧流。否则 generateAnswer 的 generating.set
       // 直接顶掉旧 controller,旧流成为无主流:与新流同写一个节点,或对已摘除节点持续
       // touchStream 广播幽灵帧。UI 虽屏蔽流式中的按钮,但 API 层必须自带守卫。
-      generating.get(conversation.id)?.abort();
+      // 意图 replaced:压缩是用户的下一步操作,不是「让这轮停下别再动」,队列不冻结。
+      abortGeneration(conversation.id, "replaced");
       generating.delete(conversation.id);
       finishInterruptedPendingToolsInConversation(conversation);
       // 压缩状态服务端权威(内测反馈:切页回来"过程条消失",误以为压缩被取消):
@@ -775,6 +777,9 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         // 与工作区路径 orchestrator 的 finally busy:false 重复广播,幂等无害。
         broadcastEngineStatus(conversation.id, { busy: false });
         broadcastList(); // 绿灯熄灭
+        // 压缩窗口关闭 → 排队消息接续派发(派发在压缩期间被 dispatchMessageQueue 的
+        // compressing 门拦住,这里是解锁后的唯一续跑点;门控条件不满足时幂等空转)。
+        dispatchMessageQueue(conversation.id);
       }
     }
     if (sub === "fork" && request.method === "POST") {

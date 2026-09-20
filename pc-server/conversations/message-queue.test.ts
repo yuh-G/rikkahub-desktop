@@ -11,7 +11,7 @@ process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-mqueue-test-"
 
 import type { Conversation, State } from "../foundation/types";
 import { textFromParts } from "../foundation/utils";
-import { generating } from "./generation-state";
+import { abortGeneration, generating } from "./generation-state";
 import { configureWorkingSet, registerConversation } from "./working-set";
 import { setState, state } from "../persistence/json-store";
 import { handleConversationRoutes } from "../api/handlers/conversations";
@@ -493,8 +493,7 @@ describe("终局三态:打断冻结", () => {
           if (server.requests.length >= 1) { clearInterval(timer); resolve(); }
         }, 10);
       });
-      const controller = generating.get(conv.id);
-      controller?.abort();
+      abortGeneration(conv.id, "interrupted");
       generating.delete(conv.id);
       holdMessageQueue(conv.id);
       releaseFirstRespond(); // 放行第一轮流——应立即被 abort 截断
@@ -516,6 +515,69 @@ describe("终局三态:打断冻结", () => {
         }, 10);
       });
       expect(hasQueuedMessages(conv.id)).toBe(false); // 队首已派发出队
+    } finally {
+      await server.close();
+      clearMessageQueue(conv.id);
+      setState(priorState);
+    }
+  });
+
+  test("端到端:接管中止(replaced)不冻结队列——即使旧流收尾抢在新流登记之前", async () => {
+    const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
+    const { model, provider } = await import("../model-providers");
+    const { defaultState } = await import("../app-config/defaults");
+    const { defaultAssistant } = await import("../assistants");
+
+    const conv = makeConversation("c-q-replaced");
+    persistConversation(conv);
+    registerConversation(conv);
+    conv.messages.push({
+      id: "c-q-replaced-n1", selectIndex: 0,
+      messages: [{
+        id: "c-q-replaced-m1", role: "USER", parts: [{ type: "text", text: "第一条" }],
+        annotations: [], createdAt: new Date().toISOString(), finishedAt: null, translation: null,
+      }],
+    } as never);
+    persistConversation(conv);
+
+    // 事故窗口(2026-09-20 用户测试 1):messages 入口 abort 旧流后先 await OCR,再登记新流。
+    // 旧流的 catch 若抢先执行,旧实现按「注册表里没有别的 controller」推断成打断 → 冻结
+    // 队列,之后所有入队都显示「已暂停」且永不自动派发。锁定:意图 replaced 不冻结。
+    let releaseFirstRespond = (_: void) => {};
+    const firstRespondGate = new Promise<void>((resolve) => { releaseFirstRespond = resolve; });
+    const server = await startFakeOpenAiSse([
+      { content: "旧流", beforeRespond: () => firstRespondGate },
+    ]);
+    try {
+      const ourModel = model("fake-model", "Replaced Test");
+      const ourProvider = provider({
+        id: crypto.randomUUID(), name: "Replaced Provider", baseUrl: server.baseUrl,
+        apiKey: "sk-test", enabled: true, models: [ourModel],
+      });
+      const next = defaultState();
+      next.settings.assistantId = "a1";
+      next.settings.assistants = [{ ...defaultAssistant(), id: "a1" }];
+      next.settings.providers = [ourProvider];
+      next.settings.chatModelId = ourModel.id;
+      next.settings.fastModelId = "";
+      setState(next as State);
+
+      const gen = generateAnswer(conv);
+      await waitUntil(() => server.requests.length >= 1);
+      // 写入口同款:声明 replaced 并清登记,但「新流」迟迟不登记(模拟慢 OCR 窗口)。
+      abortGeneration(conv.id, "replaced");
+      generating.delete(conv.id);
+      enqueueMessage(conv.id, [{ type: "text", text: "接管期间入队" }]);
+      releaseFirstRespond();
+      await gen;
+
+      expect(isQueueHeldByInterrupt(conv.id)).toBe(false);
+      expect(isQueuePaused(conv.id)).toBe(false);
+      expect(queueSnapshotFor(conv.id)?.paused).toBe(false);
+      // 续跑归接管方:被 replaced 的旧流收尾不派发队首(否则会抢在接管方登记之前点火,
+      // 把排队消息排到用户刚发的消息之前)。排队项原地等待,上游没有第二个请求。
+      expect(hasQueuedMessages(conv.id)).toBe(true);
+      expect(server.requests.length).toBe(1);
     } finally {
       await server.close();
       clearMessageQueue(conv.id);

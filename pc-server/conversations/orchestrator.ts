@@ -79,7 +79,7 @@ import { flushConvDirtyNow, getConversation, getConversationsDb, markConversatio
 import { checkoutConversation, releaseConversation } from "./working-set";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
-import { awaitingApproval, generating } from "./generation-state";
+import { abortGeneration, abortReasonOf, awaitingApproval, compressing, generating } from "./generation-state";
 import { deliverQueuedReply, holdMessageQueue, isQueueHeldByInterrupt, isQueuePaused, notifyQueuedGenerationDispatched, pauseMessageQueue, queueSnapshotFor, removeQueuedMessage, setOnQueuedGenerationDispatched, shiftNextQueued } from "./message-queue";
 import { clearSteeringChannel, drainSteeringMessages } from "./steering-channel";
 import {
@@ -583,6 +583,9 @@ function dispatchQueuedHead(conversationId: string) {
  */
 export function dispatchMessageQueue(conversationId: string) {
   if (generating.has(conversationId)) return; // 占用中:不打断,等当前流收尾续跑。
+  // 压缩窗口互斥(与 send/enqueue 入口的 409 同一理由:压缩完成时整体覆盖 messages,
+  // 窗口内点火的生成会被吞)。压缩端点 finally 解锁后接续调用本函数续跑。
+  if (compressing.has(conversationId)) return;
   if (isQueuePaused(conversationId)) return;
   if (isQueueHeldByInterrupt(conversationId)) return;
   dispatchQueuedHead(conversationId);
@@ -990,7 +993,8 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
   // 前者的 controller——前者成无主流,两路流式交错写同一节点(parts 交叉污染)、且无人能停。
   // 把端点级纪律下沉为编排器不变式:同会话已有登记流,先 abort 再接管(后到者胜,与端点
   // 语义一致)。completeConversationGeneration 按 controller 身份幂等,旧流收尾不会误删新登记。
-  generating.get(conversation.id)?.abort();
+  // 意图 replaced:接管即继续对话,旧流收尾不冻结队列。
+  abortGeneration(conversation.id, "replaced");
   const controller = new AbortController();
   generating.set(conversation.id, controller);
   // DB-first:整个生成期持有引用(与 finally 的 release 恰好配对一次;
@@ -1169,13 +1173,15 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     // 网络错误而非 AbortError,若走失败分支会给用户主动停止的回答追加"请求失败"+错误
     // 注解并弹全局错误。只要本流已被要求中止,一律按中止收尾。
     if (controller.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) {
-      // 终局三态之 Interrupted:本流以中止收尾。用户 stop/删会话 = 打断意图 → 冻结队列
-      // (对齐 Codex ThreadIdleCause::Interrupted 不派发);但「被新流接管」(send/regenerate/
-      // edit/重发的入口 abort 后立即点火新流)不算打断——新流代表用户继续对话的意图,
-      // 其收尾时队列照常派发(对齐 Codex 新输入开 turn 后 Completed 终局续跑队列)。
-      // 接管判据与 finally 的 takenOver 同源:登记在册的是另一个 controller。
-      const takenOverByAbort = generating.has(conversation.id) && generating.get(conversation.id) !== controller;
-      if (!takenOverByAbort) {
+      // 终局三态之 Interrupted:本流以中止收尾。队列命运由中止方声明的意图决定(见
+      // generation-state GenerationAbortReason):interrupted(用户 stop)→ 冻结,等显式
+      // resume(对齐 Codex Interrupted 不派发);replaced(写入口接管)→ 不冻结,新流收尾
+      // 照常派发(对齐 Codex 新输入开 turn 后 Completed 续跑);deleted → 队列随会话已清,
+      // 无事可做。无意图的中止(外部/未知来源)按最保守的 interrupted 处理——宁停勿乱跑。
+      // 此前靠「登记在册是否另一个 controller」推断接管,在 OCR 续体窗口里旧流的 catch
+      // 会抢在新流登记前执行,把接管误判成打断并冻结队列(2026-09-20 用户测试 1 症状)。
+      const reason = abortReasonOf(controller.signal) ?? "interrupted";
+      if (reason === "interrupted") {
         holdMessageQueue(conversation.id);
         broadcastQueueState(conversation.id);
       }
@@ -1219,11 +1225,13 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
       deliveredQueuedGenerations.add(replySourceId);
       deliverQueuedReply(conversation.id, replySourceId, null);
     }
-    // 消息发送队列:本条流彻底收尾后派发下一条。接管判据——generateAnswer 入口/set()前的
-    // 中止、stop 端点、删会话都先把 generating delete 成空,故「登记为空」语义含糊(既可能是
-    // 本流刚收尾,也可能是被 stop/删后本流仍在跑 finally)。真正的接管信号是「登记在册的是
-    // 另一个 controller」;仅此时不派发(由接管方收尾续跑),其余(本流正常/中止/失败收尾)都续跑。
-    const takenOver = generating.has(conversation.id) && generating.get(conversation.id) !== controller;
+    // 消息发送队列续跑的归属:被 replaced(写入口接管)的旧流不派发——接管方自己的收尾
+    // 负责续跑(compress 无新流,其端点 finally 显式续跑)。若旧流在此派发,慢 OCR 窗口里
+    // 会抢在接管方登记之前点火队首,把排队消息排到用户刚发/刚编辑的消息之前。deleted
+    // 同理无事可做(队列已随会话清除)。interrupted/正常/失败收尾照常尝试派发,由
+    // dispatchMessageQueue 的门控(占用/压缩/失败暂停/打断冻结)各自停稳。
+    const abortReason = controller.signal.aborted ? abortReasonOf(controller.signal) ?? "interrupted" : null;
+    const continuationOwnedByReplacer = abortReason === "replaced" || abortReason === "deleted";
     // P5:生成终局兜底清引擎状态条——压缩/重试进行中 abort/失败时,end 事件可能永远
     // 不来,不清会挂死"压缩中"。幂等,聊天引擎路径广播空集合无副作用。T1:判定改读
     // resumeSemantics——只有 run-and-suspend 引擎(pi)会发瞬态状态条,聊天引擎不发。
@@ -1244,12 +1252,12 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     releaseConversation(conversation.id);
     // 生成真正结束(登记已清)→ 派发队列下一条。终局三态门控(对齐 Codex
     // ThreadIdleCause):失败已在 catch 里 pause、用户中止已在 abort 分支 hold——
-    // dispatchMessageQueue 的两道门控让它们各自停稳;正常收尾则接续点火。被接管时
-    // 跳过(接管方自会续跑)。审批暂停(pause-resume 引擎的 pending 工具卡)也拦住:
+    // dispatchMessageQueue 的门控让它们各自停稳;正常收尾则接续点火。被接管时跳过
+    // (接管方自会续跑)。审批暂停(pause-resume 引擎的 pending 工具卡)也拦住:
     // 审批中的 turn 在 Codex 语义里仍是 active turn(start_turn_if_idle 返回 NotIdle),
     // 用户批准/拒绝后重触发的 generateAnswer 再走到这里时续派发。pi 引擎的审批在
-    // execute 内挂起(generating 仍在册),takenOver/generating 门已天然拦住,不到此判。
-    if (!takenOver && !hasPendingToolApproval(session.message)) dispatchMessageQueue(conversation.id);
+    // execute 内挂起(generating 仍在册),generating 门已天然拦住,不到此判。
+    if (!continuationOwnedByReplacer && !hasPendingToolApproval(session.message)) dispatchMessageQueue(conversation.id);
   }
 }
 
