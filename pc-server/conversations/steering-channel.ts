@@ -20,6 +20,7 @@
 // 生命周期:纯内存、per-conversation。生成收尾未注入的残留(引擎无轮边界可注入:纯
 // 文本流、pi 不可用回落等)自动作废——FIFO 队列还留着同一条消息,收尾派发兜底,零丢失。
 import type { MessagePart } from "../foundation/types";
+import { textFromParts } from "../foundation/utils";
 
 interface SteeringItem {
   /** 与 FIFO 队列项同 id(事实源联动键)。 */
@@ -29,8 +30,12 @@ interface SteeringItem {
 
 const channels = new Map<string, SteeringItem[]>();
 
-/** 生成中入队时同步推送一份到 steering 通道(在 queue/enqueue 端点调用)。 */
+/** 生成中入队时同步推送一份到 steering 通道(在 queue/enqueue 端点调用)。
+ *  纯附件(无文本)的补发不进通道:steering 注入面是 user turn 文本,塞不进图片;它留在
+ *  FIFO 队列由收尾派发走完整的多模态发送路径,零丢失。由此保证不变式「排水命中 ⟺
+ *  有可注入文本」——引擎侧「注入即分段」的判定只需看返回数组非空。 */
 export function pushSteeringMessage(conversationId: string, itemId: string, parts: MessagePart[]): void {
+  if (textFromParts(parts).trim().length === 0) return;
   let ch = channels.get(conversationId);
   if (!ch) {
     ch = [];

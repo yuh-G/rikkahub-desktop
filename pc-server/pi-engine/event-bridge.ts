@@ -392,8 +392,18 @@ export function createPiEventBridge() {
     }
   }
 
+  /** steer 边界分段:协调器已把落点换到新开的 continuation 节点,此后的终局文本与保真
+   *  注解都是"新气泡"的口径——累计文本清零(否则 runner 返回值把上一段整段回填进新气泡),
+   *  引擎消息序号归零(新节点的 pi-fidelity 记录必须从 0 连续,稀疏数组经 JSON 落库成
+   *  null 会让 context-encoder 的 fidelityOf 整条判废、退化 legacy 重建)。 */
+  function beginSegment(): void {
+    outcome.text = "";
+    engineMessageOrdinal = 0;
+  }
+
   return {
     handle,
+    beginSegment,
     outcome: (): PiBridgeOutcome => ({ ...outcome }),
   };
 }

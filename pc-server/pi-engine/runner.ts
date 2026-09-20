@@ -76,12 +76,14 @@ export interface PiGenerationContext {
   /** 生成事件下沉(生产侧 = conversations/generation-apply 的应用器)。 */
   sink: GenerationEventSink;
   signal?: AbortSignal;
-  /** steering(用户问题②,对齐 Codex pending_input):生成中补发的用户消息取流。
-   *  runner 在 prompt 驱动期间轮询本回调,有新文本即调 pi 原生 session.steer()
-   *  (agent-loop 在「当前轮工具执行完、下一次 LLM 调用前」排水注入——语义与
-   *  Codex 逐字一致)。不传 = 无 steering 能力(消息留在 FIFO 队列收尾派发兜底)。
-   *  回调由编排层实现(落库/队列联动在编排层,runner 零副作用)。 */
-  pollSteering?: () => string[];
+  /** steering 轮边界(用户问题②,对齐 Codex pending_input):生成中补发的用户消息取流。
+   *  runner 在 pi 的 turn_end(当前 assistant 消息结束、其工具全部执行完)同步调用本回调,
+   *  返回的文本经 session.steer() 入 pi steering 队列——agent-loop 紧接着在「下一次 LLM
+   *  调用前」排水注入(agent-loop.ts runLoop 的 turn_end 后 getSteeringMessages)。
+   *  调用时刻 = 注入时刻 = 编排层做数据层分裂的时刻,三者同点;与聊天引擎工具循环的
+   *  调用位、Codex 的 pending_input 排水位同构。不传 = 无 steering 能力(消息留在 FIFO
+   *  队列收尾派发兜底)。回调由编排层实现(落库/队列联动在编排层,runner 零副作用)。 */
+  onSteerBoundary?: () => string[];
 }
 
 /** 压缩产物的 DB 侧映射(runner 返回;orchestrator 负责落 conversation.engineCompactions)。
@@ -166,34 +168,39 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
       : {}),
   });
 
+  // steering 一次吸收全部:与聊天引擎 steerBoundary 整批排水、Codex pending_input
+  // split_off(0) 同语义——多条插话 = 多个 user 气泡 + 一个 ai_2,不按轮次逐条滴灌。
+  session.agent.steeringMode = "all";
+
   const bridge = createPiEventBridge();
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
+    // steering 轮边界(用户问题②):turn_end = 当前 assistant 消息结束、其工具批已执行完,
+    // agent-loop 紧接着 getSteeringMessages 排水。pi 的事件分发是顺序 await 各监听器
+    // (agent.ts _emit),本回调里 steer() 入队一定先于那次排水——注入零延迟、零竞态。
+    // 编排层在同一调用里完成数据层分裂(定格 ai_1 / 落 steer user / 开 ai_2 / 换绑),
+    // 于是分裂时刻与 pi 注入时刻逐字同点。此前用 1s 定时器轮询,分裂落在模型仍在流式
+    // 的任意时刻,ai_1 多半还是空占位(2026-09-20 用户实测 2-1)。
+    if (event.type === "turn_end" && ctx.onSteerBoundary) {
+      const texts = ctx.onSteerBoundary();
+      if (texts.length === 0) return;
+      // 注入即分段:编排层已换绑落点,桥的终局文本/保真序号切到新气泡口径。
+      bridge.beginSegment();
+      for (const text of texts) {
+        // steer() 内部会做 skill/模板展开——expandPromptTemplates 已在 prompt 侧关闭,
+        // 展开只作用于 "/skill:" 前缀等命令形态,会话 UX 不产生该形态,恒等。
+        void session.steer(text).catch(() => {
+          // 会话已收束(dispose 竞态)时 steer 拒绝:消息已在编排层落库并出队,
+          // FIFO 兜底路径不再持有它——按注入失败上报,排查线索进错误中心。
+          reportError("provider", "info", "补发消息注入工作区会话失败(会话可能已收束)", undefined, "pi_steer_failed");
+        });
+      }
+    }
   });
   const onAbort = () => {
     void session.abort();
   };
   ctx.signal?.addEventListener("abort", onAbort, { once: true });
-  // steering 轮询(用户问题②):补发消息经 queue/enqueue 端点随时到达,prompt 驱动期
-  // 每秒轮询一次编排层的排水回调,新文本交 pi 原生 steer()(入 pi steering 队列,
-  // agent-loop 在下一轮工具边界排水注入)。轮询粒度取 1s:补发到注入的最大延迟
-  // 远小于任何一轮工具执行/模型响应的时长,用户无感;事件驱动替代方案需要把
-  // 会话生命周期泄漏给 HTTP 层,得不偿失。
-  const steeringTimer = ctx.pollSteering
-    ? setInterval(() => {
-        for (const text of ctx.pollSteering!()) {
-          // steer() 内部会做 skill/模板展开——补发消息与首轮 prompt 同纪律,
-          // 经 _queueSteer 直排可绕开;但那是私有方法,公开面只有 steer()。
-          // expandPromptTemplates 已在 prompt 侧关闭,steer() 的展开作用于
-          // "/skill:" 前缀等命令形态——会话 UX 不产生该形态,展开为恒等。
-          void session.steer(text).catch(() => {
-            // 会话已收束(dispose 竞态)时 steer 拒绝:消息已在编排层落库并出队,
-            // FIFO 兜底路径不再持有它——按注入失败上报,排查线索进错误中心。
-            reportError("provider", "info", "补发消息注入工作区会话失败(会话可能已收束)", undefined, "pi_steer_failed");
-          });
-        }
-      }, 1_000)
-    : null;
   try {
     if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
@@ -206,7 +213,6 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
       }),
     );
   } finally {
-    if (steeringTimer) clearInterval(steeringTimer);
     ctx.signal?.removeEventListener("abort", onAbort);
     unsubscribe();
     session.dispose();

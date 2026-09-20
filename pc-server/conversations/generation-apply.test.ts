@@ -121,6 +121,6 @@ describe("generation-apply:落点是活视图(steer 边界换绑)", () => {
     expect(first.message.usage).toBeNull();
     expect(second.message.parts.map((p) => p.type)).toEqual(["text", "tool"]);
     expect(second.message.parts[0]).toEqual({ type: "text", text: "第二段" });
-    expect(second.message.usage?.totalTokens).toBe(3);
+    expect((second.message.usage as { totalTokens?: number } | null)?.totalTokens).toBe(3);
   });
 });

@@ -479,91 +479,75 @@ function broadcastQueueState(conversationId: string) {
 
 /**
  * steering 轮边界（用户问题②，对齐 Codex pending_input + transcript 逐项累积）：引擎在
- * 「工具批执行完、下一模型请求构建前」调用。排水 steering 通道（只取仍在 FIFO 队列的项——
- * 被撤回/编辑的不注入），逐条落库 steer user 节点（完整气泡 + `steered` 注解，与
- * dispatchQueuedHead 同构：正则变换入队时已做）+ 从队列移除（已注入≠待触发，防收尾再派发
- * 一次）+ 刷新面板，返回各消息文本供引擎编码。副作用全部收在本协调器（落库/队列/广播/
- * 换绑），引擎只拿纯文本——层纪律与 executeTool 同。语音回复通道：被注入项的等待方经
- * removeQueuedMessage 收 null（该轮回复涵盖全部补发，无单条回复可播报），语音模式跳过播报直接重开麦。
+ * 「即将构建下一模型请求之前」调用（聊天引擎 = 工具批执行完 / 最终轮无工具；pi = turn_end）。
+ * 排水 steering 通道（只取仍在 FIFO 队列的项——被撤回/编辑的不注入），逐条落库 steer user
+ * 节点（完整气泡 + `steered` 注解，与 dispatchQueuedHead 同构：正则变换入队时已做）+ 从队列
+ * 移除（已注入≠待触发，防收尾再派发一次）+ 刷新面板，返回各消息文本供引擎编码。副作用全部
+ * 收在本协调器（落库/队列/广播/换绑），引擎只拿纯文本——层纪律与 executeTool 同。语音回复
+ * 通道：被注入项的等待方经 removeQueuedMessage 收 null（该轮回复涵盖全部补发，无单条回复
+ * 可播报），语音模式跳过播报直接重开麦。
  *
- * Steer 边界节点分裂（v5 治本，对齐 Codex 数据序 [assistant_r1, user_steer, assistant_r2]）：
- * 排水命中后，把当前 assistant 节点收口定格（finishReasoningParts + finishedAt），落库
- * steer user，再新开一个空 continuation assistant 节点接管后续流式（session.retarget）。
- * 于是延续输出在数据层落在 steer user 之后——模型与用户都不会把 steer user 误读为悬空未答。
- * 若 session 当前节点还是无任何可见内容的空占位（isEmptyAssistantPlaceholder），不固化、
- * 直接剔除，避免「空气泡 + 插话」难看形态（复用既有判定）。整批多条 steer 只分裂一次
- * （一个 ai_2 接住这批之后的全部延续）。
+ * Steer 边界节点分裂（对齐 Codex 数据序 [assistant_r1, user_steer, assistant_r2]）：排水命中
+ * 后，把当前 assistant 节点收口定格（finishReasoningParts + finishedAt），落库 steer user，
+ * 再新开一个 continuation assistant 节点接管后续流式（session.retarget，引擎经 GenerationTarget
+ * 活视图自动跟随）。于是延续输出在数据层落在 steer user 之后——模型与用户都不会把 steer user
+ * 误读为悬空未答。若当前节点还是无任何可见内容的空占位（isEmptyAssistantPlaceholder），不
+ * 固化、直接剔除，避免「空气泡 + 插话」。整批多条 steer 只分裂一次（一个 ai_2 接住这批之后
+ * 的全部延续）。
+ *
+ * 不变式：返回非空 ⟺ 发生了分裂（pushSteeringMessage 不收纯附件项，通道里每项都有文本），
+ * 引擎侧据此把累计文本/耗时切到「当前段」口径。
  */
-function steerBoundary(conversationId: string, session?: GenerationSession): string[] {
+function steerBoundary(conversationId: string, session: GenerationSession): string[] {
   const conversation = getConversation(conversationId);
   if (!conversation) return [];
   const taken = drainSteeringMessages(conversationId, (itemId) => queueSnapshotFor(conversationId)?.items.some((it) => it.id === itemId) ?? false);
   if (taken.length === 0) return [];
 
-  // 1) 收口/剔除当前 assistant 节点（仅当本次生成提供了 session；无 session 的调用方不存在——
-  //    目前唯一装配点 generateAnswer 恒传，防御性判空）。空占位剔除而非定格，避免空气泡。
-  if (session) {
-    const prevNode = session.node;
-    const prevMessage = session.message;
-    const nodeIndex = conversation.messages.findIndex((n) => n.id === prevNode.id);
-    if (nodeIndex >= 0) {
-      if (isEmptyAssistantPlaceholder(prevMessage)) {
-        // C2：steer 落在首轮模型尚未产出任何可见内容时——空占位剔除，steer user 顶上来。
-        conversation.messages.splice(nodeIndex, 1);
-      } else {
-        // 收口 ai_1：定格为一段已完成的「答复」。它留在 steer user 之前，观感=真的答完了。
-        finishReasoningParts(prevMessage);
-        prevMessage.finishedAt = new Date().toISOString();
-      }
+  // 1) 收口/剔除当前 assistant 节点。空占位剔除而非定格，避免空气泡。
+  const prevMessage = session.message;
+  const nodeIndex = conversation.messages.findIndex((n) => n.id === session.node.id);
+  if (nodeIndex >= 0) {
+    if (isEmptyAssistantPlaceholder(prevMessage)) {
+      conversation.messages.splice(nodeIndex, 1);
+    } else {
+      // 收口 ai_1：定格为一段已完成的「答复」。它留在 steer user 之前，观感=真的答完了。
+      finishReasoningParts(prevMessage);
+      stripLoadingPlaceholder(prevMessage);
+      prevMessage.finishedAt = new Date().toISOString();
     }
-
-    // 2) 逐条落库 steer user 节点（完整气泡）。steered 注解是可选元数据（非功能依赖），
-    //    默认不做任何特殊渲染；PC→APP 导出经 PC_ONLY_ANNOTATION_TYPES 剥离。
-    const texts: string[] = [];
-    for (const item of taken) {
-      const userMessage = message("USER", item.parts.map((p) => ({ ...p })));
-      userMessage.annotations.push({ type: "steered" });
-      const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
-      conversation.messages.push(userNode);
-      texts.push(textFromParts(item.parts));
-      removeQueuedMessage(conversationId, item.id);
-    }
-
-    // 3) 新开 continuation assistant 节点 ai_2 接管后续流式（整批只开一个）。与生成入口
-    //    同款 loading 占位:用户看到的是「新一轮正在思考」的打字点,首个 delta 自动摘除。
-    const continuationMessage = message("ASSISTANT", [], prevMessage.modelId);
-    continuationMessage.finishedAt = null; // 新节点进入生成态
-    continuationMessage.annotations = [];
-    setMessageLoading(continuationMessage);
-    const continuationNode: MessageNode = { id: id(), messages: [continuationMessage], selectIndex: 0 };
-    conversation.messages.push(continuationNode);
-
-    conversation.chatSuggestions = [];
-    conversation.updateAt = Date.now();
-    persistConversation(conversation);
-    broadcastConversation(conversation);
-    broadcastQueueState(conversationId);
-
-    // 4) 换绑：之后所有 sink 事件落进 ai_2（引擎无感）。
-    session.retarget({ node: continuationNode, message: continuationMessage });
-    return texts.filter((t) => t.length > 0);
   }
 
-  // 兜底（无 session）：保持旧行为——只落库 steer user 节点，不分裂（不可达于当前装配点）。
+  // 2) 逐条落库 steer user 节点（完整气泡）。steered 注解是可选元数据（非功能依赖），
+  //    默认不做任何特殊渲染；PC→APP 导出经 PC_ONLY_ANNOTATION_TYPES 剥离。
   const texts: string[] = [];
   for (const item of taken) {
     const userMessage = message("USER", item.parts.map((p) => ({ ...p })));
+    userMessage.annotations.push({ type: "steered" });
     const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
     conversation.messages.push(userNode);
     texts.push(textFromParts(item.parts));
     removeQueuedMessage(conversationId, item.id);
   }
+
+  // 3) 新开 continuation assistant 节点 ai_2 接管后续流式（整批只开一个）。与生成入口
+  //    同款 loading 占位:用户看到的是「新一轮正在思考」的打字点,首个 delta 自动摘除。
+  const continuationMessage = message("ASSISTANT", [], prevMessage.modelId);
+  continuationMessage.finishedAt = null; // 新节点进入生成态
+  continuationMessage.annotations = [];
+  setMessageLoading(continuationMessage);
+  const continuationNode: MessageNode = { id: id(), messages: [continuationMessage], selectIndex: 0 };
+  conversation.messages.push(continuationNode);
+
   conversation.chatSuggestions = [];
   conversation.updateAt = Date.now();
   persistConversation(conversation);
   broadcastConversation(conversation);
   broadcastQueueState(conversationId);
-  return texts.filter((t) => t.length > 0);
+
+  // 4) 换绑：之后所有 sink 事件落进 ai_2（引擎无感）。
+  session.retarget({ node: continuationNode, message: continuationMessage });
+  return texts;
 }
 
 /** 队首派发核心(前置:调用方已确认空闲且未暂停)。 */
@@ -829,9 +813,9 @@ async function runPiWorkspaceGeneration(
     ],
     sink,
     signal,
-    // steering(用户问题②):编排层的轮边界回调直通 pi runner 的 steer 轮询(落库/
-    // 队列联动在 steerBoundary,runner 只拿文本喂 session.steer)。
-    pollSteering: ctx.onSteerBoundary,
+    // steering 轮边界(用户问题②):编排层同一回调直通 pi runner,在 pi turn_end 同步
+    // 调用(落库/队列联动/分裂在 steerBoundary,runner 只拿文本喂 session.steer)。
+    onSteerBoundary: ctx.onSteerBoundary,
   });
   applyCapturedEngineCompactions(conversation, result.capturedCompactions);
   return result.text;
@@ -1137,9 +1121,9 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
         provider: picked.provider,
         model: picked.model,
         executeTool,
-        // steering 轮边界(用户问题②):聊天引擎在工具循环轮边界调用;pi 引擎经
-        // runPiWorkspaceGeneration 装配为 pollSteering(见其 ctx 装配处)。传入 session
-        // 后 steerBoundary 可收口当前节点、落库 steer user、新开 continuation 节点并换绑。
+        // steering 轮边界(用户问题②):唯一装配点。聊天引擎在工具循环轮边界调用;pi 引擎
+        // 在 turn_end 调用;未来引擎在「即将构建下一模型请求前」调用同一回调即自动继承
+        // 分裂能力(收口当前节点、落库 steer user、新开 continuation 节点并换绑)。
         onSteerBoundary: () => steerBoundary(conversation.id, session),
         adapter,
       },
