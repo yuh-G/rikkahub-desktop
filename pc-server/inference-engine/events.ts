@@ -1,7 +1,16 @@
 // inference-engine/events.ts — 生成事件流与工具执行接口
 // 纪律：本文件只定义类型与回调契约，不写具体实现，避免被 server.ts 的细节污染。
 
-import type { JsonValue, Message, StreamHooks, ToolApprovalState, ToolOutputEntry } from "../foundation/types";
+import type { JsonValue, Message, MessageNode, StreamHooks, ToolApprovalState, ToolOutputEntry } from "../foundation/types";
+
+/** 本次生成的流式落点(活视图)。steer 边界分裂会把落点换到新开的 continuation 节点,
+ *  因此所有消费方(事件应用器 / 工具循环的 hooks / 引擎桥)必须在每次使用时现读
+ *  node/message,绝不能在闭包创建时解构缓存——缓存一次就等于永远写旧节点。
+ *  协调器持有可换绑的实现(GenerationSession),引擎只见这个只读面。 */
+export interface GenerationTarget {
+  readonly node: MessageNode;
+  readonly message: Message;
+}
 
 /** 生成过程中产生的单个事件。协调器（generateAnswer）根据这些事件更新消息、
  *  持久化状态和广播 SSE；推理引擎本身不直接执行副作用。 */

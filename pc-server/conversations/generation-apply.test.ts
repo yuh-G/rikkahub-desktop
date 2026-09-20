@@ -91,3 +91,36 @@ describe("generation-apply:每工具计时戳(issue #59)", () => {
     expect(part.output).toEqual([{ type: "text", text: "v2" }]); // output 仍随后帧刷新
   });
 });
+
+describe("generation-apply:落点是活视图(steer 边界换绑)", () => {
+  test("换绑后事件落进新消息,旧消息一个字节不变", () => {
+    // 事故形态(2026-09-20 用户实测 2-1/2-2):应用器创建时解构缓存了落点,steer 分裂
+    // 换绑后第二轮正文继续写进已定格的 ai_1,ai_2 空到收尾才被整段回填。锁定:每事件现读。
+    const first = makeTarget();
+    const second = makeTarget();
+    second.message.id = "msg-2";
+    second.node.id = "node-2";
+    let current = { node: first.node, message: first.message };
+    const apply = createGenerationEventApplier({
+      conversation: first.conversation,
+      get node() {
+        return current.node;
+      },
+      get message() {
+        return current.message;
+      },
+    });
+
+    apply({ kind: "text_delta", text: "第一段" });
+    current = { node: second.node, message: second.message };
+    apply({ kind: "text_delta", text: "第二段" });
+    apply({ kind: "tool_call_created", toolCallId: "t-after", toolName: "read", input: "{}", approvalState: { type: "auto" } });
+    apply({ kind: "usage", usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 } });
+
+    expect(first.message.parts).toEqual([{ type: "text", text: "第一段" }]);
+    expect(first.message.usage).toBeNull();
+    expect(second.message.parts.map((p) => p.type)).toEqual(["text", "tool"]);
+    expect(second.message.parts[0]).toEqual({ type: "text", text: "第二段" });
+    expect(second.message.usage?.totalTokens).toBe(3);
+  });
+});

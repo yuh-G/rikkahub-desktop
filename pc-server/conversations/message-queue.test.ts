@@ -10,6 +10,7 @@ import { join } from "node:path";
 process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-mqueue-test-"));
 
 import type { Conversation, State } from "../foundation/types";
+import { textFromParts } from "../foundation/utils";
 import { generating } from "./generation-state";
 import { configureWorkingSet, registerConversation } from "./working-set";
 import { setState, state } from "../persistence/json-store";
@@ -742,21 +743,25 @@ describe("steering 轮边界注入", () => {
       const steerUser = conv.messages[2]!.messages[conv.messages[2]!.selectIndex]!;
       const ai2 = conv.messages[3]!.messages[conv.messages[3]!.selectIndex]!;
 
-      // ai_1 已定格(finishedAt 落上),内容是分裂前的产出(工具轮,无正文文本)。
+      // ai_1 已定格(finishedAt 落上),内容恰是分裂前的产出:首轮正文 + 工具卡。
+      // 分裂后一个字节都不再进来——2026-09-20 实测事故形态就是第二轮正文继续写进
+      // 已定格的 ai_1(应用器创建时解构缓存了落点),这里锁死。
       expect(ai1.role).toBe("ASSISTANT");
       expect(ai1.finishedAt).toBeTruthy();
       expect(ai1.parts.some((p) => (p as { type?: string }).type === "tool")).toBe(true);
+      expect(textFromParts(ai1.parts)).toBe("先查一下");
 
       // steer user 是完整气泡,带 steered 注解(可选元数据)。
       expect(steerUser.role).toBe("USER");
       expect(JSON.stringify(steerUser.parts)).toContain("插话补充");
       expect((steerUser.annotations as Array<{ type?: string }>).some((a) => a.type === "steered")).toBe(true);
 
-      // ai_2 接管后续流式:第二轮正文落在它身上,且已定格。
+      // ai_2 接管后续流式:正文恰等于第二轮产出(不是跨轮累积的整段回填),已定格,
+      // 无 loading 残留,不携带 ai_1 的工具 part(分裂干净)。
       expect(ai2.role).toBe("ASSISTANT");
-      expect(JSON.stringify(ai2.parts)).toContain("结合插话继续作答");
+      expect(textFromParts(ai2.parts)).toBe("结合插话继续作答");
       expect(ai2.finishedAt).toBeTruthy();
-      // ai_2 不携带 ai_1 的工具 part(分裂干净——延续输出与此前轮次分段)。
+      expect(ai2.parts.some((p) => (p as { type?: string }).type === "loading")).toBe(false);
       expect(ai2.parts.some((p) => (p as { type?: string }).type === "tool")).toBe(false);
 
       // 队列已移除 steer 项(已注入≠待触发),没有第三轮。
@@ -828,9 +833,10 @@ describe("steering 轮边界注入", () => {
       const ai2 = conv.messages[3]!.messages[conv.messages[3]!.selectIndex]!;
       expect(ai1.finishedAt).toBeTruthy();
       expect(ai1.parts.some((p) => (p as { type?: string }).type === "tool")).toBe(true);
+      expect(textFromParts(ai1.parts)).toBe(""); // 分裂后第二轮正文不得回流进 ai_1
       expect(JSON.stringify(steerUser.parts)).toContain("抢先插话");
       expect((steerUser.annotations as Array<{ type?: string }>).some((a) => a.type === "steered")).toBe(true);
-      expect(JSON.stringify(ai2.parts)).toContain("收到插话,直接作答");
+      expect(textFromParts(ai2.parts)).toBe("收到插话,直接作答");
       expect(ai2.finishedAt).toBeTruthy();
     } finally {
       await server.close();

@@ -14,8 +14,8 @@
 // runPiWorkspaceGeneration)由编排器在组装注册表时经参数注入。matches() 只做路由判定,
 // 不产副作用。
 
-import type { Assistant, Conversation, Message, MessageNode, Model, Provider } from "../foundation/types";
-import type { GenerationEventSink, ToolExecutor } from "../inference-engine/events";
+import type { Assistant, Conversation, Model, Provider } from "../foundation/types";
+import type { GenerationEventSink, GenerationTarget, ToolExecutor } from "../inference-engine/events";
 import type { WorkspaceRuntime } from "../workspace/runtime";
 import { createChatAdapter } from "./chat-adapter";
 import { createPiAdapter } from "./pi-adapter";
@@ -34,8 +34,9 @@ export type EngineResumeSemantics = "pause-resume" | "run-and-suspend";
 /** 引擎无关的生成输入包(编排器入口一次性装配,贯穿本次生成)。 */
 export interface EngineRunContext {
   conversation: Conversation;
-  assistantMessage: Message;
-  assistantNode: MessageNode;
+  /** 流式落点(活视图,协调器持有可换绑实现)。引擎每次现读 target.node/target.message,
+   *  不得解构缓存——steer 边界分裂会把落点换到新开的 continuation 节点。 */
+  target: GenerationTarget;
   assistant: Assistant;
   provider: Provider;
   model: Model;

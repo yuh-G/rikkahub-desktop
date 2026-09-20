@@ -10,6 +10,13 @@ export function setMessageLoading(msg: Message, label = "正在生成回复") {
   msg.parts = [{ type: "loading", label }];
 }
 
+/** 摘除 loading 占位(setMessageLoading 的逆操作)。生成终局与 stop 端点共用:占位的
+ *  渲染不依赖 isGenerating,不摘就会在已完结消息上永久残留打字点。幂等。 */
+export function stripLoadingPlaceholder(msg: Message) {
+  if (!msg.parts.some((part) => isRecord(part) && part.type === "loading")) return;
+  msg.parts = msg.parts.filter((part) => !(isRecord(part) && part.type === "loading"));
+}
+
 export function finishReasoningParts(msg: Message) {
   const now = new Date().toISOString();
   msg.parts = msg.parts.map((part) => {

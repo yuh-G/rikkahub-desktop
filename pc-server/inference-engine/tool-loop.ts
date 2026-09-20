@@ -401,6 +401,10 @@ export async function runStreamingToolLoop(
     const steerTexts = hooks.onSteerBoundary?.() ?? [];
     if (steerTexts.length > 0 && adapter.appendSteeringUserTurns) {
       currentBody = adapter.appendSteeringUserTurns(currentBody, steerTexts);
+      // 注入即分段:协调器已把落点换到新节点,本函数的返回文本与生成耗时都是"当前
+      // 气泡"的口径——清零累计,否则收尾兜底会把上一段正文整段回填进新气泡。
+      allContent = "";
+      generationMs = 0;
     }
   }
 

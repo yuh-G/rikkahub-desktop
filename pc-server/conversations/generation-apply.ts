@@ -8,8 +8,8 @@
 // 纪律:本模块只写传入的 message/conversation/node 与 touchStream(标脏+节流落库+合帧
 // 广播),不碰全局 state、不直接落库、不直接广播——与原 applyEvent 完全一致。
 
-import type { Conversation, JsonValue, Message, MessageNode, StreamHooks } from "../foundation/types";
-import type { GenerationEvent, GenerationEventSink, StreamHooksWithSink } from "../inference-engine/events";
+import type { Conversation, JsonValue, StreamHooks } from "../foundation/types";
+import type { GenerationEvent, GenerationEventSink, GenerationTarget, StreamHooksWithSink } from "../inference-engine/events";
 import { isRecord } from "../foundation/utils";
 import { touchStream } from "../api/sse";
 import { fillContextLimit } from "../inference-engine/providers";
@@ -22,17 +22,19 @@ import {
   replaceLoadingReasoningWithTool,
 } from "../inference-engine/parts";
 
-export interface GenerationApplyTarget {
-  conversation: Conversation;
-  node: MessageNode;
-  message: Message;
+/** 应用目标 = 会话 + 活落点。node/message 是活视图(GenerationTarget):steer 边界分裂
+ *  换绑后,后续事件必须落进新节点——所以下面每个事件都现读 target,不缓存。 */
+export interface GenerationApplyTarget extends GenerationTarget {
+  readonly conversation: Conversation;
 }
 
 /** 构造把 GenerationEvent 应用到指定消息的应用器。语义与 generateAnswer 原内联
  *  applyEvent 逐字一致(含各 case 的幂等与"只升不降"审批规则),见各分支注释。 */
 export function createGenerationEventApplier(target: GenerationApplyTarget): GenerationEventSink {
-  const { conversation, node, message: currentMessage } = target;
   return (event: GenerationEvent) => {
+    // 每事件现读落点。曾在此处创建时解构一次,导致 steer 分裂后延续输出继续写进已定格
+    // 的 ai_1、ai_2 空到收尾才被整段回填(2026-09-20 用户实测 2-1/2-2)。
+    const { conversation, node, message: currentMessage } = target;
     const streamHooks: StreamHooks = { message: currentMessage, conversation, node };
     switch (event.kind) {
       // 文本/思维链/图片增量写入内存后必须 touchStream(标脏 + 200ms 节流落库 + 33ms 节流

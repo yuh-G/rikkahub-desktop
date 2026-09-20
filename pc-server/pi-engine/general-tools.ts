@@ -26,7 +26,7 @@
 
 import type { ToolDefinition } from "../../pi/packages/coding-agent/src/core/extensions/types.ts";
 import type { Assistant, Conversation, JsonValue, Model, ToolOutputEntry } from "../foundation/types";
-import type { GenerationEventSink } from "../inference-engine/events";
+import type { GenerationEventSink, GenerationTarget } from "../inference-engine/events";
 import { openAiLocalTools, openAiMcpTools, openAiSearchTools } from "../tools/bound";
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
 import { openAiToolOutput } from "../tools/format";
@@ -42,8 +42,9 @@ export interface PiGeneralToolsContext {
   conversation: Conversation;
   assistant: Assistant;
   sink: GenerationEventSink;
-  /** save_memory 待确认队列的来源标注(当前 ASSISTANT 节点,与聊天路径同口径)。 */
-  messageNodeId?: string;
+  /** save_memory 待确认队列的来源标注(当前 ASSISTANT 节点,与聊天路径同口径)。
+   *  活落点:steer 分裂后新 ai_2 接管,执行时现读 node.id 才落到真正产出该工具调用的节点。 */
+  target?: GenerationTarget;
   /** 生效模型。用于外挂 search_web 的防双搜门控(openAiSearchTools 单源谓词):模型
    *  已声明内置 search 时外挂让位。pi 引擎当前不接内置搜索(只挂外挂),传它是为了与
    *  聊天引擎同一注入源同一判定——未来 pi 接内置搜索或新引擎照抄时零成本继承。 */
@@ -98,7 +99,7 @@ function buildGeneralTool(
         {
           conversationId: ctx.conversation.id,
           conversationTitle: ctx.conversation.title,
-          messageNodeId: ctx.messageNodeId,
+          messageNodeId: ctx.target?.node.id,
           signal,
         },
       );
