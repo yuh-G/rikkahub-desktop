@@ -81,6 +81,15 @@ function makeConversation(id: string): Conversation {
   } as unknown as Conversation;
 }
 
+/** 轮询等待条件成立(E2E 派发/收尾的确定性同步点;超时即失败信号)。模块级供多个 describe 复用。 */
+async function waitUntil(cond: () => boolean, timeoutMs = 8_000): Promise<void> {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitUntil timeout");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 describe("message-queue 状态机", () => {
   test("FIFO:入队顺序即出队顺序;队空快照为 null", () => {
     const cid = "q-fifo";
@@ -287,14 +296,6 @@ describe("queue/* 端点(单飞门控)", () => {
 // 派发只调 generateAnswer,引擎无感)。用假 OpenAI SSE 上游精确控轮,第一轮响应前注入排队项,
 // 断言它在第一轮收尾后被接力点火。
 describe("消息发送队列派发(收尾续跑)", () => {
-  async function waitUntil(cond: () => boolean, timeoutMs = 8_000): Promise<void> {
-    const start = Date.now();
-    while (!cond()) {
-      if (Date.now() - start > timeoutMs) throw new Error("waitUntil timeout");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-
   test("第一轮进行中入队 → 收尾后自动点火第二轮,队首消息落库进历史", async () => {
     const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
     const { model, provider } = await import("../model-providers");
@@ -675,6 +676,162 @@ describe("steering 轮边界注入", () => {
         }, 10);
       });
       expect(hasQueuedMessages(conv.id)).toBe(false);
+    } finally {
+      await server.close();
+      clearMessageQueue(conv.id);
+      clearSteeringChannel(conv.id);
+      setState(priorState);
+    }
+  });
+
+  test("端到端:steer 边界节点分裂——ai_1 定格 + steer user + ai_2 接管,与 Codex transcript 同构", async () => {
+    const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
+    const { model, provider } = await import("../model-providers");
+    const { defaultState } = await import("../app-config/defaults");
+    const { defaultAssistant } = await import("../assistants");
+
+    const conv = makeConversation("c-q-steer-split");
+    persistConversation(conv);
+    registerConversation(conv);
+    conv.messages.push({
+      id: "c-q-steer-split-n1", selectIndex: 0,
+      messages: [{
+        id: "c-q-steer-split-m1", role: "USER", parts: [{ type: "text", text: "开始" }],
+        annotations: [], createdAt: new Date().toISOString(), finishedAt: null, translation: null,
+      }],
+    } as never);
+    persistConversation(conv);
+
+    // 剧本:第一轮带工具调用(在轮边界触发 steerBoundary 分裂),第二轮作答进 ai_2。
+    const server = await startFakeOpenAiSse([
+      {
+        content: "先查一下",
+        toolCalls: [{ id: "t1", name: "no_such_tool", arguments: "{}" }],
+        beforeRespond: () => {
+          const item = enqueueMessage(conv.id, [{ type: "text", text: "插话补充" }]);
+          pushSteeringMessage(conv.id, item.id, [{ type: "text", text: "插话补充" }]);
+        },
+      },
+      { content: "结合插话继续作答" },
+    ]);
+    try {
+      const ourModel = model("fake-model", "Split Test");
+      const ourProvider = provider({
+        id: crypto.randomUUID(), name: "Split Provider", baseUrl: server.baseUrl,
+        apiKey: "sk-test", enabled: true, models: [ourModel],
+      });
+      const next = defaultState();
+      next.settings.assistantId = "a1";
+      next.settings.assistants = [{ ...defaultAssistant(), id: "a1" }];
+      next.settings.providers = [ourProvider];
+      next.settings.chatModelId = ourModel.id;
+      next.settings.fastModelId = "";
+      setState(next as State);
+
+      await generateAnswer(conv); // 全程跑完(两轮请求,steer 在轮边界被吸收并分裂)
+      await waitUntil(() => server.requests.length >= 2);
+      // 等收尾(队列已移除 steer 项,不再派发第三轮)。
+      await waitUntil(() => !generating.has(conv.id));
+
+      // 核心断言:数据序是 [user_1, ai_1, steer_user, ai_2](逐项同构 Codex
+      // [assistant_r1, user_steer, assistant_r2])。延续输出落在 steer user 之后。
+      const roles = conv.messages.map((n) => n.messages[n.selectIndex]?.role);
+      expect(roles).toEqual(["USER", "ASSISTANT", "USER", "ASSISTANT"]);
+
+      const ai1 = conv.messages[1]!.messages[conv.messages[1]!.selectIndex]!;
+      const steerUser = conv.messages[2]!.messages[conv.messages[2]!.selectIndex]!;
+      const ai2 = conv.messages[3]!.messages[conv.messages[3]!.selectIndex]!;
+
+      // ai_1 已定格(finishedAt 落上),内容是分裂前的产出(工具轮,无正文文本)。
+      expect(ai1.role).toBe("ASSISTANT");
+      expect(ai1.finishedAt).toBeTruthy();
+      expect(ai1.parts.some((p) => (p as { type?: string }).type === "tool")).toBe(true);
+
+      // steer user 是完整气泡,带 steered 注解(可选元数据)。
+      expect(steerUser.role).toBe("USER");
+      expect(JSON.stringify(steerUser.parts)).toContain("插话补充");
+      expect((steerUser.annotations as Array<{ type?: string }>).some((a) => a.type === "steered")).toBe(true);
+
+      // ai_2 接管后续流式:第二轮正文落在它身上,且已定格。
+      expect(ai2.role).toBe("ASSISTANT");
+      expect(JSON.stringify(ai2.parts)).toContain("结合插话继续作答");
+      expect(ai2.finishedAt).toBeTruthy();
+      // ai_2 不携带 ai_1 的工具 part(分裂干净——延续输出与此前轮次分段)。
+      expect(ai2.parts.some((p) => (p as { type?: string }).type === "tool")).toBe(false);
+
+      // 队列已移除 steer 项(已注入≠待触发),没有第三轮。
+      expect(hasQueuedMessages(conv.id)).toBe(false);
+      expect(server.requests.length).toBe(2);
+    } finally {
+      await server.close();
+      clearMessageQueue(conv.id);
+      clearSteeringChannel(conv.id);
+      setState(priorState);
+    }
+  });
+
+  test("端到端:steer 落在「有工具卡但无正文」轮次——ai_1 定格保留工具足迹,延续进 ai_2", async () => {
+    const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
+    const { model, provider } = await import("../model-providers");
+    const { defaultState } = await import("../app-config/defaults");
+    const { defaultAssistant } = await import("../assistants");
+
+    const conv = makeConversation("c-q-steer-toolonly");
+    persistConversation(conv);
+    registerConversation(conv);
+    conv.messages.push({
+      id: "c-q-steer-toolonly-n1", selectIndex: 0,
+      messages: [{
+        id: "c-q-steer-toolonly-m1", role: "USER", parts: [{ type: "text", text: "开始" }],
+        annotations: [], createdAt: new Date().toISOString(), finishedAt: null, translation: null,
+      }],
+    } as never);
+    persistConversation(conv);
+
+    // 剧本:第一轮直接调工具、无正文文本(content 省略)。工具卡由循环层在轮边界前建好,
+    // ai_1 非空(isEmptyAssistantPlaceholder 判 false)——定格保留工具足迹,延续进 ai_2。
+    // (空占位剔除那条 C2 分支在工具循环里不可达:工具卡必然先于 steerBoundary 落上,
+    //  它是真实工作足迹,理应定格保留,不制造「空气泡」。)
+    const server = await startFakeOpenAiSse([
+      {
+        toolCalls: [{ id: "t1", name: "no_such_tool", arguments: "{}" }],
+        beforeRespond: () => {
+          const item = enqueueMessage(conv.id, [{ type: "text", text: "抢先插话" }]);
+          pushSteeringMessage(conv.id, item.id, [{ type: "text", text: "抢先插话" }]);
+        },
+      },
+      { content: "收到插话,直接作答" },
+    ]);
+    try {
+      const ourModel = model("fake-model", "ToolOnlySplit Test");
+      const ourProvider = provider({
+        id: crypto.randomUUID(), name: "ToolOnlySplit Provider", baseUrl: server.baseUrl,
+        apiKey: "sk-test", enabled: true, models: [ourModel],
+      });
+      const next = defaultState();
+      next.settings.assistantId = "a1";
+      next.settings.assistants = [{ ...defaultAssistant(), id: "a1" }];
+      next.settings.providers = [ourProvider];
+      next.settings.chatModelId = ourModel.id;
+      next.settings.fastModelId = "";
+      setState(next as State);
+
+      await generateAnswer(conv);
+      await waitUntil(() => server.requests.length >= 2);
+      await waitUntil(() => !generating.has(conv.id));
+
+      // ai_1 定格(含工具卡),数据序 [user_1, ai_1(定格), steer_user, ai_2]。
+      const roles = conv.messages.map((n) => n.messages[n.selectIndex]?.role);
+      expect(roles).toEqual(["USER", "ASSISTANT", "USER", "ASSISTANT"]);
+      const ai1 = conv.messages[1]!.messages[conv.messages[1]!.selectIndex]!;
+      const steerUser = conv.messages[2]!.messages[conv.messages[2]!.selectIndex]!;
+      const ai2 = conv.messages[3]!.messages[conv.messages[3]!.selectIndex]!;
+      expect(ai1.finishedAt).toBeTruthy();
+      expect(ai1.parts.some((p) => (p as { type?: string }).type === "tool")).toBe(true);
+      expect(JSON.stringify(steerUser.parts)).toContain("抢先插话");
+      expect((steerUser.annotations as Array<{ type?: string }>).some((a) => a.type === "steered")).toBe(true);
+      expect(JSON.stringify(ai2.parts)).toContain("收到插话,直接作答");
+      expect(ai2.finishedAt).toBeTruthy();
     } finally {
       await server.close();
       clearMessageQueue(conv.id);
