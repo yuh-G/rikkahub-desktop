@@ -67,6 +67,19 @@ describe("filterAnnotationsForAndroid(A-2 注解过滤)", () => {
     ]);
   });
 
+  test("PC-only 的 steered(steer 插话标注)被过滤,安卓永远看不到", () => {
+    // 与 model_call_error 同款先例:steered 是纯 PC 元数据(可选 UI 标记),枚举判别符
+    // 若流入安卓会撑爆 UIMessageAnnotation 多态解码。备份零风险的行为锁。
+    expect(
+      filterAnnotationsForAndroid([
+        { type: "steered" },
+        { type: "pi-fidelity", v: 1 },
+        { type: "compaction_boundary" },
+        { type: "url_citation", url: "https://x" },
+      ]),
+    ).toEqual([{ type: "url_citation", url: "https://x" }]);
+  });
+
   test("缺判别符的脏对象、非对象条目、非数组输入都清洗掉", () => {
     expect(filterAnnotationsForAndroid([{ junk: 1 }, null, "str", 42])).toEqual([]);
     expect(filterAnnotationsForAndroid(undefined)).toEqual([]);
