@@ -1125,10 +1125,12 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
         provider: picked.provider,
         model: picked.model,
         executeTool,
-        // steering 轮边界(用户问题②):唯一装配点。聊天引擎在工具循环轮边界调用;pi 引擎
-        // 在 turn_end 调用;未来引擎在「即将构建下一模型请求前」调用同一回调即自动继承
-        // 分裂能力(收口当前节点、落库 steer user、新开 continuation 节点并换绑)。
-        onSteerBoundary: () => steerBoundary(conversation.id, session),
+        // steering 轮边界(用户问题②):唯一装配点。聊天引擎在工具循环轮边界与最终轮调用;
+        // pi 引擎在 turn_end 调用;未来引擎在「即将构建下一模型请求前」调用同一回调即自动
+        // 继承分裂能力(收口当前节点、落库 steer user、新开 continuation 节点并换绑)。
+        // 声明 steering:"none" 的引擎不下发——排水即分裂,不能注入的引擎不该有机会排水;
+        // 其补发留在队列由收尾派发兜底。
+        ...(adapter.steering === "boundary" ? { onSteerBoundary: () => steerBoundary(conversation.id, session) } : {}),
         adapter,
       },
       sink,

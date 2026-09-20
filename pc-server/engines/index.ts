@@ -31,6 +31,18 @@ export type EngineKind = "chat" | "pi" | "dsh" | "codex" | "claude-code" | (stri
  *  子进程引擎届时按其审批模型声明。 */
 export type EngineResumeSemantics = "pause-resume" | "run-and-suspend";
 
+/** steering 能力声明(生成中补发的用户消息如何送达模型):
+ *  - "boundary":引擎在「即将构建下一模型请求之前」调用 ctx.onSteerBoundary(),把返回文本
+ *    作为 user turn 喂给模型(聊天引擎 = 工具轮边界 + 最终轮;pi = turn_end)。协调器在同一
+ *    调用里完成数据层分裂(定格当前节点 / 落库 steer user / 新开 continuation 节点 / 换绑落点),
+ *    引擎经 ctx.target 活视图自动跟随。
+ *  - "none":引擎无注入位点(单次不透明请求等)。协调器不下发回调,补发消息留在 FIFO 队列由
+ *    收尾派发兜底——视觉序仍是 [ai_1, user_2, ai_2],只是晚到生成结束;按构造优雅降级,
+ *    不会出现半吸收状态。
+ *  必填:新引擎接入时必须显式选择,忘了调回调不会静默丢能力(契约测试锁每个 "boundary"
+ *  引擎的真实调用)。 */
+export type EngineSteeringSupport = "boundary" | "none";
+
 /** 引擎无关的生成输入包(编排器入口一次性装配,贯穿本次生成)。 */
 export interface EngineRunContext {
   conversation: Conversation;
@@ -42,10 +54,10 @@ export interface EngineRunContext {
   model: Model;
   /** 工具执行闭包(协调器注入,内部已挂生成级 signal 与部分输出回写)。 */
   executeTool: ToolExecutor;
-  /** steering 轮边界(用户问题②,对齐 Codex pending_input):引擎在「工具批执行完、
-   *  下一模型请求构建前」调用,取「生成中补发」的用户消息文本(协调器已同步落库并
-   *  通知 FIFO 队列移除)。返回空数组 = 无注入。引擎无注入位点则不调用(消息留在
-   *  队列,收尾派发兜底,零丢失)。 */
+  /** steering 轮边界(用户问题②,对齐 Codex pending_input):声明 steering:"boundary" 的引擎
+   *  在「即将构建下一模型请求之前」调用,取「生成中补发」的用户消息文本(协调器已同步
+   *  落库、换绑落点并通知 FIFO 队列移除)。返回空数组 = 无注入。声明 "none" 的引擎收不到
+   *  此回调(协调器不下发)。 */
   onSteerBoundary?: () => string[];
 }
 
@@ -80,7 +92,8 @@ export interface EngineAdapter {
   /** 路由判定:该会话是否由本引擎接管。注册表按序取首个命中;chat 恒 true 兜底。 */
   matches(conversation: Conversation, assistant: Assistant): boolean;
   readonly resumeSemantics: EngineResumeSemantics;
-  /** 驱动一次生成,经 sink 发出 GenerationEvent,返回最终文本。 */
+  readonly steering: EngineSteeringSupport;
+  /** 驱动一次生成,经 sink 发出 GenerationEvent,返回最终文本(steer 分裂后为当前段口径)。 */
   run(ctx: EngineRunContext, sink: GenerationEventSink, signal?: AbortSignal): Promise<string>;
   /** 可选能力:引擎原生压缩(压引擎记忆,UI 历史不动)。每个引擎的压缩机制独立设计
    *  (prompt/切点语义各异),但共享同一调用面与 engine_status 瞬态状态通道(经 sink,

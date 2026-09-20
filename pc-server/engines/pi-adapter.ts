@@ -28,6 +28,8 @@ export function createPiAdapter(impl: { run: PiRunFn; compact: PiCompactFn }): E
     // pi 引擎=生成保持在跑、单个工具调用挂起等待审批门放行(approval-gate 汇合),
     // 不整批暂停重触发。
     resumeSemantics: "run-and-suspend",
+    // runner 在 pi turn_end 调用 onSteerBoundary,文本经 session.steer() 入 pi steering 队列。
+    steering: "boundary",
     run(ctx, sink, signal) {
       const withRuntime: EngineRunContext & { piRuntime: WorkspaceRuntime | null } = {
         ...ctx,

@@ -348,11 +348,15 @@ describe("引擎判定单源(审批旁路/压缩路由收编)", () => {
     expect(piAdapter.kind).toBe("pi");
     expect(piAdapter.resumeSemantics).toBe("run-and-suspend");
     expect(typeof piAdapter.compact).toBe("function");
+    // steering 能力声明:两个引擎都在真边界调 onSteerBoundary(pi=turn_end,chat=工具轮/最终轮),
+    // 协调器据此下发回调;声明改成 "none" 会让编排层不再下发,补发退化为收尾派发。
+    expect(piAdapter.steering).toBe("boundary");
 
     const chatAdapter = resolveEngineForConversation(seedConversation(null));
     expect(chatAdapter.kind).toBe("chat");
     expect(chatAdapter.resumeSemantics).toBe("pause-resume");
     expect(chatAdapter.compact).toBeUndefined();
+    expect(chatAdapter.steering).toBe("boundary");
   }, 30_000);
 
   test("compactEngineConversation:普通会话回落(null),工作区会话穿透到 pi 压缩驱动", async () => {
