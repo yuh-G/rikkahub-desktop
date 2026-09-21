@@ -70,7 +70,7 @@ COPY pi-patches/ ./pi-patches/
 COPY pi-model-data/ ./pi-model-data/
 RUN git clone --filter=blob:none --no-checkout https://github.com/earendil-works/pi.git pi && \
     cd pi && \
-    git checkout 5cd93f688aaab89dbb6dfa4aca535f21796ae185 && \
+    git checkout d981de1229ef899957bbe968bc8dcda02a21f477 && \
     git reset --hard && \
     git apply ../pi-patches/*.patch && \
     bun install && \

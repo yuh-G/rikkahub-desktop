@@ -41,17 +41,21 @@ jobs:
       # 装 pi 自己的依赖(proper-lockfile/typebox/openai 等,bun build 会把它们
       # 一并打包;缺了 bun build 报 Could not resolve)。pi 的 bun.lock 是
       # lockfileVersion 1,Bun 1.4.0 会迁移它,故不能用 --frozen-lockfile。
-      # packages/ai/src/providers/data/.manifest.json 是构建期生成物、git 不跟踪,
-      # 由 generate-models 从 models.dev 拉取生成(需网络,CI 有)。
+      # packages/ai/src/providers/data/ 是构建期生成物、git 不跟踪。模型数据走
+      # pi-model-data/ 快照(host 仓库 tracked,与下方 pin 的基线严格配对)——不跑
+      # generate-models:它先删全部 *.models.ts 分片再按 models.dev 当天状态重建,
+      # 第三方数据漂移(2026-09-21 kimi-for-coding 被摘除)会让分片删后无人重建,
+      # bun build --compile 解析 import 即失败(当日 v3 发版 Linux 构建正是这么挂的)。
       - name: Restore pi vendor
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/earendil-works/pi.git pi
           cd pi
-          git checkout 5cd93f688aaab89dbb6dfa4aca535f21796ae185
+          git checkout d981de1229ef899957bbe968bc8dcda02a21f477
           git reset --hard
           git apply ../pi-patches/*.patch
           bun install
-          cd packages/ai && bun run generate-models
+          mkdir -p packages/ai/src/providers/data
+          cp ../pi-model-data/*.json ../pi-model-data/.manifest.json packages/ai/src/providers/data/
 
       - name: Resolve version
         id: ver
