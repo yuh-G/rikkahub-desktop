@@ -59,6 +59,7 @@ import api, { ApiError } from "~/services/api";
 import { useChatInputStore } from "~/stores";
 import {
   evictConversations,
+  useConversationEngineStatus,
   useConversationEntry,
   useConversationStore,
 } from "~/stores/conversation-store";
@@ -770,6 +771,9 @@ const ConversationTimeline = React.memo(
     const detailLoading = (entry?.subscribing ?? false) && detail === null;
     const detailError = entry?.error ?? null;
     const isGenerating = detail?.isGenerating ?? false;
+    // 域4-1 审批等待(本地订阅,同 colocation 原则):pending 工具卡的计时存活判据——
+    // 挂起仍在 = 等用户期间秒数照走(#59 刻意语义);重启后遗留的死 pending 卡不再走表。
+    const awaitingApproval = useConversationEngineStatus(activeId)?.phase === "awaiting_approval";
     const conversationTitle = detail?.title ?? "";
     const conversationAssistantId = detail?.assistantId ?? null;
     const selectedNodeMessages = React.useMemo<SelectedNodeMessage[]>(() => {
@@ -1232,6 +1236,7 @@ const ConversationTimeline = React.memo(
                     node={node}
                     message={message}
                     loading={isGenerating && isLastLoaded}
+                    awaitingApproval={awaitingApproval}
                     isLastMessage={isLastLoaded}
                     assistant={assistant}
                     model={model}

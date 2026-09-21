@@ -107,11 +107,14 @@ function isExportable(part: UIMessagePart): boolean {
   }
 }
 
-// reasoning 时长(秒)。finishedAt 缺省时用现在相对 createdAt。
+// reasoning 时长(秒)。导出是静态快照,无"此刻还在跑"可言:finishedAt 缺失(孤儿
+// 思考卡)时长未知,返回 null 而不是拿导出时刻当终点——那会把等待渲染的时间算成
+// 思考时长。
 function reasoningSeconds(createdAt?: string, finishedAt?: string | null): number | null {
   const start = createdAt ? Date.parse(createdAt) : NaN;
   if (Number.isNaN(start)) return null;
-  const end = finishedAt ? Date.parse(finishedAt) : Date.now();
+  if (!finishedAt) return null;
+  const end = Date.parse(finishedAt);
   if (Number.isNaN(end) || end <= start) return null;
   return Math.max(0.1, (end - start) / 1000);
 }

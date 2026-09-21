@@ -46,6 +46,7 @@ import {
 import { contextWindowFor, requiredOutputCap } from "../model-providers/model-limits";
 import {
   finishReasoningParts,
+  finishToolParts,
   isEmptyAssistantPlaceholder,
   setMessageLoading,
   streamStartedMessages,
@@ -409,12 +410,6 @@ export async function resumeApprovedToolParts(
     }
     const normalized = await toolResultToParts(toolResult);
     part.output = await realizeToolResult(normalized);
-    // issue #59:审批恢复(批准后重跑/暂停后 resume)直写 output,不经应用器——每工具
-    // 计时终点在这里补戳(只补不覆盖)。denied 分支走 toolExecutionErrorPayload 的
-    // {error} 载荷语义,同样是被用户裁决的终局,一并定格。
-    if (!isRecord(part.metadata) || part.metadata.toolFinishedAt == null) {
-      part.metadata = { ...(isRecord(part.metadata) ? part.metadata : {}), toolFinishedAt: new Date().toISOString() };
-    }
     changed = true;
     toolMessages.push(
       useResponseInput
@@ -423,6 +418,10 @@ export async function resumeApprovedToolParts(
     );
   }
   if (changed) {
+    // issue #59:审批恢复(批准后重跑/暂停后 resume)直写 output,不经应用器——终点戳
+    // 由 finishToolParts 统一补(只补不覆盖,同款语义收进共享函数)。denied 分支的
+    // {error} 载荷同样是被用户裁决的终局,一并定格。
+    finishToolParts(assistantMessage);
     conversation.updateAt = Date.now();
     touchStream({ message: assistantMessage, conversation, node: assistantNode });
   }
@@ -1036,6 +1035,10 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     if (owner && owner !== controller && activeGenerationMessages.get(conversation.id) === session.message) return;
     applyOutputTransforms(session.message, assistant);
     finishReasoningParts(session.message);
+    // #59 补完:工具卡与思维链同规则收口——本流终局仍无终点戳的已执行工具在此定格
+    // (停止/失败路径的卡不走 applier 的 tool_result 终局,不补则前端按孤儿卡隐藏时长)。
+    // pending 待审批卡由 finishToolParts 自行跳过(等待期间照走表)。
+    finishToolParts(session.message);
     // 终局一律摘 loading 占位:正常路径由首个 delta 摘,但空回复 / 首个 delta 前中止 /
     // 删会话接管等路径没人摘,前端"打字点"会永久残留在已完结消息上。四条出口统一在此收口
     // (stop 端点因不经本函数仍自行摘除)。

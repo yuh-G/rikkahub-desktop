@@ -135,7 +135,8 @@ function useWorkspaceActionView(
   const running = Boolean(loading) && !model.finished;
   // 域3-1:运行耗时。起点=工具卡自己的建卡戳(终局戳=结果落地,issue #59:不再随
   // 整条消息的流式墙钟涨),无戳的历史数据回退消息级 createdAt→finishedAt 旧口径。
-  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt);
+  // live=running(消息级 loading,不带 output 门——bash 流式中已有输出仍在跑)。
+  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt, running);
   // 自动折叠(2.0.0 内测,与思维链一致):执行中保持展开,终局后自动收起,压住长会话
   // 纵向空间;历史消息挂载时 running=false 直接收起。用户点过 chevron 后(userExpanded
   // 非 null)以用户选择为准,不再自动干预。

@@ -33,6 +33,22 @@ export function hasOpenReasoningPart(msg: Message) {
   );
 }
 
+/** 工具卡终局收口(finishReasoningParts 的对称物,#59 补完):已有输出而未落终点戳的
+ *  工具卡在此补 metadata.toolFinishedAt。覆盖"终局时刻已知、戳却缺失"的窗口——用户
+ *  点停止/发新消息打断待审批/审批恢复直写 output——有 output 即该工具已执行完毕,
+ *  此刻就是终点的最近真值。只补不覆盖(已有戳=更早的真实终点);pending 待审批卡
+ *  跳过(等待期间秒数照走是 #59 的刻意语义)。 */
+export function finishToolParts(msg: Message) {
+  const now = new Date().toISOString();
+  msg.parts = msg.parts.map((part) => {
+    if (!isRecord(part) || part.type !== "tool") return part;
+    if (!Array.isArray(part.output) || part.output.length === 0) return part;
+    if (isRecord(part.approvalState) && String(part.approvalState.type ?? "") === "pending") return part;
+    if (isRecord(part.metadata) && typeof part.metadata.toolFinishedAt === "string") return part;
+    return { ...part, metadata: { ...(isRecord(part.metadata) ? part.metadata : {}), toolFinishedAt: now } };
+  });
+}
+
 /** 把 loading / 占位 reasoning 替换成工具 part（协调器应用 tool_call_created 事件时调用）。 */
 export function replaceLoadingReasoningWithTool(msg: Message, toolPart: ToolPart) {
   markStreamFirstContent(msg);

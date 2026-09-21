@@ -40,7 +40,7 @@ import { pushSteeringMessage, removeSteeringMessage } from "../../conversations/
 import { abortGeneration, awaitingApproval, compressing, generating } from "../../conversations/generation-state";
 import { getWorkspace } from "../../workspace";
 import { resolveToolApproval } from "../../inference-engine/approval-gate";
-import { stripLoadingPlaceholder } from "../../inference-engine/parts";
+import { finishToolParts, stripLoadingPlaceholder } from "../../inference-engine/parts";
 
 export async function handleConversationRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
   // 列表失效事件已并入 /api/events 通道(invalidate 事件);会话详情流保持独立端点
@@ -339,6 +339,9 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
           // Strip the loading placeholder — otherwise the user sees the typing "..." linger
           // because the placeholder part rendering doesn't depend on isGenerating.
           stripLoadingPlaceholder(msg);
+          // #59 补完:停止即终局——已执行的工具卡在此定格终点戳(applier 的终局
+          // tool_result 不会再来),飞行中未出结果的卡保持无戳由前端按孤儿卡隐藏。
+          finishToolParts(msg);
           if (!msg.finishedAt) msg.finishedAt = new Date().toISOString();
         }
         broadcastNodeUpdate(conversation, lastNode);

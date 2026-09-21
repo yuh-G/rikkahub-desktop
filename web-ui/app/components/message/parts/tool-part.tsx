@@ -59,6 +59,10 @@ interface ToolPartProps {
   /** 域3-1 耗时计时基准(消息级,由 message-part.tsx 统一透传)。 */
   messageCreatedAt?: string;
   messageFinishedAt?: string | null;
+  /** 会话级"审批等待仍在挂起"(engineStatus awaiting_approval,域4-1 信号)。
+   *  pending 卡据此判定计时存活——等用户期间秒数照走是 #59 的刻意语义;重启后
+   *  遗留的死 pending 卡(挂起已不存在)按孤儿卡隐藏时长,不再无限走表。 */
+  awaitingApproval?: boolean;
   onToolApproval?: (
     toolCallId: string,
     approved: boolean,
@@ -523,6 +527,7 @@ function AskUserToolStep({
   loading,
   messageCreatedAt,
   messageFinishedAt,
+  awaitingApproval,
   onToolApproval,
   isFirst,
   isLast,
@@ -544,7 +549,8 @@ function AskUserToolStep({
   const isAnswered = tool.approvalState.type === "answered";
 
   // 域3-1:等待用户答复的时长同样入账(等待+执行=用户体感的"这步多久"),终局定格。
-  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt);
+  // 计时存活 = 消息在生成中或审批等待仍在挂起(pending 卡专属通道)。
+  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt, Boolean(loading) || (isPending && Boolean(awaitingApproval)));
 
   const firstQuestion = questions[0]?.question ?? "...";
   const title =
@@ -741,6 +747,7 @@ export function ToolPart({
   loading = false,
   messageCreatedAt,
   messageFinishedAt,
+  awaitingApproval,
   onToolApproval,
   isFirst,
   isLast,
@@ -752,6 +759,7 @@ export function ToolPart({
         loading={loading}
         messageCreatedAt={messageCreatedAt}
         messageFinishedAt={messageFinishedAt}
+        awaitingApproval={awaitingApproval}
         onToolApproval={onToolApproval}
         isFirst={isFirst}
         isLast={isLast}
@@ -820,8 +828,9 @@ export function ToolPart({
   const canOpenDrawer = isPending || isExecuted;
   const Icon = getToolIcon(tool.toolName, memoryAction);
   // 域3-1:运行耗时(等待审批+执行=这步的真实时长),与工作区动作卡同一计时口径。
-  // issue #59:优先用工具自己的戳(建卡→结果落地),历史数据回退消息级。
-  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt);
+  // issue #59:优先用工具自己的戳(建卡→结果落地),历史数据回退消息级。计时存活 =
+  // 消息在生成中(loading 含 output 门:结果落地即终局)或审批等待仍在挂起。
+  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt, Boolean(loading) || (isPending && Boolean(awaitingApproval)));
 
   const handleApprove = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -1056,6 +1065,7 @@ export function PendingToolAttentionCard({
   loading,
   messageCreatedAt,
   messageFinishedAt,
+  awaitingApproval,
   onToolApproval,
 }: {
   tool: UIToolPart;
@@ -1063,10 +1073,13 @@ export function PendingToolAttentionCard({
   /** 域3-1:pending 期间持续计时(审批等待本身就是这步的耗时)。 */
   messageCreatedAt?: string;
   messageFinishedAt?: string | null;
+  /** 见 ToolPartProps:pending 卡的计时存活信号(挂起仍在 = 等用户,照走表)。 */
+  awaitingApproval?: boolean;
   onToolApproval?: ToolPartProps["onToolApproval"];
 }) {
   const { t } = useTranslation("message");
-  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt);
+  // 渲染的卡恒为 pending 态:计时存活只取决于审批等待是否仍在挂起。
+  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt, Boolean(loading) || Boolean(awaitingApproval));
 
   // ask_user 已经有自己的专属醒目卡片（AskUserToolStep 内部的 pending 分支），
   // 不需要再多套一层 banner。
@@ -1077,6 +1090,7 @@ export function PendingToolAttentionCard({
         loading={loading}
         messageCreatedAt={messageCreatedAt}
         messageFinishedAt={messageFinishedAt}
+        awaitingApproval={awaitingApproval}
         onToolApproval={onToolApproval}
       />
     );

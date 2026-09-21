@@ -30,6 +30,9 @@ interface ChatMessageProps {
   node: MessageNodeDto;
   message: MessageDto;
   loading?: boolean;
+  /** 会话级"审批等待仍在挂起"(engineStatus awaiting_approval)——pending 工具卡的
+   *  计时存活信号,见 ToolPartProps.awaitingApproval。 */
+  awaitingApproval?: boolean;
   isLastMessage?: boolean;
   assistant?: AssistantProfile | null;
   model?: ProviderModel | null;
@@ -246,12 +249,14 @@ function useCurrentContextLimit(): number | null | undefined {
   );
 }
 
-function getDurationMs(createdAt: string, finishedAt?: string | null): number | null {
+// finishedAt 缺失时只有 live(消息正在生成)才允许以"现在"为终点;孤儿消息(进程被杀
+// 遗留的 finishedAt=null)时长未知,返回 null——时长/速度项随之不显示,不对墙钟走表。
+function getDurationMs(createdAt: string, finishedAt?: string | null, live = true): number | null {
   const start = Date.parse(createdAt);
   if (Number.isNaN(start)) return null;
 
-  const end = finishedAt ? Date.parse(finishedAt) : Date.now();
-  if (Number.isNaN(end) || end <= start) return null;
+  const end = finishedAt ? Date.parse(finishedAt) : live ? Date.now() : null;
+  if (end == null || Number.isNaN(end) || end <= start) return null;
 
   return end - start;
 }
@@ -275,6 +280,7 @@ function getNerdStats(
   finishedAt: string | null | undefined,
   t: TFunction,
   liveContextLimit?: number | null,
+  live = true,
 ): NerdStats {
   const items: NerdStatItem[] = [];
 
@@ -300,7 +306,7 @@ function getNerdStats(
     }),
   });
 
-  const durationMs = getDurationMs(createdAt, finishedAt);
+  const durationMs = getDurationMs(createdAt, finishedAt, live);
   if (durationMs && usage.completionTokens > 0) {
     const durationSeconds = durationMs / 1000;
     // 速度分母 = 纯生成耗时(服务端骨架累计,不含轮间工具执行/审批等待)。工具调用
@@ -920,7 +926,7 @@ const ChatMessageActionsRow = React.memo(
 );
 
 const ChatMessageNerdLineRow = React.memo(
-  ({ message, alignRight }: { message: MessageDto; alignRight: boolean }) => {
+  ({ message, alignRight, live = true }: { message: MessageDto; alignRight: boolean; live?: boolean }) => {
     const { t } = useTranslation("message");
     const displaySetting = useSettingsStore((state) => state.settings?.displaySetting);
     // 分母跟随当前选中模型:切模型时这条统计行的分母立即更新(产品意图是"当下决策依据",
@@ -937,6 +943,7 @@ const ChatMessageNerdLineRow = React.memo(
       message.finishedAt,
       t,
       liveContextLimit,
+      live,
     );
     if (items.length === 0 && !context) return null;
 
@@ -978,6 +985,7 @@ export const ChatMessage = React.memo(
     node,
     message,
     loading = false,
+    awaitingApproval,
     isLastMessage = false,
     assistant,
     model,
@@ -1088,6 +1096,7 @@ export const ChatMessage = React.memo(
                 messageId={message.id}
                 messageCreatedAt={message.createdAt}
                 messageFinishedAt={message.finishedAt}
+                awaitingApproval={awaitingApproval}
                 loading={loading}
                 assistant={assistant}
                 role={message.role as "USER" | "ASSISTANT" | "SYSTEM" | "TOOL"}
@@ -1135,7 +1144,7 @@ export const ChatMessage = React.memo(
           />
         ) : null}
 
-        <ChatMessageNerdLineRow message={message} alignRight={isUser} />
+        <ChatMessageNerdLineRow message={message} alignRight={isUser} live={loading} />
       </div>
     );
   },

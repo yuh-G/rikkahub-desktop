@@ -50,6 +50,9 @@ interface MessagePartsProps {
   /** 域3-1 耗时计时基准:消息级时间戳(起点=首个内容到达,终点=协调器终局收口)。 */
   messageCreatedAt?: string;
   messageFinishedAt?: string | null;
+  /** 会话级"审批等待仍在挂起"(engineStatus awaiting_approval)——pending 工具卡
+   *  的计时存活信号,见 ToolPartProps.awaitingApproval。 */
+  awaitingApproval?: boolean;
   loading?: boolean;
   assistant?: AssistantProfile | null;
   role?: "USER" | "ASSISTANT" | "SYSTEM" | "TOOL";
@@ -110,6 +113,7 @@ export const MessageParts = React.memo(
     messageId,
     messageCreatedAt,
     messageFinishedAt,
+    awaitingApproval,
     loading = false,
     assistant,
     role,
@@ -157,6 +161,7 @@ export const MessageParts = React.memo(
                 loading={loading && block.tool.output.length === 0}
                 messageCreatedAt={messageCreatedAt}
                 messageFinishedAt={messageFinishedAt}
+                awaitingApproval={awaitingApproval}
                 onToolApproval={onToolApproval}
               />
             );
@@ -199,6 +204,7 @@ export const MessageParts = React.memo(
                       <ReasoningStepPart
                         key={stepKey}
                         reasoning={step.reasoning}
+                        messageLoading={loading}
                         isFirst={isFirst}
                         isLast={isLast}
                       />
@@ -228,6 +234,7 @@ export const MessageParts = React.memo(
                       loading={loading && step.tool.output.length === 0}
                       messageCreatedAt={messageCreatedAt}
                       messageFinishedAt={messageFinishedAt}
+                      awaitingApproval={awaitingApproval}
                       onToolApproval={onToolApproval}
                       isFirst={isFirst}
                       isLast={isLast}

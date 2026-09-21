@@ -14,6 +14,11 @@ import { ControlledChainOfThoughtStep } from "../chain-of-thought";
 
 interface ReasoningStepPartProps {
   reasoning: UIReasoningPart;
+  /** 消息级生成态(服务端实时真值)。思考卡的活动态由此驱动——此前用
+   *  `reasoning.finishedAt == null` 推断,进程被杀遗留的孤儿思考卡会被当成
+   *  "正在思考"而永远转圈/永不折叠/秒数永增;finishedAt 为 null 只代表
+   *  "从未收到终局",不代表"此刻还在跑"。 */
+  messageLoading?: boolean;
   isFirst?: boolean;
   isLast?: boolean;
 }
@@ -26,10 +31,11 @@ enum ReasoningCardState {
 
 export function ReasoningStepPart({
   reasoning,
+  messageLoading,
   isFirst,
   isLast,
 }: ReasoningStepPartProps) {
-  const loading = reasoning.finishedAt == null;
+  const loading = Boolean(messageLoading) && reasoning.finishedAt == null;
   const { t } = useTranslation("message");
   const displaySetting = useSettingsStore((state) => state.settings?.displaySetting);
   const [expandState, setExpandState] = React.useState<ReasoningCardState>(
@@ -75,7 +81,8 @@ export function ReasoningStepPart({
   };
 
   // 耗时口径与工具卡共用(useElapsedSeconds):不足 1 秒静默、定格进位显示 1 秒、1s tick。
-  const duration = useElapsedSeconds(reasoning.createdAt, reasoning.finishedAt);
+  // live=loading:孤儿思考卡(消息不再生成)无终点即无时长,不再对墙钟走表。
+  const duration = useElapsedSeconds(reasoning.createdAt, reasoning.finishedAt, loading);
 
   const preview = expandState === ReasoningCardState.Preview;
 

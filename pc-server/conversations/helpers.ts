@@ -11,6 +11,7 @@ import { abortGeneration, generating } from "./generation-state";
 import { clearMessageQueue } from "./message-queue";
 import { findAssistant as findAssistantCore } from "../assistants";
 import { fillContextLimit } from "../inference-engine/providers";
+import { finishToolParts } from "../inference-engine/parts";
 
 /** 删会话路径的中止(唯一调用方 deleteConversationsById):意图 deleted——队列随会话清除,
  *  旧流收尾无事可做。 */
@@ -267,6 +268,9 @@ export function finishInterruptedPendingToolsInConversation(conversation: Conver
     };
   });
   if (!changed) return false;
+  // #59 补完:被打断的 pending 卡此刻转 denied + 带 output,终局戳在此定格(这条
+  // 终局不经编排器,无 finalizeOutcome 兜底);消息里其它已执行无戳的卡一并收口。
+  finishToolParts(lastMessage);
   if (!lastMessage.finishedAt) lastMessage.finishedAt = new Date().toISOString();
   // 清理 loading 占位符（如果旧 generation 留下了）
   lastMessage.parts = lastMessage.parts.filter((part) =>
