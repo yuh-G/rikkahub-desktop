@@ -11,6 +11,9 @@ import { ConversationSidebar } from "~/components/conversation-sidebar";
 import { ConversationEmptyState } from "~/components/extended/conversation";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatInput } from "~/components/input/chat-input";
+import { VoiceModeBanner } from "~/components/input/voice-mode-banner";
+import { useVoiceModeState, voiceMode } from "~/lib/voice/voice-mode";
+import { MessageQueuePanel } from "~/components/input/message-queue-panel";
 import { GlobalDropZone } from "~/components/global-drop-zone";
 import { ChatMessage } from "~/components/message/chat-message";
 import { CompactionDivider } from "~/components/message/compaction-divider";
@@ -474,6 +477,9 @@ function useDraftInputController({
     if (parts.length === 0) return;
 
     if (activeId) {
+      // 单端点 StartOrSteer:占用与否由服务端裁决(空闲=落库点火;生成中=排队并在下一模型
+      // 请求边界注入,不打断在跑生成)。前端不再按 SSE 滞后的 isGenerating 选端点——快速连发
+      // 时那会误判空闲、掐掉自己刚点火的生成。
       await api.post<{ status: string }>(`conversations/${activeId}/messages`, { parts });
       clearDraft(draftKey);
       return;
@@ -557,9 +563,16 @@ interface ChatInputAreaProps {
   onStop?: () => Promise<void> | void;
   onExportConversation?: (includeReasoning: boolean) => void;
   onCompressConversation?: () => void;
+  /** 语音模式开关(仅当选中的 ASR 服务支持 server-VAD 时传入;否则输入区不显示入口)。 */
+  onToggleVoiceMode?: () => void;
+  voiceModeActive?: boolean;
   slashCommands?: SlashCommandDto[];
   onSlashCommand?: (name: string, argument: string) => Promise<boolean | void> | boolean | void;
   getOptimizeContext?: () => string;
+  /** 提示词优化回退用的当前会话 id(未配置优化模型时后端用它回退会话模型)。 */
+  conversationId?: string | null;
+  /** 队列预览插槽(由父级构造,渲染进输入卡片内顶端)。 */
+  queueSlot?: React.ReactNode;
 }
 
 const ChatInputArea = React.memo(function ChatInputArea({
@@ -575,9 +588,13 @@ const ChatInputArea = React.memo(function ChatInputArea({
   onStop,
   onExportConversation,
   onCompressConversation,
+  onToggleVoiceMode,
+  voiceModeActive,
   slashCommands,
   onSlashCommand,
   getOptimizeContext,
+  conversationId,
+  queueSlot,
 }: ChatInputAreaProps) {
   const setText = useChatInputStore((state) => state.setText);
   const addParts = useChatInputStore((state) => state.addParts);
@@ -629,9 +646,13 @@ const ChatInputArea = React.memo(function ChatInputArea({
       onStop={onStop}
       onExportConversation={onExportConversation}
       onCompressConversation={onCompressConversation}
+      onToggleVoiceMode={onToggleVoiceMode}
+      voiceModeActive={voiceModeActive}
       slashCommands={slashCommands}
       onSlashCommand={onSlashCommand}
       getOptimizeContext={getOptimizeContext}
+      conversationId={conversationId}
+      queueSlot={queueSlot}
     />
   );
 });
@@ -1103,7 +1124,10 @@ const ConversationTimeline = React.memo(
     );
 
     return (
-      <div className="relative flex-1 min-h-0">
+      // @container/timeline:消息区自身作为容器基准。分栏时窗格窄,右侧轮次跳转轨需要
+      // 在消息列(max-w-3xl)之外留出 gutter 才不压正文——视口断点(lg:)判不出单个窗格
+      // 的真实宽度,正是「轨道贴着消息叠在一起」的根因。
+      <div className="@container/timeline relative flex-1 min-h-0">
         {!activeId && !isHomeRoute ? (
           <ConversationEmptyState
             icon={<MessageSquare className="size-10" />}
@@ -1423,6 +1447,10 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
   );
   const conversationIsGenerating = useConversationStore((state) =>
     activeId ? (state.entries[activeId]?.detail?.isGenerating ?? false) : false,
+  );
+  // 消息发送队列快照(SSE 直通,队空为 null):队列面板据此渲染。
+  const conversationMessageQueue = useConversationStore((state) =>
+    activeId ? (state.entries[activeId]?.detail?.messageQueue ?? null) : null,
   );
   const hasDetail = useConversationStore((state) =>
     activeId ? state.entries[activeId]?.detail != null : false,
@@ -1813,6 +1841,31 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
     await api.post<{ status: string }>(`conversations/${activeId}/stop`);
   }, [activeId]);
 
+  // 语音模式(台账 §1.3):免提对话循环。入口在输入区,横幅在队列面板之上。
+  // 仅当选中的 ASR 服务支持 server-VAD(realtime)时可用——一次性 HTTP 识别只能做输入框听写。
+  const voiceState = useVoiceModeState();
+  const voiceActive = voiceState.phase !== "off";
+  const selectedAsrProvider = React.useMemo(
+    () => settings?.asrProviders?.find((item) => item.id === settings?.selectedASRProviderId) ?? null,
+    [settings],
+  );
+  const voiceCapable = Boolean(settings?.selectedASRProviderId && selectedAsrProvider);
+  const handleToggleVoiceMode = React.useCallback(() => {
+    if (voiceActive) {
+      voiceMode.stop();
+      return;
+    }
+    if (!activeId) return;
+    if (!settings?.selectedASRProviderId || !selectedAsrProvider) {
+      toast.error(t("input:voice.not_configured"));
+      return;
+    }
+    const sampleRate = Number(
+      selectedAsrProvider.sampleRate || (selectedAsrProvider.type === "openai_realtime" ? 24000 : 16000),
+    );
+    voiceMode.start(activeId, selectedAsrProvider.id, sampleRate);
+  }, [voiceActive, activeId, settings?.selectedASRProviderId, selectedAsrProvider, t]);
+
   const handleSaveConversationSystemPrompt = React.useCallback(async () => {
     if (!activeId || activeAssistantForConversation?.allowConversationSystemPrompt !== true) return;
     await api.post<{ status: string }>(`conversations/${activeId}/system-prompt`, {
@@ -2024,10 +2077,22 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
           {focused ? <TtsPlayBar /> : null}
           {/* pi 引擎瞬态状态条(P5):按窗格各自订阅本会话状态,分栏互不串扰。 */}
           <EngineStatusBar conversationId={activeId} />
+          {/* 语音模式横幅(免提对话循环;关闭时不渲染)。 */}
+          {voiceActive && activeId ? (
+            <VoiceModeBanner onEnd={() => voiceMode.stop()} onRetry={handleToggleVoiceMode} />
+          ) : null}
           <ChatInputArea
             draftKey={draftKey}
             slashCommands={slashCommands}
             onSlashCommand={handleSlashCommand}
+            /* 消息发送队列贴片:渲染在输入卡上沿外侧(左右内缩、下沿被卡片盖住,自带
+               叠色色差),读作「附着在输入框上的队列」而非输入框的一部分。条件带 items
+               长度——空队列不给插槽,否则输入卡上方会留一条空贴片。 */
+            queueSlot={
+              activeId && conversationMessageQueue && conversationMessageQueue.items.length > 0 ? (
+                <MessageQueuePanel conversationId={activeId} queue={conversationMessageQueue} />
+              ) : null
+            }
             isGenerating={conversationIsGenerating}
             disabled={detailLoading || Boolean(detailError)}
             isEditing={Boolean(editingSession)}
@@ -2056,6 +2121,9 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
             }
             onCompressConversation={hasMessages ? handleCompressConversation : undefined}
             getOptimizeContext={getOptimizeContext}
+            conversationId={activeId}
+            onToggleVoiceMode={voiceCapable || voiceActive ? handleToggleVoiceMode : undefined}
+            voiceModeActive={voiceActive}
           />
         </div>
       </div>

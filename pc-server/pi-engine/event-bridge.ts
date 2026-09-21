@@ -311,7 +311,8 @@ export function createPiEventBridge() {
         entry.outputMode = "partial-result";
         const partial = event.partialResult as PiToolResultView | undefined;
         if (!partial?.content?.length) return [];
-        return [{ kind: "tool_result", toolCallId: event.toolCallId, output: mapPiToolResult(partial) }];
+        // partial 快照非终局:不落 toolFinishedAt(issue #59 每工具计时终点)。
+        return [{ kind: "tool_result", toolCallId: event.toolCallId, output: mapPiToolResult(partial), final: false }];
       }
       case "tool_execution_end": {
         executing.delete(event.toolCallId);
@@ -333,7 +334,8 @@ export function createPiEventBridge() {
         if (!entry.created || entry.outputMode === "partial-result") return [];
         entry.outputMode = "bash-delta";
         entry.bashText += event.delta;
-        return [{ kind: "tool_result", toolCallId: targetId, output: [{ type: "text", text: entry.bashText }] }];
+        // bash 流式增量非终局:执行还在跑,秒数继续走表(tool_execution_end 才定格)。
+        return [{ kind: "tool_result", toolCallId: targetId, output: [{ type: "text", text: entry.bashText }], final: false }];
       }
       // 引擎瞬态状态(P5):压缩/自动重试/摘要重试 → engine_status,协调器直通 SSE
       // 状态条,不落库不产 part。end/finished 一律回 busy:false(状态条即清)。
@@ -390,8 +392,18 @@ export function createPiEventBridge() {
     }
   }
 
+  /** steer 边界分段:协调器已把落点换到新开的 continuation 节点,此后的终局文本与保真
+   *  注解都是"新气泡"的口径——累计文本清零(否则 runner 返回值把上一段整段回填进新气泡),
+   *  引擎消息序号归零(新节点的 pi-fidelity 记录必须从 0 连续,稀疏数组经 JSON 落库成
+   *  null 会让 context-encoder 的 fidelityOf 整条判废、退化 legacy 重建)。 */
+  function beginSegment(): void {
+    outcome.text = "";
+    engineMessageOrdinal = 0;
+  }
+
   return {
     handle,
+    beginSegment,
     outcome: (): PiBridgeOutcome => ({ ...outcome }),
   };
 }

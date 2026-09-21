@@ -17,6 +17,8 @@ import { loadState } from "./persistence/state-load";
 import { getConversationsDb, initConversationsRuntime } from "./conversations";
 import { repairForkNodeTheft } from "./conversations/fork-repair";
 import { initSseWiring } from "./api/sse";
+import { initMcpHealthBroadcast } from "./api/sse";
+import { startMcpHealthSupervisor } from "./tools/mcp-health";
 
 export async function bootstrap(): Promise<void> {
   // 1) 状态装载 + 一次性迁移链(SQLite 灌库、记忆拆分、附件去重、.tmp 清扫都在 loadState 内)。
@@ -56,6 +58,14 @@ export async function bootstrap(): Promise<void> {
 
   // 4) SSE 接线:working set 的"界面正开着"判据 + 错误中心 SSE 广播。
   initSseWiring();
+
+  // 4b) MCP 健康 Supervisor(7.2):引擎无关的后台探活/主动重连层。注入 SSE 快照出口 +
+  //     配置/助手读取器,启动即对当前在用服务器探活一轮。探活本身异步,不阻塞启动。
+  const mcpSupervisor = startMcpHealthSupervisor({
+    getServers: () => (state.settings.mcpServers as Array<Record<string, import("./foundation/types").JsonValue>>),
+    getAssistants: () => state.settings.assistants,
+  });
+  initMcpHealthBroadcast(() => mcpSupervisor.snapshot());
 
   // 5) 1-8:启动规范化结果(normalizeState 的 backfill/迁移标记)与 launchCount 立即落盘。
   //    此前只活在内存,纯只读会话(启动→看历史→退出)每次启动重跑全部规范化,

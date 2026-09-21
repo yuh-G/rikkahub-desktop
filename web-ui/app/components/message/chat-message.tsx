@@ -12,6 +12,7 @@ import { useStableMap } from "~/lib/stable-map";
 import { cn } from "~/lib/utils";
 import { getAudioPlaybackKey, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
 import { ttsController, useIsTtsActiveForKey } from "~/lib/tts/tts-controller";
+import { prepareSpeechText } from "~/lib/tts/text-filter";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "~/components/ui/tooltip";
 import api from "~/services/api";
@@ -576,6 +577,8 @@ const ChatMessageActionsRow = React.memo(
     const playingKey = useAudioPlaybackKey();
     const ttsActiveForThis = useIsTtsActiveForKey(message.id);
     const speaking = ttsActiveForThis || playingKey === message.id;
+    // 朗读过滤开关(台账 §4.1):displaySetting 驱动,语音页配置。
+    const displaySetting = useSettingsStore((state) => state.settings?.displaySetting);
     const [switchingBranch, setSwitchingBranch] = React.useState(false);
     const [deleting, setDeleting] = React.useState(false);
     const [forking, setForking] = React.useState(false);
@@ -703,7 +706,13 @@ const ChatMessageActionsRow = React.memo(
       }
       // buildSpeechText (not buildCopyText) so the reasoning chain is skipped — users want to
       // hear the answer, not the model's internal scratchpad.
-      const text = buildSpeechText(message.parts);
+      const raw = buildSpeechText(message.parts);
+      if (!raw) return;
+      // 朗读过滤(台账 §4.1):抠引号 → 删括号 → stripMarkdown,滤空退回原文。
+      const text = prepareSpeechText(raw, {
+        onlyReadQuoted: displaySetting?.ttsOnlyReadQuoted === true,
+        readOutsideBrackets: displaySetting?.ttsOnlyReadOutsideBrackets === true,
+      });
       if (!text) return;
       // Hand off to the chunked controller. It will:
       //   1. split the text via TextChunker (≤160 chars, paragraph/punctuation aware)
@@ -716,7 +725,7 @@ const ChatMessageActionsRow = React.memo(
       // surfaces via ttsController's PlaybackState.errorMessage which the play-bar reads;
       // forcing a parallel SpeechSynthesis stream on failure would just talk over the
       // controller-driven retry.
-    }, [message.id, message.parts, speaking]);
+    }, [message.id, message.parts, speaking, displaySetting]);
 
     const handleTranslate = React.useCallback(async () => {
       if (!onTranslate || translating) return;

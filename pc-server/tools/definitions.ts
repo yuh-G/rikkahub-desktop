@@ -5,6 +5,7 @@ import { formatKeyLocal, getStringArray, isRecord } from "../foundation/utils";
 import type { Assistant, JsonValue, MemorySettings } from "../foundation/types";
 import { isMcpToolEnabledForAssistant } from "./approval";
 import { listSkills } from "./skills";
+import { ASK_USER_TOOL_DESCRIPTION, ASK_USER_TOOL_NAME, askUserQuestionsSchema } from "./ask-user";
 
 export function openAiSearchTools(enableWebSearch: boolean) {
   return enableWebSearch
@@ -21,11 +22,17 @@ Today is ${formatKeyLocal(new Date())}.
 
 Response format:
 - items[].id (short id), title, url, text
+- images[]: image urls related to the query (may be empty)
 
 Citations:
 - After using results, add \`[citation,domain](id)\` after the sentence.
 - Multiple citations are allowed.
 - If no results are cited, omit citations.
+
+Images:
+- When images help the user understand the answer, embed relevant ones using Markdown: \`![](url)\`.
+- Embed 2 to 4 images, and only use urls from \`images[]\` (never fabricate or alter urls).
+- Usually place the images at the very beginning of your reply; skip them entirely if none are relevant.
 
 Example:
 The capital of France is Paris. [citation,example.com](abc123)
@@ -168,25 +175,12 @@ Do not mention to the user that you are saving a memory.`,
     tools.push({
       type: "function" as const,
       function: {
-        name: "ask_user",
-        description: "Ask the user one or more questions when you need clarification, additional information, or confirmation. Each question can optionally provide a list of suggested options for the user to choose from. The user may select an option or provide their own free-text answer for each question. The answers will be returned as a JSON object mapping question IDs to the user's responses.",
+        name: ASK_USER_TOOL_NAME,
+        description: ASK_USER_TOOL_DESCRIPTION,
         parameters: {
           type: "object",
           properties: {
-            questions: {
-              type: "array",
-              description: "List of questions to ask the user",
-              items: {
-                type: "object",
-                properties: {
-                  id: { type: "string", description: "Unique identifier for this question" },
-                  question: { type: "string", description: "The question text to display to the user" },
-                  options: { type: "array", description: "Optional suggested options", items: { type: "string" } },
-                  selection_type: { type: "string", enum: ["text", "single", "multi"], description: "Answer type" },
-                },
-                required: ["id", "question"],
-              },
-            },
+            questions: askUserQuestionsSchema(),
           },
           required: ["questions"],
         },

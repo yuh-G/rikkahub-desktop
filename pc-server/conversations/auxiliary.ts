@@ -38,6 +38,7 @@ import {
 } from "../app-config/prompts";
 import { compressing } from "./generation-state";
 import { getConversation, persistConversation, selectedConversationMessages } from "./index";
+import { reportError } from "../observability/app-errors";
 import { findAssistant, summaryAsText } from "./helpers";
 import { agentSummaryAsText, buildAgentCompactionContext, extractAgentActivity } from "../workspace/compaction";
 
@@ -61,7 +62,9 @@ export function limitAuxiliaryText(text: string, limit: number) {
   return Array.from(text).slice(0, limit).join("");
 }
 
-export async function generateTitleForConversation(conversation: Conversation) {
+/** 标题生成。modelId 由调用方决定口径:自动生成传 resolveFastModelId()(没配就不该调到这里);
+ *  手动「重新生成标题」传会话模型兜底——那是用户显式点的一次动作,回退用主模型合理。 */
+export async function generateTitleForConversation(conversation: Conversation, modelId: string) {
   const summary = conversationSummary(conversation, 4).trim();
   const firstText = textFromParts(conversation.messages[0]?.messages[0]?.parts ?? []).trim();
   const content = summary || firstText;
@@ -70,8 +73,10 @@ export async function generateTitleForConversation(conversation: Conversation) {
     locale: localeDisplayName(),
     content: selectedConversationMessages(conversation).slice(-4).map(summaryAsText).join("\n\n"),
   });
-  const text = await fetchAuxiliaryText(state.settings.titleModelId, prompt, "title", {
-    reasoningLevel: "off",
+  // 推理档不传 → 默认 auto:让模型自行决定是否思考,不再硬编码 "off"(部分新模型思考
+  // 不可关,硬关反而出错;APP 亦默认 AUTO)。
+  const text = await fetchAuxiliaryText(modelId, prompt, "title", {
+    conversationId: conversation.id,
   });
   return limitAuxiliaryText(
     firstAuxiliaryLine(cleanAuxiliaryText(text, limitAuxiliaryText(firstText, TITLE_CHARACTER_LIMIT) || "New Conversation")),
@@ -141,9 +146,16 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
       ? Object.entries(options.customBody).map(([key, value]) => ({ key, value }))
       : [],
   } as Assistant;
-  const headers = applyRequestHeaders({ "Content-Type": "application/json" }, assistant, providerItem, modelItem);
+  const headers = applyRequestHeaders(
+    { "Content-Type": "application/json" },
+    assistant,
+    providerItem,
+    modelItem,
+    options.conversationId,
+  );
   let endpoint = endpointFor(providerItem);
   let body: Record<string, any>;
+
   if (providerItem.type === "google") {
     // issue10:Gemini 鉴权统一走 x-goog-api-key 头,URL 不再带 ?key=(中转网关只认 header)。
     headers["x-goog-api-key"] = providerItem.apiKey;
@@ -235,17 +247,48 @@ function reasoningEnabled(level: string | null | undefined) {
   return reasoningLevelNormalized(level) !== "off";
 }
 
+/** 某个模型 id 是否指向用户真实配置的模型。
+ *  纪律:AUTO 哨兵(`DEFAULT_AUTO_MODEL_ID`,出厂默认值)**不算已配置**——它的语义是
+ *  「用户没选」。旧版把它白名单放行,导致辅助任务以为有模型可用,进而落到 findModel 的
+ *  兜底(第一个供应商 + 猜一个 "auto"→gpt-4o-mini),对不提供该模型的服务商必 400。
+ *  这是「标题/建议生成失败」弹窗的根因。判否后由各调用方决定回退口径(见
+ *  resolveFastModelId / 压缩模型回退会话模型)。 */
 export function modelExists(modelId: string | null | undefined) {
-  if (!modelId) return false;
-  if (modelId === DEFAULT_AUTO_MODEL_ID || modelId === "auto") return true;
+  if (!modelId || modelId === DEFAULT_AUTO_MODEL_ID) return false;
   return state.settings.providers.some((providerItem) =>
     providerItem.models.some((modelItem) => modelItem.id === modelId || modelItem.modelId === modelId)
   );
 }
 
+/** 会话自身的生效模型 id(助手覆盖 > 全局默认)。 */
+export function conversationModelIdFor(conversation: Conversation): string {
+  return findAssistant(conversation.assistantId).chatModelId || state.settings.chatModelId;
+}
+
+/** 快速模型(标题/建议)的生效解析:**没配就是没配**,返回 null 让调用方整体跳过。
+ *  刻意不回退主模型——标题每会话一次尚可,建议回复每轮一次,拿主模型跑不划算;宁可
+ *  标题退成首条消息文本、建议不出,也不替用户花钱。三类"没配"归一处理:
+ *  空串(设置页选了「未设置」)/ AUTO 哨兵(出厂默认,从未选过)/ 指向已删除的模型。
+ *  关键是跳过必须**静默**:此前哨兵被 modelExists 白名单放行,辅助任务照常发请求 →
+ *  findModel 兜底猜 gpt-4o-mini → 服务商不提供必 400 → 每轮弹两条失败提示。 */
+export function resolveFastModelId(): string | null {
+  const configured = state.settings.fastModelId;
+  return modelExists(configured) ? configured : null;
+}
+
+/** OCR 模型(图片转文字备用通道)的生效解析:OCR 属于"报错档"功能(用户拍板:
+ *  未配置不兜底、不静默)——没配就抛人话错误,由调用方落成图片 part 的失败态,
+ *  前端在图片下方渲染提示并引导去设置。与标题/建议的"静默跳过"档刻意相反:OCR
+ *  只在「聊天模型看不见图」时才被需要,跳过它等于把一张模型读不到的图悄悄丢进
+ *  上下文,用户必须知情。 */
+export function requireOcrModelId(): string {
+  if (modelExists(state.settings.ocrModelId)) return state.settings.ocrModelId;
+  throw new Error("当前聊天模型不支持图片输入,且未配置 OCR 模型。请到「设置 - 默认模型与提示词」为 OCR 指定一个支持视觉的模型");
+}
+
 async function fetchAuxiliaryOcrText(imageUrl: string) {
-  if (!modelExists(state.settings.ocrModelId)) return "";
-  const picked = findModel(state.settings.ocrModelId);
+  const ocrModelId = requireOcrModelId();
+  const picked = findModel(ocrModelId);
   const providerItem = picked.provider;
   const modelItem = picked.model;
   const selectedModel = modelItem.modelId === "auto" ? "gpt-4o-mini" : modelItem.modelId;
@@ -335,12 +378,15 @@ async function fetchAuxiliaryOcrText(imageUrl: string) {
   return cleanAuxiliaryText(await fetchText(endpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, completionMessageText));
 }
 
-function shouldOcrForModel(modelItem: Model) {
-  return !supportsInputModality(modelItem, "IMAGE") && modelExists(state.settings.ocrModelId);
+/** 是否需要 OCR:聊天模型看不见图(inputModalities 无 IMAGE)。**不再**在判据里
+ *  连带要求 OCR 模型已配置——未配置时也要走到 attachOcrToImageParts,让图片 part
+ *  落成"failed + 人话错误"而非静默无痕(报错档语义,见 requireOcrModelId 注)。 */
+function needsOcrForModel(modelItem: Model) {
+  return !supportsInputModality(modelItem, "IMAGE");
 }
 
 export async function attachOcrToImageParts(parts: MessagePart[], modelItem: Model) {
-  if (!shouldOcrForModel(modelItem)) return parts;
+  if (!needsOcrForModel(modelItem)) return parts;
   const next = [...parts];
   for (let index = 0; index < next.length; index += 1) {
     const part = next[index];
@@ -363,14 +409,16 @@ export async function attachOcrToImageParts(parts: MessagePart[], modelItem: Mod
           ocrError: err instanceof Error ? err.message : String(err),
         },
       };
-      console.warn("OCR failed:", err);
+      // info 级(错误中心留痕,不弹全局 toast):失败已就地落在图片 part 上,用户在
+      // 会话里看得到红色提示——再弹全局 toast 是双重打扰(多图场景会连环弹)。
+      reportError("provider", "info", "OCR 识别失败", err, "ocr_failed");
     }
   }
   return next;
 }
 
 export function markOcrPendingParts(parts: MessagePart[], modelItem: Model) {
-  if (!shouldOcrForModel(modelItem)) return parts;
+  if (!needsOcrForModel(modelItem)) return parts;
   return parts.map((part) => {
     if (!isRecord(part) || part.type !== "image") return part;
     const metadata = isRecord(part.metadata) ? part.metadata : {};
@@ -379,15 +427,16 @@ export function markOcrPendingParts(parts: MessagePart[], modelItem: Model) {
   });
 }
 
-export async function generateSuggestionsForConversation(conversation: Conversation) {
+/** 建议回复生成。modelId 必传(快速模型):未配置时调用方不该调到这里。 */
+export async function generateSuggestionsForConversation(conversation: Conversation, modelId: string) {
   const content = conversationSummary(conversation, 8);
   if (!content) return [];
   const prompt = applyPlaceholders(state.settings.suggestionPrompt || DEFAULT_SUGGESTION_PROMPT, {
     locale: localeDisplayName(),
     content: selectedConversationMessages(conversation).slice(-8).map(summaryAsText).join("\n\n"),
   });
-  const text = await fetchAuxiliaryText(state.settings.suggestionModelId, prompt, "suggestion", {
-    reasoningLevel: "off",
+  const text = await fetchAuxiliaryText(modelId, prompt, "suggestion", {
+    conversationId: conversation.id,
   });
   return uniqueStrings(
     text
@@ -478,10 +527,19 @@ export async function compressConversation(conversation: Conversation, additiona
       additional_context: contextSections.join("\n\n"),
       locale: localeDisplayName(),
     });
-    summaries.push(cleanAuxiliaryText(await fetchAuxiliaryText(state.settings.compressModelId || state.settings.chatModelId, prompt, "compression", {
-      stream: true,
-      signal,
-    })));
+    // 压缩模型未配置(空/AUTO 哨兵)或已被删除 → 回退会话模型。不能直接把哨兵交给
+    // findModel:它查不到就兜底"第一个供应商 + 猜 auto→gpt-4o-mini",对不提供该模型的
+    // 服务商必 400(与标题/建议同一根因)。
+    summaries.push(cleanAuxiliaryText(await fetchAuxiliaryText(
+      modelExists(state.settings.compressModelId) ? state.settings.compressModelId : conversationModelIdFor(conversation),
+      prompt,
+      "compression",
+      {
+        stream: true,
+        signal,
+        conversationId: conversation.id,
+      },
+    )));
   }
   // R7-4:落库前最后一道闸——取消后 LLM 结果作废,绝不改写会话(压缩是破坏性替换,
   // 取消语义必须硬保证)。

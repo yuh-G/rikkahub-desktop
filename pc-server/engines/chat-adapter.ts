@@ -17,6 +17,8 @@ export function createChatAdapter(chatRun: ChatRunFn): EngineAdapter {
     },
     // 聊天引擎=整批暂停→逐卡批准→重触发续跑(resumeApprovedToolParts)。
     resumeSemantics: "pause-resume",
+    // 工具循环骨架在工具轮边界与最终轮调用 onSteerBoundary(inference-engine/tool-loop absorbSteering)。
+    steering: "boundary",
     run(ctx, sink, signal) {
       return chatRun(ctx, sink, signal);
     },

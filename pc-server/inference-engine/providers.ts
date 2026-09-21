@@ -536,10 +536,12 @@ export async function streamClaudeChatWithTools(
           }
           return { type: "text", text: block.text ?? "" };
         });
+      // 最终轮 steer 续采样(无工具结果)只回放 assistant 轮:Anthropic 拒收空 content 的
+      // user turn,补发文本由 appendSteeringUserTurns 自成一条 user turn。
       messages = [
         ...messages,
         { role: "assistant", content: assistantBlocksForReplay },
-        { role: "user", content: toolResultBlocks },
+        ...(toolResultBlocks.length > 0 ? [{ role: "user", content: toolResultBlocks }] : []),
       ];
       return { ...body, messages, stream: true };
     },
@@ -550,6 +552,24 @@ export async function streamClaudeChatWithTools(
     toolCardsCreatedInStream: true,
     finishReasoningOnFinal: true,
     exhaustedError: "Too many consecutive Claude tool calls without final assistant content",
+    // steering 注入(用户问题②):Claude 协议要求角色交替,上一条 encodeNextTurn 已以
+    // {role:"user", content:[tool_result...]} 收尾——补发文本并入该 user turn 的 content
+    // 末尾(块序:tool_result 块在前、text 块在后),而非另起 user turn(会被 400 拒)。
+    // 多条补发以空行并成一段文本。防御:末条不是 user turn(异常 body)时退化为追加
+    // 新 user turn,宁可协议风险也不丢消息(实际不可达——encodeNextTurn 恒以 user 收尾)。
+    appendSteeringUserTurns: (requestBody, texts) => {
+      const messagesArr = [...(Array.isArray(requestBody.messages) ? requestBody.messages : [])];
+      const last = messagesArr[messagesArr.length - 1] as { role?: string; content?: unknown } | undefined;
+      if (last && last.role === "user" && Array.isArray(last.content)) {
+        messagesArr[messagesArr.length - 1] = {
+          ...last,
+          content: [...last.content, { type: "text", text: texts.join("\n\n") }],
+        };
+      } else {
+        messagesArr.push({ role: "user", content: [{ type: "text", text: texts.join("\n\n") }] });
+      }
+      return { ...requestBody, messages: messagesArr, stream: true };
+    },
   };
   return runStreamingToolLoop(adapter, initialBody, assistant, signal, hooks);
 }
@@ -902,10 +922,12 @@ export async function streamGoogleChatWithTools(
         functionResponse: { name: call.name, response: { result: toolResultTextForApi({ output }) } },
       }));
       // Gemini 要求把模型这轮的 parts（含 functionCall）原样回放，再追加 user 的 functionResponse。
+      // 最终轮 steer 续采样(无工具结果)只回放 model 轮——空 parts 的 user turn 会被拒收,
+      // 补发文本由 appendSteeringUserTurns 自成一条 user turn。
       contents = [
         ...contents,
         { role: "model", parts: round.modelParts.length ? round.modelParts : [{ text: round.textOut }] },
-        { role: "user", parts: responseParts },
+        ...(responseParts.length > 0 ? [{ role: "user", parts: responseParts }] : []),
       ];
       return { ...body, contents };
     },
@@ -916,6 +938,20 @@ export async function streamGoogleChatWithTools(
     toolCardsCreatedInStream: true,
     finishReasoningOnFinal: true,
     exhaustedError: "Too many consecutive Gemini tool calls without final assistant content",
+    // steering 注入(用户问题②):Gemini 无严格交替约束,补发文本并入上一条 user
+    // turn(与 functionResponse 同 turn)的 parts 末尾——与 Claude 同位的语义选择:
+    // 补发是「用户对当前任务的中途插话」,不是独立新轮。多条补发以空行并成一段。
+    appendSteeringUserTurns: (requestBody, texts) => {
+      const contentsArr = [...(Array.isArray(requestBody.contents) ? requestBody.contents : [])] as Array<{ role?: string; parts?: unknown[] }>;
+      const last = contentsArr[contentsArr.length - 1];
+      const textPart = { text: texts.join("\n\n") };
+      if (last && last.role === "user" && Array.isArray(last.parts)) {
+        contentsArr[contentsArr.length - 1] = { ...last, parts: [...last.parts, textPart] };
+      } else {
+        contentsArr.push({ role: "user", parts: [textPart] });
+      }
+      return { ...requestBody, contents: contentsArr };
+    },
   };
   return runStreamingToolLoop(adapter, initialBody, assistant, signal, hooks);
 }
@@ -1599,7 +1635,9 @@ export function compactAssistantToolMessage(content: string, toolCalls: any[], r
   const payload: ApiMessage = {
     role: "assistant",
     content: content || "",
-    tool_calls: toolCalls,
+    // 无工具调用的回放(最终轮 steer 续采样)不带 tool_calls 键:空数组会被严格端点按
+    // "array too short" 拒收。
+    ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
   };
   if (reasoningContent.trim()) payload.reasoning_content = reasoningContent.trim();
   return payload;
@@ -1835,7 +1873,10 @@ export async function fetchOpenAiTextStreaming(
       if (useResponseInput) {
         // 用归一化密集数组（与 toolMessages 的 call.id 同源，配对恒成立；勿用 r.toolCalls
         // 原始稀疏数组——洞会序列化成 input 的 null 项，见 responseApiToolCallItems 头注）。
-        messages = [...messages, ...responseApiToolCallItems(result.toolCalls), ...toolMessages];
+        // 最终轮 steer 续采样(无工具调用)时,本轮 assistant 正文是模型刚给出的答复,必须
+        // 作为 assistant 消息项回放——否则下一轮模型看不到自己刚说过什么,会重答。
+        const assistantItems = result.toolCalls.length === 0 && r.content ? [{ role: "assistant", content: r.content }] : [];
+        messages = [...messages, ...assistantItems, ...responseApiToolCallItems(result.toolCalls), ...toolMessages];
         return { ...body, input: messages, stream: true };
       }
       messages = [
@@ -1862,6 +1903,19 @@ export async function fetchOpenAiTextStreaming(
     toolCardsCreatedInStream: false,
     finishReasoningOnFinal: false,
     exhaustedError: "Too many consecutive tool calls without final assistant content",
+    // steering 注入(用户问题②):user turn 追加进请求体消息序列。Responses 形态的
+    // input 条目用 {role:"user",content} 通用形状(官方 Responses 接受简写),chat
+    // completions 形态走 messages——两种形态都在工具结果之后,与 Codex pending_input
+    // 的排水位对齐。
+    appendSteeringUserTurns: (requestBody, texts) => {
+      const userTurns = texts.map((text) => ({ role: "user", content: text }));
+      if (useResponseInput) {
+        const input = [...(Array.isArray(requestBody.input) ? requestBody.input : []), ...userTurns];
+        return { ...requestBody, input };
+      }
+      const messagesArr = [...(Array.isArray(requestBody.messages) ? requestBody.messages : []), ...userTurns];
+      return { ...requestBody, messages: messagesArr };
+    },
     // 专题9:助手关闭"流式输出"时的整程非流式(与下方降级用同一改造)。
     makeNonStreamBody: (requestBody) => ({ ...requestBody, stream: false, stream_options: undefined }),
     nonStreamFallback: {

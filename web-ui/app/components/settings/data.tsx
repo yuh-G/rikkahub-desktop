@@ -22,11 +22,12 @@ import { Separator } from "~/components/ui/separator";
 import { Switch } from "~/components/ui/switch";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { cn } from "~/lib/utils";
-import api, { appendWebAuthQuery } from "~/services/api";
+import api, { appendWebAuthQuery, clearWebAuthToken, fetchWebAuthStatus, requestWebAuthToken, setWebPassword, type WebAuthStatus } from "~/services/api";
 import { isTauriEnvironment } from "~/lib/system-info";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { S3Config, Settings, WebDavConfig } from "~/types";
 import { SectionHeader } from "~/components/settings/shared";
+import { PasswordInput } from "~/components/settings/shared";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 
 interface S3BackupItem {
@@ -139,6 +140,50 @@ export function DataSection({
     percent: number;
   } | null>(null);
   const [showS3Secret, setShowS3Secret] = React.useState(false);
+
+  // —— 访问密码(P1):状态经独立端点 /api/web-auth/status(只回布尔,不含哈希)。——
+  const [webAuthStatus, setWebAuthStatus] = React.useState<WebAuthStatus | null>(null);
+  const [webPwCurrent, setWebPwCurrent] = React.useState("");
+  const [webPwNew, setWebPwNew] = React.useState("");
+  const [webPwBusy, setWebPwBusy] = React.useState(false);
+  const refreshWebAuthStatus = React.useCallback(async () => {
+    try {
+      setWebAuthStatus(await fetchWebAuthStatus());
+    } catch {
+      // 状态探测失败(网络抖动)→ 保持现状,密码表单按已有 settings.webServerJwtEnabled 兜底显示。
+    }
+  }, []);
+  React.useEffect(() => {
+    void refreshWebAuthStatus();
+  }, [refreshWebAuthStatus]);
+  const webAuthConfigured = webAuthStatus?.configured ?? settings.webServerJwtEnabled === true;
+  const submitWebPassword = React.useCallback(
+    async (clear: boolean) => {
+      if (webPwBusy) return;
+      setWebPwBusy(true);
+      try {
+        await setWebPassword({
+          currentPassword: webAuthConfigured ? webPwCurrent : undefined,
+          newPassword: clear ? "" : webPwNew,
+        });
+        // 改/设密码后旧 token 已失效:立刻用新密码换发,避免下次请求 401 弹登录墙的假锁定。
+        // 清密码则清掉本地 token。
+        if (clear) clearWebAuthToken();
+        else await requestWebAuthToken(webPwNew);
+        setWebPwCurrent("");
+        setWebPwNew("");
+        await refreshWebAuthStatus();
+        onSettings({ ...settings, webServerJwtEnabled: !clear });
+        toast.success(t(clear ? "settings:data.web_password_cleared" : "settings:data.web_password_saved"));
+      } catch (error) {
+        toast.error((error as Error).message || t("settings:data.web_password_failed"));
+      } finally {
+        setWebPwBusy(false);
+      }
+    },
+    [webPwBusy, webAuthConfigured, webPwCurrent, webPwNew, refreshWebAuthStatus, onSettings, settings, t],
+  );
+
   const s3Autosave = useAutosaveDraft(
     async () => {
       const result = await api.post<{ config: S3Config }>("data/s3/config", s3Draft);
@@ -929,16 +974,93 @@ export function DataSection({
           <div className="mt-1 text-xs text-muted-foreground">
             {t("settings:data.chat_files_desc")}
           </div>
+          {/* B2:云端(WebDAV/S3)流式恢复无导入结果卡,把后端结构化降级报告
+              (settings.lastRestoreReport,经设置 SSE 推送)在此展示——「成功但跳过/降级了 N 项」可见。 */}
+          {settings.lastRestoreReport ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs dark:border-amber-800 dark:bg-amber-950">
+              <div className="font-medium">
+                {t("settings:data.restore_report_title")} ·{" "}
+                {new Date(settings.lastRestoreReport.finishedAt).toLocaleString()}
+              </div>
+              <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-muted-foreground">
+                {settings.lastRestoreReport.dbReadError ? (
+                  <li className="text-amber-700 dark:text-amber-300">
+                    {t("settings:data.restore_report_db_error", { error: settings.lastRestoreReport.dbReadError })}
+                  </li>
+                ) : null}
+                {settings.lastRestoreReport.messageNodesUnreadable > 0 ? (
+                  <li className="text-amber-700 dark:text-amber-300">
+                    {t("settings:data.restore_report_nodes_skipped", { count: settings.lastRestoreReport.messageNodesUnreadable })}
+                  </li>
+                ) : null}
+                {settings.lastRestoreReport.filesDeduped > 0 ? (
+                  <li>{t("settings:data.restore_report_files_deduped", { count: settings.lastRestoreReport.filesDeduped })}</li>
+                ) : null}
+                {!settings.lastRestoreReport.dbReadError &&
+                settings.lastRestoreReport.messageNodesUnreadable === 0 &&
+                settings.lastRestoreReport.filesDeduped === 0 ? (
+                  <li>{t("settings:data.restore_report_ok")}</li>
+                ) : null}
+              </ul>
+            </div>
+          ) : null}
         </div>
         <div className="rounded-lg border bg-card p-4">
           <div className="text-sm font-medium">{t("settings:data.web_service_title")}</div>
           <div className="mt-1 text-xs text-muted-foreground">
             {t("settings:data.web_service_desc", {
-              status: settings.webServerJwtEnabled
+              status: webAuthConfigured
                 ? t("settings:data.enabled")
                 : t("settings:data.disabled"),
             })}
           </div>
+          {/* 访问密码(P1):对外暴露(Docker/反代)时必备。部署者锁定(argv/env)时只读提示;
+              否则就地设/改/清。密码存派生哈希,这里只见布尔状态。 */}
+          {webAuthStatus?.lockedByDeployment ? (
+            <div className="mt-3 text-xs text-muted-foreground">
+              {t("settings:data.web_password_locked")}
+            </div>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {webAuthConfigured ? (
+                <PasswordInput
+                  value={webPwCurrent}
+                  onChange={setWebPwCurrent}
+                  placeholder={t("settings:data.web_password_current")}
+                />
+              ) : null}
+              <PasswordInput
+                value={webPwNew}
+                onChange={setWebPwNew}
+                placeholder={
+                  webAuthConfigured
+                    ? t("settings:data.web_password_new")
+                    : t("settings:data.web_password_set")
+                }
+              />
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  disabled={webPwBusy || (webAuthConfigured ? !webPwCurrent || !webPwNew : !webPwNew)}
+                  onClick={() => void submitWebPassword(false)}
+                >
+                  {webAuthConfigured
+                    ? t("settings:data.web_password_change")
+                    : t("settings:data.web_password_set_action")}
+                </Button>
+                {webAuthConfigured ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={webPwBusy || !webPwCurrent}
+                    onClick={() => void submitWebPassword(true)}
+                  >
+                    {t("settings:data.web_password_clear")}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          )}
         </div>
         <div className="rounded-lg border bg-card p-4 md:col-span-2">
           <div className="flex items-center justify-between gap-3">

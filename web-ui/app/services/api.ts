@@ -344,6 +344,26 @@ export async function requestWebAuthToken(password: string): Promise<WebAuthToke
   return response;
 }
 
+// —— 设置页内置访问密码(P1)——
+// 状态端点只回布尔(不含哈希),供暴露横幅与设置页状态卡;改密走 settings/web-password。
+export interface WebAuthStatus {
+  enabled: boolean;
+  configured: boolean;
+  lockedByDeployment: boolean;
+}
+
+export async function fetchWebAuthStatus(): Promise<WebAuthStatus> {
+  return api.get<WebAuthStatus>("web-auth/status");
+}
+
+/** 设/改/清访问密码。newPassword 空串=清除;已设密码须带 currentPassword。 */
+export async function setWebPassword(input: {
+  currentPassword?: string;
+  newPassword: string;
+}): Promise<{ status: string; configured: boolean }> {
+  return api.post("settings/web-password", input);
+}
+
 /**
  * 代码块"在浏览器中打开"(桌面壳专用):后端把代码落盘为临时文件,并用系统默认
  * 程序打开(.html → 默认浏览器)。桌面壳的 WebView2 会吞掉 window.open(blob:),

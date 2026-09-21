@@ -15,6 +15,7 @@ import { memoryStore } from "../memory";
 import { runScrapeWeb, runSearchWeb } from "../search";
 import { callMcpTool, resolveMcpToolServer } from "./mcp";
 import { ensureFreshMcpToken } from "./mcp-oauth";
+import { mcpToolFailureError } from "./mcp-health";
 import { runAskUserTool, runClipboardTool, runGetTimeInfoTool, runTextToSpeechTool } from "./local";
 import { readSkillBody, safeSkillFile } from "./skills";
 import { isWorkspaceToolName } from "../workspace/approval";
@@ -130,7 +131,16 @@ export async function executeToolCall(
     // state,后续取 state.settings.mcpServers 即最新。
     const target = resolveMcpToolServer(assistant, name, state.settings.mcpServers);
     if (target) await ensureFreshMcpToken(target.server);
-    return callMcpTool(assistant, name, args, state.settings.mcpServers, addLog);
+    try {
+      return await callMcpTool(assistant, name, args, state.settings.mcpServers, addLog);
+    } catch (err) {
+      // 决策④(7.2):MCP 失败把开发者向报错升级为机器可读的【结构化诊断】再回灌——模型靠
+      // kind/retryable/action 一眼分清"可自救(重试/换工具)"还是"不可自救(告知用户)",
+      // 不再对授权过期等救不活的故障死磕烧轮次。原始 exception 保留在 cause 尾部备查。
+      // 错误仍走 toolExecutionErrorPayload 的 {error} 字符串契约,只是内容换成诊断文本——
+      // 契约零变更,UI 失败卡与消息回放层不受影响。诊断抛出的同时喂给 Supervisor 记账。
+      throw mcpToolFailureError(target?.server ?? null, name, err);
+    }
   }
   throw new Error(`Unknown tool: ${name}`);
 }

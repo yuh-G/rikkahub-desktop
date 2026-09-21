@@ -1,7 +1,16 @@
 // inference-engine/events.ts — 生成事件流与工具执行接口
 // 纪律：本文件只定义类型与回调契约，不写具体实现，避免被 server.ts 的细节污染。
 
-import type { JsonValue, Message, StreamHooks, ToolApprovalState, ToolOutputEntry } from "../foundation/types";
+import type { JsonValue, Message, MessageNode, StreamHooks, ToolApprovalState, ToolOutputEntry } from "../foundation/types";
+
+/** 本次生成的流式落点(活视图)。steer 边界分裂会把落点换到新开的 continuation 节点,
+ *  因此所有消费方(事件应用器 / 工具循环的 hooks / 引擎桥)必须在每次使用时现读
+ *  node/message,绝不能在闭包创建时解构缓存——缓存一次就等于永远写旧节点。
+ *  协调器持有可换绑的实现(GenerationSession),引擎只见这个只读面。 */
+export interface GenerationTarget {
+  readonly node: MessageNode;
+  readonly message: Message;
+}
 
 /** 生成过程中产生的单个事件。协调器（generateAnswer）根据这些事件更新消息、
  *  持久化状态和广播 SSE；推理引擎本身不直接执行副作用。 */
@@ -20,7 +29,10 @@ export type GenerationEvent =
   // 审批态上调同步:流内建卡(参数未到)给的是无参数下界,批内预扫描参数齐备后
   // 若终局为 pending,循环层发此事件把卡从 auto 上调(带缘由)。只升不降。
   | { kind: "tool_approval_updated"; toolCallId: string; approvalState: ToolApprovalState }
-  | { kind: "tool_result"; toolCallId: string; output: ToolOutputEntry[] }
+  // final 区分终局与 partial:partial(bash 流式中间帧/tool_execution_update 快照)只
+  // 刷新 output;终局(缺省视为终局,兼容旧发射点)才落 metadata.toolFinishedAt——
+  // issue #59 的每工具计时终点。pending 哨兵(ask_user 暂停)不是终局,标记 partial。
+  | { kind: "tool_result"; toolCallId: string; output: ToolOutputEntry[]; final?: boolean }
   | { kind: "usage"; usage: Message["usage"] }
   // 引擎会话状态(P5):压缩中/自动重试中等瞬态提示。不落库不产 part,
   // 协调器直通 SSE 给前端状态条;busy=false 即清除。detail 是给状态条的展示参数。
@@ -133,6 +145,11 @@ export type ToolExecutor = (toolCall: ToolCall, context?: ToolContext) => Promis
 export type StreamHooksWithSink = StreamHooks & {
   sink?: GenerationEventSink;
   executeTool?: ToolExecutor;
+  /** steering 轮边界(用户问题②,对齐 Codex pending_input):工具批执行完、下一轮模型
+   *  请求构建前由循环骨架调用。协调器实现 = 从 steering 通道排水仍有效的排队消息,
+   *  落库 user 节点 + 通知 FIFO 队列移除,返回各消息的文本数组(空数组 = 无注入)。
+   *  引擎只拿文本编码进请求体,落库/队列/广播全在协调器——副作用不进引擎层。 */
+  onSteerBoundary?: () => string[];
 };
 
 /** 工具调度上下文：在工具执行回调外再包一层 executeTool 引用，

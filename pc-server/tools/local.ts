@@ -4,6 +4,7 @@
 import { formatKeyLocal } from "../foundation/utils";
 import type { JsonValue } from "../foundation/types";
 import { readSystemClipboardText, writeSystemClipboardText, speakSystemText } from "./platform";
+import { buildAskUserPending } from "./ask-user";
 
 export function runGetTimeInfoTool() {
   const now = new Date();
@@ -42,9 +43,9 @@ export async function runTextToSpeechTool(args: Record<string, JsonValue>) {
 }
 
 export function runAskUserTool(args: Record<string, JsonValue>) {
-  return {
-    pending: true,
-    questions: Array.isArray(args.questions) ? args.questions : [],
-    note: "The question has been shown in the conversation. Wait for the user answer before continuing.",
-  };
+  // 归一化(题数钳制/selection_type 校验)在共享模块;失败抛错由 execution 转 tool_result
+  // 回灌模型重试,而不是静默挂一张空卡。
+  const pending = buildAskUserPending(args);
+  if ("error" in pending) throw new Error(pending.error);
+  return pending;
 }

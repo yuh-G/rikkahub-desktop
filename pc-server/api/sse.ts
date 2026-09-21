@@ -8,6 +8,7 @@ import { initAppErrorBroadcast } from "../observability/app-errors";
 import type { Conversation, ConversationListInvalidateEventDto, ConversationNodeUpdateEventDto, ConversationSnapshotEventDto, ConversationTextDeltaEventDto, EngineStatusEventDto, JsonValue, MessageNode } from "../foundation/types";
 import { diffFingerprints, fingerprintNode, type NodeBroadcastFingerprint } from "./node-delta";
 import { conversationNegotiationToken } from "./snapshot-negotiation";
+import { stripAuthSecrets } from "./auth";
 import { nodeStamp, toSnapshotConversationDto } from "./snapshot-window";
 import { state } from "../persistence/json-store";
 import { sseHeaders } from "./request";
@@ -179,7 +180,8 @@ export function openSse(
 }
 
 export function broadcastSettings() {
-  broadcastTo(appClients, sseFrame("settings", state.settings));
+  // 剥认证敏感字段(webPasswordHash):SSE 是下发前端的暴露面,与 settings GET 同一净化纪律。
+  broadcastTo(appClients, sseFrame("settings", stripAuthSecrets(state.settings)));
 }
 
 // memory 事件(1.3.2):推送 MemorySnapshot 给前端记忆管理 UI + 待确认徽章。与 settings
@@ -187,6 +189,21 @@ export function broadcastSettings() {
 // §10.3)。触发时机:任何记忆增删改 / pending 入队/解决。
 export function broadcastMemoryUpdate() {
   broadcastTo(appClients, sseFrame("memory", memoryStore.getSnapshot()));
+}
+
+// mcp_health 事件(7.2):推送 MCP 连接健康快照(McpHealthSnapshot)给前端设置页状态灯。
+// 与 settings 分开——健康是内存态运行时数据,不属于配置(混入会让每次探活触发全量
+// settings 重渲染 + saveState 全量落盘)。快照由 mcp-health Supervisor 注入(见 initSseWiring
+// 同款注入模式),避免 sse → tools/mcp-health 的反向依赖。
+let mcpHealthSnapshotProvider: () => JsonValue = () => ({});
+export function initMcpHealthBroadcast(provider: () => JsonValue): void {
+  mcpHealthSnapshotProvider = provider;
+}
+export function broadcastMcpHealth() {
+  broadcastTo(appClients, sseFrame("mcp_health", mcpHealthSnapshotProvider()));
+}
+export function mcpHealthSnapshotFrame(): [string, JsonValue | object] {
+  return ["mcp_health", mcpHealthSnapshotProvider()];
 }
 
 export function broadcastList() {

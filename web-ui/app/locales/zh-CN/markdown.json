@@ -11,5 +11,8 @@
     "open_failed": "打开失败",
     "download_code": "下载代码",
     "downloaded_toast": "已下载至\"下载\"文件夹：{{name}}"
+  },
+  "table": {
+    "copy": "复制表格"
   }
 }

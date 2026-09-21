@@ -4,11 +4,20 @@
 
 import { gunzipSync, gzipSync } from "node:zlib";
 import type { AsrProvider, AsrRealtimeSession } from "../foundation/types";
+import { PC_KNOWN_ASR_TYPES } from "../foundation/types";
 import { id, isRecord } from "../foundation/utils";
 import { fetchWithTimeout, resolveEffectiveProxy, shouldBypassProxy } from "../foundation/net";
 import { state } from "../persistence/json-store";
 import { textBody } from "../model-providers";
 import { addLog } from "../api/logs";
+import { reportError } from "../observability/app-errors";
+
+/** 桌面端「认识且能跑」的 ASR 类型守卫(单一判定入口)。mimo/step 等 APP 独家类型
+ *  返回 false——存储层必须原样保留它们的判别符(见 normalizeAsrProviders),消费点靠
+ *  本守卫显式拒绝/兜底,绝不静默当别家跑。 */
+export function isPcKnownAsrType(type: unknown): boolean {
+  return (PC_KNOWN_ASR_TYPES as readonly string[]).includes(String(type));
+}
 
 export function defaultAsrProvider(type: AsrProvider["type"] = "openai_realtime"): AsrProvider {
   if (type === "dashscope") {
@@ -54,21 +63,32 @@ export function defaultAsrProvider(type: AsrProvider["type"] = "openai_realtime"
 
 export function normalizeAsrProviders(value: unknown): AsrProvider[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .filter(isRecord)
+  const records = value.filter(isRecord);
+  // backup C4/B2 联动:存在「本端未实现、跨端保留」的类型时上报一次(warn),让用户在错误中心
+  // 看到「这个语音识别服务来自移动端,桌面端暂不支持」——保留 ≠ 静默(30s 风暴合并防刷屏)。
+  const preservedTypes = [...new Set(records.map((i) => String(i.type ?? "")).filter((t) => t && !isPcKnownAsrType(t)))];
+  if (preservedTypes.length > 0) {
+    reportError("media", "warn", `检测到 ${preservedTypes.length} 类来自移动端的语音识别服务，桌面端暂不支持，已原样保留以便回传：${preservedTypes.join("、")}`, undefined, "voice_provider_preserved", { kind: "asr", types: preservedTypes.join(",") });
+  }
+  return records
     .map((item) => {
-      const type = ["dashscope", "volcengine", "openai_realtime"].includes(String(item.type))
-        ? String(item.type) as AsrProvider["type"]
-        : "openai_realtime";
-      const base = defaultAsrProvider(type);
+      const rawType = String(item.type ?? "");
+      // 跨端往返保真(backup C4):APP 有 5 家 ASR(openai_realtime/dashscope/volcengine/
+      // mimo/step),桌面端只实现前 3 家。mimo/step 在存储层必须原样保留 type——若在此收敛成
+      // openai_realtime,用户精心配的 MiMo/阶跃 ASR 会在 APP→PC→APP 往返里被无声没收(这正是
+      // "导入了一点反应都没有"的实锤之一)。保留后消费点显式降级(见 isPcKnownAsrType 守卫)。
+      const type = isPcKnownAsrType(rawType) ? rawType : rawType || "openai_realtime";
+      // 本端认识的类型套默认模板补全缺省字段;不认识的类型不套模板(避免 openai 默认
+      // websocketUrl/model 污染),仅补 ASR 必填骨架,其余字段原样透传待 APP 取回。
+      const base = isPcKnownAsrType(type) ? defaultAsrProvider(type) : null;
       return {
         ...base,
         ...item,
         type,
-        id: String(item.id ?? base.id),
-        name: String(item.name ?? base.name),
+        id: String(item.id ?? base?.id ?? id()),
+        name: String(item.name ?? base?.name ?? type),
         apiKey: String(item.apiKey ?? ""),
-        websocketUrl: String(item.websocketUrl ?? base.websocketUrl),
+        websocketUrl: String(item.websocketUrl ?? base?.websocketUrl ?? ""),
       };
     });
 }
@@ -95,6 +115,11 @@ function openAiAsrTranscriptionEndpoint(provider: AsrProvider) {
 export async function transcribeAudioWithAsrProvider(file: File) {
   const provider = selectedAsrProvider();
   if (!provider) throw new Error("No ASR provider configured");
+  // 消费点降级(backup C4):mimo/step 等桌面端未实现的类型在存储层被原样保留(见
+  // normalizeAsrProviders),这里显式拒绝并告知,绝不能落进 else 分支当 volcengine 跑。
+  if (!isPcKnownAsrType(provider.type)) {
+    throw new Error(`当前桌面端尚不支持「${provider.name}」(${provider.type})语音识别——该配置来自移动端，请改用 OpenAI / DashScope / 火山引擎，或在移动端使用`);
+  }
   if (!provider.apiKey.trim()) throw new Error("ASR API Key is empty");
   const endpoint = provider.type === "openai_realtime"
     ? openAiAsrTranscriptionEndpoint(provider)
@@ -178,6 +203,16 @@ function asrPublishTranscript(session: AsrRealtimeSession) {
     .filter((text) => text.trim().length > 0)
     .join(" ");
   asrSendClient(session, { type: "transcript", transcript });
+}
+
+/** 服务端 VAD 判停信号(语音模式专用):一句话说完、转写定稿时推一次。携带该句最终文本,
+ *  前端据此收尾当前 utterance 并触发发送。去抖——同一句只推一次(Volcengine definite 会随
+ *  累积全文重复到达;OpenAI/DashScope completed 本就一次)。 */
+function asrSendTurnEnd(session: AsrRealtimeSession, text: string) {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed === session.lastTurnEndText) return;
+  session.lastTurnEndText = trimmed;
+  asrSendClient(session, { type: "turn_end", transcript: trimmed });
 }
 
 function asrFail(session: AsrRealtimeSession, message: string) {
@@ -281,6 +316,8 @@ function handleTextAsrEvent(session: AsrRealtimeSession, text: string) {
       session.partialTranscripts.delete(itemId);
       if (transcript) session.completedTranscripts.push(transcript);
       asrPublishTranscript(session);
+      // 一句话定稿 = 服务端 VAD 判停;通知语音模式收尾(听写模式忽略此消息)。
+      if (transcript) asrSendTurnEnd(session, transcript);
       break;
     }
     case "error": {
@@ -347,6 +384,15 @@ function handleVolcAsrEvent(session: AsrRealtimeSession, data: ArrayBuffer) {
       session.lastText = text;
       asrSendClient(session, { type: "transcript", transcript: text });
     }
+    // 火山 VAD 判停:utterances[*].definite=true 表示该句经二遍纠错定稿。取定稿句文本推 turn_end;
+    // definite 句会随累积全文重复到达,靠 asrSendTurnEnd 的去抖(lastTurnEndText)只推一次。
+    const utterances = (raw.result?.utterances ?? []) as Array<Record<string, any>>;
+    const definiteText = utterances
+      .filter((u) => u?.definite === true)
+      .map((u) => String(u?.text ?? ""))
+      .join("")
+      .trim();
+    if (definiteText) asrSendTurnEnd(session, definiteText);
   } else if (messageType === 0x0f) {
     if (offset + 8 > buffer.length) return;
     offset += 4;
@@ -384,6 +430,12 @@ export function startAsrRealtimeSession(client: any, providerId?: string) {
     client.send(JSON.stringify({ type: "error", error: "ASR API Key is empty" }));
     return;
   }
+  // 消费点降级(backup C4):未实现的跨端类型(mimo/step 等)显式拒绝,不落进下方
+  // else 分支被当 volcengine 端点连上错误的 WebSocket。
+  if (!isPcKnownAsrType(provider.type)) {
+    client.send(JSON.stringify({ type: "error", error: `当前桌面端尚不支持「${provider.name}」(${provider.type})语音识别，请在移动端使用` }));
+    return;
+  }
   const endpoint = provider.type === "openai_realtime"
     ? openAiAsrEndpoint(provider)
     : provider.type === "dashscope"
@@ -401,6 +453,7 @@ export function startAsrRealtimeSession(client: any, providerId?: string) {
     finished: false,
     startedAt: Date.now(),
     volcSequence: 1,
+    lastTurnEndText: "",
   };
   asrRealtimeSessions.set(client, session);
   const headers: Record<string, string> = provider.type === "volcengine"

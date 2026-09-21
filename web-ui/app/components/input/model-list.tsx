@@ -236,7 +236,11 @@ export function ModelListImpl({ disabled = false, className, onChanged }: ModelL
           variant="ghost"
           size="sm"
           className={cn(
-            "ds-icon-inherit rounded-full px-0 text-compact font-medium text-[var(--ds-icon)] hover:text-foreground sm:h-8 sm:max-w-64 sm:justify-start sm:gap-1.5 sm:px-2.5",
+            // 容器查询而非视口断点:按输入卡实际宽度分级让位——视口断点在分栏下永远判"宽",
+            // 标签撑爆工具条造成元素重叠(issue:分栏排版挤在一起)。
+            // 分级:<42rem(典型分栏窗格)收起推理档与箭头、模型名限宽;<24rem(极窄)只留图标。
+            // 模型名是工具条里最该保住的信息,故它最后一个才让位。
+            "ds-icon-inherit h-8 max-w-64 shrink justify-start gap-1.5 rounded-full px-2.5 text-compact font-medium text-[var(--ds-icon)] hover:text-foreground @max-2xl/composer:max-w-32 @max-sm/composer:max-w-none @max-sm/composer:gap-0 @max-sm/composer:px-0",
             className,
           )}
           disabled={disabled || !currentAssistant}
@@ -247,15 +251,15 @@ export function ModelListImpl({ disabled = false, className, onChanged }: ModelL
             className="bg-transparent"
             imageClassName="h-full w-full"
           />
-          <span className="hidden min-w-0 flex-1 truncate text-left sm:block">
+          <span className="min-w-0 flex-1 truncate text-left @max-sm/composer:hidden">
             {currentModelLabel}
           </span>
           {reasoningLabel ? (
-            <span className="hidden shrink-0 font-normal text-[var(--ds-text-tertiary)] sm:block">
+            <span className="shrink-0 font-normal text-[var(--ds-text-tertiary)] @max-2xl/composer:hidden">
               {reasoningLabel}
             </span>
           ) : null}
-          <ChevronDown className="hidden size-3 shrink-0 sm:block" />
+          <ChevronDown className="size-3 shrink-0 @max-2xl/composer:hidden" />
         </Button>
       </DropdownMenuTrigger>
 

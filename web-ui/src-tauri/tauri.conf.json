@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Rikkahub",
-  "version": "2.0.0-preview-v2",
+  "version": "2.0.0-preview-v3",
   "identifier": "com.rikkahub.pc",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -15,7 +15,7 @@
         "label": "main",
         "visible": false,
         "title": "RikkaHub",
-        "url": "http://localhost:8080",
+        "url": "splash.html",
         "width": 1280,
         "height": 840,
         "minWidth": 880,

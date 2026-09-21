@@ -7,6 +7,11 @@ import { extname, join } from "node:path";
 import { Database } from "bun:sqlite";
 import type { JsonValue } from "../foundation/types";
 import type { Settings } from "../foundation/types/settings";
+import {
+  ANDROID_ASR_PROVIDER_TYPES,
+  ANDROID_MESSAGE_PART_TYPES,
+  ANDROID_TTS_PROVIDER_TYPES,
+} from "../foundation/types/android-contract";
 import { isRecord, safeJsonStringify } from "../foundation/utils";
 import { dataDir, filesDir, skillsDir } from "../foundation/paths";
 import { isWindowsReservedName } from "../foundation/windows-names";
@@ -14,7 +19,7 @@ import { reportError } from "../observability/app-errors";
 import { tempDir } from "../foundation/platform";
 import { state } from "../persistence/json-store";
 import { GLOBAL_MEMORY_ID, memoryStore } from "../memory/index";
-import { DEFAULT_ASSISTANT_ID, exportPcConversationsDump, flushConvDirtyNow, getConversationsDb, loadConversationNodesFromDb } from "../conversations";
+import { DEFAULT_ASSISTANT_ID, collectConversationReferencedFileIds, exportPcConversationsDump, flushConvDirtyNow, getConversationsDb, loadConversationNodesFromDb } from "../conversations";
 import { listAllConversationMetas } from "../conversations/read-queries";
 import { collectPcFileRefs, hashFileSha256 } from "./file-refs";
 import { createZipFromDirectory } from "./zip";
@@ -195,6 +200,9 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     delete copy.proxyConfig;
     delete copy.preferredPort;
     delete copy.keybindings;
+    // webPasswordHash 是 PC-only 敏感字段(访问密码派生哈希):APP 无此概念,且敏感值不该
+    // 进跨端备份。pc-backup(PC→PC)不剥,跨机恢复带上(见 api/auth.ts)。
+    delete copy.webPasswordHash;
     // shellPath 是机器级 bash 绝对路径,PC→APP/跨机恢复无意义;带到目标机反而因路径不存在
     // 锁死 bash(getShellConfig 对不存在的 customShellPath 抛错),故剥离,目标机走自动探测。
     delete copy.shellPath;
@@ -212,8 +220,38 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
         }
       }
     }
+    // C3:TTS/ASR provider 白名单清洗——type 不在 vendored 安卓全集内的整体滤掉(否则撑爆旧 APP
+    // 的 TTSProviderSetting/ASRProviderSetting 多态解码 = settings 恢复整体失败)。当前两端逐字对齐
+    // 不会滤掉任何值;这是面向「PC 未来先加、APP 未跟上」的纵深。选中 id 随之重定位到首个幸存项。
+    if (Array.isArray(copy.ttsProviders)) {
+      const before = copy.ttsProviders;
+      const kept = filterTtsProvidersForAndroid(before);
+      if (kept.length !== before.length) {
+        copy.ttsProviders = kept;
+        const sel = String(copy.selectedTTSProviderId ?? "");
+        copy.selectedTTSProviderId = kept.some((p) => isRecord(p) && String(p.id) === sel)
+          ? sel
+          : (isRecord(kept[0]) ? String(kept[0].id ?? "") : "");
+      }
+    }
+    if (Array.isArray(copy.asrProviders)) {
+      const before = copy.asrProviders;
+      const kept = filterAsrProvidersForAndroid(before);
+      if (kept.length !== before.length) {
+        copy.asrProviders = kept;
+        const sel = String(copy.selectedASRProviderId ?? "");
+        copy.selectedASRProviderId = kept.some((p) => isRecord(p) && String(p.id) === sel)
+          ? sel
+          : (isRecord(kept[0]) ? String(kept[0].id ?? "") : "");
+      }
+    }
+    // 快速模型收敛:PC 内部统一用 fastModelId(对齐 APP)。导出前清掉 2.4.16 之前残留的
+    // titleModelId / suggestionModelId——新版 Android 的 Settings 数据类已删除这两个字段,
+    // 发未知键会被其序列化器拒收(state-load 正常路径已删,这里兜备份合并等异常残留)。
+    delete copy.titleModelId;
+    delete copy.suggestionModelId;
     // Fix empty-string UUID fields — Android's Uuid deserializer rejects ""
-    const uuidFields = ["chatModelId", "titleModelId", "translateModeId", "suggestionModelId", "imageGenerationModelId", "ocrModelId", "compressModelId", "assistantId", "selectedTTSProviderId", "selectedASRProviderId"];
+    const uuidFields = ["chatModelId", "fastModelId", "translateModeId", "imageGenerationModelId", "ocrModelId", "compressModelId", "assistantId", "selectedTTSProviderId", "selectedASRProviderId"];
     for (const field of uuidFields) {
       if (field in copy && (copy[field] === "" || copy[field] === null || copy[field] === undefined)) {
         copy[field] = crypto.randomUUID();
@@ -257,19 +295,44 @@ export function filterSearchServicesForAndroid(
   return { services: kept, selectedIndex: idx >= 0 ? idx : 0 };
 }
 
-/** A-3:导出方向的消息 part 清洗,策略与注解一致——带字符串判别符且非 PC-only 才保留
- *  (缺判别符的脏对象同样会让安卓多态解码即炸)。 */
+/** C3 降级兜底:把「安卓不认识」的消息 part 降级为占位 text part,而非原样硬发(硬发会让旧版
+ *  APP 的 UIMessagePart 多态解码抛 SerializationException = 会话永久打不开)。保留原始类型名
+ *  + 可读摘要,让用户在移动端至少看到「此处有一段桌面端新功能内容」。 */
+export function downgradeUnknownPartForAndroid(part: Record<string, unknown>): Record<string, unknown> {
+  const type = String(part.type ?? "unknown");
+  const summary =
+    typeof part.text === "string" && part.text.trim() ? part.text
+    : typeof (part as { reasoning?: unknown }).reasoning === "string" && String((part as { reasoning?: unknown }).reasoning).trim() ? String((part as { reasoning?: unknown }).reasoning)
+    : typeof part.toolName === "string" ? `[工具调用 ${part.toolName}]`
+    : typeof part.url === "string" ? `[附件 ${part.url}]`
+    : "";
+  return { type: "text", text: `[此内容(${type})暂不支持移动端显示]${summary ? `\n${summary}` : ""}` };
+}
+
+/** A-3 + C3:导出方向的消息 part 清洗——「黑名单删除 + 白名单降级」双闸。
+ *  ① PC-only 黑名单(loading 占位):删除,无信息量。
+ *  ② 缺判别符的脏对象:删除(安卓多态解码即炸)。
+ *  ③ 不在 vendored 安卓全集内的未知判别符:降级为占位 text part(C3 纵深——即便哨兵 C1 漏网、
+ *     PC 先于 APP 产出新 part,也绝不让未知值硬发出去)。安卓已知类型原样透传。 */
 export function filterMessagePartsForAndroid(
   parts: unknown[],
   pcOnlyTypes: ReadonlySet<string> = PC_ONLY_MESSAGE_PART_TYPES,
+  counter?: { downgraded: number },
 ): unknown[] {
-  return parts.filter((p) => isRecord(p) && typeof p.type === "string" && !pcOnlyTypes.has(p.type));
+  return parts
+    .filter((p) => isRecord(p) && typeof p.type === "string" && !pcOnlyTypes.has(p.type))
+    .map((p) => {
+      if (ANDROID_MESSAGE_PART_TYPES.has(String((p as Record<string, unknown>).type))) return p;
+      if (counter) counter.downgraded += 1;
+      return downgradeUnknownPartForAndroid(p as Record<string, unknown>);
+    });
 }
 
 /** PC-only 消息注解判别符(安卓 UIMessageAnnotation 只有 url_citation;PC 生成失败时
  *  写入的 model_call_error 若流入安卓即"会话打不开")。pi-fidelity 是 P7 引擎消息
- *  保真注解(块结构/思维链签名),纯 PC 工作区语义,同样不得流入安卓。 */
-export const PC_ONLY_ANNOTATION_TYPES: ReadonlySet<string> = new Set(["model_call_error", "pi-fidelity", "compaction_boundary"]);
+ *  保真注解(块结构/思维链签名),纯 PC 工作区语义,同样不得流入安卓。steered 是
+ *  steer 插话用户消息的轻量标注(仅 PC 用于将来可选 UI 标记),同样不得流入安卓。 */
+export const PC_ONLY_ANNOTATION_TYPES: ReadonlySet<string> = new Set(["model_call_error", "pi-fidelity", "compaction_boundary", "steered"]);
 
 /** A-2:导出方向的注解清洗。只保留"带字符串判别符且非 PC-only"的注解——缺判别符的
  *  遗留脏对象与 PC-only 类型都会让安卓多态解码即炸;安卓自有/未来新增类型原样透传。 */
@@ -281,6 +344,20 @@ export function filterAnnotationsForAndroid(
   return annotations.filter(
     (a) => isRecord(a) && typeof a.type === "string" && !pcOnlyTypes.has(a.type),
   );
+}
+
+/** C3:导出方向的 TTS provider 清洗——type 不在 vendored 安卓全集内的整体过滤(否则会撑爆
+ *  旧 APP 的 TTSProviderSetting 多态解码 = settings 恢复整体失败)。当前 PC 12 家与安卓逐字对齐,
+ *  实际不会滤掉任何值;这是面向「PC 未来先加、APP 未跟上」的纵深防御。选中 id 由调用方重定位。 */
+export function filterTtsProvidersForAndroid(providers: unknown): unknown[] {
+  if (!Array.isArray(providers)) return [];
+  return providers.filter((p) => isRecord(p) && ANDROID_TTS_PROVIDER_TYPES.has(String(p.type)));
+}
+
+/** C3:ASR provider 同理(ASRProviderSetting 多态解码)。 */
+export function filterAsrProvidersForAndroid(providers: unknown): unknown[] {
+  if (!Array.isArray(providers)) return [];
+  return providers.filter((p) => isRecord(p) && ANDROID_ASR_PROVIDER_TYPES.has(String(p.type)));
 }
 
 /** A-1:把 PC 侧 preset 消息({role, content} 简化形态)转成安卓 UIMessage 形状。
@@ -311,18 +388,27 @@ export function toAndroidPresetMessage(pm: unknown): unknown {
  *    此前逐表重建只搬 PC 认识的数据,APP→PC→APP 一轮往返会清洗掉安卓侧其余数据(T-2)。
  *  - 无模板(纯 PC 用户首次导出):按 vendored 安卓 Room schema v24 全新建库。此前直接
  *    放弃生成,静默产出"安卓导入后没有任何会话"的 zip(T-1)。 */
-function generateRikkaHubDb(dbPath: string, backupNameById?: Map<number, string>): boolean {
+/** 安卓会话库生成的降级统计:C3 白名单把「安卓不认识」的 part 降级成占位 text 时计数,
+ *  由导出端汇成 X-Export-Warnings 透出(B2 联动)——用户必须知道「有内容在移动端会变成
+ *  占位文本」,而不是拿到一份看似完整、实则降级的备份。 */
+export interface AndroidDbBuildResult {
+  ok: boolean;
+  downgradedParts: number;
+}
+
+function generateRikkaHubDb(dbPath: string, backupNameById?: Map<number, string>): AndroidDbBuildResult {
   try {
     const cachedDbPath = join(dataDir, "rikka_hub_cached.db");
+    const counter = { downgraded: 0 };
     if (existsSync(cachedDbPath)) {
-      buildAndroidDbOnCachedBase(cachedDbPath, dbPath, backupNameById);
+      buildAndroidDbOnCachedBase(cachedDbPath, dbPath, backupNameById, counter);
     } else {
-      buildAndroidDbFromVendoredSchema(dbPath, backupNameById);
+      buildAndroidDbFromVendoredSchema(dbPath, backupNameById, counter);
     }
-    return true;
+    return { ok: true, downgradedParts: counter.downgraded };
   } catch (err) {
     reportError("backup", "error", "安卓会话库生成失败，导出包将不含会话", err, "android_db_export_failed");
-    return false;
+    return { ok: false, downgradedParts: 0 };
   }
 }
 
@@ -348,7 +434,7 @@ const PC_MANAGED_CONVERSATION_COLUMNS = new Set([
  *  归并后把主库文件字节拷入 stage——延迟释放的句柄只挂在临时目录文件上,stage 内的
  *  rikka_hub.db 从头到尾不存在打开的句柄。不用 Database.deserialize 走全内存:cached 库
  *  是 WAL 模式,其镜像 deserialize 后任何访问都报 SQLITE_CANTOPEN(内存库不支持 WAL)。 */
-function buildAndroidDbOnCachedBase(cachedDbPath: string, dbPath: string, backupNameById?: Map<number, string>): void {
+function buildAndroidDbOnCachedBase(cachedDbPath: string, dbPath: string, backupNameById?: Map<number, string>, counter?: { downgraded: number }): void {
   const workPath = join(tempDir(), `rikkahub-android-db-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.db`);
   copyFileSync(cachedDbPath, workPath);
   const db = new Database(workPath);
@@ -373,7 +459,7 @@ function buildAndroidDbOnCachedBase(cachedDbPath: string, dbPath: string, backup
     if (db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='MemoryEntity'").get()) {
       db.exec("DELETE FROM MemoryEntity");
     }
-    insertConversationsIntoDb(db, backupNameById);
+    insertConversationsIntoDb(db, backupNameById, counter);
     insertMemoriesIntoDb(db);
     // ④ 回填安卓自有列(UPDATE 未命中 = 会话已在 PC 删除,自然跳过)。
     if (extraCols.length > 0 && extrasById.size > 0) {
@@ -399,7 +485,7 @@ function buildAndroidDbOnCachedBase(cachedDbPath: string, dbPath: string, backup
  *  app/schemas/…/24.json 的逐字节副本(安卓升级 Room 版本后同步替换并更新文件名);
  *  setupQueries 自带 room_master_table 建表 + identityHash 写入(Room 打开时校验),
  *  android_metadata 由安卓框架管理,这里按惯例补一行 locale。 */
-function buildAndroidDbFromVendoredSchema(dbPath: string, backupNameById?: Map<number, string>): void {
+function buildAndroidDbFromVendoredSchema(dbPath: string, backupNameById?: Map<number, string>, counter?: { downgraded: number }): void {
   const schema = (androidSchemaV24 as {
     database: {
       version: number;
@@ -419,7 +505,7 @@ function buildAndroidDbFromVendoredSchema(dbPath: string, backupNameById?: Map<n
         db.exec(idx.createSql.replaceAll("${TABLE_NAME}", entity.tableName));
       }
     }
-    insertConversationsIntoDb(db, backupNameById);
+    insertConversationsIntoDb(db, backupNameById, counter);
     insertMemoriesIntoDb(db);
     writeFileSync(dbPath, db.serialize());
   } finally {
@@ -482,7 +568,7 @@ export function rewritePcUrlsToAndroidUpload(jsonText: string, backupNameById: M
   });
 }
 
-function insertConversationsIntoDb(db: InstanceType<typeof Database>, backupNameById?: Map<number, string>) {
+function insertConversationsIntoDb(db: InstanceType<typeof Database>, backupNameById?: Map<number, string>, counter?: { downgraded: number }) {
   // 安卓对齐批6:模板列存在时回写 custom_system_prompt(会话级系统提示词),按 PRAGMA
   // 判该列可否为 null。模板较老没有该列时保持 8 列写入,不破坏旧模板兼容。
   const convCols = db.prepare("PRAGMA table_info(ConversationEntity)").all() as { name: string; notnull: number }[];
@@ -540,7 +626,7 @@ function insertConversationsIntoDb(db: InstanceType<typeof Database>, backupName
               id: typeof m.id === "string" && UUID_RE.test(m.id) ? m.id : crypto.randomUUID(),
               role: String(m.role || "user").toLowerCase(),
               // A-3:PC-only part(loading 占位)与缺判别符脏对象过滤,详见助手注释。
-              parts: filterMessagePartsForAndroid(fixParts(m.parts || [])),
+              parts: filterMessagePartsForAndroid(fixParts(m.parts || []), PC_ONLY_MESSAGE_PART_TYPES, counter),
               // A-2:PC-only 注解(model_call_error)与缺判别符脏对象过滤,详见助手注释。
               annotations: filterAnnotationsForAndroid(m.annotations),
               finishedAt: toLocalDt(m.finishedAt) ?? null,
@@ -628,9 +714,9 @@ export function collectReferencedFileIds(): Set<number> {
   }
   const db = getConversationsDb();
   if (db) {
-    for (const row of db.prepare("SELECT messages FROM pc_message_node").all() as { messages: string }[]) {
-      collectPcFileRefs(row.messages, ids);
-    }
+    // B1:消息节点引用收集经 SQL LIKE 预筛(只把含 /api/files/ 的节点搬进 JS 抽取),
+    // 不再把全库 messages 文本搬进 JS 堆——海量会话库的导出峰值从「全库文本」降到「仅命中行」。
+    collectConversationReferencedFileIds(db, ids);
   }
   return ids;
 }
@@ -782,8 +868,12 @@ export function createSettingsBackupZipToPath(targetZipPath: string, onProgress?
       onProgress?.("正在生成对话数据库...");
       const dbPath = join(stageDir, "rikka_hub.db");
       try {
-        const ok = generateRikkaHubDb(dbPath, uploadPlan.backupNameById);
-        if (ok) {
+        const dbResult = generateRikkaHubDb(dbPath, uploadPlan.backupNameById);
+        if (dbResult.ok) {
+          if (dbResult.downgradedParts > 0) {
+            // B2↔C3:有 part 被白名单降级成占位文本——知情透出,不再是「看似完整的降级备份」。
+            warnings.push(`${dbResult.downgradedParts} 段内容移动端暂不支持，已在备份中降级为占位文本`);
+          }
           for (const suffix of ["-wal", "-shm", "-journal"]) {
             const p = dbPath + suffix;
             if (existsSync(p)) try { rmSync(p); } catch { /* */ }

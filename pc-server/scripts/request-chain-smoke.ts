@@ -824,8 +824,7 @@ async function configure(useResponseApi: boolean) {
     method: "POST",
     body: JSON.stringify({
       chatModelId: modelId,
-      titleModelId: modelId,
-      suggestionModelId: "",
+      fastModelId: modelId,
       translateModeId: modelId,
       compressModelId: modelId,
     }),
@@ -836,8 +835,7 @@ async function configure(useResponseApi: boolean) {
       body: JSON.stringify({
         ...current,
         chatModelId: modelId,
-        titleModelId: modelId,
-        suggestionModelId: "",
+        fastModelId: modelId,
         translateModeId: modelId,
         compressModelId: modelId,
       }),
@@ -884,8 +882,7 @@ async function configureImageProvider(providerType: "openai" | "google") {
     method: "POST",
     body: JSON.stringify({
       chatModelId: settings.chatModelId,
-      titleModelId: settings.titleModelId,
-      suggestionModelId: settings.suggestionModelId,
+      fastModelId: settings.fastModelId,
       translateModeId: settings.translateModeId,
       compressModelId: settings.compressModelId,
       ocrModelId: settings.ocrModelId,
@@ -1140,9 +1137,9 @@ async function runTemplateTimeAndSettingsSmoke() {
   const requestText = promptTextFromChatBody(first!);
   assert(requestText.includes("WRAPPED(user): 模板和时间提醒 smoke。"), "message template did not wrap user content");
   assert(requestText.includes("<time_reminder>Current time:"), "time reminder was not injected for first user message");
-  assert(requestText.includes("since last message"), "time reminder did not inject the one-hour gap branch for later user messages");
+  assert(requestText.includes("since last message"), "time reminder did not inject the gap branch for later user messages");
   const reminderCount = (requestText.match(/<time_reminder>/g) ?? []).length;
-  assert(reminderCount === 2, `time reminder should inject exactly first-user and one-hour-gap reminders, got ${reminderCount}`);
+  assert(reminderCount === 2, `time reminder should inject exactly first-user and gap reminders, got ${reminderCount}`);
 
   await api("/api/settings/favorite-models", {
     method: "POST",

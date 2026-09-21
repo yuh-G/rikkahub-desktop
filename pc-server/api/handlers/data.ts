@@ -13,7 +13,7 @@ import { state } from "../../persistence/json-store";
 import { getConversationsDb } from "../../conversations";
 import { countConversations } from "../../conversations/read-queries";
 import { createSettingsBackupZipToPath } from "../../backup/export";
-import { applyAndroidZipBackupFromPath, applyBackupPayload, customJsImportWarning, customJsScriptSignatures } from "../../backup/import";
+import { applyAndroidZipBackupFromPath, applyBackupPayload, buildImportWarnings, customJsImportWarning, customJsScriptSignatures } from "../../backup/import";
 import { normalizeS3Config, normalizeWebDavConfig } from "../../app-config/backup-config";
 import {
   s3Backup,
@@ -446,16 +446,26 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
           summary.dbReadError ? `对话历史导入失败：${summary.dbReadError}` : "",
         ].filter(Boolean);
         const zipCustomJsWarning = customJsImportWarning(customJsBefore, state.settings);
-        return json({ status: "imported", source: "android-zip", summary: messages, warnings: zipCustomJsWarning ? [zipCustomJsWarning] : [], settings: state.settings });
+        // B2:汇总降级警告(custom_js 安全提醒 + 结构化降级报告),前端据此弹结果卡——
+        // 「成功但跳过/降级了 N 项」不再静默。
+        const zipWarnings = [
+          ...(zipCustomJsWarning ? [zipCustomJsWarning] : []),
+          ...buildImportWarnings(summary.report),
+        ];
+        return json({ status: "imported", source: "android-zip", summary: messages, warnings: zipWarnings, settings: state.settings });
       }
       // PC JSON path — safe to read fully into memory; JSON backups are KB-MB, not GB.
       const text = readFileSync(onDiskPath, "utf-8");
       const body = JSON.parse(text) as { state?: Partial<State>; skills?: unknown } & Partial<State>;
-      applyBackupPayload(body);
+      const jsonReport = applyBackupPayload(body);
       const elapsed = ((Date.now() - importStartedAt) / 1000).toFixed(1);
       console.log(`[import] PC json processed in ${elapsed}s`);
       const jsonCustomJsWarning = customJsImportWarning(customJsBefore, state.settings);
-      return json({ status: "imported", source: "pc-json", warnings: jsonCustomJsWarning ? [jsonCustomJsWarning] : [], settings: state.settings });
+      const jsonWarnings = [
+        ...(jsonCustomJsWarning ? [jsonCustomJsWarning] : []),
+        ...buildImportWarnings(jsonReport),
+      ];
+      return json({ status: "imported", source: "pc-json", warnings: jsonWarnings, settings: state.settings });
     } catch (err) {
       const elapsed = ((Date.now() - importStartedAt) / 1000).toFixed(1);
       console.error(`[import] failed after ${elapsed}s:`, err);

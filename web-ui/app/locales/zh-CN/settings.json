@@ -9,10 +9,10 @@
     "mcp": "MCP 与拓展",
     "speech": "语音",
     "memory": "记忆",
-    "data": "数据设置",
+    "data": "数据",
     "stats": "统计",
     "logs": "应用日志",
-    "proxy": "代理与端口",
+    "proxy": "网络",
     "about": "关于",
     "donate": "赞助",
     "back": "返回",
@@ -137,9 +137,12 @@
     "loading": "加载 PC 设置",
     "get_key": "获取 API Key",
     "get_key_title": "前往官网获取 API Key",
+    "base_url_switched": "已切换请求地址：{{url}}",
     "chat_url": "聊天完整 URL：{{url}}",
     "models_url": "模型列表 URL：{{url}}",
     "response_api_desc": "开启后聊天端点自动切换为 /responses",
+    "chat_completions_path_label": "Chat Completions Path",
+    "responses_path_label": "Responses Path",
     "history_reasoning_title": "回传历史思考过程",
     "history_reasoning_desc": "新一代模型（例如 DeepSeek V4）要求回传 reasoning_content。开启后，历史 assistant 消息的 reasoning_content 字段将会随请求回传，不要求回传的模型会静默忽略该字段。若部分供应商不识别该字段而拒绝请求时，可手动关闭。",
     "prompt_cache_title": "Claude 提示缓存",
@@ -329,10 +332,14 @@
     "ext_lorebook": "世界书"
   },
   "proxy": {
-    "title": "代理与端口",
-    "subtitle": "为 AI API、搜索、MCP 等所有出站请求统一指定 HTTP 代理，以及本地服务的监听端口。代理留空将自动跟随系统代理，端口留空将自动选择。",
+    "title": "网络",
+    "subtitle": "为 AI API、搜索、MCP 等所有出站请求统一指定 HTTP 代理与 User-Agent，以及本地服务的监听端口。代理留空将自动跟随系统代理，端口留空将自动选择。",
     "http_title": "HTTP 代理设置",
     "http_desc": "所有 AI API 请求均通过此代理转发",
+    "ua_title": "用户代理（User-Agent）",
+    "ua_desc": "自定义出站请求的 User-Agent 请求头。留空使用默认值。仅当你的服务提供商（如企业网关、API 中转）要求特定 User-Agent 时才需要修改。",
+    "ua_label": "User-Agent",
+    "ua_reset": "重置为默认",
     "detect": "从系统代理填入",
     "address": "代理地址",
     "address_ph": "http://127.0.0.1:7890（留空 = 跟随系统代理）",
@@ -479,15 +486,21 @@
   },
   "models": {
     "title": "默认模型与提示词",
-    "subtitle": "为聊天、标题、翻译、建议、OCR、压缩等场景分别指定默认模型和 Prompt。",
+    "subtitle": "为聊天、快速模型、翻译、OCR、压缩等场景分别指定默认模型和 Prompt。",
     "note": "这里只显示已通过供应商测试的模型。标题、翻译、建议回复、OCR 和压缩 Prompt 均预置了合理的默认模板，点右侧工具按钮可查看和恢复默认值。",
     "not_set": "未设置",
+    "not_set_fallback": "未设置（自动跟随会话模型）",
+    "not_set_disabled": "未设置（功能不可用）",
     "autosaved": "已自动保存",
     "autosave_failed": "自动保存默认模型失败",
     "edit_prompt": "编辑 Prompt",
     "variables_label": "变量：",
     "reset_default": "恢复默认",
     "done": "完成",
+    "fast_tab": {
+      "title": "标题",
+      "suggestion": "建议回复"
+    },
     "compress_engine": {
       "chat": "对话引擎",
       "pi": "工作区引擎 (pi)",
@@ -516,31 +529,27 @@
       },
       "optimize": {
         "title": "提示词优化",
-        "desc": "对话输入框「优化提示词」按钮使用这个模型，把你的草稿改写得更清晰专业。"
+        "desc": "对话输入框「优化提示词」按钮使用这个模型，把你的草稿改写得更清晰专业。未设置时自动跟随当前会话的模型。"
       },
-      "title": {
-        "title": "标题生成",
-        "desc": "对话首次回复后读取最近消息自动生成会话标题。"
+      "fast": {
+        "title": "快速模型",
+        "desc": "标题生成、建议回复等轻量后台任务共用这个模型。未设置时标题直接用首条消息文本命名、不生成建议回复，不额外消耗模型额度。点右上角可分别编辑标题与建议的 Prompt。"
       },
       "translate": {
         "title": "翻译",
-        "desc": "AI 回复下方翻译按钮使用这个模型和 Prompt。"
-      },
-      "suggestion": {
-        "title": "建议回复",
-        "desc": "回复完成后生成 3 到 5 条用户可点选建议。"
+        "desc": "AI 回复下方翻译按钮使用这个模型和 Prompt。未设置时自动跟随当前会话的模型。"
       },
       "compress": {
         "title": "上下文压缩",
-        "desc": "长会话压缩时保留关键上下文并写回会话。"
+        "desc": "长会话压缩时保留关键上下文并写回会话。未设置时自动跟随当前会话的模型。"
       },
       "ocr": {
         "title": "OCR",
-        "desc": "图片转文字的备用通道，用于不支持视觉输入的聊天模型。"
+        "desc": "图片转文字的备用通道，用于不支持视觉输入的聊天模型。未设置时该通道不可用，纯文本聊天不受影响。"
       },
       "image": {
         "title": "图像生成",
-        "desc": "用于支持具备图像生成能力的模型入口。"
+        "desc": "用于支持具备图像生成能力的模型入口。未设置时无法生成图像。"
       }
     }
   },
@@ -578,6 +587,22 @@
     "status_off": "已关闭",
     "status_error": "连接异常",
     "status_connected": "已连接",
+    "status_reconnecting": "重连中",
+    "health": {
+      "ready": "已就绪",
+      "reconnecting": "连接中断，正在后台重连(第 {{attempt}}/{{max}} 次)…",
+      "reconnect_now": "立即重连",
+      "kind_auth_expired": "授权已过期，请重新授权",
+      "kind_config_error": "服务器地址配置有误，请检查",
+      "kind_server_unavailable": "服务器持续无响应，请稍后再试或检查服务",
+      "kind_network_transient": "网络连接异常",
+      "kind_unknown": "连接失败"
+    },
+    "health_notify": {
+      "auth_expired": "MCP 服务器授权已过期，请前往设置重新授权",
+      "config_error": "MCP 服务器配置有误，请前往设置检查",
+      "server_unavailable": "MCP 服务器持续无响应，请检查服务状态"
+    },
     "oauth": {
       "title": "OAuth 授权",
       "desc": "部分 MCP 服务器要求 OAuth 2.1 登录授权。授权在系统浏览器中完成，令牌只保存在本机。",
@@ -676,6 +701,12 @@
     "asr_delete_confirm": "删除语音识别服务「{{name}}」？",
     "tts_title": "文字转语音",
     "tts_subtitle": "TTS provider 用于消息语音播报，ASR provider 用于输入框实时语音识别。",
+    "read_filter_title": "朗读过滤",
+    "read_filter_desc": "朗读前对文本做预处理，过滤掉不想听到的部分。",
+    "only_read_quoted": "只读引号内容",
+    "only_read_quoted_desc": "仅朗读引号内的台词，跳过旁白与动作描写（适合角色扮演）。",
+    "skip_brackets": "不读括号内容",
+    "skip_brackets_desc": "跳过中英文括号里的注释、语气与舞台说明。",
     "asr_title": "语音识别",
     "asr_subtitle": "支持 OpenAI Realtime、DashScope、Volcengine；通过实时 PCM WebSocket 完成转写。",
     "asr_services": "ASR 服务",
@@ -718,6 +749,22 @@
     "select_emotion": "选择情感",
     "emotion_auto": "自动（由 MiniMax 决定）",
     "minimax_speed_desc": "MiniMax 语速。",
+    "elevenlabs_stability_desc": "稳定性，越低越富表现力，越高越稳定。",
+    "elevenlabs_similarity_desc": "相似度增强，越高越贴近原音色。",
+    "step_speed_desc": "语速，1 为正常。",
+    "step_volume_desc": "音量，1 为正常。",
+    "step_instruction_ph": "全局语境/风格指令（仅 stepaudio-2.5-tts 生效，≤200 字符）",
+    "step_instruction_desc": "留空则不下发；step-tts-mini / vivid 会忽略此字段。",
+    "fish_reference_desc": "音色克隆的 reference_id，留空用默认音色。",
+    "fish_temperature_desc": "采样温度，越高越随机。",
+    "fish_topp_desc": "核采样 Top-P。",
+    "fish_speed_desc": "语速，1 为正常。",
+    "fish_normalize_desc": "文本规范化（数字/标点朗读）。",
+    "volc_resource_desc": "需与控制台已开通的服务和音色匹配，默认 seed-tts-2.0；注意是豆包语音控制台的 API Key，不是火山方舟的。",
+    "volc_speaker_label": "音色 ID",
+    "volc_speaker_desc": "填写控制台中的音色 ID，默认使用 VV 音色。",
+    "volc_rate_label": "语速",
+    "volc_rate_desc": "范围 -50～100，0 为正常语速，-50 为半速，100 为两倍速。",
     "system_rate_desc": "系统语音语速，1 为默认。",
     "system_pitch_desc": "系统语音当前不支持直接调整音高，此设置仅会随配置导出。",
     "select_tts": "请选择或新增 TTS 服务。"
@@ -779,7 +826,7 @@
     "cancel": "取消",
     "confirm_export": "确认导出",
     "export_no_chat": "导出（不含对话）",
-    "title": "数据设置",
+    "title": "数据",
     "subtitle": "本地状态导入导出、聊天文件存储路径，以及 WebDAV / S3 远端同步。",
     "android_compat": "手机端适配",
     "ready": "已就绪",
@@ -801,6 +848,11 @@
     "import_backup": "导入备份",
     "chat_files_title": "聊天文件储存",
     "chat_files_desc": "上传的头像和附件会保存到本地数据目录，并通过 /api/files 提供内容。",
+    "restore_report_title": "上次云端恢复",
+    "restore_report_ok": "未跳过或降级任何内容",
+    "restore_report_db_error": "对话历史导入失败：{{error}}（已降级为仅恢复设置）",
+    "restore_report_nodes_skipped": "{{count}} 条消息因备份内数据损坏被跳过",
+    "restore_report_files_deduped": "{{count}} 个附件与本机已有内容一致，已复用（未重复占用空间）",
     "web_service_title": "Web 服务",
     "web_service_desc": "当前 Web JWT：{{status}}",
     "enabled": "已启用",
@@ -821,7 +873,17 @@
     "s3_title": "S3 备份",
     "s3_desc": "支持标准 AWS S3 与兼容 endpoint（MinIO/R2/腾讯云 COS/阿里云 OSS 等）。备份内容与 WebDAV 一致。",
     "endpoint_label": "Endpoint（留空使用 AWS 官方）",
-    "prefix_path": "前缀路径"
+    "prefix_path": "前缀路径",
+    "web_password_current": "当前密码",
+    "web_password_new": "新密码",
+    "web_password_set": "设置访问密码",
+    "web_password_change": "修改密码",
+    "web_password_set_action": "设置",
+    "web_password_clear": "清除密码",
+    "web_password_saved": "访问密码已保存,刷新生效",
+    "web_password_cleared": "访问密码已清除",
+    "web_password_failed": "操作失败",
+    "web_password_locked": "访问密码由部署配置(--password / RIKKAHUB_PASSWORD)管理,请在部署层修改。"
   },
   "hotkeys": {
     "title": "快捷键",
@@ -889,7 +951,8 @@
       "hygiene_legacy_snapshot_cleaned": "数据目录清理：移除旧版迁移遗留快照",
       "orphan_stats": "附件目录统计：{{orphans}} 个条目已无引用，约 {{orphanMb}} MB；另有 {{untracked}} 个无记录文件，约 {{untrackedMb}} MB。不会自动删除，如需清理请先备份",
       "hygiene_failed": "数据目录清理任务失败，不影响运行，下次启动重试",
-      "output_limit_unknown": "模型 {{model}} 的最大输出长度未知，已按保守默认 {{fallback}} 发送。若该模型报「max_tokens 非法」，请在助手设置里手动指定最大输出长度"
+      "output_limit_unknown": "模型 {{model}} 的最大输出长度未知，已按保守默认 {{fallback}} 发送。若该模型报「max_tokens 非法」，请在助手设置里手动指定最大输出长度",
+      "voice_provider_preserved": "检测到来自移动端的语音服务（{{types}}），当前桌面端暂不支持，已原样保留配置以便回传，不会丢失"
     }
   },
   "model_edit": {

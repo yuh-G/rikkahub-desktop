@@ -22,7 +22,7 @@ import { Button } from "~/components/ui/button";
 import { CopyButton } from "~/components/ui/copy-button";
 import { DiffView, parseDiffStats } from "~/components/workspace/diff-view";
 import { TerminalOutput } from "~/components/workspace/terminal-output";
-import { useElapsedSeconds } from "~/hooks/use-elapsed-since";
+import { useToolElapsedSeconds } from "~/hooks/use-elapsed-since";
 import { cn } from "~/lib/utils";
 import {
   buildWorkspaceActionModel,
@@ -133,10 +133,9 @@ function useWorkspaceActionView(
 
   const model = React.useMemo(() => buildWorkspaceActionModel(tool), [tool]);
   const running = Boolean(loading) && !model.finished;
-  // 域3-1:运行耗时。起点消息 createdAt(首个内容到达时被 markStreamFirstContent 覆写
-  // 为真实起点;等待期入账与"已等待 xx 秒"一致,等待+执行 = 用户体感的"这个动作多久"),
-  // 终点消息 finishedAt(协调器终局统一收口)。运行中每秒 tick、终局定格,口径与思维链一致。
-  const elapsedSeconds = useElapsedSeconds(messageCreatedAt, messageFinishedAt ?? null);
+  // 域3-1:运行耗时。起点=工具卡自己的建卡戳(终局戳=结果落地,issue #59:不再随
+  // 整条消息的流式墙钟涨),无戳的历史数据回退消息级 createdAt→finishedAt 旧口径。
+  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt);
   // 自动折叠(2.0.0 内测,与思维链一致):执行中保持展开,终局后自动收起,压住长会话
   // 纵向空间;历史消息挂载时 running=false 直接收起。用户点过 chevron 后(userExpanded
   // 非 null)以用户选择为准,不再自动干预。

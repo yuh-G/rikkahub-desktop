@@ -11,5 +11,8 @@
     "open_failed": "Failed to open",
     "download_code": "Download code",
     "downloaded_toast": "Downloaded to Downloads folder: {{name}}"
+  },
+  "table": {
+    "copy": "Copy table"
   }
 }

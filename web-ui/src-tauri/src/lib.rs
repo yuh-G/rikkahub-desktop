@@ -338,8 +338,9 @@ fn spawn_sidecar(
 
     // The sidecar prints a single `RIKKAHUB_PORT:<n>` line on stdout once Bun.serve binds.
     // We parse it here and forward the value over a channel so the setup routine can navigate
-    // the webview to the correct port — the static window URL is still 8080, so when the
-    // sidecar hopped to another port we re-navigate after this resolves.
+    // the webview to the correct port — the window opens on the bundled splash page (a local
+    // asset, so the user never sees a connection-refused page), and is re-navigated to the
+    // real origin once this resolves.
     let (port_tx, port_rx) = std::sync::mpsc::channel::<u16>();
     let port_tx_clone = port_tx.clone();
 
@@ -763,11 +764,14 @@ pub fn run() {
 
                 wait_handle.emit("sidecar://ready", true).ok();
 
-                // 端口标记到达 = Bun.serve 已在监听。窗口的静态 URL（tauri.conf.json）固定
-                // 是 8080：初始加载可能早于绑定而落在连接失败页（任何端口都会，包括 8080
-                // 本身），也可能端口顺延去了别处。守卫用 SPA 在 <head> 内联脚本设置的
-                // __RIKKAHUB_APP__ 旗标：旗标在且端口对 → 页面活着，不打扰；否则重导航。
-                // （旧实现只在非 8080 时导航、用 location.href 猜测，修不了 8080 死页。）
+                // 端口标记到达 = Bun.serve 已在监听。窗口初始 URL（tauri.conf.json）指向
+                // 内嵌的 splash.html（本地资源，零网络依赖——旧实现直指 8080，启动空窗期
+                // 必然先落在 WebView2 的「无法访问此页面」，几乎每次启动都闪一次报错页）。
+                // 守卫用 SPA 在 <head> 内联脚本设置的 __RIKKAHUB_APP__ 旗标：旗标在且
+                // 端口对 → 页面活着，不打扰；否则（splash 页或端口顺延后的旧页）重导航到
+                // 实际端口。splash 页视觉与 SPA 的 HydrateFallback 逐像素一致，用户感知为
+                // 一整段连续的品牌启动屏。
+                // （更旧的实现只在非 8080 时导航、用 location.href 猜测，修不了 8080 死页。）
                 if let Some(window) = wait_handle.get_webview_window("main") {
                     let js = format!(
                         "(function(){{var t='http://localhost:{p}';try{{if(!window.__RIKKAHUB_APP__||location.port!=='{p}'){{location.replace(t)}}}}catch(e){{location.replace(t)}}}})()",

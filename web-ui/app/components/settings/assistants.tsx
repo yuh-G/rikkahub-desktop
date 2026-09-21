@@ -15,6 +15,7 @@ import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import { UIAvatar } from "~/components/ui/ui-avatar";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
+import { createId } from "~/lib/id";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -134,7 +135,7 @@ export function AssistantsSection({
     const template = settings.assistants[0] as AssistantProfile | undefined;
     const created = {
       ...(template ? clone(template) : { tags: [] }),
-      id: crypto.randomUUID(),
+      id: createId(),
       name: t("settings:assistants.new_assistant_name"),
       avatar: { type: "dummy" },
       useAssistantAvatar: true,
@@ -520,7 +521,7 @@ export function AssistantsSection({
                     regexes: [
                       ...assistantRegexes,
                       {
-                        id: crypto.randomUUID(),
+                        id: createId(),
                         name: "",
                         enabled: true,
                         findRegex: "",
@@ -736,7 +737,8 @@ export function AssistantsSection({
               {[
                 ["time_info", t("settings:assistants.tools.time_info.title"), t("settings:assistants.tools.time_info.desc")],
                 ["clipboard", t("settings:assistants.tools.clipboard.title"), t("settings:assistants.tools.clipboard.desc")],
-                ["tts", t("settings:assistants.tools.tts.title"), t("settings:assistants.tools.tts.desc")],
+                // 语音播报(tts)暂不展示:后端工具与定义保留(预备),只是不在设置里开放开关。
+                // 若未来要把 AI 主动朗读做成卖点再恢复此卡片,i18n key(tools.tts)仍在。
                 ["ask_user", t("settings:assistants.tools.ask_user.title"), t("settings:assistants.tools.ask_user.desc")],
               ].map(([type, label, desc]) => {
                 const enabled =

@@ -7,13 +7,15 @@ import { state } from "../persistence/json-store";
 import { broadcastList, dropConversationSse } from "../api/sse";
 import { deletePcConversations, flushConvDirtyNow, getConversation, persistConversation, selectedConversationMessages } from "./index";
 import { registerConversation, removeConversations } from "./working-set";
-import { generating } from "./generation-state";
+import { abortGeneration, generating } from "./generation-state";
+import { clearMessageQueue } from "./message-queue";
 import { findAssistant as findAssistantCore } from "../assistants";
 import { fillContextLimit } from "../inference-engine/providers";
 
+/** 删会话路径的中止(唯一调用方 deleteConversationsById):意图 deleted——队列随会话清除,
+ *  旧流收尾无事可做。 */
 export function abortConversationGeneration(conversationId: string) {
-  const wasGenerating = generating.has(conversationId);
-  generating.get(conversationId)?.abort();
+  const wasGenerating = abortGeneration(conversationId, "deleted");
   generating.delete(conversationId);
   // Mirror completeConversationGeneration: when the user manually stops generation,
   // the sidebar's per-conversation streaming indicator also needs to flip off, and
@@ -34,6 +36,8 @@ export function deleteConversationsById(ids: Set<string>) {
     abortConversationGeneration(conversationId);
     // R2-4+R2-6:close 详情流 + 清待发节点广播(见 dropConversationSse 注释)
     dropConversationSse(conversationId);
+    // 会话删除即清其发送队列(纯内存态,孤儿队列只是泄漏,顺手清)。
+    clearMessageQueue(conversationId);
   }
   // P7:引擎会话状态(压缩记录)在会话行内(engine_compactions 列),随行删除天然级联,
   // 无文件生命周期可管——P2 的 jsonl 收集/删除逻辑随层退役。

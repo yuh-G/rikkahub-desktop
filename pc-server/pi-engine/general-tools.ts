@@ -1,8 +1,14 @@
 // pi-engine/general-tools.ts — 通用工具与 MCP 桥注册为 pi customTools(P4,方案 §3.2/§4.9)
 //
-// 挂载裁决(§4.9 落定):search_web / scrape_web / save_memory + 按助手启用的 mcp__*。
-// 不挂:use_skill(pi 原生 <available_skills> 替代)、get_time_info(有 bash)、
-// tts/clipboard/ask_user(v1 收面;ask_user 的挂起语义与 pi 循环冲突,不进工作区会话)。
+// 挂载裁决(§4.9 落定):search_web / scrape_web / save_memory / ask_user + 按助手启用的 mcp__*。
+// 不挂:use_skill(pi 原生 <available_skills> 替代)、get_time_info(有 bash)、tts/clipboard(v1 收面)。
+//
+// ask_user(P6 起进工作区):早期注释"挂起语义与 pi 循环冲突"针对的是聊天式"返回 pending 哨兵
+// → 整批暂停→重触发"。pi 已有更强的 run-and-suspend 原语(gateToolApproval 在 execute 内挂起
+// 单工具),ask_user 只是"决议里多带一个 answer 字段"的特例——经 inference-engine/ask-user-flow
+// 的 gateAskUser 挂起,/tool-approval 端点把答复经 approval-gate 送达在途 execute,执行返回真实
+// 结果,循环原地继续,零冲突。答案回灌模型的文本与聊天引擎逐字一致(扁平 {"answers":{...}}
+// 契约,经 details.app.output 由事件桥还原成 text part)。
 //
 // 根源纪律:一行分发/守卫/审批逻辑都不复刻——
 // - 声明:tools/bound 的同一组装配函数(与聊天引擎进模型的 schema 逐字同源);
@@ -19,13 +25,15 @@
 // 在引擎记忆里双写);仅当 entries 含图片/多条目时才带,桥按有无 app 标记选路。
 
 import type { ToolDefinition } from "../../pi/packages/coding-agent/src/core/extensions/types.ts";
-import type { Assistant, Conversation, JsonValue, ToolOutputEntry } from "../foundation/types";
-import type { GenerationEventSink } from "../inference-engine/events";
+import type { Assistant, Conversation, JsonValue, Model, ToolOutputEntry } from "../foundation/types";
+import type { GenerationEventSink, GenerationTarget } from "../inference-engine/events";
 import { openAiLocalTools, openAiMcpTools, openAiSearchTools } from "../tools/bound";
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
 import { openAiToolOutput } from "../tools/format";
 import { initialApprovalState } from "../tools/approval";
 import { gateToolApproval } from "../inference-engine/approval-flow";
+import { gateAskUser } from "../inference-engine/ask-user-flow";
+import { normalizeAskUserQuestions, serializeAskUserAnswer, ASK_USER_TOOL_NAME } from "../tools/ask-user";
 
 type PiToolParameters = ToolDefinition["parameters"];
 type PiToolResult = Awaited<ReturnType<ToolDefinition["execute"]>>;
@@ -34,8 +42,13 @@ export interface PiGeneralToolsContext {
   conversation: Conversation;
   assistant: Assistant;
   sink: GenerationEventSink;
-  /** save_memory 待确认队列的来源标注(当前 ASSISTANT 节点,与聊天路径同口径)。 */
-  messageNodeId?: string;
+  /** save_memory 待确认队列的来源标注(当前 ASSISTANT 节点,与聊天路径同口径)。
+   *  活落点:steer 分裂后新 ai_2 接管,执行时现读 node.id 才落到真正产出该工具调用的节点。 */
+  target?: GenerationTarget;
+  /** 生效模型。用于外挂 search_web 的防双搜门控(openAiSearchTools 单源谓词):模型
+   *  已声明内置 search 时外挂让位。pi 引擎当前不接内置搜索(只挂外挂),传它是为了与
+   *  聊天引擎同一注入源同一判定——未来 pi 接内置搜索或新引擎照抄时零成本继承。 */
+  model?: Model | null;
 }
 
 /** entries → pi AgentToolResult。模型面文本与聊天引擎 resolvedToolOutput 同源
@@ -86,11 +99,44 @@ function buildGeneralTool(
         {
           conversationId: ctx.conversation.id,
           conversationTitle: ctx.conversation.title,
-          messageNodeId: ctx.messageNodeId,
+          messageNodeId: ctx.target?.node.id,
           signal,
         },
       );
       const entries = await realizeToolResult(await toolResultToParts(raw));
+      return toGeneralPiToolResult(entries);
+    },
+  };
+}
+
+/** ask_user 专用构造:不经 gateToolApproval+executeToolCall,改走 gateAskUser——决议携答复
+ *  载荷,答案即工具结果(扁平契约,与聊天引擎 answered 回放逐字一致)。executionMode 同为
+ *  sequential:提问卡与审批卡一次一张,不与其它工具并发抢跑。 */
+function buildAskUserTool(
+  declaration: { name: string; description: string; parameters: Record<string, unknown> },
+  ctx: PiGeneralToolsContext,
+): ToolDefinition {
+  return {
+    name: declaration.name,
+    label: declaration.name,
+    description: declaration.description,
+    parameters: declaration.parameters as unknown as PiToolParameters,
+    executionMode: "sequential",
+    async execute(toolCallId, params, signal) {
+      const args = (params ?? {}) as Record<string, JsonValue>;
+      const normalized = normalizeAskUserQuestions(args.questions);
+      if ("error" in normalized) throw new Error(normalized.error);
+      const summary = normalized.questions[0]?.question.trim().slice(0, 120);
+      const resolution = await gateAskUser({
+        conversationId: ctx.conversation.id,
+        toolCallId,
+        sink: ctx.sink,
+        signal,
+        ...(summary ? { summary } : {}),
+      });
+      // denied/中止在 gateAskUser 内已抛错(桥映射 {error}/中断);此处返回时必为 answered。
+      if (resolution.kind !== "answered") throw new Error("ask_user did not resolve to an answer");
+      const entries: ToolOutputEntry[] = [{ type: "text", text: serializeAskUserAnswer(resolution.answers) }];
       return toGeneralPiToolResult(entries);
     },
   };
@@ -101,18 +147,18 @@ function buildGeneralTool(
  *  这里天然为空——用户没启用 MCP 时 pi 会话零 MCP 工具(§3.2)。 */
 export function createPiGeneralTools(ctx: PiGeneralToolsContext): ToolDefinition[] {
   const declarations = [
-    ...openAiSearchTools(),
-    ...openAiLocalTools(ctx.assistant).filter((tool) => tool.function.name === "save_memory"),
+    ...openAiSearchTools(ctx.model),
+    ...openAiLocalTools(ctx.assistant).filter(
+      (tool) => tool.function.name === "save_memory" || tool.function.name === ASK_USER_TOOL_NAME,
+    ),
     ...openAiMcpTools(ctx.assistant),
   ];
-  return declarations.map((decl) =>
-    buildGeneralTool(
-      {
-        name: String(decl.function.name),
-        description: String(decl.function.description ?? ""),
-        parameters: (decl.function.parameters ?? { type: "object", properties: {} }) as Record<string, unknown>,
-      },
-      ctx,
-    ),
-  );
+  return declarations.map((decl) => {
+    const shaped = {
+      name: String(decl.function.name),
+      description: String(decl.function.description ?? ""),
+      parameters: (decl.function.parameters ?? { type: "object", properties: {} }) as Record<string, unknown>,
+    };
+    return shaped.name === ASK_USER_TOOL_NAME ? buildAskUserTool(shaped, ctx) : buildGeneralTool(shaped, ctx);
+  });
 }

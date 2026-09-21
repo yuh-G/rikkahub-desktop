@@ -21,7 +21,7 @@ const { defaultState } = await import("../app-config/defaults");
 // 注意:store.state 是 live binding,解构成局部 const 会拿到 import 时的旧值(undefined)。
 const store = await import("../persistence/json-store");
 
-import type { Assistant, Conversation, State } from "../foundation/types";
+import type { Assistant, Conversation, Model, State } from "../foundation/types";
 import type { GenerationEvent } from "../inference-engine/events";
 
 const priorState = store.state;
@@ -112,6 +112,20 @@ describe("工具面枚举", () => {
     expect(alpha?.description).toBe("Alpha tool");
     expect((alpha?.parameters as { properties?: Record<string, unknown> }).properties).toHaveProperty("q");
   });
+
+  // 防双搜(对齐安卓 shouldUseExternalWebSearch):pi 引擎经同一注入源 openAiSearchTools
+  // 消费同一谓词。模型声明内置 search 时外挂 search_web/scrape_web 让位,与聊天引擎同闸。
+  test("模型带内置 search → 外挂搜索让位(防双搜同闸)", () => {
+    const { ctx } = fixture({ mcpServers: [] });
+    const builtIn = { ...ctx, model: { tools: ["search"] } as unknown as Model };
+    const names = createPiGeneralTools(builtIn).map((tool) => tool.name);
+    expect(names).not.toContain("search_web");
+    expect(names).not.toContain("scrape_web");
+
+    // 无内置搜索的模型(常态)→ 外挂照常,证明让位是内置 search 触发而非误伤。
+    const plain = { ...ctx, model: { tools: [] } as unknown as Model };
+    expect(createPiGeneralTools(plain).map((tool) => tool.name)).toContain("search_web");
+  });
 });
 
 describe("审批语义(同聊天引擎口径)", () => {
@@ -143,5 +157,61 @@ describe("审批语义(同聊天引擎口径)", () => {
     expect(String(first?.text ?? "").length).toBeGreaterThan(0);
     // 单文本结果不带 app 结构化输出 → 事件桥按 content 渲染
     expect(result.details ?? {}).toEqual({});
+  });
+});
+
+describe("ask_user(run-and-suspend 提问)", () => {
+  const withAskUser = { localTools: [{ type: "ask_user" }] };
+
+  test("挂载随助手 localTools 开关;声明面含 selection_type 枚举", () => {
+    const off = createPiGeneralTools(fixture().ctx).map((tool) => tool.name);
+    expect(off).not.toContain("ask_user");
+
+    const { ctx } = fixture(withAskUser);
+    const ask = createPiGeneralTools(ctx).find((tool) => tool.name === "ask_user");
+    if (!ask) throw new Error("ask_user missing");
+    const items = (ask.parameters as { properties?: { questions?: { items?: { properties?: Record<string, unknown> } } } })
+      .properties?.questions?.items?.properties;
+    expect(items).toHaveProperty("selection_type");
+  });
+
+  test("作答:execute 挂起 → resolve 携 answer → 回灌文本为扁平契约(与聊天引擎逐字一致)", async () => {
+    const { ctx, conversation, events } = fixture(withAskUser);
+    const ask = createPiGeneralTools(ctx).find((tool) => tool.name === "ask_user");
+    if (!ask) throw new Error("ask_user missing");
+
+    const questions = [{ id: "q1", question: "选哪个?", selection_type: "multi", options: ["甲", "乙"] }];
+    const running = execOf(ask)("call-q1", { questions }, new AbortController().signal, () => {});
+    await Bun.sleep(10);
+    expect(approvalEvents(events).map((e) => e.approvalState.type)).toEqual(["pending"]);
+
+    const payload = JSON.stringify({ answers: { q1: "甲, 乙, 都要" } });
+    expect(resolveToolApproval(conversation.id, "call-q1", { approved: true, answer: payload })).toBe(true);
+
+    const result = await running;
+    expect(result.content[0]?.text).toBe(payload);
+    // 单文本结果不带 details.app → 事件桥按 content 渲染(与聊天 answered 回放同字符串)。
+    expect(result.details ?? {}).toEqual({});
+    expect(approvalEvents(events).at(-1)?.approvalState).toEqual({ type: "answered", answer: payload });
+  });
+
+  test("拒绝:抛历史契约文案(桥映射 {error})", async () => {
+    const { ctx, conversation } = fixture(withAskUser);
+    const ask = createPiGeneralTools(ctx).find((tool) => tool.name === "ask_user");
+    if (!ask) throw new Error("ask_user missing");
+    const running = execOf(ask)("call-q2", { questions: [{ id: "q", question: "?" }] }, new AbortController().signal, () => {});
+    await Bun.sleep(10);
+    expect(resolveToolApproval(conversation.id, "call-q2", { approved: false, reason: "跳过" })).toBe(true);
+    await expect(running).rejects.toThrow("Tool execution denied by user. Reason: 跳过");
+  });
+
+  test("非法入参(零题/超上限)→ 抛错回灌模型重试,不挂卡", async () => {
+    const { ctx, events } = fixture(withAskUser);
+    const ask = createPiGeneralTools(ctx).find((tool) => tool.name === "ask_user");
+    if (!ask) throw new Error("ask_user missing");
+    await expect(
+      execOf(ask)("call-q3", { questions: [] }, new AbortController().signal, () => {}),
+    ).rejects.toThrow(/at least one valid question/);
+    expect(approvalEvents(events)).toEqual([]);
   });
 });

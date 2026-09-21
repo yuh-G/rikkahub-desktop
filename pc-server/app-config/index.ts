@@ -4,6 +4,7 @@
 import { saveState, state } from "../persistence/json-store";
 import { broadcastList, broadcastSettings } from "../api/sse";
 import { applyEffectiveProxy, resolveEffectiveProxy } from "../foundation/net";
+import { reconcileMcpHealth } from "../tools/mcp-health";
 import type { AppConfig, Settings } from "../foundation/types/settings";
 
 export type { AppConfig } from "../foundation/types/settings";
@@ -33,6 +34,9 @@ export function updateSettings(next: Settings) {
   saveState();
   broadcastSettings();
   broadcastList();
+  // MCP 健康 Supervisor(7.2):配置/助手选中变化后重评探活集合(新启用的服务器立即探活,
+  // 禁用/取消选中的清出状态面)。reconcile 幂等且只在集合变化时探活,普通设置保存零开销。
+  reconcileMcpHealth();
   const newProxyUrl = resolveEffectiveProxy(state.settings.proxyConfig).url;
   if (newProxyUrl !== prevProxyUrl) {
     applyEffectiveProxy(state.settings.proxyConfig);

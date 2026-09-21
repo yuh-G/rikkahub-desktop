@@ -175,7 +175,15 @@
     "not_selected": "未选择",
     "waiting_seconds": "已等待 {{seconds}} 秒",
     "cancel": "取消",
-    "cancelled": "已取消生成"
+    "cancelled": "已取消生成",
+    "select": "选择",
+    "selected_count": "已选 {{count}} 张",
+    "select_all": "全选",
+    "download_selected": "下载所选",
+    "delete_selected": "删除所选",
+    "delete_selected_confirm": "删除选中的 {{count}} 张图片？此操作不可恢复。",
+    "delete_selected_done": "已删除 {{count}} 张图片",
+    "download_started": "已开始下载 {{count}} 张图片"
   },
   "web_auth_gate": {
     "title": "Web API 已锁定",
@@ -248,5 +256,10 @@
   "theme": {
     "custom": "自定义",
     "unnamed": "未命名主题"
+  },
+  "exposed_banner": {
+    "message": "服务正对外暴露且未设访问密码：同一网络的任何人都能读取你的会话与 API Key。",
+    "action": "去设置密码",
+    "dismiss": "暂时关闭"
   }
 }

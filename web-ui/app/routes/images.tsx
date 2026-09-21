@@ -1,6 +1,6 @@
 import * as React from "react";
 
-import { ArrowLeft, ImagePlus, Loader2, Plus, Trash2, WandSparkles, X } from "lucide-react";
+import { ArrowLeft, CheckSquare, Download, ImagePlus, Loader2, Plus, Trash2, WandSparkles, X } from "lucide-react";
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ import { motion } from "motion/react";
 
 import { AIIcon } from "~/components/ui/ai-icon";
 import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
@@ -23,7 +24,8 @@ import {
 import { Skeleton } from "~/components/ui/skeleton";
 import { Textarea } from "~/components/ui/textarea";
 import { normalizeImageForModelUpload } from "~/lib/image-normalize";
-import api from "~/services/api";
+import api, { appendWebAuthQuery } from "~/services/api";
+import { cn } from "~/lib/utils";
 import { useSettingsStore } from "~/stores/app-store";
 import { confirmDialog } from "~/stores/confirm-store";
 import { useElapsedSeconds } from "~/hooks/use-elapsed-since";
@@ -139,6 +141,79 @@ export default function ImagesPage() {
   const abortRef = React.useRef<AbortController | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
+  // 图片多选(台账 §1.9):右键卡片进入选择模式,点选切换,Esc/取消退出。
+  // selectedIds 存图片 id(string,与服务端 GeneratedImage.id 一致),选择态与数据解耦。
+  const [selectionMode, setSelectionMode] = React.useState(false);
+  const [selectedIds, setSelectedIds] = React.useState<ReadonlySet<string>>(new Set());
+  const [batchBusy, setBatchBusy] = React.useState(false);
+
+  const clearSelection = React.useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  const toggleSelect = React.useCallback((imageId: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(imageId)) next.delete(imageId);
+      else next.add(imageId);
+      return next;
+    });
+  }, []);
+
+  const beginSelection = React.useCallback((imageId: string) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([imageId]));
+  }, []);
+
+  // Esc 退出选择模式(对齐 Android BackHandler);选择数据随列表刷新自动剔除已删项。
+  React.useEffect(() => {
+    if (!selectionMode) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clearSelection();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectionMode, clearSelection]);
+
+  const deleteSelected = React.useCallback(async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0 || batchBusy) return;
+    if (!(await confirmDialog({
+      title: t("image_page.delete_selected_confirm", { count: ids.length }),
+      danger: true,
+    }))) return;
+    setBatchBusy(true);
+    try {
+      await api.post("images/batch-delete", { ids });
+      setImages((current) => current.filter((item) => !selectedIds.has(item.id)));
+      toast.success(t("image_page.delete_selected_done", { count: ids.length }));
+      clearSelection();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("image_page.generate_failed"));
+    } finally {
+      setBatchBusy(false);
+    }
+  }, [selectedIds, batchBusy, t, clearSelection]);
+
+  const downloadSelected = React.useCallback(() => {
+    const chosen = images.filter((item) => selectedIds.has(item.id));
+    if (chosen.length === 0) return;
+    // 浏览器多文件下载:逐张触发 <a download>(同源 /api/files 走 web 鉴权,拼 access_token)。
+    chosen.forEach((item, index) => {
+      setTimeout(() => {
+        const anchor = document.createElement("a");
+        anchor.href = appendWebAuthQuery(item.url);
+        anchor.download = item.fileName || `image-${item.id}`;
+        anchor.rel = "noreferrer";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }, index * 150);
+    });
+    toast.success(t("image_page.download_started", { count: chosen.length }));
+  }, [images, selectedIds, t]);
+
   const imageModels = React.useMemo<ImageModelOption[]>(() => {
     if (!settings) return [];
     return settings.providers
@@ -182,9 +257,8 @@ export default function ImagesPage() {
       setSettings(next);
       await api.post("settings/default-models", {
         chatModelId: settings.chatModelId,
-        titleModelId: settings.titleModelId,
+        fastModelId: settings.fastModelId,
         translateModeId: settings.translateModeId,
-        suggestionModelId: settings.suggestionModelId,
         imageGenerationModelId: modelId,
         ocrModelId: settings.ocrModelId,
         compressModelId: settings.compressModelId,
@@ -481,6 +555,62 @@ export default function ImagesPage() {
               </div>
             </section>
 
+            {images.length > 0 ? (
+              selectionMode ? (
+                <div className="flex items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-card">
+                  <Button type="button" variant="ghost" size="sm" onClick={clearSelection} disabled={batchBusy}>
+                    <X className="size-4" />
+                    {t("image_page.cancel")}
+                  </Button>
+                  <span className="text-sm font-medium tabular-nums">
+                    {t("image_page.selected_count", { count: selectedIds.size })}
+                  </span>
+                  <div className="ml-auto flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={batchBusy || selectedIds.size === images.length}
+                      onClick={() => setSelectedIds(new Set(images.map((item) => item.id)))}
+                    >
+                      <CheckSquare className="size-4" />
+                      {t("image_page.select_all")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={batchBusy || selectedIds.size === 0}
+                      onClick={downloadSelected}
+                    >
+                      <Download className="size-4" />
+                      {t("image_page.download_selected")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={batchBusy || selectedIds.size === 0}
+                      onClick={() => void deleteSelected()}
+                    >
+                      {batchBusy ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                      {t("image_page.delete_selected")}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">
+                    {t("image_page.selected_count", { count: images.length })}
+                  </span>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setSelectionMode(true)}>
+                    <CheckSquare className="size-4" />
+                    {t("image_page.select")}
+                  </Button>
+                </div>
+              )
+            ) : null}
+
             <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {generating &&
                 generatingStartedAt &&
@@ -491,7 +621,9 @@ export default function ImagesPage() {
                     onCancel={cancelGenerate}
                   />
                 ))}
-              {images.map((image, index) => (
+              {images.map((image, index) => {
+                const selected = selectedIds.has(image.id);
+                return (
                 <motion.article
                   key={image.id}
                   initial={{ opacity: 0, scale: 0.96, y: 8 }}
@@ -501,20 +633,46 @@ export default function ImagesPage() {
                     delay: index * 0.05,
                     ease: [0.16, 1, 0.3, 1],
                   }}
-                  className="group overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-card"
+                  className={cn(
+                    "group overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-card",
+                    selectionMode && "cursor-pointer",
+                    selected && "border-primary ring-2 ring-primary/60",
+                  )}
+                  onContextMenu={(event) => {
+                    // 桌面端「长按」等价物:右键进入选择模式并选中该张。
+                    event.preventDefault();
+                    if (!selectionMode) beginSelection(image.id);
+                  }}
+                  onClick={() => {
+                    if (selectionMode) toggleSelect(image.id);
+                  }}
                 >
-                  <a
-                    href={image.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="relative block bg-muted"
-                  >
-                    <img
-                      src={image.url}
-                      alt={image.prompt}
-                      className="aspect-square w-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
-                    />
-                  </a>
+                  <div className="relative block bg-muted">
+                    {selectionMode ? (
+                      <div className="pointer-events-none absolute inset-0 z-10">
+                        <Checkbox
+                          checked={selected}
+                          className="absolute right-2 top-2 size-5 bg-background/90 shadow"
+                          aria-label={t("image_page.select")}
+                        />
+                      </div>
+                    ) : null}
+                    {selectionMode ? (
+                      <img
+                        src={image.url}
+                        alt={image.prompt}
+                        className="aspect-square w-full object-contain"
+                      />
+                    ) : (
+                      <a href={image.url} target="_blank" rel="noreferrer" className="block">
+                        <img
+                          src={image.url}
+                          alt={image.prompt}
+                          className="aspect-square w-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+                        />
+                      </a>
+                    )}
+                  </div>
                   <div className="space-y-3 p-3">
                     <div className="line-clamp-2 text-sm">{image.prompt}</div>
                     <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
@@ -530,7 +688,8 @@ export default function ImagesPage() {
                         type="button"
                         variant="ghost"
                         size="icon-sm"
-                        onClick={async () => {
+                        onClick={async (event) => {
+                          event.stopPropagation();
                           if (!(await confirmDialog({ title: t("image_page.delete_confirm"), danger: true }))) return;
                           await api.delete(`images/${image.id}`);
                           setImages((current) => current.filter((item) => item.id !== image.id));
@@ -542,7 +701,8 @@ export default function ImagesPage() {
                     </div>
                   </div>
                 </motion.article>
-              ))}
+                );
+              })}
             </section>
             {images.length === 0 ? (
               <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">

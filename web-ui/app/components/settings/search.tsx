@@ -1,4 +1,4 @@
-// components/settings/search.tsx — 搜索服务分区（17 种服务配置/测试/排序，纯搬迁自 routes/settings.tsx）
+// components/settings/search.tsx — 搜索服务分区（19 种服务配置/测试/排序，纯搬迁自 routes/settings.tsx）
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -12,6 +12,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { cn } from "~/lib/utils";
+import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { SearchServiceOption, Settings } from "~/types";
@@ -27,25 +28,52 @@ import {
 
 // Canonical labels for search services. Used in both the settings dropdown and as the
 // AIIcon lookup key so the logo follows the type, not the user-entered display name.
+// Order mirrors APP SearchServiceOptions.TYPES(the "add provider" picker order).
 const SEARCH_SERVICE_TYPE_LABELS: Record<string, string> = {
   bing_local: "Bing",
   rikkahub: "RikkaHub",
+  zhipu: "智谱",
+  doubao: "豆包",
   tavily: "Tavily",
   exa: "Exa",
-  zhipu: "智谱",
-  tinyfish: "Tinyfish",
-  brave: "Brave",
-  perplexity: "Perplexity",
-  bocha: "博查",
+  searxng: "SearXNG",
   linkup: "LinkUp",
+  brave: "Brave",
   metaso: "秘塔",
   ollama: "Ollama",
-  jina: "Jina",
+  perplexity: "Perplexity",
   firecrawl: "Firecrawl",
+  jina: "Jina",
+  bocha: "博查",
   grok: "Grok",
-  searxng: "SearXNG",
+  tinyfish: "Tinyfish",
+  serper: "Serper",
   custom_js: "Custom JS",
 };
+
+// 类型下拉的可创建清单(顺序同 SEARCH_SERVICE_TYPE_LABELS / APP TYPES)。
+// 单源供 SelectContent 渲染与 backup 的 android-contract-sync.test.ts 机械化提取共用。
+const SEARCH_SERVICE_CREATABLE_TYPES = [
+  "bing_local",
+  "rikkahub",
+  "zhipu",
+  "doubao",
+  "tavily",
+  "exa",
+  "searxng",
+  "linkup",
+  "brave",
+  "metaso",
+  "ollama",
+  "perplexity",
+  "firecrawl",
+  "jina",
+  "bocha",
+  "grok",
+  "tinyfish",
+  "serper",
+  "custom_js",
+] as const;
 
 function searchServiceLabelForType(type: string | null | undefined): string {
   const key = String(type ?? "")
@@ -201,7 +229,7 @@ const DEFAULT_CUSTOM_JS_SCRAPE_SCRIPT = `async function scrape(urls) {
 
 function createSearchService(): Record<string, unknown> {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     type: "tavily",
     name: "Tavily",
     apiKey: "",
@@ -210,7 +238,7 @@ function createSearchService(): Record<string, unknown> {
 }
 
 function toSearchService(value: Record<string, unknown>): SearchServiceOption {
-  return { ...value, id: String(value.id ?? crypto.randomUUID()) } as SearchServiceOption;
+  return { ...value, id: String(value.id ?? createId()) } as SearchServiceOption;
 }
 
 export function SearchSection({
@@ -533,27 +561,7 @@ export function SearchSection({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {(
-                    [
-                      "bing_local",
-                      "rikkahub",
-                      "tavily",
-                      "exa",
-                      "zhipu",
-                      "tinyfish",
-                      "brave",
-                      "perplexity",
-                      "bocha",
-                      "linkup",
-                      "metaso",
-                      "ollama",
-                      "jina",
-                      "firecrawl",
-                      "grok",
-                      "searxng",
-                      "custom_js",
-                    ] as const
-                  ).map((type) => (
+                  {SEARCH_SERVICE_CREATABLE_TYPES.map((type) => (
                     <SelectItem key={type} value={type}>
                       <span className="flex items-center gap-2">
                         <AIIcon
@@ -578,6 +586,25 @@ export function SearchSection({
                 />
                 <span className="text-xs text-muted-foreground">{t("settings:search.api_key_hint")}</span>
               </div>
+            ) : null}
+            {textValue(draft.type) === "doubao" ? (
+              // 豆包(火山 Search-Infinity)两模:global=综合搜索(带图),custom=网页搜索。
+              // 对齐 APP DoubaoOptions 的 Mode 分段选择器。
+              <label className="space-y-2">
+                <span className="text-sm font-medium">Mode</span>
+                <Select
+                  value={textValue(draft.mode) || "custom"}
+                  onValueChange={(mode) => patchDraft({ mode })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="global">Global</SelectItem>
+                    <SelectItem value="custom">Custom</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
             ) : null}
             {textValue(draft.type) === "searxng" ? (
               <>

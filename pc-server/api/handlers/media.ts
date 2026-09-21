@@ -5,20 +5,51 @@ import type { AsrProvider, TtsProvider } from "../../foundation/types";
 import { saveState, state } from "../../persistence/json-store";
 import { friendlyRequestError } from "../../foundation/net";
 import { cancelAllSystemTts } from "../../tools/platform";
+import { unlinkSync } from "node:fs";
 import { callImageGeneration } from "../../media/image-gen";
-import { defaultAsrProvider, normalizeAsrProviders, transcribeAudioWithAsrProvider } from "../../media/asr";
+import { defaultAsrProvider, isPcKnownAsrType, normalizeAsrProviders, transcribeAudioWithAsrProvider } from "../../media/asr";
 import { DEFAULT_SYSTEM_TTS_ID, defaultTtsProvider, generateSpeechWithTtsProvider, normalizeTtsProviders } from "../../media/tts";
+import { TTS_PROVIDER_TYPES } from "../../media/tts-providers/registry";
+import { RetryableHttpError } from "../../foundation/retry";
+import { extractedTextPath } from "../../files/index";
 import { error, json, readJson } from "../request";
 import { updateSettings } from "../../app-config";
+
+/**
+ * 删除一组生成图(账本 generatedImages + 关联 StoredFile + 磁盘字节 + 抽取旁车)。
+ * 修复既有缺口:原单删只摘 generatedImages 条目,文件字节与 files 账本永久残留(磁盘泄漏)。
+ * 与 files.ts 删除纪律一致:历史去重条目共享同一路径时,仅当无其余引用才删字节。
+ * 返回实际删除的图片数(已不存在的幂等跳过)。
+ */
+function deleteGeneratedImagesById(ids: string[]): number {
+  const idSet = new Set(ids.map(String));
+  const targets = state.generatedImages.filter((image) => idSet.has(image.id));
+  if (targets.length === 0) return 0;
+  state.generatedImages = state.generatedImages.filter((image) => !idSet.has(image.id));
+  for (const target of targets) {
+    if (target.fileId == null) continue;
+    // 先取路径再摘账本条目——顺序反了会查不到路径,字节就删不掉。
+    const filePath = state.files.find((file) => file.id === target.fileId)?.path;
+    state.files = state.files.filter((file) => file.id !== target.fileId);
+    if (filePath && !state.files.some((file) => file.path === filePath)) {
+      try { unlinkSync(filePath); } catch { /* 不存在/被锁,忽略 */ }
+    }
+    try { unlinkSync(extractedTextPath(target.fileId)); } catch { /* 无旁车 */ }
+  }
+  saveState();
+  return targets.length;
+}
 
 export async function handleMediaRoutes(request: Request, _url: URL, path: string): Promise<Response | null> {
   if (path === "settings/asr-provider/detail" && request.method === "POST") {
     const body = await readJson<Partial<AsrProvider>>(request);
-    const type = ["dashscope", "volcengine", "openai_realtime"].includes(String(body.type))
-      ? String(body.type) as AsrProvider["type"]
-      : "openai_realtime";
-    const base = defaultAsrProvider(type);
-    const providerItem = normalizeAsrProviders([{ ...base, ...body, type, id: String(body.id ?? base.id) }])[0];
+    // 新增/create 时归一化会套用默认模板,故必须收敛到本端已知类型(前端下拉只给 3 家);
+    // 编辑/save 时 body 携带完整对象,未知跨端类型(mimo/step)必须原样透传——
+    // 在此重置成 openai_realtime 会把用户在设置页的一次保存变成「配置被没收」(backup C4)。
+    const requested = String(body.type ?? "");
+    const type = isPcKnownAsrType(requested) ? requested : requested || "openai_realtime";
+    const base = isPcKnownAsrType(type) ? defaultAsrProvider(type) : ({} as Partial<AsrProvider>);
+    const providerItem = normalizeAsrProviders([{ ...base, ...body, type, id: String(body.id ?? (base as AsrProvider).id ?? "") }])[0];
     const exists = state.settings.asrProviders.some((item) => item.id === providerItem.id);
     updateSettings({
       ...state.settings,
@@ -60,9 +91,12 @@ export async function handleMediaRoutes(request: Request, _url: URL, path: strin
 
   if (path === "settings/tts-provider/detail" && request.method === "POST") {
     const body = await readJson<Partial<TtsProvider>>(request);
-    const type = ["system", "openai", "gemini", "minimax", "qwen", "groq", "xai", "mimo"].includes(String(body.type)) ? body.type as TtsProvider["type"] : "system";
-    const base = defaultTtsProvider(type);
-    const providerItem = normalizeTtsProviders([{ ...base, ...body, type, id: String(body.id ?? base.id) }])[0];
+    // 同 ASR:新增/create 收敛到本端已知类型套默认模板;编辑/save 时未知跨端类型原样透传,
+    // 不在此重置成 system(否则设置页一次保存即没收配置,backup C4)。
+    const requested = String(body.type ?? "");
+    const type = TTS_PROVIDER_TYPES.includes(requested as TtsProvider["type"]) ? requested : requested || "system";
+    const base = TTS_PROVIDER_TYPES.includes(type as TtsProvider["type"]) ? defaultTtsProvider(type as TtsProvider["type"]) : ({} as Partial<TtsProvider>);
+    const providerItem = normalizeTtsProviders([{ ...base, ...body, type, id: String(body.id ?? (base as TtsProvider).id ?? "") }])[0];
     const exists = state.settings.ttsProviders.some((item) => item.id === providerItem.id);
     updateSettings({
       ...state.settings,
@@ -126,7 +160,11 @@ export async function handleMediaRoutes(request: Request, _url: URL, path: strin
         },
       });
     } catch (err) {
-      return error(err instanceof Error ? err.message : String(err), 502);
+      // §4.3:透传真实状态码(408/429/5xx…),客户端据此区分可重试错;非 HTTP 错误回落 502。
+      const status = err instanceof RetryableHttpError && err.statusCode >= 400 && err.statusCode <= 599
+        ? err.statusCode
+        : 502;
+      return error(err instanceof Error ? err.message : String(err), status);
     }
   }
 
@@ -163,14 +201,26 @@ export async function handleMediaRoutes(request: Request, _url: URL, path: strin
       if (err instanceof DOMException && err.name === "AbortError") {
         return error("Client cancelled", 499);
       }
+      // 未配置生图模型:400 引导去配置,不是上游故障(502 会误导用户以为服务坏了)。
+      if (err instanceof Error && err.message.includes("未配置图像生成模型")) {
+        return error(err.message, 400);
+      }
       return error(friendlyRequestError(err, state.settings.proxyConfig), 502);
     }
+  }
+  // 批量删除(图片多选):一次请求一次 saveState,原子;逐张删与单删同纪律(账本+字节+旁车)。
+  if (path === "images/batch-delete" && request.method === "POST") {
+    const body = await readJson<{ ids?: unknown }>(request);
+    const ids = Array.isArray(body.ids) ? body.ids.map(String).filter((s) => s.trim().length > 0) : [];
+    if (ids.length === 0) return error("ids required", 400);
+    const deleted = deleteGeneratedImagesById(ids);
+    return json({ status: "deleted", deleted });
   }
   const generatedImageDelete = path.match(/^images\/([^/]+)$/);
   if (generatedImageDelete && request.method === "DELETE") {
     const imageId = decodeURIComponent(generatedImageDelete[1]);
-    state.generatedImages = state.generatedImages.filter((image) => image.id !== imageId);
-    saveState();
+    const deleted = deleteGeneratedImagesById([imageId]);
+    if (deleted === 0) return error("Image not found", 404);
     return json({ status: "deleted" });
   }
   return null;

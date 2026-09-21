@@ -20,6 +20,7 @@ import type {
   AppErrorPushEventDto,
   AppErrorSnapshotEventDto,
   ConversationListInvalidateEventDto,
+  McpHealthSnapshotDto,
   MemorySnapshot,
   Settings,
 } from "~/types";
@@ -30,6 +31,7 @@ export interface AppEventMap {
   app_errors_snapshot: AppErrorSnapshotEventDto;
   app_error: AppErrorPushEventDto;
   invalidate: ConversationListInvalidateEventDto;
+  mcp_health: McpHealthSnapshotDto;
 }
 
 type AppEventName = keyof AppEventMap;
@@ -39,6 +41,7 @@ const REPLAY_EVENTS: ReadonlySet<AppEventName> = new Set([
   "memory",
   "app_errors_snapshot",
   "invalidate",
+  "mcp_health",
 ]);
 
 /** 与 worker 心跳判活(PORT_STALE_MS = 3 × 心跳间隔)保持一致,改动需两处同步。 */

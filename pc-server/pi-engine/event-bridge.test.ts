@@ -123,7 +123,8 @@ describe("pi 事件桥:纯映射", () => {
         args: { path: "b" },
         partialResult: { content: [{ type: "text", text: "partial" }], details: undefined },
       }),
-    ).toEqual([{ kind: "tool_result", toolCallId: "call-2", output: [{ type: "text", text: "partial" }] }]);
+      // issue #59:partial 快照带 final:false(应用器据此不落每工具计时终点)。
+    ).toEqual([{ kind: "tool_result", toolCallId: "call-2", output: [{ type: "text", text: "partial" }], final: false }]);
     expect(
       bridge.handle({
         type: "tool_execution_end",
@@ -184,10 +185,10 @@ describe("pi 事件桥:纯映射", () => {
     expect(bridge.handle({ type: "bash_execution_update", id: "nobody", delta: "x" })).toEqual([]);
     bridge.handle({ type: "tool_execution_start", toolCallId: "call-4", toolName: "bash", args: {} });
     expect(bridge.handle({ type: "bash_execution_update", id: "call-4", delta: "line1\n" }))
-      .toEqual([{ kind: "tool_result", toolCallId: "call-4", output: [{ type: "text", text: "line1\n" }] }]);
+      .toEqual([{ kind: "tool_result", toolCallId: "call-4", output: [{ type: "text", text: "line1\n" }], final: false }]);
     // 无 id:唯一在执行 → 归它,输出累计
     expect(bridge.handle({ type: "bash_execution_update", delta: "line2" }))
-      .toEqual([{ kind: "tool_result", toolCallId: "call-4", output: [{ type: "text", text: "line1\nline2" }] }]);
+      .toEqual([{ kind: "tool_result", toolCallId: "call-4", output: [{ type: "text", text: "line1\nline2" }], final: false }]);
     // 第二个工具开始执行 → 无 id 归属歧义,丢弃
     bridge.handle({ type: "tool_execution_start", toolCallId: "call-5", toolName: "read", args: {} });
     expect(bridge.handle({ type: "bash_execution_update", delta: "?" })).toEqual([]);

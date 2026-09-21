@@ -175,9 +175,30 @@
   @apply bg-muted/50;
 }
 
-/* Images */
+/* Images — 搜索结果配图(§3.1)与 AI 嵌入图的统一呈现。inline-block 让连续多张图按
+   阅读流横向排列、容器窄了自动折行(对话/工作区分栏、窗口拉伸均自适应,无需 JS)。
+   w-auto + max-w-full + max-h-80:宽度优先铺满,但竖长图先撞到 320px 高度上限,
+   此时宽度按比例收缩(w-auto)而非压扁——不变形、不刷屏。 */
 .markdown img {
-  @apply my-4 rounded-lg border border-border max-w-full h-auto;
+  @apply my-2 inline-block rounded-lg border border-border align-middle;
+  max-width: 100%;
+  width: auto;
+  height: auto;
+  max-height: 20rem; /* 320px,对齐 max-h-80 刻度 */
+  /* 相邻图片留呼吸感,折行后行距也不挤 */
+  margin-right: 0.5rem;
+}
+.markdown img:last-child {
+  margin-right: 0;
+}
+
+/* 段内只有图片时(配图通常独立成段),收紧段距让多图更像一排画廊而非散落方块。 */
+.markdown p:has(> img:only-child) {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.markdown p:has(> img:only-child) + p:has(> img:only-child) {
+  margin-top: -0.25rem;
 }
 
 /* Strikethrough (GFM) */

@@ -56,7 +56,9 @@
   --font-mono:
     "Spline Sans Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
     "Courier New", monospace;
-  /* 默认代码字体:优先尝试本机安装的现代等宽字体,未安装则回退系统等宽栈。 */
+  /* 默认代码字体:优先尝试本机安装的现代等宽字体,未安装则回退系统等宽栈。
+     栈内字体(Maple/JetBrains Mono/Fira Code 等)默认开连字——代码渲染统一由下方
+     code 选择器声明 font-feature-settings 关闭(=>、!= 合成单字形读代码碍眼)。 */
   --rikkahub-code-font:
     "Maple Mono", "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", ui-monospace,
     SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -142,6 +144,11 @@
   --ds-icon: #7e7f7e;
   --ds-selection-bg: color-mix(in srgb, var(--primary) 85%, transparent);
   --ds-surface-input: var(--ds-surface-100);
+  /* 输入卡顶端「附着层」底色(排队消息贴片):刻意是**半透明前景叠色**而非与输入面
+     混出的实色——贴片盖在输入卡上沿,实色会挡掉卡片自身的 inset 描边(暗色/花色主题的
+     轮廓就是那道 inset 环),半透明则让它透出来。由 --foreground 派生,预置/自定义主题
+     自动适配,只有暗色需要更大比例(深底上等比例叠色的色差更弱)。 */
+  --ds-queue-surface: color-mix(in srgb, var(--foreground) 9%, transparent);
   --ds-popover: var(--popover);
   --ds-menu-bg: color-mix(in oklch, var(--popover) 96%, white);
   --ds-menu-shadow-plate: none;
@@ -239,6 +246,7 @@
   --ds-menu-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12), 0 0 9px -4px rgba(0, 0, 0, 0.5), 0 0 32px -8px rgba(0, 0, 0, 0.2);
   --ds-menu-shadow-inset: none;
   --ds-surface-input: var(--ds-surface-300);
+  --ds-queue-surface: color-mix(in srgb, var(--foreground) 12%, transparent);
   --ds-menu-bg: var(--ds-surface-400);
   --ds-overlay: rgba(0, 0, 0, 0.6);
 }
@@ -1369,8 +1377,9 @@
   background: var(--muted) !important;
   color: var(--primary) !important;
   padding: 0.1rem 0.32rem !important;
-  /* 默认代码字体栈,可被 --rikkahub-code-font 覆盖 */
+  /* 默认代码字体栈,可被 --rikkahub-code-font 覆盖;禁用连字(见变量处注释) */
   font-family: var(--rikkahub-code-font) !important;
+  font-feature-settings: "calt" 0, "liga" 0, "clig" 0 !important;
   font-size: 0.95em !important;
 }
 
@@ -1386,6 +1395,7 @@
 [data-message-role] .message-markdown .code-block-content pre,
 [data-message-role] .message-markdown .code-block-content pre code {
   font-family: var(--rikkahub-code-font) !important;
+  font-feature-settings: "calt" 0, "liga" 0, "clig" 0 !important;
 }
 
 /* 语言标签跟随对话字体,与块 UI 文字观感一致。 */
@@ -1751,4 +1761,78 @@
   box-shadow: var(--ds-menu-shadow-inset);
   pointer-events: none;
 }
+
+/* ── 语音模式(Siri 风)────────────────────────────────────────────── */
+/* 胶囊玻璃材质:在 --ds-pill-bg 之上叠真玻璃模糊,四角细高光,动态岛质感。
+   性能加固:@supports 门控——不支持 backdrop-filter 的老 GPU/浏览器退化为半透明
+   纯色底(无模糊采样,零 GPU 合成压力),视觉仍成立。 */
+.vm-pill {
+  background-color: var(--ds-pill-bg);
+  background-image: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.06),
+    transparent 40%
+  );
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .vm-pill {
+    background-color: color-mix(in srgb, var(--ds-pill-bg) 55%, transparent);
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  }
+}
+.dark .vm-pill {
+  background-image: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.08),
+    transparent 45%
+  );
+}
+
+/* 聆听声纹:五根细条按相位错落弹跳(复用 cpd 声纹的呼吸节奏,色随阶段)。 */
+.vm-wave-bar {
+  width: 2px;
+  height: 100%;
+  border-radius: 999px;
+  background-color: currentColor;
+  transform-origin: center;
+  animation: vm-wave 1s ease-in-out infinite;
+}
+.vm-wave-bar:nth-child(1) { height: 6px; }
+.vm-wave-bar:nth-child(2) { height: 13px; }
+.vm-wave-bar:nth-child(3) { height: 16px; }
+.vm-wave-bar:nth-child(4) { height: 13px; }
+.vm-wave-bar:nth-child(5) { height: 6px; }
+@keyframes vm-wave {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+
+/* 朗读声环:两圈由内向外扩散消隐的柔波。 */
+.vm-ripple {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1.5px solid var(--ds-brand-primary);
+  opacity: 0;
+  animation: vm-ripple 1.6s ease-out infinite;
+}
+@keyframes vm-ripple {
+  0% { transform: scale(0.5); opacity: 0.7; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* 连接/转写呼吸点:缓慢明暗,表达"在准备/在整理"。 */
+.vm-breathe {
+  animation: vm-breathe 1.4s ease-in-out infinite;
+}
+@keyframes vm-breathe {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vm-wave-bar, .vm-ripple, .vm-breathe { animation: none; }
+}
+
 }

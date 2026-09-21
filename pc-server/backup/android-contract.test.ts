@@ -7,9 +7,11 @@ import { describe, expect, test } from "bun:test";
 
 import { rewriteAndroidFileUrl, rewriteAndroidFileUrlsDeep } from "./file-refs";
 import {
+  downgradeUnknownPartForAndroid,
   filterAnnotationsForAndroid,
   filterMessagePartsForAndroid,
   filterSearchServicesForAndroid,
+  filterTtsProvidersForAndroid,
   PC_AVATAR_TYPE_TO_ANDROID,
   rewriteAvatarsInSettings,
   toAndroidPresetMessage,
@@ -65,6 +67,19 @@ describe("filterAnnotationsForAndroid(A-2 注解过滤)", () => {
     ]);
   });
 
+  test("PC-only 的 steered(steer 插话标注)被过滤,安卓永远看不到", () => {
+    // 与 model_call_error 同款先例:steered 是纯 PC 元数据(可选 UI 标记),枚举判别符
+    // 若流入安卓会撑爆 UIMessageAnnotation 多态解码。备份零风险的行为锁。
+    expect(
+      filterAnnotationsForAndroid([
+        { type: "steered" },
+        { type: "pi-fidelity", v: 1 },
+        { type: "compaction_boundary" },
+        { type: "url_citation", url: "https://x" },
+      ]),
+    ).toEqual([{ type: "url_citation", url: "https://x" }]);
+  });
+
   test("缺判别符的脏对象、非对象条目、非数组输入都清洗掉", () => {
     expect(filterAnnotationsForAndroid([{ junk: 1 }, null, "str", 42])).toEqual([]);
     expect(filterAnnotationsForAndroid(undefined)).toEqual([]);
@@ -103,25 +118,92 @@ describe("搜索服务过滤机制(S-1)与 custom_js 事故回归", () => {
   });
 });
 
-describe("filterMessagePartsForAndroid(A-3 loading 占位过滤)", () => {
-  test("loading 占位与缺判别符脏对象被过滤,安卓已知/未来类型透传", () => {
+describe("filterMessagePartsForAndroid(A-3 loading 过滤 + C3 白名单降级)", () => {
+  test("loading 占位与缺判别符脏对象被删除;安卓已知类型原样透传", () => {
     expect(
       filterMessagePartsForAndroid([
         { type: "loading", label: "生成中" },
         { type: "text", text: "hi" },
-        { type: "some_future_android_part", x: 1 },
+        { type: "server_tool", toolName: "web_search", status: "completed" },
         { junk: 1 },
         null,
       ]),
     ).toEqual([
       { type: "text", text: "hi" },
-      { type: "some_future_android_part", x: 1 },
+      { type: "server_tool", toolName: "web_search", status: "completed" },
     ]);
   });
 
-  test("preset 消息里的 loading 同样被清洗(toAndroidPresetMessage 链路)", () => {
-    const out = toAndroidPresetMessage({ role: "user", parts: [{ type: "loading" }, { type: "text", text: "x" }] }) as any;
-    expect(out.parts).toEqual([{ type: "text", text: "x" }]);
+  test("C3:不在 vendored 安卓全集内的未知判别符被降级为占位 text part(不硬发给旧 APP)", () => {
+    const out = filterMessagePartsForAndroid([
+      { type: "some_future_pc_part", text: "未来内容摘要" },
+      { type: "text", text: "正常" },
+    ]) as any[];
+    expect(out[0].type).toBe("text");
+    expect(out[0].text).toContain("some_future_pc_part");
+    expect(out[0].text).toContain("未来内容摘要");
+    expect(out[1]).toEqual({ type: "text", text: "正常" });
+  });
+
+  test("C3 降级保留可读摘要:工具调用与附件也有提示", () => {
+    expect(downgradeUnknownPartForAndroid({ type: "future_tool", toolName: "code_exec" }).text).toContain("code_exec");
+    expect(downgradeUnknownPartForAndroid({ type: "future_media", url: "file:///x.png" }).text).toContain("x.png");
+    expect(downgradeUnknownPartForAndroid({ type: "bare" }).text).toContain("bare");
+  });
+
+  test("preset 消息里的 loading 仍被清洗、未知 part 仍被降级(toAndroidPresetMessage 链路)", () => {
+    const out = toAndroidPresetMessage({ role: "user", parts: [{ type: "loading" }, { type: "text", text: "x" }, { type: "pc_only_x" }] }) as any;
+    expect(out.parts.map((p: any) => p.type)).toEqual(["text", "text"]);
+    expect(out.parts[1].text).toContain("pc_only_x");
+  });
+});
+
+describe("C3:TTS/ASR provider 白名单清洗(旧 APP 多态解码保护)", () => {
+  test("PC 已知的 12 家 TTS 全部透传(当前两端对齐,实际不滤)", () => {
+    const known = ["system", "openai", "gemini", "minimax", "qwen", "groq", "xai", "mimo", "elevenlabs", "step", "fish-audio", "volcengine"]
+      .map((t) => ({ id: `id-${t}`, type: t, name: t }));
+    expect(filterTtsProvidersForAndroid(known)).toHaveLength(12);
+  });
+
+  test("TTS:未来 PC 先加的类型被滤掉,且选中 id 重定位到幸存项", () => {
+    const out = rewriteAvatarsInSettings({
+      ttsProviders: [
+        { id: "a", type: "openai", name: "A" },
+        { id: "b", type: "acme_future_tts", name: "B" },
+        { id: "c", type: "step", name: "C" },
+      ],
+      selectedTTSProviderId: "b", // 选中项被滤 → 应重定位
+      asrProviders: [
+        { id: "x", type: "openai_realtime", name: "X" },
+        { id: "y", type: "acme_future_asr", name: "Y" },
+      ],
+      selectedASRProviderId: "x",
+    }, PC_AVATAR_TYPE_TO_ANDROID, "to-android");
+    expect(out.ttsProviders.map((p: any) => p.type)).toEqual(["openai", "step"]);
+    expect(out.selectedTTSProviderId).toBe("a"); // 重定位到首个幸存项
+    expect(out.asrProviders.map((p: any) => p.type)).toEqual(["openai_realtime"]);
+    expect(out.selectedASRProviderId).toBe("x"); // 未被滤则保留
+  });
+
+  test("TTS/ASR 全被滤时选中 id 置空串(后续 uuidFields 兜底为随机 UUID,防拒收)", () => {
+    const out = rewriteAvatarsInSettings({
+      ttsProviders: [{ id: "b", type: "acme_only" }],
+      selectedTTSProviderId: "b",
+      asrProviders: [],
+    }, PC_AVATAR_TYPE_TO_ANDROID, "to-android");
+    expect(out.ttsProviders).toEqual([]);
+    expect(typeof out.selectedTTSProviderId).toBe("string"); // 不留悬挂 id
+  });
+
+  test("to-pc 方向不做 TTS/ASR 清洗(APP→PC 须原样保留 mimo/step 等)", () => {
+    const src = {
+      ttsProviders: [{ id: "b", type: "acme_future_tts" }],
+      asrProviders: [{ id: "y", type: "mimo" }, { id: "z", type: "step" }],
+      selectedASRProviderId: "y",
+    };
+    const out = rewriteAvatarsInSettings(src, PC_AVATAR_TYPE_TO_ANDROID, "to-pc");
+    expect(out.asrProviders.map((p: any) => p.type)).toEqual(["mimo", "step"]);
+    expect(out.ttsProviders.map((p: any) => p.type)).toEqual(["acme_future_tts"]);
   });
 });
 

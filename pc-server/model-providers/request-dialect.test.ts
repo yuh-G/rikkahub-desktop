@@ -11,6 +11,7 @@ import {
   isKimiK3Model,
   isKimiReasoningModel,
   isKimiSamplingLockedModel,
+  isMiMoOfficialHost,
   isSamplingLockedModel,
   isSiliconFlowEffortModel,
   isZhipuEffortModel,
@@ -62,9 +63,29 @@ describe("request-dialect 统一请求方言", () => {
     expect(registeredOutputLimit("glm-5.3-flash")).toBe(131_072);
     expect(registeredOutputLimit("GLM-5.3")).toBe(131_072);
     // 未登记的模型返回 null,交由目录/兜底处理——不许在这里编数。
-    expect(registeredOutputLimit("glm-5.2")).toBeNull();
     expect(registeredOutputLimit("gpt-5")).toBeNull();
     expect(registeredOutputLimit("")).toBeNull();
+  });
+
+  it("输出上限登记表:2026-09 新注册模型(全一手官方文档实证);未公布的不编数", () => {
+    // 每项对应一条 OUTPUT_LIMIT_FACTS,数值与出处见表内注释(2026-09-17 核实)。
+    expect(registeredOutputLimit("gpt-5.6-sol")).toBe(128_000);
+    expect(registeredOutputLimit("gpt-5.6")).toBe(128_000); // 别名
+    expect(registeredOutputLimit("gpt-6-astra")).toBe(128_000);
+    expect(registeredOutputLimit("claude-opus-4-8")).toBe(128_000);
+    expect(registeredOutputLimit("gemini-3.5-flash")).toBe(65_536);
+    expect(registeredOutputLimit("deepseek-flash")).toBe(384_000);
+    expect(registeredOutputLimit("deepseek-v4.1-flash")).toBe(384_000);
+    expect(registeredOutputLimit("glm-5.2")).toBe(131_072); // 与 5.3 同值但独立条目
+    expect(registeredOutputLimit("kimi-k3")).toBe(131_072);
+    expect(registeredOutputLimit("k3")).toBe(131_072); // 裸 id
+    expect(registeredOutputLimit("minimax-m3")).toBe(512_000);
+    expect(registeredOutputLimit("step-3.7-flash")).toBe(262_144);
+    expect(registeredOutputLimit("longcat-2.0")).toBe(131_072);
+    expect(registeredOutputLimit("qwen3.8-max")).toBe(131_072);
+    expect(registeredOutputLimit("qwen3.8-max-0902")).toBe(131_072); // 快照版本
+    // Gemini 3.5 Pro 厂商未公布输出上限——刻意不登记,返回 null 落兜底(不编数)。
+    expect(registeredOutputLimit("gemini-3.5-pro")).toBeNull();
   });
 
   it("历史 reasoning 项:仅官方主机回传(火山 400 内测实证 2026-09-05,第二轮必炸根因)", () => {
@@ -182,6 +203,16 @@ describe("request-dialect 厂商思考开关协议", () => {
     expect(openAiThinkingSwitchProtocol("api.moonshot.cn", "kimi-k2.6")).toBe("thinking-type-object");
     expect(openAiThinkingSwitchProtocol("api.moonshot.cn", "kimi-k2.5")).toBe("thinking-type-object");
     expect(openAiThinkingSwitchProtocol("api.moonshot.cn", "kimi-latest")).toBe("thinking-type-object");
+  });
+
+  it("小米 MiMo 官方主机:thinking:{type}(token-plan-cn 子域同族;对齐安卓 L354-360)", () => {
+    expect(openAiThinkingSwitchProtocol("api.xiaomimimo.com", "mimo-v3")).toBe("thinking-type-object");
+    expect(openAiThinkingSwitchProtocol("token-plan-cn.xiaomimimo.com", "mimo-v3")).toBe("thinking-type-object");
+    expect(isMiMoOfficialHost("api.xiaomimimo.com")).toBe(true);
+    expect(isMiMoOfficialHost("token-plan-cn.xiaomimimo.com")).toBe(true);
+    // 误伤面:别家/空串不命中。
+    expect(isMiMoOfficialHost("api.openai.com")).toBe(false);
+    expect(isMiMoOfficialHost("")).toBe(false);
   });
 });
 

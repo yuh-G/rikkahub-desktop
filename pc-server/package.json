@@ -17,7 +17,7 @@
     "compile:linux": "bun install && bun build --compile --target=bun-linux-x64 server.ts --outfile ../dist/rikkahub-pc"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.0",
+    "@types/bun": "^1.4.2",
     "typescript": "5.9.3"
   },
   "dependencies": {

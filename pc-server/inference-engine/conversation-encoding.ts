@@ -36,7 +36,7 @@ export function buildGoogleRequestBody(messagesForApi: ApiMessage[], modelItem: 
   const systemContent = messagesForApi.find((item) => item.role === "system")?.content;
   const hasImageOutput = supportsOutputModality(modelItem, "IMAGE");
   const functionTools = supportsAbility(modelItem, "TOOL")
-    ? conversationFunctionTools(assistant)
+    ? conversationFunctionTools(assistant, modelItem)
     : [];
   const functionDeclarations = googleFunctionDeclarations(functionTools);
   // 内置工具（googleSearch/urlContext）目前与函数工具互斥，优先内置工具，镜像安卓

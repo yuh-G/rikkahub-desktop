@@ -126,7 +126,20 @@
     "parsing_send_blocked": "Attachment still parsing — you can send once it finishes",
     "extraction_failed": "Parsing failed: this file's text can't be attached when sending",
     "extraction_empty": "No text could be extracted (scanned or unsupported file)",
-    "stop_generating": "Stop generating"
+    "stop_generating": "Stop generating",
+    "queue_send": "Send to queue (won't interrupt the current reply)",
+    "command_queue_blocked": "Commands are available once the current reply finishes"
+  },
+  "queue": {
+    "held_failed": "The last reply failed; queued messages are paused",
+    "held_interrupted": "Generation stopped; queued messages were not sent",
+    "resume": "Resume",
+    "edit": "Edit",
+    "remove": "Discard",
+    "save": "Save",
+    "cancel": "Cancel",
+    "empty_message": "Message can't be empty",
+    "attachment": "attachment"
   },
   "resize_handle": "Drag to resize the input box",
   "compress_history": "Compress conversation history",
@@ -146,7 +159,22 @@
     "connect_failed": "Speech recognition connection failed",
     "mic_denied": "Cannot access the microphone",
     "start": "Voice input",
-    "stop": "Stop voice input"
+    "stop": "Stop voice input",
+    "insecure_context": "Voice input requires HTTPS or localhost (the browser disables the microphone in this insecure context)."
+  },
+  "voice": {
+    "start": "Voice mode",
+    "title": "Voice mode",
+    "end": "End",
+    "retry": "Retry",
+    "connecting": "Connecting…",
+    "listening": "Listening; your message sends when you finish speaking",
+    "transcribing": "Finalizing transcription…",
+    "speaking": "Reading the reply aloud; listening resumes afterward",
+    "error_title": "Voice mode paused",
+    "not_configured": "Select a realtime-capable speech service in Settings first",
+    "mic_denied": "Cannot access the microphone; check system permission",
+    "connect_failed": "Speech recognition connection failed"
   },
   "workspace_permission": {
     "title": "Workspace permissions",

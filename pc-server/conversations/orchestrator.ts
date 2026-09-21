@@ -3,7 +3,7 @@
 
 import type { ApiMessage, Assistant, Conversation, JsonValue, Message, MessageNode, Model, Provider, ToolPendingOutput } from "../foundation/types";
 import { bumpAnalyticsErrCount } from "../app-config/analytics";
-import type { GenerationEventSink, StreamHooksWithSink, ToolExecutor } from "../inference-engine/events";
+import type { GenerationEventSink, GenerationTarget, StreamHooksWithSink, ToolExecutor } from "../inference-engine/events";
 import { id, isRecord, message, textFromParts } from "../foundation/utils";
 import { classifyProxyError } from "../foundation/net";
 import { classifyContextOverflowError, classifyOutputCapError, classifyRateLimitError } from "../inference-engine/provider-errors";
@@ -46,8 +46,10 @@ import {
 import { contextWindowFor, requiredOutputCap } from "../model-providers/model-limits";
 import {
   finishReasoningParts,
+  isEmptyAssistantPlaceholder,
   setMessageLoading,
   streamStartedMessages,
+  stripLoadingPlaceholder,
 } from "../inference-engine/parts";
 import { createGenerationEventApplier } from "./generation-apply";
 import { apiToolCallFromPart, toolExecutionErrorPayload, toolResultTextForApi } from "../tools/format";
@@ -77,7 +79,9 @@ import { flushConvDirtyNow, getConversation, getConversationsDb, markConversatio
 import { checkoutConversation, releaseConversation } from "./working-set";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
-import { awaitingApproval, generating } from "./generation-state";
+import { abortGeneration, abortReasonOf, awaitingApproval, compressing, generating } from "./generation-state";
+import { deliverQueuedReply, holdMessageQueue, isQueueHeldByInterrupt, isQueuePaused, notifyQueuedGenerationDispatched, pauseMessageQueue, queueSnapshotFor, removeQueuedMessage, setOnQueuedGenerationDispatched, shiftNextQueued } from "./message-queue";
+import { clearSteeringChannel, drainSteeringMessages } from "./steering-channel";
 import {
   appendTextPart,
   canResumeToolExecution,
@@ -88,7 +92,7 @@ import {
   hasResumableToolParts,
   toolApprovalType,
 } from "./helpers";
-import { generateSuggestionsForConversation, generateTitleForConversation, limitAuxiliaryText, markCompactionBoundary, modelExists, shouldAutoGenerateTitle } from "./auxiliary";
+import { generateSuggestionsForConversation, generateTitleForConversation, limitAuxiliaryText, markCompactionBoundary, modelExists, resolveFastModelId, shouldAutoGenerateTitle } from "./auxiliary";
 
 /** 生成入口一次性解析的配置快照（P1-4）。流式生成横跨多个 await 点，用户中途改配置
  *  （换模型/改工具集/删助手）时，updateSettings 会整体替换 state.settings——持有入口
@@ -97,6 +101,37 @@ export interface GenerationSnapshot {
   assistant: Assistant;
   provider: Provider;
   model: Model;
+}
+
+/** 生成会话句柄（steer 边界节点分裂的统一管理核心，对齐 Codex transcript 逐项累积）。
+ *  generateAnswer 装配时创建一次、随本次生成存活。初始落点 = ai_1（ensureAssistantGenerationNode
+ *  给出的 assistant 节点）；steer 边界由 steerBoundary 调 retarget 把后续流式换绑进新开的
+ *  continuation 节点 ai_2——从而延续输出在数据层落在 steer user 之后（②模型层重答污染的治本）。
+ *  引擎/adapter/tool-loop 只见它的只读面 GenerationTarget（活视图，每次现读），落点统一由
+ *  session 管；未来新引擎把 onSteerBoundary 指向同一 steerBoundary 即自动继承分裂能力。 */
+export interface GenerationSession extends GenerationTarget {
+  retarget(next: { node: MessageNode; message: Message }): void;
+}
+
+function createGenerationSession(conversationId: string, initial: { node: MessageNode; message: Message }): GenerationSession {
+  let node = initial.node;
+  let message = initial.message;
+  activeGenerationMessages.set(conversationId, message);
+  return {
+    get node() {
+      return node;
+    },
+    get message() {
+      return message;
+    },
+    retarget(next) {
+      node = next.node;
+      message = next.message;
+      // 所有权记录随落点走:finalizeOutcome 的接管守卫按「新流是否复用同一消息对象」
+      // 判定,换绑后不更新会让守卫拿旧 ai_1 比对新流的 ai_2,永远判不中。
+      activeGenerationMessages.set(conversationId, message);
+    },
+  };
 }
 
 export async function callProvider(
@@ -112,7 +147,7 @@ export async function callProvider(
   const providerItem = picked.provider;
   const selectedModel = picked.model.modelId === "auto" ? "gpt-4o-mini" : picked.model.modelId;
   const url = endpointFor(providerItem);
-  const headers = applyRequestHeaders({ "Content-Type": "application/json" }, assistant, providerItem, picked.model);
+  const headers = applyRequestHeaders({ "Content-Type": "application/json" }, assistant, providerItem, picked.model, conversation.id);
   // 对齐 e63d017：OpenAI 路径才让 includeHistoryReasoning 生效；
   // claude/google 不走 OpenAI assistant 序列化，一律保持 true。
   const includeHistoryReasoning =
@@ -141,7 +176,7 @@ export async function callProvider(
     const messages = messagesForApi;
     const systemContent = messages.find((item) => item.role === "system")?.content;
     const functionTools = supportsAbility(picked.model, "TOOL")
-      ? conversationFunctionTools(assistant)
+      ? conversationFunctionTools(assistant, picked.model)
       : [];
     const claudeTools = claudeToolsFromOpenAiTools(functionTools, providerItem);
     const normalizedReasoning = reasoningLevelNormalized(assistant.reasoningLevel);
@@ -179,8 +214,13 @@ export async function callProvider(
   }
 
   headers.Authorization = `Bearer ${providerItem.apiKey}`;
+  // 台账 §7.4,对齐安卓 ChatCompletionsAPI.kt:262 —— OpenRouter 在请求体发 session_id(非
+  // 头;网关据此把同会话路由到同一上游实例,前缀缓存更可能命中)。仅 chat-completions 形态
+  // 有此事;responses 形态安卓无对应。conversation.id 即会话身份(与 prompt_cache_key 同物)。
+  const openRouterSessionId =
+    hostOfProvider(providerItem) === "openrouter.ai" ? conversation.id : undefined;
   if (providerItem.useResponseApi) {
-    const functionTools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant) : [];
+    const functionTools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant, picked.model) : [];
     const builtInTools = responseApiBuiltInTools(picked.model);
     const systemContent = conversationResponseApiInstructions(conversation, assistant);
     const reasoning = responseApiReasoningForProvider(providerItem, picked.model, assistant.reasoningLevel);
@@ -210,7 +250,7 @@ export async function callProvider(
     if (!body.tools.length) delete body.tools;
     return fetchText(url, headers, applyCustomBody(body, assistant, picked.model), providerItem, (raw) => raw.output_text ?? raw.output?.flatMap((item: any) => item.content ?? []).map((item: any) => item.text ?? "").join("\n"), signal);
   }
-  const tools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant) : [];
+  const tools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant, picked.model) : [];
   body = {
     model: selectedModel,
     messages: messagesForApi,
@@ -224,15 +264,15 @@ export async function callProvider(
     tools: tools.length ? tools : undefined,
     tool_choice: tools.length ? "auto" : undefined,
     ...(providerItem.promptCacheKey === true ? { prompt_cache_key: conversation.id } : {}),
+    ...(openRouterSessionId ? { session_id: openRouterSessionId } : {}),
   };
   return fetchOpenAiText(url, headers, applyCustomBody(body, assistant, picked.model), providerItem, assistant, signal, hooks);
 }
 
 export async function callProviderStreaming(
   conversation: Conversation,
-  assistantMessage: Message,
-  assistantNode: MessageNode,
-  ctx: { signal?: AbortSignal; sink: GenerationEventSink; executeTool: ToolExecutor; snapshot?: GenerationSnapshot },
+  target: GenerationTarget,
+  ctx: { signal?: AbortSignal; sink: GenerationEventSink; executeTool: ToolExecutor; snapshot?: GenerationSnapshot; onSteerBoundary?: () => string[] },
 ): Promise<string> {
   const assistant = ctx.snapshot?.assistant ?? findAssistant(conversation.assistantId);
   const picked = ctx.snapshot
@@ -246,7 +286,10 @@ export async function callProviderStreaming(
     assistant,
     providerItem,
     picked.model,
+    conversation.id,
   );
+  const openRouterSessionId =
+    hostOfProvider(providerItem) === "openrouter.ai" ? conversation.id : undefined;
   const messagesForApi = conversationMessagesForApi(
     conversation,
     assistant,
@@ -254,13 +297,23 @@ export async function callProviderStreaming(
     // 默认 true，仅当用户显式关闭时才不回传历史 reasoning_content。
     providerItem.type === "openai" ? providerItem.includeHistoryReasoning !== false : true,
   );
-  const tools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant) : [];
+  const tools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant, picked.model) : [];
+  // hooks 的 message/node 是活视图:工具循环骨架与 provider reader 直接读 hooks.message
+  // (usage 合并 / 思维链收口 / 快照模式的可见文本回读 / 下一轮编码取 reasoning),
+  // steer 分裂换绑后这些读写必须落到新节点,所以不能在这里取值缓存。
   const hooks: StreamHooksWithSink = {
-    message: assistantMessage,
+    get message() {
+      return target.message;
+    },
+    get node() {
+      return target.node;
+    },
     conversation,
-    node: assistantNode,
     sink: ctx.sink,
     executeTool: ctx.executeTool,
+    // steering 轮边界透传(用户问题②):协调器装配的排水回调直抵工具循环骨架,
+    // 引擎层零感知副作用。
+    onSteerBoundary: ctx.onSteerBoundary,
   };
   if (providerItem.type !== "openai") {
     // 把本函数已解析的快照透传，确保 claude/google 路径与 openai 路径读到同一代配置
@@ -307,6 +360,7 @@ export async function callProviderStreaming(
     tools: tools.length ? tools : undefined,
     tool_choice: tools.length ? "auto" : undefined,
     ...(providerItem.promptCacheKey === true ? { prompt_cache_key: conversation.id } : {}),
+    ...(openRouterSessionId ? { session_id: openRouterSessionId } : {}),
     stream: true,
     stream_options: hostOfProvider(providerItem) === "api.mistral.ai" ? undefined : { include_usage: true },
   }, assistant, picked.model);
@@ -355,6 +409,12 @@ export async function resumeApprovedToolParts(
     }
     const normalized = await toolResultToParts(toolResult);
     part.output = await realizeToolResult(normalized);
+    // issue #59:审批恢复(批准后重跑/暂停后 resume)直写 output,不经应用器——每工具
+    // 计时终点在这里补戳(只补不覆盖)。denied 分支走 toolExecutionErrorPayload 的
+    // {error} 载荷语义,同样是被用户裁决的终局,一并定格。
+    if (!isRecord(part.metadata) || part.metadata.toolFinishedAt == null) {
+      part.metadata = { ...(isRecord(part.metadata) ? part.metadata : {}), toolFinishedAt: new Date().toISOString() };
+    }
     changed = true;
     toolMessages.push(
       useResponseInput
@@ -411,11 +471,145 @@ function conversationStillExists(conversationId: string) {
   return db ? conversationExistsInDb(db, conversationId) : false;
 }
 
+/** 队列快照变化 → 会话 SSE 重广播(前端队列面板即据此刷新)。低频事件,不走合帧热路径。 */
+function broadcastQueueState(conversationId: string) {
+  const conv = getConversation(conversationId);
+  if (conv) broadcastConversation(conv);
+}
+
+/**
+ * steering 轮边界（用户问题②，对齐 Codex pending_input + transcript 逐项累积）：引擎在
+ * 「即将构建下一模型请求之前」调用（聊天引擎 = 工具批执行完 / 最终轮无工具；pi = turn_end）。
+ * 排水 steering 通道（只取仍在 FIFO 队列的项——被撤回/编辑的不注入），逐条落库 steer user
+ * 节点（完整气泡 + `steered` 注解，与 dispatchQueuedHead 同构：正则变换入队时已做）+ 从队列
+ * 移除（已注入≠待触发，防收尾再派发一次）+ 刷新面板，返回各消息文本供引擎编码。副作用全部
+ * 收在本协调器（落库/队列/广播/换绑），引擎只拿纯文本——层纪律与 executeTool 同。语音回复
+ * 通道：被注入项的等待方经 removeQueuedMessage 收 null（该轮回复涵盖全部补发，无单条回复
+ * 可播报），语音模式跳过播报直接重开麦。
+ *
+ * Steer 边界节点分裂（对齐 Codex 数据序 [assistant_r1, user_steer, assistant_r2]）：排水命中
+ * 后，把当前 assistant 节点收口定格（finishReasoningParts + finishedAt），落库 steer user，
+ * 再新开一个 continuation assistant 节点接管后续流式（session.retarget，引擎经 GenerationTarget
+ * 活视图自动跟随）。于是延续输出在数据层落在 steer user 之后——模型与用户都不会把 steer user
+ * 误读为悬空未答。若当前节点还是无任何可见内容的空占位（isEmptyAssistantPlaceholder），不
+ * 固化、直接剔除，避免「空气泡 + 插话」。整批多条 steer 只分裂一次（一个 ai_2 接住这批之后
+ * 的全部延续）。
+ *
+ * 不变式：返回非空 ⟺ 发生了分裂（pushSteeringMessage 不收纯附件项，通道里每项都有文本），
+ * 引擎侧据此把累计文本/耗时切到「当前段」口径。
+ */
+function steerBoundary(conversationId: string, session: GenerationSession): string[] {
+  const conversation = getConversation(conversationId);
+  if (!conversation) return [];
+  const taken = drainSteeringMessages(conversationId, (itemId) => queueSnapshotFor(conversationId)?.items.some((it) => it.id === itemId) ?? false);
+  if (taken.length === 0) return [];
+
+  // 1) 收口/剔除当前 assistant 节点。空占位剔除而非定格，避免空气泡。
+  const prevMessage = session.message;
+  const nodeIndex = conversation.messages.findIndex((n) => n.id === session.node.id);
+  if (nodeIndex >= 0) {
+    if (isEmptyAssistantPlaceholder(prevMessage)) {
+      conversation.messages.splice(nodeIndex, 1);
+    } else {
+      // 收口 ai_1：定格为一段已完成的「答复」。它留在 steer user 之前，观感=真的答完了。
+      finishReasoningParts(prevMessage);
+      stripLoadingPlaceholder(prevMessage);
+      prevMessage.finishedAt = new Date().toISOString();
+    }
+  }
+
+  // 2) 逐条落库 steer user 节点（完整气泡）。steered 注解是可选元数据（非功能依赖），
+  //    默认不做任何特殊渲染；PC→APP 导出经 PC_ONLY_ANNOTATION_TYPES 剥离。
+  const texts: string[] = [];
+  for (const item of taken) {
+    const userMessage = message("USER", item.parts.map((p) => ({ ...p })));
+    userMessage.annotations.push({ type: "steered" });
+    const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
+    conversation.messages.push(userNode);
+    texts.push(textFromParts(item.parts));
+    removeQueuedMessage(conversationId, item.id);
+  }
+
+  // 3) 新开 continuation assistant 节点 ai_2 接管后续流式（整批只开一个）。与生成入口
+  //    同款 loading 占位:用户看到的是「新一轮正在思考」的打字点,首个 delta 自动摘除。
+  const continuationMessage = message("ASSISTANT", [], prevMessage.modelId);
+  continuationMessage.finishedAt = null; // 新节点进入生成态
+  continuationMessage.annotations = [];
+  setMessageLoading(continuationMessage);
+  const continuationNode: MessageNode = { id: id(), messages: [continuationMessage], selectIndex: 0 };
+  conversation.messages.push(continuationNode);
+
+  conversation.chatSuggestions = [];
+  conversation.updateAt = Date.now();
+  persistConversation(conversation);
+  broadcastConversation(conversation);
+  broadcastQueueState(conversationId);
+
+  // 4) 换绑：之后所有 sink 事件落进 ai_2（引擎无感）。
+  session.retarget({ node: continuationNode, message: continuationMessage });
+  return texts;
+}
+
+/** 队首派发核心(前置:调用方已确认空闲且未暂停)。 */
+function dispatchQueuedHead(conversationId: string) {
+  const conversation = getConversation(conversationId);
+  if (!conversation) return;
+  const next = shiftNextQueued(conversationId);
+  if (!next) return;
+  // 把队首的用户消息本体落库进历史(与 send 入口同构;parts 入队时已做正则变换),再基于最新历史点火下一条。
+  const userMessage = message("USER", next.parts.map((p) => ({ ...p })));
+  const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
+  conversation.messages.push(userNode);
+  conversation.chatSuggestions = [];
+  conversation.updateAt = Date.now();
+  persistConversation(conversation);
+  broadcastConversation(conversation);
+  // 队列状态已变(少一条),面板立即刷新。
+  broadcastQueueState(conversationId);
+  // 语音模式回复通道:登记本条生成源自哪个排队项(经 message-queue 回调,仅 waitingReply 项生效)。
+  notifyQueuedGenerationDispatched(conversationId, next);
+  // 点火下一条。generateAnswer 入口自带「先中止旧流」不变式,但此处旧流已收尾(generating
+  // 登记刚被 completeConversationGeneration 清除),它登记新 controller 并正常驱动。
+  void generateAnswer(conversation);
+}
+
+/**
+ * 消息发送队列派发(跨引擎统一):空闲 && 未暂停 && 未被打断冻结 && 队非空时,从队首
+ * 取下一条待生成并点火。触发点:generateAnswer 收尾(经 stillMine 快照判「未被接管」后
+ * 调用)+ queue/resume 端点(空闲时)。队列对引擎种类无感——它只调 generateAnswer,
+ * 而那是聊天/pi 唯一注册生成的入口,新增引擎自动继承。
+ * 终局三态门控(对齐 Codex ThreadIdleCause):heldByInterrupt(用户 stop/写入口接管
+ * 中止)时 return——打断意图支配派发,冻结的队列等用户显式 resume。
+ */
+export function dispatchMessageQueue(conversationId: string) {
+  if (generating.has(conversationId)) return; // 占用中:不打断,等当前流收尾续跑。
+  // 压缩窗口互斥(与 send/enqueue 入口的 409 同一理由:压缩完成时整体覆盖 messages,
+  // 窗口内点火的生成会被吞)。压缩端点 finally 解锁后接续调用本函数续跑。
+  if (compressing.has(conversationId)) return;
+  if (isQueuePaused(conversationId)) return;
+  if (isQueueHeldByInterrupt(conversationId)) return;
+  dispatchQueuedHead(conversationId);
+}
+
+/** 语音模式回复通道:登记「当前正在跑的排队生成」的源排队项 id。值仅存于内存,随收尾结算
+ *  后删除;并发安全靠 generateAnswer 的「先 abort 再接管」不变式(同会话同一时刻只跑一条)。 */
+const queuedGenerationSource = new Map<string, string>();
+/** 已交付回复的排队项 id(防同消息被接管重跑时重复交付)。键同排队项生命周期,交付后即弃。 */
+const deliveredQueuedGenerations = new Set<string>();
+// 排队项被派发即登记来源。回复等待只在语音模式注册(waitingReply),键盘排队不触发回复通道。
+setOnQueuedGenerationDispatched((conversationId, item) => {
+  if (item.waitingReply) queuedGenerationSource.set(conversationId, item.id);
+});
+
 async function runPostGenerationTasks(conversationId: string, snapshot: Conversation, assistantMessageId: string) {
   const liveConversation = () => getConversation(conversationId);
-  if (shouldAutoGenerateTitle(snapshot) && modelExists(state.settings.titleModelId)) {
+  // 快速模型解析一次,两个后台任务共用。null = 没配(空/出厂哨兵/指向已删模型)→ 两者
+  // 都静默跳过:标题退成首条消息文本,建议不生成,不弹任何失败提示,也不擅自拿主模型
+  // 跑(建议回复每轮一次,用主模型不划算)。用户想要 AI 标题就去设置里配快速模型。
+  const fastModelId = resolveFastModelId();
+  if (shouldAutoGenerateTitle(snapshot) && fastModelId) {
     try {
-      const title = await generateTitleForConversation(snapshot);
+      const title = await generateTitleForConversation(snapshot, fastModelId);
       const live = liveConversation();
       if (live && shouldAutoGenerateTitle(live)) {
         live.title = title;
@@ -432,7 +626,9 @@ async function runPostGenerationTasks(conversationId: string, snapshot: Conversa
         kind: "aux:title",
         error: titleError instanceof Error ? titleError.message : String(titleError),
       });
-      reportError("provider", "warn", "标题自动生成失败，已回退为首条消息文本", titleError, "title_generation_failed");
+      // info 级:标题只是便利功能,回退首条消息文本后用户无感损失。只进错误中心供排查,
+      // 不弹全局 toast——后台任务的失败不该打断用户手上的事。
+      reportError("provider", "info", "标题自动生成失败，已回退为首条消息文本", titleError, "title_generation_failed");
       // Title generation failed → fall back to first user message text (Android parity).
       const live = liveConversation();
       if (live && shouldAutoGenerateTitle(live)) {
@@ -444,7 +640,7 @@ async function runPostGenerationTasks(conversationId: string, snapshot: Conversa
       }
     }
   } else if (shouldAutoGenerateTitle(snapshot)) {
-    // No title model configured at all → still give it a sensible name from the first user message.
+    // 未配快速模型 → 不调任何模型,直接用首条用户消息文本命名(与 Android 同口径)。
     const live = liveConversation();
     if (live && shouldAutoGenerateTitle(live)) {
       const firstText = textFromParts(live.messages[0]?.messages[0]?.parts ?? []).trim();
@@ -457,22 +653,22 @@ async function runPostGenerationTasks(conversationId: string, snapshot: Conversa
     }
   }
 
-  if (modelExists(state.settings.suggestionModelId)) {
-    try {
-      const suggestions = await generateSuggestionsForConversation(snapshot);
-      const live = liveConversation();
-      const lastNode = live?.messages[live.messages.length - 1];
-      const lastMessage = lastNode?.messages[lastNode.selectIndex] ?? lastNode?.messages[0];
-      if (live && lastMessage?.id === assistantMessageId && !generating.has(live.id)) {
-        live.chatSuggestions = suggestions;
-        live.updateAt = Date.now();
-        persistConversation(live);
-        broadcastConversation(live);
-      }
-    } catch (suggestionError) {
-      // Suggestions are auxiliary;正文生成状态不应受影响。
-      reportError("provider", "warn", "会话建议生成失败", suggestionError, "suggestion_generation_failed");
+  if (!fastModelId) return;
+  try {
+    const suggestions = await generateSuggestionsForConversation(snapshot, fastModelId);
+    const live = liveConversation();
+    const lastNode = live?.messages[live.messages.length - 1];
+    const lastMessage = lastNode?.messages[lastNode.selectIndex] ?? lastNode?.messages[0];
+    if (live && lastMessage?.id === assistantMessageId && !generating.has(live.id)) {
+      live.chatSuggestions = suggestions;
+      live.updateAt = Date.now();
+      persistConversation(live);
+      broadcastConversation(live);
     }
+  } catch (suggestionError) {
+    // Suggestions are auxiliary;正文生成状态不应受影响。info 级同标题:少几个建议 chip
+    // 不构成需要打扰用户的故障。
+    reportError("provider", "info", "会话建议生成失败", suggestionError, "suggestion_generation_failed");
   }
 }
 
@@ -549,7 +745,7 @@ async function runPiWorkspaceGeneration(
   sink: GenerationEventSink,
   signal?: AbortSignal,
 ): Promise<string> {
-  const { conversation, assistantNode } = ctx;
+  const { conversation, target } = ctx;
   const runtime = ctx.piRuntime;
   if (!runtime) {
     // 路由不变式:resolveEngine 选中 pi 时 matches() 已确认工作区可用。此处为防御兜底
@@ -616,10 +812,13 @@ async function runPiWorkspaceGeneration(
     resources,
     tools: [
       ...createPiWorkspaceTools({ conversation, assistant: deps.assistant, sink }),
-      ...createPiGeneralTools({ conversation, assistant: deps.assistant, sink, messageNodeId: assistantNode.id }),
+      ...createPiGeneralTools({ conversation, assistant: deps.assistant, sink, target, model: deps.selectedModel }),
     ],
     sink,
     signal,
+    // steering 轮边界(用户问题②):编排层同一回调直通 pi runner,在 pi turn_end 同步
+    // 调用(落库/队列联动/分裂在 steerBoundary,runner 只拿文本喂 session.steer)。
+    onSteerBoundary: ctx.onSteerBoundary,
   });
   applyCapturedEngineCompactions(conversation, result.capturedCompactions);
   return result.text;
@@ -630,10 +829,12 @@ async function runPiWorkspaceGeneration(
  *  审批旁路判定无需再改。 */
 const ENGINE_REGISTRY = createEngineRegistry({
   chatRun: (ctx, sink, signal) =>
-    callProviderStreaming(ctx.conversation, ctx.assistantMessage, ctx.assistantNode, {
+    callProviderStreaming(ctx.conversation, ctx.target, {
       signal,
       sink,
       executeTool: ctx.executeTool,
+      // steering 轮边界(用户问题②):透传给聊天引擎的工具循环骨架。
+      onSteerBoundary: ctx.onSteerBoundary,
       // P1-4:generateAnswer 入口解析的 assistant/provider/model 贯穿本次生成,
       // callProviderStreaming 不再从可能已被替换的 state.settings 重新解析。
       snapshot: { assistant: ctx.assistant, provider: ctx.provider, model: ctx.model },
@@ -792,7 +993,8 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
   // 前者的 controller——前者成无主流,两路流式交错写同一节点(parts 交叉污染)、且无人能停。
   // 把端点级纪律下沉为编排器不变式:同会话已有登记流,先 abort 再接管(后到者胜,与端点
   // 语义一致)。completeConversationGeneration 按 controller 身份幂等,旧流收尾不会误删新登记。
-  generating.get(conversation.id)?.abort();
+  // 意图 replaced:接管即继续对话,旧流收尾不冻结队列。
+  abortGeneration(conversation.id, "replaced");
   const controller = new AbortController();
   generating.set(conversation.id, controller);
   // DB-first:整个生成期持有引用(与 finally 的 release 恰好配对一次;
@@ -817,23 +1019,32 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     assistantNode = ensureAssistantGenerationNode(conversation, picked.model.id);
   }
   const currentMessage = assistantNode.messages[assistantNode.selectIndex];
-  activeGenerationMessages.set(conversation.id, currentMessage);
+  // Steer 边界节点分裂：本次生成的流式落点句柄。初始 = ai_1；steer 边界由 steerBoundary
+  // 经 retarget 换绑到 ai_2。下方 sink/applyEvent/finalization/abort/失败/审批判定全部改读
+  // session 当前值，不再硬编码 assistantNode/currentMessage——steer 后延续输出自然落进新节点。
+  // 所有权记录(activeGenerationMessages)由 session 内部随落点维护。
+  const session = createGenerationSession(conversation.id, { node: assistantNode, message: currentMessage });
   // P1-3:四条出口路径(pending/done/aborted/failed)的共同收尾序列。差异只在 parts 与
   // finishedAt 处理,由 applyParts 注入。completeConversationGeneration 幂等,finally 兜底。
+  // 落点读 session 当前值:无 steer 时=ai_1,有 steer 时=ai_2——四条路径同正确。
   const finalizeOutcome = (applyParts: () => void) => {
     // 批6复审 G2:接管守卫——被新流接管且新流复用同一消息对象时,旧流的收尾若继续执行,
     // 会对新流正在写的回答做 transforms/盖 finishedAt/写估算 usage,失败分支甚至把
     // "请求失败"文本和 model_call_error 注解追加进去。此时静默退出(消息已易主,由新流
     // 负责收尾);新流用的是新消息对象时,旧流仍照常收尾自己的消息,行为不变。
     const owner = generating.get(conversation.id);
-    if (owner && owner !== controller && activeGenerationMessages.get(conversation.id) === currentMessage) return;
-    applyOutputTransforms(currentMessage, assistant);
-    finishReasoningParts(currentMessage);
+    if (owner && owner !== controller && activeGenerationMessages.get(conversation.id) === session.message) return;
+    applyOutputTransforms(session.message, assistant);
+    finishReasoningParts(session.message);
+    // 终局一律摘 loading 占位:正常路径由首个 delta 摘,但空回复 / 首个 delta 前中止 /
+    // 删会话接管等路径没人摘,前端"打字点"会永久残留在已完结消息上。四条出口统一在此收口
+    // (stop 端点因不经本函数仍自行摘除)。
+    stripLoadingPlaceholder(session.message);
     applyParts();
-    ensureUsage(currentMessage, conversation);
+    ensureUsage(session.message, conversation);
     conversation.updateAt = Date.now();
     completeConversationGeneration(conversation.id, controller);
-    broadcastNodeUpdate(conversation, assistantNode);
+    broadcastNodeUpdate(conversation, session.node);
     broadcastConversation(conversation);
   };
   // T1:续跑语义读 adapter 声明——仅 pause-resume 引擎(聊天)有"整批暂停→逐卡批准→
@@ -875,7 +1086,7 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
       const raw = await executeToolCall(toolCall, assistant, {
         ...context,
         signal: controller.signal,
-        onToolPartialOutput: (output) => applyEvent({ kind: "tool_result", toolCallId: toolCall.id, output }),
+        onToolPartialOutput: (output) => applyEvent({ kind: "tool_result", toolCallId: toolCall.id, output, final: false }),
       });
       // ask_user / MCP 审批等 pending 状态直接作为单 output 载荷返回，让协调器走暂停路径。
       if (isRecord(raw) && "pending" in raw) {
@@ -887,7 +1098,16 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     };
     // P2(pi 引擎):内联 applyEvent 抽取为共享应用器(conversations/generation-apply.ts,
     // 逐字搬迁行为零变)——聊天引擎与 pi 事件桥共用同一份"事件→parts"写入字典。
-    const applyEvent = createGenerationEventApplier({ conversation, node: assistantNode, message: currentMessage });
+    // 落点 = session 活视图:steer 换绑后,后续事件自动应用到 ai_2(应用器每事件现读)。
+    const applyEvent = createGenerationEventApplier({
+      conversation,
+      get node() {
+        return session.node;
+      },
+      get message() {
+        return session.message;
+      },
+    });
     const sink: GenerationEventSink = (event) => {
       // P5:引擎瞬态状态(压缩中/自动重试)不落库不产 part,直通会话 SSE 状态条;
       // 其余事件照走应用器。generateAnswer finally 兜底 busy:false,中途 abort 不挂条。
@@ -900,40 +1120,52 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     const content = await runGeneration(
       {
         conversation,
-        assistantMessage: currentMessage,
-        assistantNode,
+        target: session,
         assistant,
         provider: picked.provider,
         model: picked.model,
         executeTool,
+        // steering 轮边界(用户问题②):唯一装配点。聊天引擎在工具循环轮边界与最终轮调用;
+        // pi 引擎在 turn_end 调用;未来引擎在「即将构建下一模型请求前」调用同一回调即自动
+        // 继承分裂能力(收口当前节点、落库 steer user、新开 continuation 节点并换绑)。
+        // 声明 steering:"none" 的引擎不下发——排水即分裂,不能注入的引擎不该有机会排水;
+        // 其补发留在队列由收尾派发兜底。
+        ...(adapter.steering === "boundary" ? { onSteerBoundary: () => steerBoundary(conversation.id, session) } : {}),
         adapter,
       },
       sink,
       controller.signal,
     );
     if (controller.signal.aborted) throw new DOMException("Generation stopped", "AbortError");
-    if (adapter.resumeSemantics === "pause-resume" && hasPendingToolApproval(currentMessage)) {
+    if (adapter.resumeSemantics === "pause-resume" && hasPendingToolApproval(session.message)) {
       // 注:hasPendingToolApproval 判定在 applyOutputTransforms 之前与旧实现一致——
       // 旧实现先 transform 再判定,但 transform 只改 text/reasoning parts,不触碰 tool
       // parts 的 approvalState,判定结果不受影响;两分支的 transform 都由 finalize 统一做。
       finalizeOutcome(() => {
-        currentMessage.finishedAt = null;
+        session.message.finishedAt = null;
       });
       return;
     }
     finalizeOutcome(() => {
-      if (currentMessage.parts.length === 0) {
-        finishMessage(currentMessage, [{ type: "text", text: content }]);
+      if (session.message.parts.length === 0) {
+        finishMessage(session.message, [{ type: "text", text: content }]);
       } else {
-        const hasText = textFromParts(currentMessage.parts).trim().length > 0;
+        const hasText = textFromParts(session.message.parts).trim().length > 0;
         if (!hasText && content && content !== "(empty response)") {
-          appendTextPart(currentMessage, content);
+          appendTextPart(session.message, content);
         }
-        currentMessage.finishedAt = new Date().toISOString();
+        session.message.finishedAt = new Date().toISOString();
       }
     });
     const snapshot = cloneConversation(conversation);
-    void runPostGenerationTasks(conversation.id, snapshot, currentMessage.id);
+    void runPostGenerationTasks(conversation.id, snapshot, session.message.id);
+    // 语音模式回复通道:本条若源自「等回复的排队生成」,把该轮 assistant 文本交付等待方。
+    // 空正文交付 null(语音模式据此跳过播报)。已交付集合防「同消息被接管重跑」重复交付。
+    const replySourceId = queuedGenerationSource.get(conversation.id);
+    if (replySourceId && !deliveredQueuedGenerations.has(replySourceId)) {
+      deliveredQueuedGenerations.add(replySourceId);
+      deliverQueuedReply(conversation.id, replySourceId, textFromParts(session.message.parts));
+    }
   } catch (err) {
     if (!conversationStillExists(conversation.id)) {
       completeConversationGeneration(conversation.id, controller);
@@ -943,12 +1175,20 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     // 网络错误而非 AbortError,若走失败分支会给用户主动停止的回答追加"请求失败"+错误
     // 注解并弹全局错误。只要本流已被要求中止,一律按中止收尾。
     if (controller.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) {
+      // 终局三态之 Interrupted:本流以中止收尾。队列命运由中止方声明的意图决定(见
+      // generation-state GenerationAbortReason):interrupted(用户 stop)→ 冻结,等显式
+      // resume(对齐 Codex Interrupted 不派发);replaced(写入口接管)→ 不冻结,新流收尾
+      // 照常派发(对齐 Codex 新输入开 turn 后 Completed 续跑);deleted → 队列随会话已清,
+      // 无事可做。无意图的中止(外部/未知来源)按最保守的 interrupted 处理——宁停勿乱跑。
+      // 此前靠「登记在册是否另一个 controller」推断接管,在 OCR 续体窗口里旧流的 catch
+      // 会抢在新流登记前执行,把接管误判成打断并冻结队列(2026-09-20 用户测试 1 症状)。
+      const reason = abortReasonOf(controller.signal) ?? "interrupted";
+      if (reason === "interrupted") {
+        holdMessageQueue(conversation.id);
+        broadcastQueueState(conversation.id);
+      }
       finalizeOutcome(() => {
-        // 批6复审 G4:中止若发生在首个 delta 之前,loading 占位没人摘(正常路径由首个
-        // delta 摘,stop 端点手工摘,但删会话/接管等 abort 路径不经过 stop 端点),
-        // 前端"打字点"会永久残留在已完结消息上。与 stop 端点的手工摘除对齐。
-        currentMessage.parts = currentMessage.parts.filter((part) => !(isRecord(part) && part.type === "loading"));
-        currentMessage.finishedAt = new Date().toISOString();
+        session.message.finishedAt = new Date().toISOString();
       });
       return;
     }
@@ -965,18 +1205,35 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     // P2-1(N-7 归宿):失败文本除了落在消息注解上(仅会话内可见),还上报全局通道——
     // 用户不在该会话页时也能收到通知(批2 接前端 toast)。
     reportError("provider", "error", failureText, err);
+    // 消息发送队列:失败自动暂停(保留全部排队项,待用户手动 resume 续跑)。对齐 APP
+    // onGenerationFinished(cause != null) → pause。仅真失败暂停——用户主动 stop/中止在上面
+    // 已 return,不会到这;故 stop 不会暂停队列,只停在「无下一条自动点火」。
+    pauseMessageQueue(conversation.id);
+    broadcastQueueState(conversation.id);
     finalizeOutcome(() => {
       // 错误零污染正文(对齐 Android addError):失败详情只活在 model_call_error 注解的
       // message 字段,由前端错误卡呈现;正文保留半截真实产出。既无正文也无错误的流
       // (中止/纯失败)不会走到这里——中止分支已先行返回。
-      currentMessage.finishedAt = new Date().toISOString();
+      session.message.finishedAt = new Date().toISOString();
       // R7-2:结构化错误标记——前端错误卡由它驱动,详情取注解的 message 字段,
       // 不再对正文做关键词正则(讨论 HTTP 状态码/超时的正常回答不误报)。
-      currentMessage.annotations.push({ type: "model_call_error", message: failureText });
+      session.message.annotations.push({ type: "model_call_error", message: failureText });
     });
   } finally {
-    releaseConversation(conversation.id);
-    completeConversationGeneration(conversation.id, controller);
+    // 语音模式回复通道兜底:成功路径已交付;走到 finally 仍未交付 = 本条排队生成以
+    // abort/失败/被接管收尾(均无可播报回复),交付 null 让语音模式跳过播报、直接重开麦。
+    const replySourceId = queuedGenerationSource.get(conversation.id);
+    if (replySourceId && !deliveredQueuedGenerations.has(replySourceId)) {
+      deliveredQueuedGenerations.add(replySourceId);
+      deliverQueuedReply(conversation.id, replySourceId, null);
+    }
+    // 消息发送队列续跑的归属:被 replaced(写入口接管)的旧流不派发——接管方自己的收尾
+    // 负责续跑(compress 无新流,其端点 finally 显式续跑)。若旧流在此派发,慢 OCR 窗口里
+    // 会抢在接管方登记之前点火队首,把排队消息排到用户刚发/刚编辑的消息之前。deleted
+    // 同理无事可做(队列已随会话清除)。interrupted/正常/失败收尾照常尝试派发,由
+    // dispatchMessageQueue 的门控(占用/压缩/失败暂停/打断冻结)各自停稳。
+    const abortReason = controller.signal.aborted ? abortReasonOf(controller.signal) ?? "interrupted" : null;
+    const continuationOwnedByReplacer = abortReason === "replaced" || abortReason === "deleted";
     // P5:生成终局兜底清引擎状态条——压缩/重试进行中 abort/失败时,end 事件可能永远
     // 不来,不清会挂死"压缩中"。幂等,聊天引擎路径广播空集合无副作用。T1:判定改读
     // resumeSemantics——只有 run-and-suspend 引擎(pi)会发瞬态状态条,聊天引擎不发。
@@ -985,9 +1242,24 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     // 这里是"生成终局但审批仍挂着"的防御(引擎 run 因故结束而 execute 未走到注销)。
     // 幂等(delete 不存在键无副作用),与 busy:false 同点收口。
     awaitingApproval.delete(conversation.id);
-    if (!conversationStillExists(conversation.id)) return;
-    broadcastNodeUpdate(conversation, assistantNode);
-    broadcastConversation(conversation);
+    // steering 通道残留清扫:生成收尾时仍未被注入的补发(引擎无轮边界可注入:纯文本
+    // 流无工具轮、pi 会话收束竞态等)直接作废——FIFO 队列仍持有同一条消息,上方
+    // dispatchMessageQueue 派发兜底,零丢失。不清扫会让残留漂到下一轮生成被误注入。
+    clearSteeringChannel(conversation.id);
+    if (conversationStillExists(conversation.id)) {
+      broadcastNodeUpdate(conversation, session.node);
+      broadcastConversation(conversation);
+    }
+    completeConversationGeneration(conversation.id, controller);
+    releaseConversation(conversation.id);
+    // 生成真正结束(登记已清)→ 派发队列下一条。终局三态门控(对齐 Codex
+    // ThreadIdleCause):失败已在 catch 里 pause、用户中止已在 abort 分支 hold——
+    // dispatchMessageQueue 的门控让它们各自停稳;正常收尾则接续点火。被接管时跳过
+    // (接管方自会续跑)。审批暂停(pause-resume 引擎的 pending 工具卡)也拦住:
+    // 审批中的 turn 在 Codex 语义里仍是 active turn(start_turn_if_idle 返回 NotIdle),
+    // 用户批准/拒绝后重触发的 generateAnswer 再走到这里时续派发。pi 引擎的审批在
+    // execute 内挂起(generating 仍在册),generating 门已天然拦住,不到此判。
+    if (!continuationOwnedByReplacer && !hasPendingToolApproval(session.message)) dispatchMessageQueue(conversation.id);
   }
 }
 

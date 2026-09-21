@@ -33,6 +33,13 @@ import { cn } from "~/lib/utils";
 import type { TextPart as UITextPart, ToolPart as UIToolPart } from "~/types";
 
 import { workspaceToolKind } from "~/lib/workspace-tool-model";
+import {
+  buildAskUserAnswerMap,
+  normalizeAskUserQuestions,
+  parseAskUserAnswer,
+  serializeAskUserAnswer,
+  type AskUserQuestion,
+} from "@server/tools/ask-user";
 
 import { ControlledChainOfThoughtStep } from "../chain-of-thought";
 import {
@@ -41,7 +48,7 @@ import {
   workspaceReadTitle,
   workspaceReconTitle,
 } from "./workspace-tool-part";
-import { useElapsedSeconds } from "~/hooks/use-elapsed-since";
+import { useToolElapsedSeconds } from "~/hooks/use-elapsed-since";
 import { AudioPart as AudioPartRenderer } from "./audio-part";
 import { ImagePart as ImagePartRenderer } from "./image-part";
 import { VideoPart as VideoPartRenderer } from "./video-part";
@@ -504,32 +511,13 @@ function ScrapeWebPreview({ content }: { content: unknown }) {
   );
 }
 
-interface AskUserQuestion {
-  id: string;
-  question: string;
-  options: string[];
+interface AskUserToolStep {
+  tool: UIToolPart;
 }
 
-function parseAskUserQuestions(args: unknown): AskUserQuestion[] {
-  try {
-    const questions = getArrayField(args, "questions");
-    return questions
-      .map((q) => {
-        if (!q || typeof q !== "object" || Array.isArray(q)) return null;
-        const record = q as Record<string, unknown>;
-        const id = typeof record.id === "string" ? record.id : "";
-        const question = typeof record.question === "string" ? record.question : "";
-        if (!id || !question) return null;
-        const rawOptions = Array.isArray(record.options) ? record.options : [];
-        const options = rawOptions.filter((o): o is string => typeof o === "string");
-        return { id, question, options } satisfies AskUserQuestion;
-      })
-      .filter((q): q is AskUserQuestion => q !== null);
-  } catch {
-    return [];
-  }
-}
-
+// ask_user 的解析/合并/序列化全部走共享模块(@server/tools/ask-user)——与后端、与 APP
+// 端逐字同源,UI 不再自带一套解析。selectionType: text 纯文本 / single 单选(chip 选中即
+// 填回文本框,可再改) / multi 多选(checkbox 切换,自定义文本追加最后,逗号合并)。
 function AskUserToolStep({
   tool,
   loading,
@@ -543,14 +531,20 @@ function AskUserToolStep({
   const [expanded, setExpanded] = React.useState(true);
 
   const args = React.useMemo(() => safeJsonParse(tool.input), [tool.input]);
-  const questions = React.useMemo(() => parseAskUserQuestions(args), [args]);
-  const [answers, setAnswers] = React.useState<Record<string, string>>({});
+  const questions = React.useMemo<AskUserQuestion[]>(() => {
+    const normalized = normalizeAskUserQuestions((args as Record<string, unknown>)?.questions);
+    return "error" in normalized ? [] : normalized.questions;
+  }, [args]);
+
+  // 每题原始选择:text/single 用 customText(chip 选中写入),multi 另持 selected 集合。
+  const [drafts, setDrafts] = React.useState<Record<string, { selected: string[]; customText: string }>>({});
+  const [confirmingPartial, setConfirmingPartial] = React.useState(false);
 
   const isPending = tool.approvalState.type === "pending";
   const isAnswered = tool.approvalState.type === "answered";
 
   // 域3-1:等待用户答复的时长同样入账(等待+执行=用户体感的"这步多久"),终局定格。
-  const elapsedSeconds = useElapsedSeconds(messageCreatedAt, messageFinishedAt ?? null);
+  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt);
 
   const firstQuestion = questions[0]?.question ?? "...";
   const title =
@@ -558,30 +552,53 @@ function AskUserToolStep({
       ? firstQuestion
       : t("tool_part.ask_user_questions_count", { count: questions.length });
 
-  const allAnswered = questions.length > 0 && questions.every((q) => answers[q.id]?.trim());
-
-  const handleSubmit = () => {
-    if (!onToolApproval || !allAnswered) return;
-    const payload = JSON.stringify({
-      answers: Object.fromEntries(questions.map((q) => [q.id, answers[q.id] ?? ""])),
-    });
-    void onToolApproval(tool.toolCallId, true, "", payload);
+  const getDraft = (id: string) => drafts[id] ?? { selected: [], customText: "" };
+  const patchDraft = (id: string, patch: Partial<{ selected: string[]; customText: string }>) => {
+    setDrafts((prev) => ({ ...prev, [id]: { ...getDraft(id), ...prev[id], ...patch } }));
+    setConfirmingPartial(false);
   };
-
-  const setAnswer = (questionId: string, value: string) => {
-    setAnswers((prev) => ({ ...prev, [questionId]: value }));
-  };
-
-  // Parse answered state for display
-  const answeredValues = React.useMemo(() => {
-    if (tool.approvalState.type !== "answered") return {};
-    try {
-      const parsed = JSON.parse(tool.approvalState.answer) as { answers?: Record<string, string> };
-      return parsed.answers ?? {};
-    } catch {
-      return {};
+  const toggleOption = (q: AskUserQuestion, option: string) => {
+    const draft = getDraft(q.id);
+    if (q.selectionType === "multi") {
+      const selected = draft.selected.includes(option)
+        ? draft.selected.filter((o) => o !== option)
+        : [...draft.selected, option];
+      patchDraft(q.id, { selected });
+    } else {
+      // single/text:chip 选中即填入文本框(用户可继续编辑),再点同一项不撤销(避免误清空)。
+      patchDraft(q.id, { customText: option });
     }
-  }, [tool.approvalState]);
+  };
+
+  const resolved = React.useMemo(
+    () => buildAskUserAnswerMap(questions, Object.fromEntries(questions.map((q) => [q.id, getDraft(q.id)]))),
+    // drafts 变化即重算;getDraft 从 drafts 派生,不列入依赖。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [questions, drafts],
+  );
+  const answeredCount = questions.filter((q) => resolved[q.id]?.trim()).length;
+  const anyAnswered = answeredCount > 0;
+  const allAnswered = questions.length > 0 && answeredCount === questions.length;
+
+  const doSubmit = () => {
+    if (!onToolApproval || !anyAnswered) return;
+    void onToolApproval(tool.toolCallId, true, "", serializeAskUserAnswer(resolved));
+  };
+  const handleSubmit = () => {
+    if (!anyAnswered) return;
+    // codex 式未答全确认:有留空时先确认,再提交(空题以空串提交)。
+    if (!allAnswered && !confirmingPartial) {
+      setConfirmingPartial(true);
+      return;
+    }
+    doSubmit();
+  };
+
+  // 历史回放:共享容错读取器解析 answered.answer(扁平契约)。
+  const answeredValues = React.useMemo(
+    () => (tool.approvalState.type === "answered" ? parseAskUserAnswer(tool.approvalState.answer) : {}),
+    [tool.approvalState],
+  );
 
   // PC 端可见性改进：pending 状态时脱离"思考链折叠步骤"的视觉壳，改用一张
   // 高显眼度的卡片直接挂在消息流里。问题在于原来的设计把整个 ask_user 都
@@ -612,50 +629,73 @@ function AskUserToolStep({
           </div>
         </div>
 
-        <div className="mt-3 space-y-3">
-          {questions.map((q) => (
-            <div key={q.id} className="space-y-2">
-              <div className="text-sm font-medium text-foreground">{q.question}</div>
-              {q.options.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {q.options.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => setAnswer(q.id, option)}
-                      className={cn(
-                        "rounded-full border px-3 py-1 text-xs transition-colors",
-                        answers[q.id] === option
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-primary/40 bg-background text-foreground hover:border-primary hover:bg-primary/10",
-                      )}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <Input
-                value={answers[q.id] ?? ""}
-                onChange={(e) => setAnswer(q.id, e.target.value)}
-                placeholder={
-                  q.options.length > 0 ? t("tool_part.ask_user_custom_placeholder") : q.question
-                }
-                className="text-sm"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey && allAnswered) {
-                    e.preventDefault();
-                    handleSubmit();
+        <div className="mt-3 space-y-4">
+          {questions.map((q) => {
+            const draft = getDraft(q.id);
+            const isMulti = q.selectionType === "multi";
+            return (
+              <div key={q.id} className="space-y-2">
+                <div className="text-sm font-medium text-foreground">{q.question}</div>
+                {q.options.length > 0 && q.selectionType !== "text" && (
+                  <div className="flex flex-wrap gap-1.5" role={isMulti ? "group" : "radiogroup"}>
+                    {q.options.map((option) => {
+                      const active = isMulti ? draft.selected.includes(option) : draft.customText === option;
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          role={isMulti ? "checkbox" : "radio"}
+                          aria-checked={active}
+                          onClick={() => toggleOption(q, option)}
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
+                            active
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-primary/40 bg-background text-foreground hover:border-primary hover:bg-primary/10",
+                          )}
+                        >
+                          {isMulti && active && <Check className="h-3 w-3" aria-hidden />}
+                          {option}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <Input
+                  value={draft.customText}
+                  onChange={(e) => patchDraft(q.id, { customText: e.target.value })}
+                  placeholder={
+                    q.selectionType === "text" || q.options.length === 0
+                      ? q.question
+                      : isMulti
+                        ? t("tool_part.ask_user_custom_placeholder_multi")
+                        : t("tool_part.ask_user_custom_placeholder")
                   }
-                }}
-              />
-            </div>
-          ))}
+                  className="text-sm"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && anyAnswered) {
+                      e.preventDefault();
+                      handleSubmit();
+                    }
+                  }}
+                />
+              </div>
+            );
+          })}
 
-          <div className="flex justify-end">
-            <Button size="sm" disabled={!allAnswered} onClick={handleSubmit}>
+          <div className="flex items-center justify-end gap-2">
+            {confirmingPartial && !allAnswered && (
+              <span className="mr-auto text-xs text-amber-600 dark:text-amber-500">
+                {t("tool_part.ask_user_submit_partial_confirm", {
+                  count: questions.length - answeredCount,
+                })}
+              </span>
+            )}
+            <Button size="sm" disabled={!anyAnswered} onClick={handleSubmit}>
               <Send className="mr-1.5 h-3.5 w-3.5" />
-              {t("tool_part.ask_user_submit")}
+              {confirmingPartial && !allAnswered
+                ? t("tool_part.ask_user_submit_anyway")
+                : t("tool_part.ask_user_submit")}
             </Button>
           </div>
         </div>
@@ -687,11 +727,7 @@ function AskUserToolStep({
           <div key={q.id} className="space-y-1.5">
             {questions.length > 1 && <div className="text-sm text-foreground">{q.question}</div>}
             {isAnswered ? (
-              <div className="text-sm text-primary">
-                {(answeredValues[q.id] ?? tool.approvalState.type === "answered")
-                  ? answeredValues[q.id] || ""
-                  : ""}
-              </div>
+              <div className="text-sm text-primary whitespace-pre-wrap">{answeredValues[q.id] ?? ""}</div>
             ) : null}
           </div>
         ))}
@@ -753,6 +789,22 @@ export function ToolPart({
     tool.approvalState.type === "denied" ? (tool.approvalState.reason ?? "") : "";
   const isExecuted = tool.output.length > 0;
 
+  // 决策③④(7.2):MCP 工具失败的结构化诊断——解析 output 里 {error} 载荷的
+  //  MCP_TOOL_FAILURE 头,渲染成内联失败块(不打断对话)。非 MCP 失败(无该前缀)为 null。
+  const mcpFailure = React.useMemo(() => {
+    for (const part of tool.output) {
+      if (part.type !== undefined) continue; // 只认历史契约的 {error} 裸载荷
+      const text = (part as { error?: unknown }).error;
+      if (typeof text !== "string" || !text.startsWith("MCP_TOOL_FAILURE ")) continue;
+      const head = text.slice(0, text.indexOf("\n") === -1 ? undefined : text.indexOf("\n"));
+      const get = (k: string) => new RegExp(`${k}=([^\\s]+)`).exec(head)?.[1];
+      const kind = get("kind") ?? "unknown";
+      const server = (() => { try { return JSON.parse(get("server") ?? `""`) as string; } catch { return ""; } })();
+      return { kind, server, retryable: get("retryable") === "true" };
+    }
+    return null;
+  }, [tool.output]);
+
   const hasExtraContent =
     (tool.toolName === TOOL_NAMES.MEMORY &&
       (memoryAction === MEMORY_ACTIONS.CREATE || memoryAction === MEMORY_ACTIONS.EDIT) &&
@@ -762,12 +814,14 @@ export function ToolPart({
         getArrayField(outputContent, "items").length > 0)) ||
     (tool.toolName === TOOL_NAMES.SCRAPE_WEB && Boolean(getStringField(args, "url"))) ||
     isDenied ||
+    mcpFailure !== null ||
     hasMediaOutput;
 
   const canOpenDrawer = isPending || isExecuted;
   const Icon = getToolIcon(tool.toolName, memoryAction);
   // 域3-1:运行耗时(等待审批+执行=这步的真实时长),与工作区动作卡同一计时口径。
-  const elapsedSeconds = useElapsedSeconds(messageCreatedAt, messageFinishedAt ?? null);
+  // issue #59:优先用工具自己的戳(建卡→结果落地),历史数据回退消息级。
+  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt);
 
   const handleApprove = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -857,6 +911,18 @@ export function ToolPart({
                 {deniedReason
                   ? t("tool_part.denied_with_reason", { reason: deniedReason })
                   : t("tool_part.denied")}
+              </div>
+            )}
+
+            {mcpFailure !== null && (
+              <div className="flex items-center gap-1.5 text-destructive text-xs">
+                <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
+                <span>
+                  {t(`tool_part.mcp_failed_${mcpFailure.kind}`, {
+                    server: mcpFailure.server,
+                    defaultValue: t("tool_part.mcp_failed_unknown", { server: mcpFailure.server }),
+                  })}
+                </span>
               </div>
             )}
 
@@ -1000,7 +1066,7 @@ export function PendingToolAttentionCard({
   onToolApproval?: ToolPartProps["onToolApproval"];
 }) {
   const { t } = useTranslation("message");
-  const elapsedSeconds = useElapsedSeconds(messageCreatedAt, messageFinishedAt ?? null);
+  const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt);
 
   // ask_user 已经有自己的专属醒目卡片（AskUserToolStep 内部的 pending 分支），
   // 不需要再多套一层 banner。

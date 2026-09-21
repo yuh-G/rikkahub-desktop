@@ -8,8 +8,8 @@
 // 纪律:本模块只写传入的 message/conversation/node 与 touchStream(标脏+节流落库+合帧
 // 广播),不碰全局 state、不直接落库、不直接广播——与原 applyEvent 完全一致。
 
-import type { Conversation, JsonValue, Message, MessageNode, StreamHooks } from "../foundation/types";
-import type { GenerationEvent, GenerationEventSink, StreamHooksWithSink } from "../inference-engine/events";
+import type { Conversation, JsonValue, StreamHooks } from "../foundation/types";
+import type { GenerationEvent, GenerationEventSink, GenerationTarget, StreamHooksWithSink } from "../inference-engine/events";
 import { isRecord } from "../foundation/utils";
 import { touchStream } from "../api/sse";
 import { fillContextLimit } from "../inference-engine/providers";
@@ -22,17 +22,19 @@ import {
   replaceLoadingReasoningWithTool,
 } from "../inference-engine/parts";
 
-export interface GenerationApplyTarget {
-  conversation: Conversation;
-  node: MessageNode;
-  message: Message;
+/** 应用目标 = 会话 + 活落点。node/message 是活视图(GenerationTarget):steer 边界分裂
+ *  换绑后,后续事件必须落进新节点——所以下面每个事件都现读 target,不缓存。 */
+export interface GenerationApplyTarget extends GenerationTarget {
+  readonly conversation: Conversation;
 }
 
 /** 构造把 GenerationEvent 应用到指定消息的应用器。语义与 generateAnswer 原内联
  *  applyEvent 逐字一致(含各 case 的幂等与"只升不降"审批规则),见各分支注释。 */
 export function createGenerationEventApplier(target: GenerationApplyTarget): GenerationEventSink {
-  const { conversation, node, message: currentMessage } = target;
   return (event: GenerationEvent) => {
+    // 每事件现读落点。曾在此处创建时解构一次,导致 steer 分裂后延续输出继续写进已定格
+    // 的 ai_1、ai_2 空到收尾才被整段回填(2026-09-20 用户实测 2-1/2-2)。
+    const { conversation, node, message: currentMessage } = target;
     const streamHooks: StreamHooks = { message: currentMessage, conversation, node };
     switch (event.kind) {
       // 文本/思维链/图片增量写入内存后必须 touchStream(标脏 + 200ms 节流落库 + 33ms 节流
@@ -76,6 +78,11 @@ export function createGenerationEventApplier(target: GenerationApplyTarget): Gen
             input: event.input,
             output: [],
             approvalState: event.approvalState,
+            // issue #59:每工具计时起点。徽章此前用消息级 createdAt/finishedAt 计时,
+            // 工具完成后秒数随整条消息的流式墙钟继续涨("加载技能用时X秒一直增加")。
+            // 按契约纪律挂 metadata(不新增顶层字段,安卓端安全)。幂等重建(流内建卡
+            // 后终局再发建卡事件)不改写起点——首个时间戳即真实建卡时刻。
+            metadata: { toolStartedAt: new Date().toISOString() },
           });
         }
         touchStream(streamHooks as StreamHooksWithSink);
@@ -102,7 +109,22 @@ export function createGenerationEventApplier(target: GenerationApplyTarget): Gen
       case "tool_result":
         currentMessage.parts = currentMessage.parts.map((part) => {
           if (!isRecord(part) || part.type !== "tool" || part.toolCallId !== event.toolCallId) return part;
-          return { ...part, output: event.output };
+          // issue #59:终局结果(final 缺省视为终局)落每工具计时终点;partial 中间帧
+          // 只刷新 output 不动戳,流式输出期间秒数继续走表。只补不覆盖——已定格的
+          // 终点不因后续同 id 帧回退(审批恢复重发终局时保首次定格)。
+          if (event.final === false) return { ...part, output: event.output };
+          // pending 哨兵(ask_user/MCP 审批挂起)非终局:卡在等用户,秒数必须继续走,
+          // 真实结果由 resume 路径落地时才定格。
+          if (event.output.length === 1 && isRecord(event.output[0]) && "pending" in event.output[0]) {
+            return { ...part, output: event.output };
+          }
+          const meta = (isRecord(part.metadata) ? part.metadata : {}) as Record<string, JsonValue>;
+          if (meta.toolFinishedAt != null) return { ...part, output: event.output };
+          return {
+            ...part,
+            output: event.output,
+            metadata: { ...meta, toolFinishedAt: new Date().toISOString() },
+          };
         });
         touchStream(streamHooks as StreamHooksWithSink);
         break;

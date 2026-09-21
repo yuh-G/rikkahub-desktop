@@ -7,6 +7,7 @@
 
 import { getStringArray, isRecord } from "../foundation/utils";
 import type { Assistant, Conversation, JsonValue, ToolApprovalState } from "../foundation/types";
+import { skillsDir } from "../foundation/paths";
 import { state } from "../persistence/json-store";
 import {
   isWorkspaceToolName,
@@ -47,6 +48,8 @@ function workspaceApprovalDecision(
   const reason = workspaceCallApprovalReason(toolName, preset, parseArgsRecord(args), {
     root: workspace.root,
     cwd: lexicalWorkspaceCwd(workspace.root, conversation?.workspaceCwd),
+    // §6.7:技能库 pc-data/skills/ 免审批可写(AI 装/改技能不弹窗)。
+    approvalExemptWritePrefixes: [skillsDir],
   });
   if (reason === null) return { pending: false };
   return { pending: true, ...(reason ? { reason } : {}) };

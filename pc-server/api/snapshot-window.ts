@@ -14,6 +14,7 @@
 // 节点数 ≤ 窗口的会话(绝大多数)nodesOffset=0、messages 完整,除多出 stamp 清单外
 // 与旧行为逐字节一致——风险被约束在巨型会话内。
 import { toMessageNodeDtos } from "../conversations";
+import { queueSnapshotFor } from "../conversations/message-queue";
 import type { Conversation, MessageNode } from "../foundation/types";
 import type { ConversationDto } from "../foundation/types/dto";
 
@@ -51,5 +52,7 @@ export function toSnapshotConversationDto(
     isGenerating,
     nodesOffset: offset,
     nodeStamps: conversation.messages.map(nodeStamp),
+    // 消息发送队列快照(内存态,瞬时不落库):生成中补发排队的面板数据源。队空为 null。
+    messageQueue: queueSnapshotFor(conversation.id),
   };
 }

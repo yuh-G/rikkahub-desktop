@@ -126,7 +126,20 @@
     "parsing_send_blocked": "附件解析中，完成后即可发送",
     "extraction_failed": "解析失败：发送时将无法附带此文件的正文",
     "extraction_empty": "未能提取出文本（可能是扫描件或不支持的格式）",
-    "stop_generating": "停止生成"
+    "stop_generating": "停止生成",
+    "queue_send": "发送并排队（不打断当前回复）",
+    "command_queue_blocked": "指令需在当前回复完成后使用"
+  },
+  "queue": {
+    "held_failed": "上一条回复失败，排队消息已暂停",
+    "held_interrupted": "已停止生成，排队消息未发送",
+    "resume": "继续发送",
+    "edit": "修改",
+    "remove": "撤回",
+    "save": "保存",
+    "cancel": "取消",
+    "empty_message": "消息不能为空",
+    "attachment": "附件"
   },
   "resize_handle": "拖动调整输入框大小",
   "compress_history": "压缩对话历史",
@@ -146,7 +159,22 @@
     "connect_failed": "语音识别连接失败",
     "mic_denied": "无法访问麦克风",
     "start": "语音识别",
-    "stop": "停止语音识别"
+    "stop": "停止语音识别",
+    "insecure_context": "语音输入需要 HTTPS 或 localhost 环境(当前为非安全上下文,浏览器禁用了麦克风)。"
+  },
+  "voice": {
+    "start": "语音模式",
+    "title": "语音模式",
+    "end": "结束",
+    "retry": "重试",
+    "connecting": "正在连接…",
+    "listening": "正在聆听，说完自动发送",
+    "transcribing": "正在整理识别结果…",
+    "speaking": "正在朗读回复，结束后继续聆听",
+    "error_title": "语音模式已暂停",
+    "not_configured": "请先在设置中选择支持实时识别的语音服务",
+    "mic_denied": "无法访问麦克风，请检查系统权限",
+    "connect_failed": "语音识别连接失败"
   },
   "workspace_permission": {
     "title": "工作区权限",

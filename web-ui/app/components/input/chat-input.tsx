@@ -1,6 +1,7 @@
 import * as React from "react";
 
-import { ArrowUp, File, FileDown, Image, LoaderCircle, Mic, Plus, Scissors, Sparkles, Square, TriangleAlert, Undo2, Video, X, Zap } from "lucide-react";
+import { ArrowUp, File, FileDown, Image, LoaderCircle, Mic, PhoneCall, Plus, Scissors, Sparkles, Square, TriangleAlert, Undo2, Video, X, Zap } from "lucide-react";
+import { startMicCapture } from "~/lib/voice/mic-capture";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -43,6 +44,10 @@ export interface ChatInputProps {
   onSuggestionClick?: (suggestion: string) => void;
   onExportConversation?: (includeReasoning: boolean) => void;
   onCompressConversation?: () => void;
+  /** 语音模式切换(仅当选中的 ASR 服务支持 server-VAD 时由父级传入;否则不显示入口)。 */
+  onToggleVoiceMode?: () => void;
+  /** 语音模式是否激活(控制入口高亮)。 */
+  voiceModeActive?: boolean;
   /** 斜杠指令:当前环境可用清单(服务端 GET /api/commands 权威判定;缺省/空 =
    *  指令面整体关闭,推荐列表/染色/拦截均不生效)。 */
   slashCommands?: SlashCommandDto[];
@@ -55,6 +60,14 @@ export interface ChatInputProps {
   // 提示词优化时,返回最近几轮对话的纯文本作为上下文(让优化模型理解模糊指代)。
   // 无对话(首条消息)时返回空串。只在用户点击"优化提示词"时调用。
   getOptimizeContext?: () => string;
+  /** 当前会话 id(提示词优化未配置专属模型时,后端回退此会话的模型;新对话页为 null
+   *  → 后端兜底全局默认聊天模型)。与 getOptimizeContext 同属"点击时才消费"的会话
+   *  上下文,传静态值即可,不参与渲染。 */
+  conversationId?: string | null;
+  /** 消息发送队列预览(生成中补发的排队项)。队空/无会话时父级传 null,不渲染贴片。
+   *  刻意作为 children 式插槽由父级构造:队列面板渲染在输入卡上沿外侧的贴片层里
+   *  (见下方渲染处注释),但它的数据源与 API 调用属于会话层,不该穿透进纯输入组件。 */
+  queueSlot?: React.ReactNode;
   className?: string;
 }
 
@@ -63,8 +76,6 @@ const IMAGE_UPLOAD_ACCEPT = "image/*";
 const SLASH_MENU_ID = "chat-slash-command-menu";
 const EMPTY_SLASH_COMMANDS: SlashCommandDto[] = [];
 
-const ASR_FRAME_SIZE = 4096;
-
 function websocketApiUrl(path: string) {
   const base =
     typeof window === "undefined"
@@ -72,31 +83,6 @@ function websocketApiUrl(path: string) {
       : window.location.origin.replace(/^http/i, "ws");
   // WebSocket 无法携带 Authorization header，启用 web 鉴权时 token 走 access_token query
   return `${base}${appendWebAuthQuery(`/api/${path.replace(/^\/+/, "")}`)}`;
-}
-
-function resampleLinear(input: Float32Array, inputRate: number, outputRate: number) {
-  if (inputRate === outputRate) return input;
-  const ratio = inputRate / outputRate;
-  const outputLength = Math.max(1, Math.round(input.length / ratio));
-  const output = new Float32Array(outputLength);
-  for (let i = 0; i < outputLength; i++) {
-    const sourceIndex = i * ratio;
-    const left = Math.floor(sourceIndex);
-    const right = Math.min(input.length - 1, left + 1);
-    const weight = sourceIndex - left;
-    output[i] = input[left] * (1 - weight) + input[right] * weight;
-  }
-  return output;
-}
-
-function floatToPcm16(input: Float32Array) {
-  const buffer = new ArrayBuffer(input.length * 2);
-  const view = new DataView(buffer);
-  for (let i = 0; i < input.length; i++) {
-    const sample = Math.max(-1, Math.min(1, input[i]));
-    view.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-  }
-  return buffer;
 }
 
 function partLabel(part: UIMessagePart, t: (key: string) => string): string {
@@ -276,9 +262,13 @@ function ChatInputInner({
   onSuggestionClick,
   onExportConversation,
   onCompressConversation,
+  onToggleVoiceMode,
+  voiceModeActive = false,
   slashCommands,
   onSlashCommand,
   getOptimizeContext,
+  conversationId,
+  queueSlot,
   className,
 }: ChatInputProps) {
   const { t } = useTranslation("input");
@@ -360,12 +350,8 @@ function ChatInputInner({
   const [error, setError] = React.useState<string | null>(null);
   const [asrListening, setAsrListening] = React.useState(false);
   const asrSocketRef = React.useRef<WebSocket | null>(null);
-  const asrAudioContextRef = React.useRef<AudioContext | null>(null);
-  const asrSourceRef = React.useRef<MediaStreamAudioSourceNode | null>(null);
-  const asrProcessorRef = React.useRef<ScriptProcessorNode | null>(null);
-  const asrStreamRef = React.useRef<MediaStream | null>(null);
-  const asrFrameRef = React.useRef<Int16Array[]>([]);
-  const asrFrameSamplesRef = React.useRef(0);
+  // 麦克风采集由共享 mic-capture 承担(与语音模式同一实现),这里只持有其清理句柄。
+  const asrCaptureRef = React.useRef<{ stop: () => void } | null>(null);
   // 提示词优化:点击后把输入框原文发给"提示词优化模型",返回的优化版直接替换输入框。
   // 优化成功后在优化按钮旁显示常驻"撤销"按钮(不走 toast —— toast 几秒就消失,用户来不及点
   // 或事后想反悔就没机会了)。originalBeforeOptimize 保存原文,点撤销即恢复;重新优化 / 发送
@@ -419,7 +405,9 @@ function ChatInputInner({
   const canStop = ready && Boolean(onStop) && isGenerating && !disabled;
   // 域9-1:解析中门禁并入 canSend——canSend=false 时 actionDisabled 让发送按钮置灰,
   // handlePrimaryAction 顶部 return 短路键盘路径;canStop(停止生成)不受附件解析影响。
-  const canSend = ready && !isGenerating && !disabled && !isEmpty && !hasParsingAttachments;
+  // 消息发送队列:生成中仍允许发送——此时发送=把消息排入队列(服务端 FIFO,当前流收尾后续跑),
+  // 不再打断在跑的生成。故 canSend 不再以 !isGenerating 为门。
+  const canSend = ready && !disabled && !isEmpty && !hasParsingAttachments;
   // 生成中允许上传:用户常在模型输出时准备下一轮的 prompt 和附件,加文件到草稿和打字
   // 一样都不打断当前生成。submitting(发送的一瞬间)和 uploading 仍保留互斥。
   const canUpload = ready && !disabled && !uploading && !submitting;
@@ -429,16 +417,8 @@ function ChatInputInner({
   const actionDisabled = submitting || uploading || (!canStop && !canSend);
 
   const releaseAsrResources = React.useCallback(() => {
-    asrProcessorRef.current?.disconnect();
-    asrProcessorRef.current = null;
-    asrSourceRef.current?.disconnect();
-    asrSourceRef.current = null;
-    void asrAudioContextRef.current?.close().catch(() => undefined);
-    asrAudioContextRef.current = null;
-    asrStreamRef.current?.getTracks().forEach((track) => track.stop());
-    asrStreamRef.current = null;
-    asrFrameRef.current = [];
-    asrFrameSamplesRef.current = 0;
+    asrCaptureRef.current?.stop();
+    asrCaptureRef.current = null;
   }, []);
 
   React.useEffect(() => {
@@ -456,16 +436,18 @@ function ChatInputInner({
     setError(null);
 
     try {
-      if (canStop) {
-        await onStop?.();
-        return;
-      }
-
+      // 消息发送队列:输入非空时优先「发送(=生成中则排队)」,只有空输入才退到「停止生成」。
+      // 用户打着字时的意图是「补一句」,不是「停掉当前」;停止键在空输入时仍独占(红色)。
       if (canSend) {
-        // 斜杠指令拦截:完整指令不作为消息发送,清空输入框交执行器(方案 §3.5)。
-        // 域5-1(3F):执行器返回 false / 抛错 = 未受理(如压缩占用),把原始指令文本回填
-        // 输入框,用户键入的参数不丢。受理(默认 true)则维持"已清空"。
+        // 斜杠指令是即时动作(压缩/清空等),不可排队:生成中禁用并提示,等当前流收尾再用。
         if (parsedCommand && onSlashCommand) {
+          if (isGenerating) {
+            toast.info(t("chat.command_queue_blocked"));
+            return;
+          }
+          // 完整指令不作为消息发送,清空输入框交执行器(方案 §3.5)。
+          // 域5-1(3F):执行器返回 false / 抛错 = 未受理(如压缩占用),把原始指令文本回填
+          // 输入框,用户键入的参数不丢。受理(默认 true)则维持"已清空"。
           const { command, argument } = parsedCommand;
           const originalText = value;
           onValueChange("");
@@ -479,6 +461,12 @@ function ChatInputInner({
         }
         setOriginalBeforeOptimize(null);
         await onSend();
+        return;
+      }
+
+      if (canStop) {
+        await onStop?.();
+        return;
       }
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : t("chat.send_failed");
@@ -486,7 +474,7 @@ function ChatInputInner({
     } finally {
       setSubmitting(false);
     }
-  }, [actionDisabled, canSend, canStop, onSend, onSlashCommand, onStop, onValueChange, parsedCommand, t, value]);
+  }, [actionDisabled, canSend, canStop, isGenerating, onSend, onSlashCommand, onStop, onValueChange, parsedCommand, t, value]);
 
   const handleOptimize = React.useCallback(async () => {
     const original = value.trim();
@@ -500,7 +488,8 @@ function ChatInputInner({
       const context = getOptimizeContext?.() ?? "";
       const res = await api.post<{ text: string }>(
         "prompt/optimize",
-        { text: value, context },
+        // conversationId:未配置优化模型时后端回退此会话的模型;新对话页可省略。
+        { text: value, context, ...(conversationId ? { conversationId } : {}) },
         { timeout: 60_000 },
       );
       const optimized = String(res.text ?? "").trim();
@@ -527,7 +516,7 @@ function ChatInputInner({
       setOptimizeHint(null);
       setOptimizing(false);
     }
-  }, [value, optimizing, onValueChange, getOptimizeContext]);
+  }, [value, optimizing, onValueChange, getOptimizeContext, conversationId]);
 
   const handleTextChange = React.useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -589,18 +578,13 @@ function ChatInputInner({
         toast.error(t("asr.not_configured"));
         return;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
       const socket = new WebSocket(websocketApiUrl("asr/realtime"));
       socket.binaryType = "arraybuffer";
       asrSocketRef.current = socket;
-      asrStreamRef.current = stream;
+      const targetSampleRate = Math.max(
+        8000,
+        Number(provider.sampleRate || (provider.type === "openai_realtime" ? 24000 : 16000)),
+      );
       const baseText = value;
       let latestTranscript = "";
       const applyTranscript = (transcript: string) => {
@@ -613,48 +597,23 @@ function ChatInputInner({
       };
       socket.onopen = async () => {
         socket.send(JSON.stringify({ type: "start", providerId: provider.id }));
-        const AudioContextCtor =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        const audioContext = new AudioContextCtor();
-        const source = audioContext.createMediaStreamSource(stream);
-        const processor = audioContext.createScriptProcessor(4096, 1, 1);
-        asrAudioContextRef.current = audioContext;
-        asrSourceRef.current = source;
-        asrProcessorRef.current = processor;
-        const targetSampleRate = Math.max(
-          8000,
-          Number(provider.sampleRate || (provider.type === "openai_realtime" ? 24000 : 16000)),
-        );
-        processor.onaudioprocess = (event) => {
-          if (socket.readyState !== WebSocket.OPEN) return;
-          const channel = event.inputBuffer.getChannelData(0);
-          const pcmBuffer = floatToPcm16(
-            resampleLinear(channel, audioContext.sampleRate, targetSampleRate),
-          );
-          const chunk = new Int16Array(pcmBuffer);
-          asrFrameRef.current.push(chunk);
-          asrFrameSamplesRef.current += chunk.length;
-          while (asrFrameSamplesRef.current >= ASR_FRAME_SIZE) {
-            const frame = new Int16Array(ASR_FRAME_SIZE);
-            let offset = 0;
-            while (offset < ASR_FRAME_SIZE) {
-              const head = asrFrameRef.current[0];
-              const take = Math.min(head.length, ASR_FRAME_SIZE - offset);
-              frame.set(head.subarray(0, take), offset);
-              offset += take;
-              if (take === head.length) {
-                asrFrameRef.current.shift();
-              } else {
-                asrFrameRef.current[0] = head.subarray(take);
-              }
-              asrFrameSamplesRef.current -= take;
-            }
-            socket.send(frame.buffer);
-          }
-        };
-        source.connect(processor);
-        processor.connect(audioContext.destination);
+        try {
+          // 采集与 PCM 编码走共享实现(与语音模式同一份),帧直接推进本 socket。
+          const capture = await startMicCapture(targetSampleRate, (frame) => {
+            if (socket.readyState === WebSocket.OPEN) socket.send(frame);
+          });
+          asrCaptureRef.current = capture;
+        } catch (captureError) {
+          const message =
+            captureError instanceof Error && captureError.message === "mic_insecure_context"
+              ? t("asr.insecure_context")
+              : captureError instanceof Error
+                ? captureError.message
+                : t("asr.mic_denied");
+          setError(message);
+          toast.error(message);
+          stopAsr();
+        }
       };
       socket.onmessage = (event) => {
         if (typeof event.data !== "string") return;
@@ -682,7 +641,12 @@ function ChatInputInner({
       };
       setAsrListening(true);
     } catch (asrError) {
-      const message = asrError instanceof Error ? asrError.message : t("asr.mic_denied");
+      const message =
+        asrError instanceof Error && asrError.message === "mic_insecure_context"
+          ? t("asr.insecure_context")
+          : asrError instanceof Error
+            ? asrError.message
+            : t("asr.mic_denied");
       setError(message);
       toast.error(message);
       stopAsr();
@@ -729,7 +693,6 @@ function ChatInputInner({
       }
 
       if (event.key !== "Enter") return;
-      if (isGenerating) return;
       if (event.nativeEvent.isComposing) return;
 
       // 镜像逻辑：
@@ -817,7 +780,23 @@ function ChatInputInner({
         >
           <div className="h-1 w-10 rounded-full bg-border/70 transition-colors hover:bg-primary/50" />
         </div>
-        <div className="chat-input-box relative flex flex-col gap-2 rounded-[var(--ds-chat-composer-radius)] bg-[var(--ds-surface-input)] p-3">
+
+        {/* 消息发送队列贴片:Codex 同款「附着」形态——不属于输入框,而是贴在输入卡上沿
+            外侧的一层:mx-2 左右内缩、-mb-3 让卡片盖住贴片下沿,读作「卡片上方压了一张
+            便签」。--ds-queue-surface 半透明叠色负责与卡片/对话区的色差。必须在卡外而非
+            卡内:卡内满宽会读作「输入框自己长出一截」(用户反馈「与编辑框合为一体」的
+            根因)。父级仅在队列非空时给出插槽(空插槽会留下一条空贴片),面板自身的队空
+            守卫是第二道防线。 */}
+        {queueSlot ? (
+          <div className="mx-2 -mb-3 rounded-t-[var(--ds-chat-composer-radius)] bg-[var(--ds-queue-surface)] px-3 pb-4.5 pt-1.5">
+            {queueSlot}
+          </div>
+        ) : null}
+
+        {/* @container/composer:输入卡自身作为容器查询基准。分栏时窗格变窄,工具条要按
+            「卡片实际宽度」而非视口宽度收起标签——视口断点(sm:/lg:)在分栏下永远为真,
+            正是「元素挤在一起」的根因(issue:分栏排版元素重叠)。 */}
+        <div className="chat-input-box @container/composer relative flex flex-col gap-2 rounded-[var(--ds-chat-composer-radius)] bg-[var(--ds-surface-input)] p-3">
           {/* 斜杠指令推荐列表:锚定输入卡片上方,随输入实时过滤(方案 §4.2)。 */}
           {slash.menuOpen ? (
             <SlashCommandMenu
@@ -833,6 +812,7 @@ function ChatInputInner({
           <div className="absolute -top-4 right-2 z-10">
             <MemoryBadge />
           </div>
+
           {isEditing ? (
             <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
               <span className="text-primary">{t("chat.editing_tip")}</span>
@@ -859,7 +839,9 @@ function ChatInputInner({
           ) : null}
 
           {attachments.length > 0 ? (
-            <div className="flex flex-wrap gap-2 px-2 pt-1">
+            // issue #51:附件多且文件名长时,无界 flex-wrap 把 textarea 挤出可视区。
+            // 限高两行 chip + 区内滚动,输入框本体高度不受附件数量影响。
+            <div className="flex max-h-[68px] flex-wrap gap-2 overflow-y-auto px-2 pt-1">
               {attachments.map((part, index) => {
                 const key = `${part.type}-${index}`;
                 return (
@@ -950,8 +932,11 @@ function ChatInputInner({
               style={{ minHeight: `${inputMinHeight}px`, maxHeight: `${inputMaxHeight}px` }}
             />
           </div>
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-1">
+          {/* 工具条两组都允许收缩(min-w-0 + 各自 shrink):此前两组内的 Button 都带
+              shrink-0,窄容器下无人让位,右组被左组顶出去形成重叠(分栏排版 bug)。
+              收缩后由各控件自己的 @max-2xl/composer 变体收起文字标签,只留图标。 */}
+          <div className="flex items-center justify-between gap-1">
+            <div className="flex min-w-0 shrink items-center gap-1">
               <DropdownMenu open={uploadMenuOpen} onOpenChange={setUploadMenuOpen}>
                 <input
                   ref={fileInputRef}
@@ -1035,12 +1020,30 @@ function ChatInputInner({
                 disabled={!canUseQuickMessage}
                 onSelect={handleQuickMessageSelect}
               />
+              {onToggleVoiceMode ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={onToggleVoiceMode}
+                  className={cn(
+                    "size-8 rounded-full toolbar-btn",
+                    voiceModeActive
+                      ? "bg-[var(--ds-brand-primary)]/15 text-[var(--ds-brand-primary)]"
+                      : "text-[var(--ds-icon)] hover:text-foreground",
+                  )}
+                  title={t("voice.start")}
+                  aria-pressed={voiceModeActive}
+                >
+                  <PhoneCall className="size-4" />
+                </Button>
+              ) : null}
               <SearchPickerButton disabled={!canSwitchModel} />
               <ExtensionPickerButton disabled={!canSwitchModel} />
               <WorkspaceFilesButton />
               <WorkspacePermissionPicker />
             </div>
-            <div className="relative flex items-center gap-1.5">
+            <div className="relative flex min-w-0 shrink items-center gap-1">
               {/* 优化较慢提示:浮在按钮组上方,绝对定位不挤占布局(原方案放底部会把整个输入区往下顶)。 */}
               {optimizeHint ? (
                 <span className="animate-pulse absolute -top-8 right-0 z-10 whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-mini text-muted-foreground shadow-sm">
@@ -1080,9 +1083,10 @@ function ChatInputInner({
                   {t("optimize.undo")}
                 </Button>
               ) : null}
-              <ModelList disabled={!canSwitchModel} className="max-w-56" />
+              <ModelList disabled={!canSwitchModel} />
               {/* NewMax cpd-action-btn:语音/发送合一——空文本=麦克风(常驻底色),有文本=
-                  品牌色上箭头,录音=红底声纹条,生成中=红底停止。状态切换带宽度/配色过渡。 */}
+                  品牌色上箭头,录音=红底声纹条,生成中=红底停止。状态切换带宽度/配色过渡。
+                  消息发送队列:生成中且有文本 → 上箭头=「发送并排队」(不打断当前流);仅空文本才落红停止。 */}
               <Button
                 type="button"
                 variant="ghost"
@@ -1092,7 +1096,9 @@ function ChatInputInner({
                 }
                 title={
                   isGenerating
-                    ? t("chat.stop_generating")
+                    ? isEmpty
+                      ? t("chat.stop_generating")
+                      : t("chat.queue_send")
                     : asrListening
                       ? t("asr.stop")
                       : isEmpty
@@ -1107,7 +1113,7 @@ function ChatInputInner({
                 }}
                 className={cn(
                   "cpd-action-btn size-8 rounded-full",
-                  isGenerating
+                  isGenerating && isEmpty
                     ? "cpd-action-btn--send !bg-destructive !text-white"
                     : asrListening
                       ? "cpd-action-btn--recording"
@@ -1118,7 +1124,7 @@ function ChatInputInner({
               >
                 {submitting || uploading ? (
                   <LoaderCircle className="size-4 animate-spin" />
-                ) : isGenerating ? (
+                ) : isGenerating && isEmpty ? (
                   <span className="cpd-icon-enter" key="stop">
                     <Square className="size-4" />
                   </span>

@@ -22,6 +22,8 @@ interface ProxyStatus {
   containerMode: boolean;
   // 实际运行端口(顺延后可能与 preferredPort 不同), 端口 Card 显示
   runningPort: number | null;
+  // 品牌默认 UA(后端 proxyStatusPayload 返回),UA 输入框占位符/重置目标。
+  defaultUserAgent: string;
 }
 
 function isValidProxyUrl(url: string): boolean {
@@ -96,6 +98,8 @@ export function ProxySection({
   }, []);
   const [testResult, setTestResult] = React.useState<{ ok: boolean; status?: number; latencyMs?: number; error?: string } | null>(null);
   const [status, setStatus] = React.useState<ProxyStatus | null>(null);
+  // 品牌默认 UA(占位符/重置目标),来自后端 proxyStatusPayload;首次拉取前用空串。
+  const defaultUA = status?.defaultUserAgent ?? "";
 
   // R8-2:防抖自动保存统一走共享三件套 hook(保存窗口内键击不丢,语义见 hook 文件头)。
   const autosave = useAutosaveDraft(
@@ -124,6 +128,7 @@ export function ProxySection({
         mode: result.mode,
         containerMode: result.containerMode,
         runningPort: result.runningPort,
+        defaultUserAgent: result.defaultUserAgent,
       });
     },
     {
@@ -140,7 +145,7 @@ export function ProxySection({
     // resetting `draft` from `initial` would wipe those new keystrokes.
     if (autosave.isDirty()) return;
     setDraft(initial);
-  }, [initial.mode, initial.url, initial.username, initial.password, initial.bypassRules]);
+  }, [initial.mode, initial.url, initial.username, initial.password, initial.bypassRules, initial.userAgent]);
 
   // Fetch the active-proxy footer state on mount + after every save so it reflects what the
   // backend is actually using right now (manual override vs auto-detected from system).
@@ -473,6 +478,45 @@ export function ProxySection({
                   : `${t("settings:proxy.test_fail")}${testResult.error ? `: ${testResult.error}` : ""}`}
               </div>
             )}
+          </div>
+        </div>
+
+        <div className="space-y-4 rounded-lg border bg-card p-6">
+          <div>
+            <div className="text-base font-medium">{t("settings:proxy.ua_title")}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {t("settings:proxy.ua_desc")}
+            </div>
+          </div>
+          <label className="block space-y-2">
+            <span className="text-sm font-medium">{t("settings:proxy.ua_label")}</span>
+            <div className="flex gap-2">
+              <Input
+                className="flex-1 font-mono text-sm"
+                value={draft.userAgent ?? ""}
+                onChange={(event) => patch({ userAgent: event.target.value })}
+                placeholder={defaultUA}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                disabled={!draft.userAgent}
+                onClick={() => patch({ userAgent: "" })}
+              >
+                <RotateCcw className="size-4" />
+                {t("settings:proxy.ua_reset")}
+              </Button>
+            </div>
+          </label>
+          <div className="flex justify-end">
+            <AutosaveStatusRow
+              status={autosave.status}
+              onRetry={() => void autosave.saveNow()}
+            />
           </div>
         </div>
 

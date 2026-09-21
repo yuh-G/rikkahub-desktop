@@ -5,14 +5,14 @@ import type { Assistant, JsonValue, Model, Provider } from "../foundation/types"
 import { id, isRecord, mergeObjects, uniqueStrings } from "../foundation/utils";
 import { hostOfProvider } from "../inference-engine/message-builder";
 import { state } from "../persistence/json-store";
-import { isKimiReasoningModel } from "./request-dialect";
+import { isKimiK3Model, isKimiReasoningModel } from "./request-dialect";
 
 export const DEFAULT_AUTO_MODEL_ID = "b7055fb4-39f9-4042-a88a-0d80ed76cf08";
 
 export function inferModelAbilities(modelId: string): string[] {
   const name = modelId.toLowerCase();
   const abilities: string[] = [];
-  if (/(^|[/:_-])(gpt-[45]|o[134]|claude|gemini|deepseek|qwen|qwq|qvq|glm|kimi|moonshot|doubao|hunyuan|grok|llama|mistral|mixtral|command|sonar|perplexity|mimo)/i.test(modelId)) {
+  if (/(^|[/:_-])(gpt-[4-6]|o[134]|claude|gemini|deepseek|qwen|qwq|qvq|glm|kimi|moonshot|doubao|hunyuan|hy[3-9]|grok|llama|mistral|mixtral|command|sonar|perplexity|mimo|minimax|longcat|step|muse)/i.test(modelId) || isKimiK3Model(modelId)) {
     abilities.push("TOOL");
   }
   // Reasoning detection mirrors Android's ModelRegistry. Note that Claude family names like
@@ -22,7 +22,7 @@ export function inferModelAbilities(modelId: string): string[] {
   // Kimi 代际走方言谓词(K2.5 起全系支持思考;正则无 kimi 模式曾致能力位缺失,
   // UI 推理选项不显示、两引擎思考链路未激活)。存量模型由启动时 enrichModel 并集自愈。
   if (
-    /(gpt-5|^o[134]|[/:_-]o[134]|reason|reasoning|thinking|deepseek-r1|deepseek-reasoner|deepseek-v4|deepseek.*v4|qwq|qvq|qwen3|glm-[45]|glm-z1|hunyuan-a13b|mimo-v2|claude-3[.-]7|claude-4|claude-(opus|sonnet|haiku)-(3[.-]7|[4-9]|\d{2,})|gemini-2[.-]5|gemini-3|grok-4)/i.test(
+    /(gpt-[56]|^o[134]|[/:_-]o[134]|reason|reasoning|thinking|deepseek-r1|deepseek-reasoner|deepseek-v4|deepseek.*v4|deepseek-flash|qwq|qvq|qwen3|glm-[45]|glm-z1|hunyuan-a13b|[/:_-]hy[3-9]|^hy[3-9]|mimo-v2|mimo-v3|minimax[-/_]?m[-._]?3|longcat|step[-._]?3|muse|claude-3[.-]7|claude-4|claude-(opus|sonnet|haiku)-(3[.-]7|[4-9]|\d{2,})|gemini-2[.-]5|gemini-3|grok-4)/i.test(
       name,
     ) ||
     isKimiReasoningModel(name)
@@ -49,7 +49,12 @@ export function inferInputModalities(modelId: string, raw?: any): string[] {
     ...(Array.isArray(raw?.inputModalities) ? raw.inputModalities : []),
   ].map((item) => String(item).toUpperCase());
   if (declared.length) return uniqueStrings(declared);
-  return /(vision|visual|vl|omni|gpt-4o|gpt-4\.1|gemini|claude-3|claude-4|qwen.*vl|glm-4v|grok-vision|llava|pixtral|mimo[-_./:]?v?2[-_./:]?5|mimo[-_./:]?v?2[-_./:]?omni)/i.test(modelId)
+  // 视觉(图像输入)登记,逐家对齐安卓 ModelRegistry 的 visionInput()(2026-09-17 核对行号):
+  //   deepseek-flash/v4.1(多模态,L311/318)、step-3 系(L454/460)、minimax-m3(L528)、
+  //   mimo-v2.5/v3 系(L544/555/561)、longcat-2.0(L582)、qwen3.7/3.8 非 Max(L362/368)、
+  //   gpt-5.6/gpt-6(经 gpt-4o 同款 token 命中,补 gpt-5/gpt-6)、glm-4v/5.3-flash。
+  //   纯文本(刻意不收):hy3/hy4、qwen3.7/3.8-max、glm-5.2/5.3 普通版——安卓同样无 visionInput。
+  return /(vision|visual|vl|omni|gpt-4o|gpt-4\.1|gpt-5|gpt-6|gemini|claude-3|claude-4|qwen.*vl|qwen3[.-]?[78](?!.*max)|glm-4v|glm-5[.-]3[.-]?flash|deepseek.*(flash|v[-._]?4)|step[-._]?3|minimax[-._/]?m[-._]?3|longcat|mimo[-_./:]?v?2[-_./:]?5|mimo[-_./:]?v?2[-_./:]?omni|mimo[-_./:]?v?3|muse|grok-vision|llava|pixtral)/i.test(modelId) || isKimiK3Model(modelId)
     ? ["TEXT", "IMAGE"]
     : ["TEXT"];
 }
@@ -108,7 +113,9 @@ export function provider(input: Partial<Provider> & Pick<Provider, "id" | "name"
     promptCaching: false,
     promptCacheTtl: "5m",
     promptCacheKey: false,
-    testPassed: input.name === "RikkaHub" || input.id === "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce",
+    // 出厂即视为连通、免手动测试的,只有 RikkaHub 内置供应商一条;它已下架(SUNSET),
+    // 但条件保留——老用户 state 里若仍存着该内置供应商(配过 key 的),沿用出厂 testPassed。
+    testPassed: input.id === "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce",
     models: [],
     balanceOption: { enabled: false, apiPath: "/credits", resultPath: "data.total_usage" },
     ...input,
@@ -124,6 +131,7 @@ export const SUNSET_PROVIDER_IDS = new Set<string>([
   "da93779f-3956-48cc-82ef-67bb482eaaf7", // 302.AI
   "53027b08-1b58-43d5-90ed-29173203e3d8", // AckAI
   "4da09554-8844-4cc8-a4a9-fe1b2515e91b", // UnifyLLM
+  "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce", // RikkaHub(内置模型,服务停维护下架;配过 key 的保留)
 ]);
 
 // 1.1.1 供应商迁移用的固定 id。改名/补模型走 id 匹配,确保老用户 state 也生效。
@@ -141,7 +149,6 @@ export const NA_API_PRESET_MODELS = [
 // 对应位置,用户新增的自定义供应商不受影响,统一保留在内置供应商之后(保持其相对顺序)。
 // 排序是幂等的:重复执行结果一致,不会反复改动已排好的 state。
 const BUILTIN_PROVIDER_ORDER: readonly string[] = [
-  "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce", // RikkaHub
   "1eeea727-9ee5-4cae-93e6-6fb01a4d051e", // OpenAI
   "b2c7e1a4-9f3d-4a6e-8c1b-5d7f9e2a3b14", // Anthropic
   "6ab18148-c138-4394-a46f-1cd8c8ceaa6d", // Gemini
@@ -157,6 +164,9 @@ const BUILTIN_PROVIDER_ORDER: readonly string[] = [
   "d5734028-d39b-4d41-9841-fd648d65440e", // OpenRouter
   "386e0f29-8228-4512-affe-8fd8add82d88", // Vercel AI Gateway
   "56a94d29-c88b-41c5-8e09-38a7612d6cf8", // 硅基流动
+  // 对齐 APP 新增的 Claude 形 / OpenAI 形预置(APP 顺序追加在末尾,APP 的 MaruCode 赞助商不移植)。
+  "b4deabea-20fb-4101-a74c-65679c7e4754", // MiniMax
+  "a2bafe83-eaf8-47bf-a8c7-3dd82d89f637", // MIMO
 ];
 
 export function builtinProviderRank(providerItem: Provider): number {
@@ -166,21 +176,6 @@ export function builtinProviderRank(providerItem: Provider): number {
 
 export function defaultProviders(): Provider[] {
   return [
-    provider({
-      id: "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce",
-      name: "RikkaHub",
-      baseUrl: "https://api.rikka-ai.com/v1",
-      enabled: true,
-      shortDescription: "RikkaHub 内置模型",
-      description: "Built-in RikkaHub provider template, matching the Android default.",
-      models: [
-        {
-          ...model("auto", "Auto"),
-          id: DEFAULT_AUTO_MODEL_ID,
-          abilities: ["TOOL", "REASONING"],
-        },
-      ],
-    }),
     provider({
       id: "1eeea727-9ee5-4cae-93e6-6fb01a4d051e",
       name: "OpenAI",
@@ -259,6 +254,21 @@ export function defaultProviders(): Provider[] {
       shortDescription: "SiliconFlow API",
       balanceOption: { enabled: true, apiPath: "/user/info", resultPath: "data.totalBalance" },
     }),
+    // 对齐 APP 新增的两家内置供应商(APP 的 MaruCode 为赞助商位,不移植)。沿用 APP 的稳定
+    // UUID,使未来 merge/reorder 与 APP 对齐;均无出厂预置模型,配 key 后由 /models 拉取。
+    provider({
+      id: "b4deabea-20fb-4101-a74c-65679c7e4754",
+      type: "claude",
+      name: "MiniMax",
+      baseUrl: "https://api.minimaxi.com/anthropic/v1",
+      shortDescription: "MiniMax 官方 Anthropic 兼容端点",
+    }),
+    provider({
+      id: "a2bafe83-eaf8-47bf-a8c7-3dd82d89f637",
+      name: "MIMO",
+      baseUrl: "https://api.xiaomimimo.com/v1",
+      shortDescription: "小米 MiMo 官方 OpenAI 兼容 API",
+    }),
   ];
 }
 
@@ -328,21 +338,59 @@ export function customHeaderRecords(assistant: Assistant, modelItem?: Model) {
   ].filter(isRecord);
 }
 
+// 会话身份头(台账 §7.4,对齐安卓 configureSessionHeaders):给每条 LLM 请求带当前会话 ID,
+// 让能识别的上游(网关/聚合商)做会话亲和——前缀缓存更可能命中(更省钱更快)、请求关联与
+// 限流分桶;不识别的上游静默忽略,无害。安卓对全 provider 发 X-Session-ID、opencode 另发
+// x-opencode-session。
+//
+// 注入纪律(三条,缺一不可):
+//  ① 每条请求都注入:conversationId 缺省时兜底随机 UUID(单次调用内稳定),不再是"辅助
+//     调用整条不发"——OpenCode Zen 对缺头请求直接 400 MissingSessionID(安卓 #1902,
+//     标题/翻译/压缩/OCR/连通性测试全中招;它只要求非空且稳定,不校验内容)。有会话
+//     上下文的辅助调用(标题/压缩)应传真实 conversationId,由调用方负责。
+//  ② ??= 而非 =:用户在 助手/模型自定义头 里显式配的同名头优先(与下方 X-Title/HTTP-Referer
+//     同纪律)——我们不静默覆盖用户意图。
+//  ③ 这是唯一注入点:applyRequestHeaders(会话流)与 applyModelRequestHeaders(pi 引擎注册头 +
+//     辅助/测试)都过它;新引擎只要复用这两个汇聚函数之一就自动继承,无需各自记得加。
+function applySessionHeaders(
+  headers: Record<string, string>,
+  baseUrl: string,
+  conversationId: string | null | undefined,
+) {
+  const sessionId = conversationId || crypto.randomUUID();
+  headers["X-Session-ID"] ??= sessionId;
+  if (hostOfProvider({ baseUrl } as Provider) === "opencode.ai") {
+    headers["x-opencode-session"] ??= sessionId;
+  }
+}
+
 export function modelCustomHeaderRecords(modelItem?: Model) {
   return (Array.isArray(modelItem?.customHeaders) ? modelItem.customHeaders : []).filter(isRecord);
 }
 
-export function applyModelRequestHeaders(headers: Record<string, string>, providerItem: Provider, modelItem?: Model) {
-  for (const header of modelCustomHeaderRecords(modelItem)) {
-    const name = String(header.name ?? header.key ?? "").trim();
-    if (name) headers[name] = String(header.value ?? "");
-  }
+// 主机特例(对齐安卓 configureReferHeaders):applyModelRequestHeaders/applyRequestHeaders
+// 共用这一份,不再两处各写一遍。
+function applyHostSpecialHeaders(headers: Record<string, string>, providerItem: Provider) {
   const host = hostOfProvider(providerItem);
   if (host === "aihubmix.com") headers["APP-Code"] ??= "DKHA9468";
   if (host === "openrouter.ai") {
     headers["X-Title"] ??= "RikkaHub";
     headers["HTTP-Referer"] ??= "https://rikka-ai.com";
   }
+}
+
+export function applyModelRequestHeaders(
+  headers: Record<string, string>,
+  providerItem: Provider,
+  modelItem?: Model,
+  sessionId?: string | null,
+) {
+  for (const header of modelCustomHeaderRecords(modelItem)) {
+    const name = String(header.name ?? header.key ?? "").trim();
+    if (name) headers[name] = String(header.value ?? "");
+  }
+  applyHostSpecialHeaders(headers, providerItem);
+  applySessionHeaders(headers, providerItem.baseUrl, sessionId);
   return headers;
 }
 
@@ -351,17 +399,14 @@ export function applyRequestHeaders(
   assistant: Assistant,
   providerItem: Provider,
   modelItem?: Model,
+  sessionId?: string | null,
 ) {
   for (const header of customHeaderRecords(assistant, modelItem)) {
     const name = String(header.name ?? header.key ?? "").trim();
     if (name) headers[name] = String(header.value ?? "");
   }
-  const host = hostOfProvider(providerItem);
-  if (host === "aihubmix.com") headers["APP-Code"] ??= "DKHA9468";
-  if (host === "openrouter.ai") {
-    headers["X-Title"] ??= "RikkaHub";
-    headers["HTTP-Referer"] ??= "https://rikka-ai.com";
-  }
+  applyHostSpecialHeaders(headers, providerItem);
+  applySessionHeaders(headers, providerItem.baseUrl, sessionId);
   return headers;
 }
 

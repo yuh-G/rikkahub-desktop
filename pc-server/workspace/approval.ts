@@ -47,6 +47,11 @@ function isLexicallyOutsideRoot(absolutePath: string, root: string): boolean {
   return target !== rootCmp && !target.startsWith(rootCmp.endsWith(sep) ? rootCmp : rootCmp + sep);
 }
 
+/** 词法子树判定(isLexicallyOutsideRoot 的反向):目标在 root 内(含等于 root)。 */
+function isLexicallyInsideRoot(absolutePath: string, root: string): boolean {
+  return !isLexicallyOutsideRoot(absolutePath, root);
+}
+
 /** 会话 cwd 的词法解析(与 runtime.resolveCwd 同语义,少一步存在性自愈——审批判定不碰 fs)。 */
 export function lexicalWorkspaceCwd(root: string, workspaceCwd: string | null | undefined): string {
   const raw = String(workspaceCwd ?? "").trim();
@@ -60,6 +65,11 @@ export interface WorkspaceCallContext {
   root: string;
   /** 会话工作目录(相对参数路径按此解析,恒在 root 内) */
   cwd: string;
+  /** 免审批可写前缀(§6.7,对齐 APP「/skills 加入免审批可写区」):落在这些目录内的
+   *  write/edit 即便越出工作区边界根也豁免审批(典型:技能库 pc-data/skills/,与工作区
+   *  边界根不同根)。由调用方(tools/approval.ts)注入 paths.skillsDir,本层保持零 fs 依赖。
+   *  仅豁免 write/edit;bash 仍走危险命令清单。confirm_each 档不受此豁免影响(恒审批)。 */
+  approvalExemptWritePrefixes?: readonly string[];
 }
 
 /** 参数齐备后的终局判定。返回 null=免审;返回字符串=需审批,非空串是给审批卡的缘由
@@ -82,6 +92,8 @@ export function workspaceCallApprovalReason(
   const raw = args.path;
   if (typeof raw !== "string" || !raw.trim()) return null;
   const resolved = resolveToCwd(raw, ctx.cwd);
+  // 免审批可写前缀(§6.7):技能库等目录即便越出工作区边界根也豁免。
+  if (ctx.approvalExemptWritePrefixes?.some((prefix) => isLexicallyInsideRoot(resolved, prefix))) return null;
   return isLexicallyOutsideRoot(resolved, ctx.root)
     ? `Writes outside the workspace: ${resolved}`
     : null;

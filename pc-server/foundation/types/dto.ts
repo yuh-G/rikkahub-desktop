@@ -73,6 +73,22 @@ export type MessageNodeDto = Omit<MessageNode, "messages"> & {
   messages: MessageDto[];
 };
 
+/** 消息发送队列的线上快照项(生成中补发排队;preview/hasAttachments 由后端派生,前端直接渲染)。 */
+export type MessageQueueItemDto = {
+  id: string;
+  preview: string;
+  hasAttachments: boolean;
+  createdAt: number;
+};
+
+/** 消息发送队列线上快照。纯内存态(不落库),随会话 SSE 快照直通;队空 = null(前端隐藏面板)。
+ *  held:队列停摆原因——failed(上一条生成失败自动暂停,错误恢复语境)/ interrupted(用户主动
+ *  停止后的冻结,中性提示)/ null(正常排队,当前回复结束后自动依次发送)。恢复动作同为 resume。 */
+export type MessageQueueSnapshotDto = {
+  items: MessageQueueItemDto[];
+  held: "failed" | "interrupted" | null;
+} | null;
+
 /** 会话详情:GET conversations/:id 响应与会话 SSE snapshot 载荷。
  *  I-2(专题2)窗口化:快照可能只携带最近若干节点,messages[0] 的绝对节点下标为
  *  nodesOffset(缺省/0 = 从头完整);nodeStamps 为**全部**节点的内容戳清单(与绝对
@@ -83,6 +99,8 @@ export type ConversationDto = Omit<Conversation, "messages"> & {
   isGenerating: boolean;
   nodesOffset?: number;
   nodeStamps?: string[];
+  /** 消息发送队列快照(瞬态,内存态)。生成中补发排队的面板数据源;队空为 null。 */
+  messageQueue?: MessageQueueSnapshotDto;
 };
 
 /** GET conversations/:id/nodes 响应:窗口化快照的向上翻页分片(专题2 I-2)。
@@ -212,6 +230,32 @@ export type AppErrorPushEventDto = {
   type: "app_error";
   error: AppErrorDto;
 };
+
+// ── MCP 连接健康(7.2)───────────────────────────────────────────────
+
+/** MCP 故障分类(与 tools/mcp-health.ts McpFailureKind 对齐;前端按它渲染人话)。 */
+export type McpFailureKindDto =
+  | "network_transient"
+  | "auth_expired"
+  | "server_unavailable"
+  | "config_error"
+  | "unknown";
+
+/** 单台 MCP 服务器的健康快照(mcp_health 事件 + /api/events 初始帧的元素)。 */
+export type McpHealthEntryDto =
+  | { status: "ready" }
+  | { status: "reconnecting"; attempt: number; maxAttempts: number }
+  | {
+      status: "failed";
+      kind: McpFailureKindDto;
+      retryable: boolean;
+      message: string;
+      consecutiveFailures: number;
+      checkedAt: number;
+    };
+
+/** mcp_health 事件载荷:serverId → 健康项。只含"被启用且被某助手选中"的服务器(决策①)。 */
+export type McpHealthSnapshotDto = Record<string, McpHealthEntryDto>;
 
 // ── SSE 事件载荷 ───────────────────────────────────────────────────
 

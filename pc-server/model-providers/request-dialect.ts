@@ -159,6 +159,70 @@ export const OUTPUT_LIMIT_FACTS: readonly OutputLimitFact[] = [
       "docs.bigmodel.cn GLM-5.3 模型页「支持 1M 上下文窗口，最大输出 Tokens 为 128K」"
       + " + 上游报文 [1210][max_tokens参数非法：限制数值范围[1,131072]](2026-09-09 核实)",
   },
+  // ===== 2026-09 新注册模型(对齐 APP 2.4.x/2.5.x)输出上限登记 =====
+  // 全部一手官方文档实证;Gemini 3.5 Pro 未公布(2026-09 仍预览)**刻意不登记**——落
+  // DEFAULT_OUTPUT_TOKENS 兜底 + output_limit_unknown 告警,待公布后再补(见头注规程 5)。
+  {
+    // OpenAI GPT-5.6 系(sol/terra/luna,别名 gpt-5.6)与 GPT-6 Astra:输出 128K,上下文 1.05M。
+    // 用 gpt-5.6/gpt-6 token 判定,误伤面近乎零(gpt-5 精确匹配已在采样锁定单独处理)。
+    match: (id) => /gpt[-._]?5[.-]6/i.test(id) || /gpt[-._]?6/i.test(id),
+    cap: 128_000,
+    source: "OpenAI 官方模型页(gpt-6-astra / gpt-5.6-sol/terra/luna)「Max output 128K · Context 1.05M」(2026-09-17 官方截图直证)",
+  },
+  {
+    // Anthropic Claude Opus 4.8:同步 API 128K(Batch+beta 头可到 300K,取同步保守值)。
+    match: (id) => /claude-opus-4[.-]8/i.test(id),
+    cap: 128_000,
+    source: "platform.claude.com/docs/en/models/opus-4-8/overview「Context 1M · Max output 128K」(2026-09-17 直抓)",
+  },
+  {
+    // Google Gemini 3.5 Flash;Pro 未公布(2026-09 仍预览),只登记 Flash。
+    match: (id) => /gemini-3[.-]5[.-]?flash/i.test(id) || /gemini-3[.-]5(?!.*pro)/i.test(id),
+    cap: 65_536,
+    source: "ai.google.dev/gemini-api/docs/models「Gemini 3.5 Flash Output token limit 65,536」(2026-09-17 直抓)",
+  },
+  {
+    // DeepSeek V4.1 Flash / deepseek-flash:输出 384K(远高于 DEFAULT_OUTPUT_TOKENS,不登记会被钳小)。
+    match: (id) => /deepseek.*(v[-._]?4[-._]?1|flash)/i.test(id) || /^deepseek-flash/i.test(id),
+    cap: 384_000,
+    source: "api-docs.deepseek.com/quick_start/pricing「MAXIMUM: 384K · Context 1M」(2026-09-17 直抓)",
+  },
+  {
+    // 智谱 GLM-5.2(注意排除 5.3,后者上方已登记 128K):输出上限 128K。
+    match: (id) => /glm-5\.2/i.test(id),
+    cap: 131_072,
+    source: "docs.z.ai/guides/llm/glm-5.2「Maximum supported max_tokens: 131,072」(2026-09-17 直抓)",
+  },
+  {
+    // 月之暗面 Kimi K3(含裸 id k3):官方明示输出单独设上限,默认 131072 可配至满窗口。
+    match: isKimiK3Model,
+    cap: 131_072,
+    source: "platform.kimi.com/docs/api/chat「此值为期望返回的 Token 长度,默认 131072」(2026-09-17 直抓)",
+  },
+  {
+    // MiniMax M3:输出上限 512K(1M 上下文内保证最低 512K 输出)。
+    match: (id) => /minimax[-._/]?m[-._]?3/i.test(id),
+    cap: 512_000,
+    source: "minimax.io/models/text/m3 + platform.minimax.io「max_tokens Max: 512000 · 1M context」(2026-09-17 直抓)",
+  },
+  {
+    // 阶跃 Step 3.7 Flash:上下文与输出同 256K。
+    match: (id) => /step[-._]?3[.-]7[.-]?flash/i.test(id),
+    cap: 262_144,
+    source: "help.aliyun.com/model-studio/step-3-7-flash「各上限统一 262,144」(2026-09-17 直抓)",
+  },
+  {
+    // 美团 LongCat 2.0:官方 API 文档输出 128K(第三方平台口径不一,以官方为准)。
+    match: (id) => /longcat[-._]?2/i.test(id),
+    cap: 131_072,
+    source: "longcat.chat 官方 API 文档「max output 128K · context 1M」(2026-09-17 直抓)",
+  },
+  {
+    // 阿里 Qwen3.8-Max(含快照 qwen3.8-max-0902):输出 128K。
+    match: (id) => /qwen[-._]?3[.-]8[.-]?max/i.test(id),
+    cap: 131_072,
+    source: "help.aliyun.com/zh/model-studio/qwen3-8-max「最大输出长度 131,072 · 上下文 1M」(2026-09-17 直抓)",
+  },
 ];
 
 /** 方言登记的输出上限;未登记返回 null(调用方继续查目录)。 */
@@ -267,6 +331,13 @@ export function isZhipuForcedThinkingModel(modelId: string): boolean {
  *  reasoning_effort；老 doubao 系只认 thinking.type。 */
 export function isArkSeed2Model(modelId: string): boolean {
   return /doubao-seed-[2-9]/i.test(modelId);
+}
+
+/** 小米 MiMo 官方主机(api.xiaomimimo.com 与订阅制 token-plan-cn 子域):思考开关走
+ *  thinking:{type}(官方 OpenAI 兼容文档 mimo.mi.com/docs/zh-CN/api/chat/openai-api,
+ *  安卓 ChatCompletionsAPI L354-360 同口径)。独立谓词与主机族写法,同 isOfficialOpenAiHost。 */
+export function isMiMoOfficialHost(host: string): boolean {
+  return host === "api.xiaomimimo.com" || host.endsWith(".xiaomimimo.com");
 }
 
 /** SiliconFlow 上支持 reasoning_effort 的托管模型（官方：DeepSeek-V4 系与
@@ -381,6 +452,9 @@ export function openAiThinkingSwitchProtocol(host: string, modelId: string): Ope
   if (host === "ark.cn-beijing.volces.com" || host === "open.bigmodel.cn" || host === "api.deepseek.com") {
     return "thinking-type-object";
   }
+  // 小米 MiMo 官方:thinking:{type} 开关(对象内无 effort/keep 差异,落各引擎翻译层的
+  // 通用 thinking-type-object 兜底,与 Moonshot K2.5/火山老系同路径)。
+  if (isMiMoOfficialHost(host)) return "thinking-type-object";
   if (host === "api.moonshot.cn") {
     if (isKimiK3Model(modelId)) return "reasoning-effort"; // K3 移除 thinking,唯一强度入口
     if (isKimiK27Model(modelId)) return "suppress"; // 始终思考,开关字段拒收

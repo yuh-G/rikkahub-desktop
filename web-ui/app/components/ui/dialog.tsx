@@ -124,7 +124,9 @@ function DialogTitle({
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn("text-lg leading-none font-semibold", className)}
+      // issue#53:确认框 title 会内嵌无空格的长文件名(如 backup_20260916_224956_….zip)。
+      // break-words 让长 token 在任意字符处断行;leading-none 会让硬折的多行叠行,放宽到 snug。
+      className={cn("text-lg leading-snug font-semibold break-words", className)}
       {...props}
     />
   )

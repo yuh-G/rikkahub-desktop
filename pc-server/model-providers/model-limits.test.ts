@@ -37,14 +37,15 @@ function at(baseUrl: string, type: Provider["type"] = "openai"): Provider {
  *  - zhipuai / zhipuai-coding-plan 同挂 open.bigmodel.cn,输出上限 131072(权威);
  *  - digitalocean 的同名行 output == context == 1048576(占位行,旧查表撞到的就是它);
  *  - openrouter 的同名行 262144(合法但不是本端点的口径)。
- *  glm-5.2 一并入场:它是**未进方言登记表**的真实模型,用来验证纯目录路径
- *  (glm-5.3 已登记,任何目录数据都不再影响它——那是另一组用例的事)。 */
+ *  glm-5.1 一并入场:它是**未进方言登记表**的真实型号(glm-5.2/5.3 已分别于 2026-09 登记,
+ *  不能再当"未登记"样本),用来验证纯目录路径。 */
 const CATALOG: ModelCatalog = {
   zhipuai: {
     api: "https://open.bigmodel.cn/api/paas/v4",
     models: {
       "glm-5.3": { limit: { context: 1_000_000, output: 131_072 } },
       "glm-5.2": { limit: { context: 1_000_000, output: 131_072 } },
+      "glm-5.1": { limit: { context: 1_000_000, output: 131_072 } },
     },
   },
   "zhipuai-coding-plan": {
@@ -52,6 +53,7 @@ const CATALOG: ModelCatalog = {
     models: {
       "glm-5.3": { limit: { context: 1_000_000, output: 200_000 } },
       "glm-5.2": { limit: { context: 1_000_000, output: 200_000 } },
+      "glm-5.1": { limit: { context: 1_000_000, output: 200_000 } },
     },
   },
   digitalocean: {
@@ -59,6 +61,7 @@ const CATALOG: ModelCatalog = {
     models: {
       "glm-5.3": { limit: { context: 1_048_576, output: 1_048_576 } },
       "glm-5.2": { limit: { context: 262_144, output: 262_144 } },
+      "glm-5.1": { limit: { context: 262_144, output: 262_144 } },
     },
   },
   openrouter: {
@@ -66,6 +69,7 @@ const CATALOG: ModelCatalog = {
     models: {
       "z-ai/glm-5.3": { limit: { context: 1_310_720, output: 262_144 } },
       "z-ai/glm-5.2": { limit: { context: 1_048_576, output: 131_072 } },
+      "z-ai/glm-5.1": { limit: { context: 1_048_576, output: 131_072 } },
     },
   },
   // 无 api 字段的一线厂商(端点由 SDK 内建):只能经官方主机白名单或一线厂商全集命中。
@@ -87,11 +91,11 @@ const CATALOG: ModelCatalog = {
 describe("A 行为:按端点身份取上限(2026-09-09 GLM-5.3 1210 报障复现)", () => {
   test("智谱端点 → 智谱目录,不是名字撞到的第一个", () => {
     const zhipu = at("https://open.bigmodel.cn/api/paas/v4");
-    // 用未登记的 glm-5.2 验证纯目录路径:同 host 两个目录键(paas 131072 +
+    // 用未登记的 glm-5.1 验证纯目录路径:同 host 两个目录键(paas 131072 +
     // coding-plan 200000)命中,取 min——偏小只是答案被截短,偏大是整个请求被 400,
     // 代价不对等。旧实现会撞到 digitalocean 的 262144 占位行。
-    expect(outputLimitFor(CATALOG, zhipu, "glm-5.2")).toBe(131_072);
-    expect(requiredOutputCap(CATALOG, zhipu, "glm-5.2", null)).toBe(131_072);
+    expect(outputLimitFor(CATALOG, zhipu, "glm-5.1")).toBe(131_072);
+    expect(requiredOutputCap(CATALOG, zhipu, "glm-5.1", null)).toBe(131_072);
   });
 
   test("报障的两个数字不可能再出现(1048576 / 1041128)", () => {
@@ -107,15 +111,15 @@ describe("A 行为:按端点身份取上限(2026-09-09 GLM-5.3 1210 报障复现
   });
 
   test("output >= context 的占位行一律丢弃(目录里 15.6% 是这个形状)", () => {
-    // 用未登记的 glm-5.2 走纯目录路径:digitalocean 端点对它只有 output==context 的
+    // 用未登记的 glm-5.1 走纯目录路径:digitalocean 端点对它只有 output==context 的
     // 占位行(262144/262144) → 视为"查不到",而不是把窗口尺寸当输出上限发出去。
     const dirty = at("https://inference.do-ai.run/v1");
-    expect(lookupModelLimit(CATALOG, "inference.do-ai.run", "glm-5.2", "output")).toBeNull();
-    expect(outputLimitFor(CATALOG, dirty, "glm-5.2")).toBeNull();
+    expect(lookupModelLimit(CATALOG, "inference.do-ai.run", "glm-5.1", "output")).toBeNull();
+    expect(outputLimitFor(CATALOG, dirty, "glm-5.1")).toBeNull();
     // context 字段不做此校验(它就是窗口本身,没有可比的上界)。
-    expect(contextWindowFor(CATALOG, dirty, "glm-5.2")).toBe(262_144);
+    expect(contextWindowFor(CATALOG, dirty, "glm-5.1")).toBe(262_144);
     // 查不到 → 兜底,且兜底恒小于窗口。
-    expect(requiredOutputCap(CATALOG, dirty, "glm-5.2", null)).toBe(DEFAULT_OUTPUT_TOKENS);
+    expect(requiredOutputCap(CATALOG, dirty, "glm-5.1", null)).toBe(DEFAULT_OUTPUT_TOKENS);
     // 同一份脏行在旧实现里就是报障值的来源:1048576(glm-5.3 那行)。
     expect(lookupModelLimit(CATALOG, "inference.do-ai.run", "glm-5.3", "output")).toBeNull();
   });
@@ -146,11 +150,11 @@ describe("A 行为:按端点身份取上限(2026-09-09 GLM-5.3 1210 报障复现
   });
 
   test("聚合网关的行不参与「退到一线厂商」这一级(它们精度最低)", () => {
-    // openrouter 有 z-ai/glm-5.2;未知端点问这个名字时不得借它的值(用未登记的 5.2,
-    // 才是在测目录路径——5.3 已进方言登记表,恒 131072 与目录无关)。
-    expect(outputLimitFor(CATALOG, at("https://api.some-relay.example/v1"), "z-ai/glm-5.2")).toBeNull();
+    // openrouter 有 z-ai/glm-5.1;未知端点问这个名字时不得借它的值(用未登记的 5.1,
+    // 才是在测目录路径——5.2/5.3 已进方言登记表,恒 131072 与目录无关)。
+    expect(outputLimitFor(CATALOG, at("https://api.some-relay.example/v1"), "z-ai/glm-5.1")).toBeNull();
     // 但直连 openrouter 端点时当然要用它自己的口径。
-    expect(outputLimitFor(CATALOG, at("https://openrouter.ai/api/v1"), "z-ai/glm-5.2")).toBe(131_072);
+    expect(outputLimitFor(CATALOG, at("https://openrouter.ai/api/v1"), "z-ai/glm-5.1")).toBe(131_072);
     expect(outputLimitFor(CATALOG, at("https://openrouter.ai/api/v1"), "z-ai/glm-5.3")).toBe(131_072);
   });
 });
@@ -173,7 +177,7 @@ describe("A 行为:方言登记表优先于目录(新模型的适配入口)", ()
       expect(outputLimitFor(CATALOG, at(`https://${host}/v1`), "glm-5.3-flash")).toBe(131_072);
     }
     expect(registeredOutputLimit("GLM-5.3")).toBe(131_072); // 大小写不敏感
-    expect(registeredOutputLimit("glm-5.2")).toBeNull(); // 未登记 → 交给目录
+    expect(registeredOutputLimit("glm-5.1")).toBeNull(); // 未登记 → 交给目录
   });
 
   test("每条登记都必须带出处(未来加档位时不许省)", () => {
@@ -271,6 +275,9 @@ const REGISTERED_OUTPUT_CAP_FILES: ReadonlySet<string> = new Set([
   "inference-engine/message-builder.ts",
   // 工作区引擎桥接:上限数值由 orchestrator 经 requiredOutputCap 注入,本文件只定字段名。
   "pi-engine/model-bridge.ts",
+  // 方言事实单源:OUTPUT_LIMIT_FACTS 登记表(一手文档上限)+ DEFAULT_OUTPUT_TOKENS 兜底常量。
+  // 它是 model-limits 的取值来源之一(登记优先于目录),自身即单源的一部分。
+  "model-providers/request-dialect.ts",
 ]);
 
 /** 线上字段判别符:出现即意味着"这里在决定发给模型的输出上限"。 */

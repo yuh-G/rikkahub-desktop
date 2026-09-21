@@ -15,6 +15,7 @@ import {
   isKimiK26Model,
   isKimiK27Model,
   isKimiK3Model,
+  isMiMoOfficialHost,
   isSamplingLockedModel,
   isSiliconFlowEffortModel,
   isZhipuEffortModel,
@@ -658,6 +659,22 @@ export function hasBuiltInTool(modelItem: Model, toolType: string) {
 }
 
 
+/** 防双搜唯一裁决(对齐安卓 ChatToolFactory.kt:21 shouldUseExternalWebSearch):
+ *  全局外挂搜索开关开 **且** 模型未声明内置 search 时,才允许注入外挂 search_web。
+ *  模型自带内置搜索(Google googleSearch / OpenAI Responses web_search)时,外挂必须
+ *  让位——否则同一轮模型手里同时攥着"服务端内置搜索"和"外挂 search_web"两套,可能
+ *  重复调用、结果打架。Google 路在 conversation-encoding 已天然互斥(内置优先整组
+ *  functionDeclarations 不发);本谓词补的是 OpenAI Responses 路(orchestrator 把
+ *  functionTools 与 responseApiBuiltInTools 并列发出)与一切未来引擎。
+ *
+ *  单源纪律:外挂 search_web 的唯一注入源 openAiSearchTools(tools/bound)经本谓词门控,
+ *  聊天引擎(conversationFunctionTools)与 pi 引擎(createPiGeneralTools)同口消费——
+ *  未来新引擎只要从同一注入源取外挂搜索,天然继承本闸,无需各自复刻判定。 */
+export function shouldUseExternalWebSearch(enableWebSearch: boolean, modelItem: Model | null | undefined) {
+  return enableWebSearch && !(modelItem && hasBuiltInTool(modelItem, "search"));
+}
+
+
 export function responseApiBuiltInTools(modelItem: Model) {
   const tools: Record<string, JsonValue>[] = [];
   if (hasBuiltInTool(modelItem, "search")) tools.push({ type: "web_search" });
@@ -996,6 +1013,10 @@ export function reasoningPayloadForProvider(providerItem: Provider, modelItem: M
     return { reasoning_effort: normalized };
   }
   if (host === "chat.intern-ai.org.cn") return { thinking_mode: enabled };
+  // 小米 MiMo 官方(api.xiaomimimo.com 及 token-plan-cn 子域):思考开关走 thinking:{type},
+  // 无 effort/keep(对齐安卓 ChatCompletionsAPI L354-360);此前缺分支会落兜底 reasoning_effort,
+  // 端点不识该字段。pi 引擎经 openAiThinkingSwitchProtocol 同判 thinking-type-object。
+  if (isMiMoOfficialHost(host)) return { thinking: { type: enabled ? "enabled" : "disabled" } };
   // issue10:Gemini 经 OpenAI 兼容层(官方 /openai 端点及各类中转网关)时,思维链必须用
   // extra_body.google.thinking_config 显式请求 include_thoughts,否则模型即使思考也不回传
   // 思维内容(对齐 Cherry Studio;安卓端此场景同样缺失,属 PC 端补强)。字段区分与原生

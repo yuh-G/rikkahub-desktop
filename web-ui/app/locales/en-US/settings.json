@@ -12,7 +12,7 @@
     "data": "Data",
     "stats": "Statistics",
     "logs": "App logs",
-    "proxy": "Proxy & port",
+    "proxy": "Network",
     "about": "About",
     "donate": "Donate",
     "back": "Back",
@@ -137,9 +137,12 @@
     "loading": "Loading settings",
     "get_key": "Get API Key",
     "get_key_title": "Go to the provider's website to get an API key",
+    "base_url_switched": "Base URL switched to {{url}}",
     "chat_url": "Chat endpoint URL: {{url}}",
     "models_url": "Model list URL: {{url}}",
     "response_api_desc": "When enabled, the chat endpoint switches to /responses",
+    "chat_completions_path_label": "Chat Completions Path",
+    "responses_path_label": "Responses Path",
     "history_reasoning_title": "Echo historical reasoning",
     "history_reasoning_desc": "Newer models (e.g. DeepSeek V4) require reasoning_content to be echoed back. When enabled, the reasoning_content of past assistant messages is sent with each request; models that don't need it ignore the field silently. Turn this off if a provider rejects requests over the unrecognized field.",
     "prompt_cache_title": "Claude prompt caching",
@@ -329,10 +332,14 @@
     "ext_lorebook": "Lorebooks"
   },
   "proxy": {
-    "title": "Proxy & port",
-    "subtitle": "Set an HTTP proxy for all outbound traffic (AI APIs, search, MCP) and the local service port. Leave the proxy blank to follow the system proxy; leave the port blank to auto-select.",
+    "title": "Network",
+    "subtitle": "Set an HTTP proxy and User-Agent for all outbound traffic (AI APIs, search, MCP), plus the local service port. Leave the proxy blank to follow the system proxy; leave the port blank to auto-select.",
     "http_title": "HTTP proxy",
     "http_desc": "All AI API requests are routed through this proxy",
+    "ua_title": "User-Agent",
+    "ua_desc": "Customize the User-Agent header sent with outbound requests. Leave blank to use the default. Only change this if your provider (e.g. a corporate gateway or API relay) requires a specific User-Agent.",
+    "ua_label": "User-Agent",
+    "ua_reset": "Reset to default",
     "detect": "Fill from system proxy",
     "address": "Proxy address",
     "address_ph": "http://127.0.0.1:7890 (blank = follow system proxy)",
@@ -479,15 +486,21 @@
   },
   "models": {
     "title": "Default models & prompts",
-    "subtitle": "Pick a default model and prompt for chat, titles, translation, suggestions, OCR, compression and more.",
+    "subtitle": "Pick a default model and prompt for chat, the fast model, translation, OCR, compression and more.",
     "note": "Only models that passed the provider test are shown here. Title, translation, suggestion, OCR and compression prompts ship with sensible defaults — click the tool button on the right to view or restore them.",
     "not_set": "Not set",
+    "not_set_fallback": "Not set (follows the conversation model)",
+    "not_set_disabled": "Not set (feature unavailable)",
     "autosaved": "Saved automatically",
     "autosave_failed": "Failed to auto-save default models",
     "edit_prompt": "Edit prompt",
     "variables_label": "Variables: ",
     "reset_default": "Reset to default",
     "done": "Done",
+    "fast_tab": {
+      "title": "Title",
+      "suggestion": "Suggestions"
+    },
     "compress_engine": {
       "chat": "Chat engine",
       "pi": "Workspace engine (pi)",
@@ -516,31 +529,27 @@
       },
       "optimize": {
         "title": "Prompt optimization",
-        "desc": "The “Optimize prompt” button in the chat input uses this model to rewrite your draft more clearly and professionally."
+        "desc": "The “Optimize prompt” button in the chat input uses this model to rewrite your draft more clearly and professionally. When unset, it follows the current conversation's model."
       },
-      "title": {
-        "title": "Title generation",
-        "desc": "Reads recent messages after the first reply to auto-generate a conversation title."
+      "fast": {
+        "title": "Fast model",
+        "desc": "Lightweight background tasks such as title generation and suggested replies share this model. When unset, titles fall back to the first message text and no suggestions are generated — no extra model usage. Use the button at the top right to edit the title and suggestion prompts separately."
       },
       "translate": {
         "title": "Translation",
-        "desc": "The translate button under an AI reply uses this model and prompt."
-      },
-      "suggestion": {
-        "title": "Suggested replies",
-        "desc": "Generates 3–5 clickable suggestions after a reply completes."
+        "desc": "The translate button under an AI reply uses this model and prompt. When unset, it follows the current conversation's model."
       },
       "compress": {
         "title": "Context compression",
-        "desc": "Keeps key context when compressing long conversations and writes it back."
+        "desc": "Keeps key context when compressing long conversations and writes it back. When unset, it follows the current conversation's model."
       },
       "ocr": {
         "title": "OCR",
-        "desc": "A fallback image-to-text channel for chat models without vision input."
+        "desc": "A fallback image-to-text channel for chat models without vision input. When unset, this channel is unavailable — plain-text chats are unaffected."
       },
       "image": {
         "title": "Image generation",
-        "desc": "Entry point for models with image generation capability."
+        "desc": "Entry point for models with image generation capability. Image generation is unavailable until a model is set."
       }
     }
   },
@@ -578,6 +587,22 @@
     "status_off": "Disabled",
     "status_error": "Connection error",
     "status_connected": "Connected",
+    "status_reconnecting": "Reconnecting",
+    "health": {
+      "ready": "Ready",
+      "reconnecting": "Connection lost, reconnecting in background (attempt {{attempt}}/{{max}})…",
+      "reconnect_now": "Reconnect now",
+      "kind_auth_expired": "Authorization expired — please re-authorize",
+      "kind_config_error": "Invalid server URL — please check the configuration",
+      "kind_server_unavailable": "Server is persistently unreachable — try again later or check the service",
+      "kind_network_transient": "Network connection issue",
+      "kind_unknown": "Connection failed"
+    },
+    "health_notify": {
+      "auth_expired": "MCP server authorization expired — re-authorize it in Settings",
+      "config_error": "MCP server misconfigured — check it in Settings",
+      "server_unavailable": "MCP server is persistently unreachable — check the service"
+    },
     "oauth": {
       "title": "OAuth Authorization",
       "desc": "Some MCP servers require OAuth 2.1 sign-in. Authorization happens in your system browser; tokens are stored locally only.",
@@ -676,6 +701,12 @@
     "asr_delete_confirm": "Delete the ASR provider \"{{name}}\"?",
     "tts_title": "Text to speech",
     "tts_subtitle": "TTS providers narrate messages; ASR providers power real-time speech recognition in the input box.",
+    "read_filter_title": "Reading filter",
+    "read_filter_desc": "Preprocess text before narration to skip parts you don't want to hear.",
+    "only_read_quoted": "Read quoted text only",
+    "only_read_quoted_desc": "Read only the lines inside quotes, skipping narration and action descriptions (great for role-play).",
+    "skip_brackets": "Skip bracketed content",
+    "skip_brackets_desc": "Skip notes, tone and stage directions inside Chinese/English brackets.",
     "asr_title": "Speech recognition",
     "asr_subtitle": "Supports OpenAI Realtime, DashScope and Volcengine via real-time PCM WebSocket transcription.",
     "asr_services": "ASR services",
@@ -718,6 +749,22 @@
     "select_emotion": "Select emotion",
     "emotion_auto": "Auto (decided by MiniMax)",
     "minimax_speed_desc": "MiniMax speech rate.",
+    "elevenlabs_stability_desc": "Stability: lower is more expressive, higher is more consistent.",
+    "elevenlabs_similarity_desc": "Similarity boost: higher stays closer to the source voice.",
+    "step_speed_desc": "Speech rate, 1 is normal.",
+    "step_volume_desc": "Volume, 1 is normal.",
+    "step_instruction_ph": "Global context/style instruction (stepaudio-2.5-tts only, ≤200 chars)",
+    "step_instruction_desc": "Omitted when empty; step-tts-mini / vivid ignore this field.",
+    "fish_reference_desc": "reference_id of a cloned voice; leave empty for the default voice.",
+    "fish_temperature_desc": "Sampling temperature; higher is more random.",
+    "fish_topp_desc": "Nucleus sampling Top-P.",
+    "fish_speed_desc": "Speech rate, 1 is normal.",
+    "fish_normalize_desc": "Text normalization (numbers/punctuation read aloud).",
+    "volc_resource_desc": "Must match the service and voice enabled in the console; default seed-tts-2.0. Note: use the Doubao Speech console API key, not the Volcano Ark one.",
+    "volc_speaker_label": "Voice ID",
+    "volc_speaker_desc": "Fill in the voice ID from the console; defaults to the VV voice.",
+    "volc_rate_label": "Speech Rate",
+    "volc_rate_desc": "Range -50 to 100; 0 is normal, -50 half speed, 100 double speed.",
     "system_rate_desc": "System voice rate, 1 is default.",
     "system_pitch_desc": "System voice pitch can't be adjusted directly; this setting is exported with the config only.",
     "select_tts": "Select or add a TTS service."
@@ -801,6 +848,11 @@
     "import_backup": "Import backup",
     "chat_files_title": "Chat file storage",
     "chat_files_desc": "Uploaded avatars and attachments are saved to the local data directory and served via /api/files.",
+    "restore_report_title": "Last cloud restore",
+    "restore_report_ok": "Nothing was skipped or downgraded",
+    "restore_report_db_error": "Conversation import failed: {{error}} (fell back to settings-only)",
+    "restore_report_nodes_skipped": "{{count}} messages were skipped due to corrupted data in the backup",
+    "restore_report_files_deduped": "{{count}} attachments matched existing content and were reused (no extra space used)",
     "web_service_title": "Web service",
     "web_service_desc": "Web JWT: {{status}}",
     "enabled": "enabled",
@@ -821,7 +873,17 @@
     "s3_title": "S3 backup",
     "s3_desc": "Standard AWS S3 and compatible endpoints (MinIO/R2/Tencent COS/Alibaba OSS, etc.). Backup contents match WebDAV.",
     "endpoint_label": "Endpoint (blank = official AWS)",
-    "prefix_path": "Prefix path"
+    "prefix_path": "Prefix path",
+    "web_password_current": "Current password",
+    "web_password_new": "New password",
+    "web_password_set": "Set an access password",
+    "web_password_change": "Change password",
+    "web_password_set_action": "Set",
+    "web_password_clear": "Clear password",
+    "web_password_saved": "Access password saved; reload to apply",
+    "web_password_cleared": "Access password cleared",
+    "web_password_failed": "Operation failed",
+    "web_password_locked": "The access password is managed by deployment config (--password / RIKKAHUB_PASSWORD); change it there."
   },
   "hotkeys": {
     "title": "Shortcuts",
@@ -889,7 +951,8 @@
       "hygiene_legacy_snapshot_cleaned": "Data directory cleanup: removed a legacy migration snapshot",
       "orphan_stats": "Attachment stats: {{orphans}} entries no longer referenced (~{{orphanMb}} MB); {{untracked}} untracked files (~{{untrackedMb}} MB). Nothing is deleted automatically; back up first if you want to clean up",
       "hygiene_failed": "Data directory cleanup task failed; harmless, will retry on next launch",
-      "output_limit_unknown": "The maximum output length for {{model}} is unknown; sent the conservative default {{fallback}}. If this model rejects it with an invalid max_tokens error, set the max output length manually in the assistant settings"
+      "output_limit_unknown": "The maximum output length for {{model}} is unknown; sent the conservative default {{fallback}}. If this model rejects it with an invalid max_tokens error, set the max output length manually in the assistant settings",
+      "voice_provider_preserved": "Detected voice services from the mobile app ({{types}}) that this desktop app doesn't support yet. Their configuration is preserved as-is for round-trip and won't be lost"
     }
   },
   "model_edit": {

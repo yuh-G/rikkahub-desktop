@@ -19,7 +19,10 @@ const PROVIDER_TEST_OUTPUT_TOKENS = 4096;
 export function endpointFor(providerItem: Provider) {
   const base = providerItem.baseUrl.replace(/\/+$/, "");
   if (providerItem.type === "openai") {
-    return providerItem.useResponseApi ? `${base}/responses` : `${base}${providerItem.chatCompletionsPath || "/chat/completions"}`;
+    // responsesPath 留空回落 /responses(对齐安卓 §2.3,适配 Azure/网关非标准路径)。
+    return providerItem.useResponseApi
+      ? `${base}${providerItem.responsesPath?.trim() || "/responses"}`
+      : `${base}${providerItem.chatCompletionsPath || "/chat/completions"}`;
   }
   // claude 拼接标准化(A):剥尾部 /v1 再拼全路径 /v1/messages——与 pi 引擎 piBaseUrlFor
   // 同款归一化,用户填 https://api.anthropic.com 或 .../v1 都能工作。此前 `${base}/messages`

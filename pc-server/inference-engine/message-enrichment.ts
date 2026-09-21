@@ -50,22 +50,30 @@ function messageTimestamp(msg: Message): Date | undefined {
   return Number.isFinite(parsed) ? new Date(parsed) : undefined;
 }
 
+// 间隔超过该阈值才在 USER 消息前补时间提醒(首条恒提醒)。刻意硬编码不开放给用户:
+// 这是感知类节奏阈值,用户无需感知;10min 对齐桌面 IM 场景(APP 出厂默认 60min 偏久,
+// 间隔 10min~1h 的回来接着聊才是桌面高频)。可调则必须补分钟级文案分支。
+const TIME_REMINDER_GAP_THRESHOLD_SECONDS = 10 * 60;
+
 function timeReminderContent(current: Message, previous?: Message) {
   const currentTime = new Date(current.createdAt);
   const weekday = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(currentTime);
   const timeText = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(currentTime);
   if (!previous) return `<time_reminder>Current time: ${weekday}, ${timeText}</time_reminder>`;
   const gapSeconds = Math.floor((Date.parse(current.createdAt) - Date.parse(previous.createdAt)) / 1000);
-  // createdAt 不可解析时 gapSeconds 为 NaN(NaN<=3600 为 false),原实现会输出 "NaN d",
-  // 用否定式条件一并挡掉;间隔 <=1h 不提醒,故不存在分钟级分支。
-  if (!(gapSeconds > 3600)) return "";
-  const gapText = gapSeconds < 86400
-    ? `${Math.floor(gapSeconds / 3600)} h`
-    : `${Math.floor(gapSeconds / 86400)} d`;
+  // createdAt 不可解析时 gapSeconds 为 NaN(NaN<=阈值 为 false),原实现会输出 "NaN d",
+  // 用否定式条件一并挡掉。三档文案与 APP TimeReminderTransformer.formatGap 一致(min/h/d)。
+  if (!(gapSeconds > TIME_REMINDER_GAP_THRESHOLD_SECONDS)) return "";
+  const gapText =
+    gapSeconds < 3600
+      ? `${Math.floor(gapSeconds / 60)} min`
+      : gapSeconds < 86400
+        ? `${Math.floor(gapSeconds / 3600)} h`
+        : `${Math.floor(gapSeconds / 86400)} d`;
   return `<time_reminder>Current time: ${weekday}, ${timeText} (${gapText} since last message)</time_reminder>`;
 }
 
-/** 在 USER 消息前插时间提醒(首条 USER 恒提醒,后续间隔 >1h 提醒)。
+/** 在 USER 消息前插时间提醒(首条 USER 恒提醒,后续间隔 >10min 提醒)。
  *  previousUserMessage: 调用方若已把 system 等前缀拼在序列前,传最后一条非 USER
  *  消息作为"首条 USER 的前一条"基准,保持与聊天引擎原语义(首条提醒看 gap)一致。
  *  返回新数组;提醒消息是新对象,调用方经 EnrichResult.syntheticIds 识别。 */
@@ -168,6 +176,57 @@ export function truncationStartFor(messageCount: number, contextLimit: number): 
   return Math.floor((messageCount - contextLimit) / step) * step;
 }
 
+/** 已执行工具 = 有 output(与安卓 UIMessagePart.Tool.isExecuted 同义:output.isNotEmpty())。 */
+function toolPartExecuted(part: MessagePart): boolean {
+  return part.type === "tool" && Array.isArray(part.output) && part.output.length > 0;
+}
+
+/** 截断起点回退到安全边界,避免把 tool call 与其 result 拆散、或让上下文从半截工具
+ *  调用开始——对齐安卓 limitContext 的 alignContextStart。滞回/锚点起点是纯算术,不看
+ *  消息内容,可能恰好压在一对工具中间;一旦切开,编码侧会把"无对应 call 的 tool result"
+ *  发给上游,OpenAI/Claude 直接 400,且因前缀稳定会连续多轮 400。
+ *
+ *  只向前(下标减小)调整,因此不破坏"最多保留 limit 条"的下界;调整只依赖 [0,start)
+ *  区间,这部分对追加消息稳定。判定规则(与安卓一致):
+ *   R1 起点消息含已执行 tool → 其 call 在更早处已被切掉,往前找到那条"尚未执行(纯 call)"
+ *      的消息作为新起点(即这次调用真正的发起处)。
+ *   R2 起点消息含未执行 tool(纯 call) → 它是某次工具链的发起,往前归并到触发它的最近
+ *      一条 USER(工具链入口)。 */
+export function alignContextStart(messages: Message[], start: number): number {
+  let adjusted = Math.min(start, messages.length);
+  const visited = new Set<number>();
+  let needsAdjustment = true;
+  while (needsAdjustment && adjusted > 0) {
+    needsAdjustment = false;
+    if (visited.has(adjusted)) break; // 防御:环则停(正常路径不会触发)
+    visited.add(adjusted);
+    const current = messages[adjusted];
+    if (!current) break;
+    const tools = current.parts.filter((p): p is Extract<MessagePart, { type: "tool" }> => p.type === "tool");
+    // R1:当前含已执行 tool → 往前找对应的纯 call(未执行 tool)
+    if (tools.some((t) => toolPartExecuted(t))) {
+      for (let i = adjusted - 1; i >= 0; i--) {
+        if (messages[i].parts.some((p) => p.type === "tool" && !toolPartExecuted(p))) {
+          adjusted = i;
+          needsAdjustment = true;
+          break;
+        }
+      }
+    }
+    // R2:当前含未执行 tool(纯 call) → 往前归并到最近的 USER(工具链入口)
+    if (messages[adjusted].parts.some((p) => p.type === "tool" && !toolPartExecuted(p))) {
+      for (let i = adjusted - 1; i >= 0; i--) {
+        if (messages[i].role === "USER") {
+          adjusted = i;
+          needsAdjustment = true;
+          break;
+        }
+      }
+    }
+  }
+  return adjusted;
+}
+
 // ---- 主编排:富化管线(两引擎共用) ----
 
 export interface EnrichOptions {
@@ -211,7 +270,10 @@ export function enrichMessages(baseMessages: Message[], options: EnrichOptions):
   const anchorIndex = options.windowStartMessageId
     ? baseMessages.findIndex((msg) => msg.id === options.windowStartMessageId)
     : -1;
-  const start = Math.max(hysteresisStart, anchorIndex >= 0 ? anchorIndex : 0);
+  // 算术起点再经 alignContextStart 回退:保证切点不劈开任何 tool call/result 配对
+  // (对齐安卓 limitContext),否则编码侧会发出"无 call 的孤儿 result"触发上游 400。
+  const rawStart = Math.max(hysteresisStart, anchorIndex >= 0 ? anchorIndex : 0);
+  const start = alignContextStart(baseMessages, rawStart);
   const windowed = start > 0 ? baseMessages.slice(start) : baseMessages;
 
   // 2. 模板/占位符逐消息渲染(一次到位:pi 编码器与聊天编码器吃同一份渲染产物)。

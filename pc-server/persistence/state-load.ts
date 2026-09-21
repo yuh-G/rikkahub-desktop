@@ -22,7 +22,7 @@ import { getConversationsDb, migrateConversationsIntoDbBatched, openConversation
 import { setStartupPhase } from "../foundation/startup-gate";
 import { countConversations } from "../conversations/read-queries";
 import { GLOBAL_MEMORY_ID, memoryStore } from "../memory";
-import { NA_API_PRESET_MODELS, NA_API_PROVIDER_ID, SUNSET_PROVIDER_IDS, TENCENT_PROVIDER_ID, builtinProviderRank, enrichModel, inferModelAbilities, model } from "../model-providers";
+import { DEFAULT_AUTO_MODEL_ID, NA_API_PRESET_MODELS, NA_API_PROVIDER_ID, SUNSET_PROVIDER_IDS, TENCENT_PROVIDER_ID, builtinProviderRank, enrichModel, inferModelAbilities, model } from "../model-providers";
 import { normalizeTtsProviders } from "../media/tts";
 import { normalizeAsrProviders } from "../media/asr";
 import { normalizeS3Config, normalizeWebDavConfig } from "../app-config/backup-config";
@@ -164,6 +164,19 @@ export function normalizeState(input: Partial<State>): State {
   normalized.settings.ocrPrompt = normalized.settings.ocrPrompt || DEFAULT_OCR_PROMPT;
   normalized.settings.compressPrompt = normalized.settings.compressPrompt || DEFAULT_COMPRESS_PROMPT;
   normalized.settings.promptOptimizePrompt = normalized.settings.promptOptimizePrompt || DEFAULT_PROMPT_OPTIMIZE_PROMPT;
+  // 快速模型收敛(对齐 APP 2.4.16):标题/建议改用统一 fastModelId。老 state 若只有独立的
+  // titleModelId / suggestionModelId,把用户定制迁到 fastModelId(标题优先,其次建议,都默认则 AUTO),
+  // 并删除遗留键——单一来源,避免新旧两套模型 id 并存漂移。幂等:回填后旧键即清。
+  {
+    const legacy = normalized.settings as unknown as Record<string, unknown>;
+    if (typeof legacy.fastModelId !== "string" || !legacy.fastModelId) {
+      const legacyTitle = typeof legacy.titleModelId === "string" ? legacy.titleModelId : "";
+      const legacySuggestion = typeof legacy.suggestionModelId === "string" ? legacy.suggestionModelId : "";
+      normalized.settings.fastModelId = legacyTitle || legacySuggestion || DEFAULT_AUTO_MODEL_ID;
+    }
+    delete legacy.titleModelId;
+    delete legacy.suggestionModelId;
+  }
   // R1-11:标题/建议默认提示词的字数上限曾从 10 调到 15/18。旧做法是每次启动无条件正则
   // 替换 "not exceed 10 characters"——用户有意写 10 的自定义提示词被反复静默改掉。
   // 终极版不用迁移标记(pc-backup.json 不导出标记,恢复即丢,R1-12 已踩过这坑),改为
@@ -253,6 +266,8 @@ export function normalizeState(input: Partial<State>): State {
   // 内置搜索服务补齐(带墓碑豁免):type 不存在且用户没删过 → 补。新增内置服务时在
   // 此登记即可,墓碑机制天然防复活,无需迁移标记。
   const backfillSearchPresets: Array<Record<string, JsonValue>> = [
+    { type: "doubao", id: id(), name: "豆包", apiKey: "", mode: "custom" },
+    { type: "serper", id: id(), name: "Serper", apiKey: "" },
     { type: "tinyfish", id: id(), name: "Tinyfish", apiKey: "" },
     { type: "firecrawl", id: id(), name: "Firecrawl", apiKey: "" },
     { type: "grok", id: id(), name: "Grok", apiKey: "", customUrl: "https://api.x.ai/v1/responses", model: "grok-4-fast" },

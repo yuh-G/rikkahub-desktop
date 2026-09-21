@@ -32,12 +32,15 @@ import {
 } from "../sse";
 import { bumpAnalyticsMsgCount } from "../../app-config/analytics";
 import { DEFAULT_TRANSLATION_PROMPT } from "../../app-config/prompts";
-import { attachOcrToImageParts, compressConversation, englishLanguageName, fetchAuxiliaryText, generateTitleForConversation, isQwenMtModel, markOcrPendingParts } from "../../conversations/auxiliary";
-import { compactEngineConversation, generateAnswer, resolveEngineForConversation } from "../../conversations/orchestrator";
+import { attachOcrToImageParts, compressConversation, conversationModelIdFor, englishLanguageName, fetchAuxiliaryText, generateTitleForConversation, isQwenMtModel, markOcrPendingParts, modelExists, resolveFastModelId } from "../../conversations/auxiliary";
+import { compactEngineConversation, dispatchMessageQueue, generateAnswer, resolveEngineForConversation } from "../../conversations/orchestrator";
 import { deleteConversationsById, ensureConversation, findAssistant, finishInterruptedPendingToolsInConversation, hasPendingToolApproval } from "../../conversations/helpers";
-import { awaitingApproval, compressing, generating } from "../../conversations/generation-state";
+import { editQueuedMessage, enqueueMessage, holdMessageQueue, pauseMessageQueue, releaseMessageQueueHold, removeQueuedMessage, resumeMessageQueue, waitForQueuedReply } from "../../conversations/message-queue";
+import { pushSteeringMessage, removeSteeringMessage } from "../../conversations/steering-channel";
+import { abortGeneration, awaitingApproval, compressing, generating } from "../../conversations/generation-state";
 import { getWorkspace } from "../../workspace";
 import { resolveToolApproval } from "../../inference-engine/approval-gate";
+import { stripLoadingPlaceholder } from "../../inference-engine/parts";
 
 export async function handleConversationRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
   // 列表失效事件已并入 /api/events 通道(invalidate 事件);会话详情流保持独立端点
@@ -212,15 +215,26 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       const body = messagesBody ?? {};
       const assistant = findAssistant(conversation.assistantId);
       const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
-      // 用户在 ask_user 等待中直接发新消息时，旧 generation 可能还在跑（不太常
-      // 见，因为 ask_user 通常会中止流并等待）也可能已经停了。无论如何先 abort
-      // 旧 controller，避免后续 race；然后把上一条 ASSISTANT 残留的 pending 工具
-      // 标记为"用户取消"，让历史回放时模型看到的是 denied tool 结果而不是空 output
-      // ——对齐安卓 commit 05c12488 finishInterruptedPendingTools 的修复目标。
-      generating.get(conversation.id)?.abort();
-      generating.delete(conversation.id);
-      finishInterruptedPendingToolsInConversation(conversation);
       const processedParts = applyInputRegexTransformParts((body.parts ?? []) as MessagePart[], assistant);
+      // StartOrSteer(对齐 Codex start_or_steer_turn):占用与否由服务端裁决,前端永远只管
+      // 提交。此前前端按 SSE 滞后的 isGenerating 选端点,快速连发时误判空闲走到这里,
+      // 把自己刚点火的生成掐掉(2026-09-20 用户测试 1)。
+      if (generating.has(conversation.id)) {
+        // 生成中:入 FIFO(事实源:改/撤/序都作用于它)+ 推一份进 steering 通道——引擎在
+        // 下一个模型请求边界注入(对齐 Codex pending_input),编排层在同一时刻做数据层
+        // 分裂并把该项移出队列;引擎无边界可注入时它留在队列,收尾派发兜底,零丢失。
+        // 消息本体不落历史(注入/派发时才落),不中止在跑流。
+        const item = enqueueMessage(conversation.id, processedParts);
+        pushSteeringMessage(conversation.id, item.id, processedParts);
+        broadcastConversation(conversation);
+        return json({ status: "queued", queued: true, id: item.id }, { status: 202 });
+      }
+      // 空闲:落库用户消息并点火。上一条 ASSISTANT 若残留 pending 工具(聊天引擎审批
+      // 暂停后用户直接发新消息)标记为"用户取消",历史回放时模型看到 denied 结果而非空
+      // output——对齐安卓 commit 05c12488 finishInterruptedPendingTools。
+      finishInterruptedPendingToolsInConversation(conversation);
+      // 直发新消息 = 用户继续对话的明确意图:解除遗留的打断冻结,新流收尾后队列恢复自动续跑。
+      releaseMessageQueueHold(conversation.id);
       const userMessage = message("USER", markOcrPendingParts(processedParts, picked.model));
       bumpAnalyticsMsgCount();
       const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
@@ -246,13 +260,14 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
           conversation.updateAt = Date.now();
           persistConversation(conversation);
           broadcastNodeUpdate(conversation, userNode);
-          // generateAnswer 入口同步自持引用,续体无需 await 到生成结束
+          // generateAnswer 入口同步自持引用,续体无需 await 到生成结束。入口不变式「先中止
+          // 旧流再接管」兜住 OCR 窗口内的并发点火(两条空闲直发的续体先后触发时后到者胜)。
           void generateAnswer(conversation);
         } finally {
           releaseConversation(conversation.id);
         }
       })();
-      return json({ status: "accepted" }, { status: 202 });
+      return json({ status: "accepted", queued: false }, { status: 202 });
     }
     if (sub === "pin" && request.method === "POST") {
       conversation.isPinned = !conversation.isPinned;
@@ -303,9 +318,15 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       // Abort the in-flight upstream fetch. Some providers take a moment to actually close the
       // socket after `controller.abort()` returns, so we proactively flush any throttled state
       // and broadcast immediately — the UI shouldn't have to wait for the next streaming chunk.
-      const controller = generating.get(conversation.id);
-      controller?.abort();
+      // 意图 interrupted:generateAnswer 的中止分支按它冻结队列。
+      abortGeneration(conversation.id, "interrupted");
       generating.delete(conversation.id);
+      // 终局三态之 Interrupted(用户问题①,对齐 Codex):停止意图支配队列——正在排队的
+      // 消息不接棒点火(否则「打断一条又开始下一条」违背停止的本意),冻结保留等用户
+      // 显式 resume。generateAnswer 的中止分支会再 hold 一次(纵深防御),此处先置是为
+      // 了覆盖「流已不在跑、队列还挂着」的边缘态(stop 幂等连点)。
+      holdMessageQueue(conversation.id);
+      broadcastConversation(conversation);
       // 与新消息入口对齐：用户主动停止时，也把残留的 pending tool 标记成"用户取消"，
       // 否则下次重生成/继续时会基于一条 output 为空的 pending tool 节点继续。
       // 对齐安卓 commit 05c12488 把 finishInterruptedPendingTools 同时用在新消息
@@ -317,9 +338,7 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         if (msg) {
           // Strip the loading placeholder — otherwise the user sees the typing "..." linger
           // because the placeholder part rendering doesn't depend on isGenerating.
-          msg.parts = msg.parts.filter((part) => !(
-            part && typeof part === "object" && !Array.isArray(part) && part.type === "loading"
-          ));
+          stripLoadingPlaceholder(msg);
           if (!msg.finishedAt) msg.finishedAt = new Date().toISOString();
         }
         broadcastNodeUpdate(conversation, lastNode);
@@ -329,9 +348,106 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       broadcastConversation(conversation);
       return json({ status: "stopped" });
     }
+    // ── 消息发送队列(生成中补发不打断,FIFO 排队)─────────────────────────
+    // 跨引擎统一:队列只压「待触发的生成」,入队走 messages 端点的 StartOrSteer 裁决,派发由
+    // 编排层在 generateAnswer 收尾时驱动,聊天/pi 共用同一队列与同一派发点。
+    if (sub === "queue/pause" && request.method === "POST") {
+      pauseMessageQueue(conversation.id);
+      broadcastConversation(conversation);
+      return json({ status: "paused" });
+    }
+    if (sub === "queue/resume" && request.method === "POST") {
+      resumeMessageQueue(conversation.id);
+      broadcastConversation(conversation);
+      // 恢复即尝试点火:若当前空闲,立即派发队首。
+      if (!generating.has(conversation.id)) dispatchMessageQueue(conversation.id);
+      return json({ status: "resumed" });
+    }
+    const queueItem = sub.match(/^queue\/([^/]+)$/);
+    if (queueItem && request.method === "DELETE") {
+      const removed = removeQueuedMessage(conversation.id, decodeURIComponent(queueItem[1]));
+      if (!removed) return error("Queue item not found", 404);
+      broadcastConversation(conversation);
+      return json({ status: "deleted" });
+    }
+    if (queueItem && request.method === "POST") {
+      const body = await readJson<{ parts?: JsonValue[] }>(request);
+      const itemId = decodeURIComponent(queueItem[1]);
+      const ok = editQueuedMessage(conversation.id, itemId, (body.parts ?? []) as MessagePart[]);
+      if (!ok) return error("Queue item not found", 404);
+      // 编辑使 steering 通道里的同 id 项失效(通道持的是旧内容快照)——移出通道,
+      // 编辑后的消息回到「收尾派发」路径(失去即时性,换内容正确性;对齐事实源纪律)。
+      removeSteeringMessage(conversation.id, itemId);
+      broadcastConversation(conversation);
+      return json({ status: "updated" });
+    }
+    if (sub === "voice/send" && request.method === "POST") {
+      // 语音模式:发送一条语音转写消息,并把本轮 assistant 文本回传(供 TTS 播报)。
+      // 复用消息发送队列(台账「与语音模式共用 MessageQueue」):空闲=同 send 直发,占用=入队
+      // 由收尾派发。回复通道与队列绑定——派发该排队项时登记来源,收尾交付文本;直接发则生成后读取。
+      if (compressing.has(conversation.id)) {
+        return error("已有压缩正在进行，请稍候", 409, "compress_in_progress");
+      }
+      const body = await readJson<{ parts?: JsonValue[] }>(request);
+      const text = textFromParts((body.parts ?? []) as MessagePart[]).trim();
+      if (!text) return error("Empty utterance", 400);
+      const assistant = findAssistant(conversation.assistantId);
+      const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
+      const processedParts = applyInputRegexTransformParts((body.parts ?? []) as MessagePart[], assistant);
+
+      const idle = !generating.has(conversation.id);
+      let reply: string | null;
+      if (idle) {
+        // 空闲直发(与 send 同构):用户消息落库 → 点火 → 等待生成收尾后读本条 assistant 文本。
+        // 同 send/queue-enqueue 空闲分支:直发=继续对话,解除遗留打断冻结。
+        releaseMessageQueueHold(conversation.id);
+        const userMessage = message("USER", markOcrPendingParts(processedParts, picked.model));
+        bumpAnalyticsMsgCount();
+        const userNode = { id: id(), messages: [userMessage], selectIndex: 0 };
+        conversation.messages.push(userNode);
+        conversation.chatSuggestions = [];
+        conversation.updateAt = Date.now();
+        if (!conversation.title) conversation.title = "New Conversation";
+        persistConversation(conversation);
+        broadcastConversation(conversation);
+        reply = await (async () => {
+          checkoutConversation(conversation.id);
+          try {
+            userMessage.parts = await attachOcrToImageParts(userMessage.parts, picked.model);
+            if (getConversation(conversation.id) !== conversation) return null;
+            conversation.updateAt = Date.now();
+            persistConversation(conversation);
+            broadcastNodeUpdate(conversation, userNode);
+            await generateAnswer(conversation);
+            if (getConversation(conversation.id) !== conversation) return null;
+            // 读刚才生成的 assistant 消息(最后一条);abort/失败/空回复由文本为空兜成 null。
+            const lastNode = conversation.messages[conversation.messages.length - 1];
+            const assistantMsg = lastNode?.messages?.[lastNode.selectIndex];
+            const replyText = assistantMsg?.role === "ASSISTANT" ? textFromParts(assistantMsg.parts).trim() : "";
+            return replyText.length > 0 ? replyText : null;
+          } finally {
+            releaseConversation(conversation.id);
+          }
+        })();
+      } else {
+        // 生成中:入队(waitingReply 标记),等收尾派发 → 生成 → 回复通道交付文本。
+        // 刻意不推 steering 通道:语音模式要「这句话的专属回复」做 TTS 播报,轮边界
+        // 注入会把话并进在途任务、回复通道收 null(无可播报的独立回复)。语音的排队
+        // 语义 = 排队等下一轮,键盘的排队语义 = 及时注入——分道是产品语义不是遗漏。
+        const item = enqueueMessage(conversation.id, processedParts, { waitingReply: true });
+        broadcastConversation(conversation);
+        reply = await waitForQueuedReply(conversation.id, item.id);
+      }
+      return json({ status: "ok", reply });
+    }
     if (sub === "regenerate-title" && request.method === "POST") {
       try {
-        const title = await generateTitleForConversation(conversation);
+        // 手动「重新生成标题」是用户显式点的一次动作:配了快速模型就用它,没配则回退
+        // 会话模型(而非像自动生成那样静默跳过——用户点了按钮就期待有个 AI 标题)。
+        const title = await generateTitleForConversation(
+          conversation,
+          resolveFastModelId() ?? conversationModelIdFor(conversation),
+        );
         // R7-4:客户端已取消/超时断开则结果作废,不改写标题(取消语义硬保证)。
         if (request.signal.aborted) return error("Client cancelled", 499);
         // 批6复审 G1:标题生成期间会话可能已被删除——下方 persistConversation 是无条件
@@ -354,7 +470,7 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       // 2-1:对齐 send 入口——先中止进行中的旧流。否则 generateAnswer 的 generating.set
       // 直接顶掉旧 controller,旧流成为无主流:与新流同写一个节点,或对已摘除节点持续
       // touchStream 广播幽灵帧。UI 虽屏蔽流式中的按钮,但 API 层必须自带守卫。
-      generating.get(conversation.id)?.abort();
+      abortGeneration(conversation.id, "replaced");
       generating.delete(conversation.id);
       finishInterruptedPendingToolsInConversation(conversation);
       let regenerateAtNodeId: string | undefined;
@@ -443,7 +559,7 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       // 2-1:对齐 send 入口——先中止进行中的旧流。否则 generateAnswer 的 generating.set
       // 直接顶掉旧 controller,旧流成为无主流:与新流同写一个节点,或对已摘除节点持续
       // touchStream 广播幽灵帧。UI 虽屏蔽流式中的按钮,但 API 层必须自带守卫。
-      generating.get(conversation.id)?.abort();
+      abortGeneration(conversation.id, "replaced");
       generating.delete(conversation.id);
       finishInterruptedPendingToolsInConversation(conversation);
       const messageId = decodeURIComponent(messageEdit[1]);
@@ -510,7 +626,12 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         // R2-2:续体自持引用(流式翻译可长于 60s sweep 闲置期),理由同 messages POST 续体。
         checkoutConversation(conversation.id);
         try {
-          const pickedTranslationModel = findModel(state.settings.translateModeId || state.settings.chatModelId);
+          // 翻译模型未配置(AUTO 哨兵)或已删除 → 回退会话模型。同标题/建议的口径:
+          // 绝不把哨兵交给 findModel(它兜底猜 gpt-4o-mini,服务商不提供就必 400)。
+          const translationModelId = modelExists(state.settings.translateModeId)
+            ? state.settings.translateModeId
+            : conversationModelIdFor(conversation);
+          const pickedTranslationModel = findModel(translationModelId);
           const useQwenMt = isQwenMtModel(pickedTranslationModel.model.modelId);
           const prompt = useQwenMt
             ? sourceText
@@ -520,10 +641,11 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
               });
           let streamedTranslation = "";
           let lastNodeBroadcastAt = 0;
-          msg.translation = await fetchAuxiliaryText(state.settings.translateModeId, prompt, "translation", {
+          msg.translation = await fetchAuxiliaryText(translationModelId, prompt, "translation", {
             reasoningLevel: useQwenMt ? null : (state.settings.translateThinkingBudget ?? 0) > 0 ? "LOW" : null,
             temperature: useQwenMt ? 0.3 : null,
             topP: useQwenMt ? 0.95 : null,
+            conversationId: conversation.id,
             customBody: useQwenMt
               ? { translation_options: { source_lang: "auto", target_lang: englishLanguageName(targetLanguage) } }
               : undefined,
@@ -570,7 +692,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       // 2-1:对齐 send 入口——先中止进行中的旧流。否则 generateAnswer 的 generating.set
       // 直接顶掉旧 controller,旧流成为无主流:与新流同写一个节点,或对已摘除节点持续
       // touchStream 广播幽灵帧。UI 虽屏蔽流式中的按钮,但 API 层必须自带守卫。
-      generating.get(conversation.id)?.abort();
+      // 意图 replaced:压缩是用户的下一步操作,不是「让这轮停下别再动」,队列不冻结。
+      abortGeneration(conversation.id, "replaced");
       generating.delete(conversation.id);
       finishInterruptedPendingToolsInConversation(conversation);
       // 压缩状态服务端权威(内测反馈:切页回来"过程条消失",误以为压缩被取消):
@@ -615,6 +738,9 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         // 与工作区路径 orchestrator 的 finally busy:false 重复广播,幂等无害。
         broadcastEngineStatus(conversation.id, { busy: false });
         broadcastList(); // 绿灯熄灭
+        // 压缩窗口关闭 → 排队消息接续派发(派发在压缩期间被 dispatchMessageQueue 的
+        // compressing 门拦住,这里是解锁后的唯一续跑点;门控条件不满足时幂等空转)。
+        dispatchMessageQueue(conversation.id);
       }
     }
     if (sub === "fork" && request.method === "POST") {
@@ -676,6 +802,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       const consumed = resolveToolApproval(conversation.id, String(body.toolCallId ?? ""), {
         approved: body.approved === true,
         ...(body.reason ? { reason: String(body.reason) } : {}),
+        // ask_user:把答复载荷一并送达在途等待者(pi 引擎 execute 据此把答案回灌模型)。
+        ...(body.answer != null ? { answer: String(body.answer) } : {}),
       });
       if (consumed || resolveEngineForConversation(conversation).resumeSemantics === "run-and-suspend") {
         return json({ status: "accepted" }, { status: 202 });

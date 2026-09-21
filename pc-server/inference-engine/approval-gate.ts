@@ -21,6 +21,10 @@ export interface ToolApprovalDecision {
   approved: boolean;
   /** 拒绝理由(前端拒绝框可留空;放行时无意义)。 */
   reason?: string;
+  /** ask_user 答复载荷(契约:扁平 JSON 字符串 {"answers":{qid:string}},tools/ask-user.ts)。
+   *  仅 ask_user 路径填;普通审批工具恒 undefined。聊天引擎忽略它(其 resume 读持久化
+   *  part 的 approvalState.answer);run-and-suspend 引擎(pi)靠它把答案送回在途 execute。 */
+  answer?: string;
 }
 
 interface Waiter {

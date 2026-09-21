@@ -11,7 +11,7 @@ import i18n from "~/i18n";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Route } from "./+types/root";
-import { useSettingsStore, useSettingsSubscription, useMemorySubscription, useAppErrorsSubscription } from "~/stores";
+import { useSettingsStore, useSettingsSubscription, useMemorySubscription, useAppErrorsSubscription, useMcpHealthSubscription } from "~/stores";
 import { useHotkeys } from "~/hooks/use-hotkeys";
 import "./app.css";
 import "./i18n";
@@ -20,10 +20,12 @@ import { ThemeProvider } from "./components/theme-provider";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { UpdateDialog, type UpdateInfo } from "./components/update-dialog";
 import { WebAuthGate } from "./components/web-auth-gate";
+import { ExposedBanner } from "./components/exposed-banner";
 import { StartupGate } from "./components/startup-gate";
 import Logo from "./components/logo";
 import { FontFaceInjector } from "./components/font-face-injector";
 import { openExternal } from "./lib/external-link";
+import { createId } from "./lib/id";
 import {
   CHAT_CJK_OVERRIDE_FAMILY,
   composeFontChain,
@@ -191,6 +193,7 @@ function AppContent() {
   useSettingsSubscription();
   useMemorySubscription();
   useAppErrorsSubscription();
+  useMcpHealthSubscription();
   // 域4-1(交互审查 2A):审批等待的桌面通知(窗口不可见时),琥珀点外显在侧栏/标签条。
   useApprovalNotifications();
   useHotkeys();
@@ -326,7 +329,7 @@ function AppContent() {
       if (reason instanceof Error && reason.name === "AbortError") return;
       const message = reason instanceof Error ? reason.message : String(reason);
       const isNewEntry = useAppErrorsStore.getState().reportLocalError({
-        id: crypto.randomUUID(),
+        id: createId(),
         at: Date.now(),
         count: 1,
         severity: "error",
@@ -349,6 +352,7 @@ function AppContent() {
           成熟桌面应用的主区域切换均为即时切换 —— React 单次提交内旧页换新页,
           不存在中间帧,是唯一确定性零闪的形态。 */}
       <Outlet />
+      <ExposedBanner />
       <WebAuthGate />
       <StartupGate />
       <FontFaceInjector />
@@ -371,6 +375,9 @@ export default function App() {
 // 启动加载屏:样式完全来自 Layout <head> 的内联关键 CSS(不依赖 app.css),
 // 因此从 index.html 解析那一刻起就能正确显示,覆盖"CSS/JS 尚未就绪"的空窗期。
 // Logo 组件 fill/stroke 均为 currentColor,预渲染成静态 SVG 后随容器 color 明暗自适应。
+// 双生子约束:web-ui/public/splash.html(Tauri 壳启动页,窗口创建到后端就绪之间的
+// 占位)与本屏逐像素一致——版式/色值/字号/动画任一处改动,两边同步改(那里是原生
+// HTML,暗色走 prefers-color-scheme 而非 .dark 类)。
 export function HydrateFallback() {
   return (
     <div id="rikkahub-splash">

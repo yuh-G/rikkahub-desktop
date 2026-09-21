@@ -6,11 +6,13 @@ import { existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { Database } from "bun:sqlite";
 import { conversationsDbPath, dataDir } from "../foundation/paths";
 import { checkoutConversation, configureWorkingSet, peekConversation, releaseConversation, startWorkingSetSweep } from "./working-set";
+import { hasQueuedMessages } from "./message-queue";
 import { getConversationMeta } from "./read-queries";
 import { generating } from "./generation-state";
 import type { Conversation, ConversationListDto, JsonValue, Message, MessageNode, MessageNodeDto, PcConversationRow, PcMessageNodeRow, PcWorkspaceRow } from "../foundation/types";
 import { clearAllFts, deleteConversationFts, ensureMessageFtsTable, ftsRowCount, rebuildFtsFromNodeTable, replaceNodeFts } from "./fts";
 import { reportError } from "../observability/app-errors";
+import { collectPcFileRefs } from "../backup/file-refs";
 
 export const DEFAULT_ASSISTANT_ID = "0950e2dc-9bd5-4801-afa3-aa887aa36b4e";
 
@@ -245,12 +247,24 @@ export function loadConversationNodesFromDb(db: InstanceType<typeof Database>, c
 }
 
 /** 读取全部会话(会话行 + 各自节点),组装成内存 Conversation[]。
- *  备份合并基底用:Android zip 合并路径(无 PC zip 暂存)从活库全量读出现有会话做合并
- *  基底(backup/import.ts),导入是低频重操作,全量读的峰值内存可接受。 */
+ *  PC zip 恢复路径用:dump 读回须全量进内存当替换基底(backup/import.ts)。
+ *  ⚠️ 安卓 zip 的「合并」基底改用 listAllConversationMetas + 逐会话 checkout 流式合并,
+ *  不再走本函数全量驻留(B1:海量会话 + 全量节点 messages 会在导入时把 JS 堆打爆)。 */
 export function loadAllConversationsFromDb(db: InstanceType<typeof Database>): Conversation[] {
   const conversations = loadConversationMetasFromDb(db);
   for (const conv of conversations) conv.messages = loadConversationNodesFromDb(db, conv.id);
   return conversations;
+}
+
+/** B1:收集消息节点里引用的文件 id。先用 SQL LIKE 把「含 /api/files/ 引用」的节点在库层
+ *  筛掉(海量会话库里这类节点是极少数),再对命中行在 JS 侧用与导出端同一正则抽取 id。
+ *  与旧「全库 messages 文本搬进 JS 堆」相比,常驻内存从「全库文本」降到「仅命中行」。
+ *  注:Bun 的 SQLite 无 regexp_extract,故抽取仍在 JS——但只在 LIKE 命中的行上做。 */
+export function collectConversationReferencedFileIds(db: InstanceType<typeof Database>, into: Set<number>): void {
+  const rows = db
+    .prepare("SELECT messages FROM pc_message_node WHERE messages LIKE '%/api/files/%'")
+    .all() as { messages: string }[];
+  for (const row of rows) collectPcFileRefs(row.messages, into);
 }
 
 // ----- DB-first:会话运行时权威 = 活库 + working set -----
@@ -299,6 +313,8 @@ export function initConversationsRuntime(): void {
     isGenerating: (convId) => generating.has(convId),
     hasSseClients: (convId) => hasSseClientsGuard(convId),
     hasDirty: hasConvDirtyState,
+    // 队列非空即驻留:生成派发链跨"当前流结束→下条点火"空窗持有会话,防 sweep 逐出致队列孤儿化。
+    hasQueuedMessages: (convId) => hasQueuedMessages(convId),
   });
   startWorkingSetSweep();
 }

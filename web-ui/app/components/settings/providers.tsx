@@ -27,6 +27,7 @@ import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { cn } from "~/lib/utils";
 import { isBalanceResultPathValid } from "~/lib/json-expression";
+import { createId } from "~/lib/id";
 import { openExternal } from "~/lib/external-link";
 import api, { appendWebAuthQuery } from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -39,8 +40,10 @@ import {
   SortableRow,
   textValue,
 } from "~/components/settings/shared";
-
-type ProviderKind = "openai" | "claude" | "google";
+// API 格式切换的 base 换算(协议默认/出厂/登记三张表 + 机器地址判定 + 换算规则)独立在
+// lib/provider-base-urls.ts——纯函数零依赖,行为锁在 pc-server/api/provider-base-urls.test.ts
+// 的往返矩阵(核心不变量:往返不漂移、自定义不覆写)。御三家 URL 与登记端点只在那一个文件维护。
+import { DEFAULT_BASE_URLS, type ProviderKind, baseUrlForKindSwitch } from "~/lib/provider-base-urls";
 
 type ProviderTestMode = "non_stream" | "stream" | "tools";
 
@@ -153,7 +156,7 @@ function endpointPreview(provider: ProviderProfile): string {
   const base = textValue(provider.baseUrl).replace(/\/+$/, "");
   if (!base) return defaultPathForKind(kind, provider.useResponseApi === true);
   if (kind === "openai")
-    return `${base}${provider.useResponseApi === true ? "/responses" : textValue(provider.chatCompletionsPath) || "/chat/completions"}`;
+    return `${base}${provider.useResponseApi === true ? textValue(provider.responsesPath) || "/responses" : textValue(provider.chatCompletionsPath) || "/chat/completions"}`;
   // claude 拼接标准化(A):与服务端 endpointFor 同款规则(剥尾部 /v1 拼 /v1/messages),
   // 预览即真实请求 URL,带不带 /v1 都能工作。
   if (kind === "claude") return `${base.replace(/\/v1$/, "")}/v1/messages`;
@@ -173,7 +176,7 @@ function modelListEndpointPreview(provider: ProviderProfile): string {
 
 function createProvider(): ProviderProfile {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     type: "openai",
     enabled: true,
     name: "自定义供应商",
@@ -184,6 +187,7 @@ function createProvider(): ProviderProfile {
     baseUrl: "https://api.example.com/v1",
     chatCompletionsPath: "/chat/completions",
     useResponseApi: false,
+    responsesPath: "/responses",
     // 与安卓 OpenAI provider 默认值一致 (commit e63d017)
     includeHistoryReasoning: true,
     models: [],
@@ -192,21 +196,17 @@ function createProvider(): ProviderProfile {
 }
 
 function normalizeKindPatch(provider: ProviderProfile, kind: ProviderKind): ProviderProfile {
-  const nextBaseUrl =
-    kind === "claude"
-      ? "https://api.anthropic.com/v1"
-      : kind === "google"
-        ? "https://generativelanguage.googleapis.com/v1beta"
-        : textValue(provider.baseUrl) || "https://api.openai.com/v1";
   return {
     ...provider,
     type: kind,
-    baseUrl: nextBaseUrl,
+    baseUrl: baseUrlForKindSwitch(provider.id, textValue(provider.baseUrl), kind),
     useResponseApi: kind === "openai" ? provider.useResponseApi === true : false,
     chatCompletionsPath: defaultPathForKind(
       kind,
       kind === "openai" && provider.useResponseApi === true,
     ),
+    // kind 切换时把 responsesPath 一并归位默认,避免切到 openai+ResponseAPI 时残留旧自定义路径。
+    responsesPath: "/responses",
   };
 }
 
@@ -690,10 +690,7 @@ export function ProvidersSection({
 
   const openAddModelDialog = () => {
     if (!draft) return;
-    const uuid =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const uuid = createId();
     setModelDialog({
       mode: "add",
       modelIdLocked: false,
@@ -861,7 +858,12 @@ export function ProvidersSection({
                 onValueChange={(value) => {
                   // 类型切换也是编辑,必须置脏,否则永不自动保存(复审 F3 补获)
                   autosave.markDirty();
-                  setDraft(normalizeKindPatch(draft, value as ProviderKind));
+                  const next = normalizeKindPatch(draft, value as ProviderKind);
+                  // 按登记表/协议默认换算过地址时告知用户去向;自定义地址不动则不打扰
+                  if (next.baseUrl !== textValue(draft.baseUrl) && textValue(draft.baseUrl)) {
+                    toast(t("settings:providers.base_url_switched", { url: next.baseUrl }));
+                  }
+                  setDraft(next);
                 }}
               >
                 <SelectTrigger className="w-full">
@@ -899,9 +901,7 @@ export function ProvidersSection({
               <Input
                 value={textValue(draft.baseUrl)}
                 onChange={(event) => patchDraft({ baseUrl: event.target.value })}
-                placeholder={
-                  kind === "claude" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"
-                }
+                placeholder={DEFAULT_BASE_URLS[kind]}
               />
               <span className="block break-all text-xs text-muted-foreground">
                 {t("settings:providers.chat_url", { url: endpointPreview(draft) })}
@@ -912,14 +912,26 @@ export function ProvidersSection({
             </label>
             <div className="grid gap-x-6 gap-y-3 rounded-md border px-3 py-3 md:col-span-2 md:grid-cols-2">
               <label className="space-y-2">
-                <span className="text-sm font-medium">Chat Completions Path</span>
+                {/* 单输入框按开关切换绑定字段(对齐安卓 ProviderConfigure):关→chatCompletionsPath,开→responsesPath */}
+                <span className="text-sm font-medium">
+                  {draft.useResponseApi === true
+                    ? t("settings:providers.responses_path_label")
+                    : t("settings:providers.chat_completions_path_label")}
+                </span>
                 <Input
-                  disabled={kind !== "openai" || draft.useResponseApi === true}
+                  disabled={kind !== "openai"}
                   value={
-                    textValue(draft.chatCompletionsPath) ||
-                    defaultPathForKind(kind, draft.useResponseApi === true)
+                    draft.useResponseApi === true
+                      ? textValue(draft.responsesPath) || "/responses"
+                      : textValue(draft.chatCompletionsPath) || defaultPathForKind(kind, false)
                   }
-                  onChange={(event) => patchDraft({ chatCompletionsPath: event.target.value })}
+                  onChange={(event) =>
+                    patchDraft(
+                      draft.useResponseApi === true
+                        ? { responsesPath: event.target.value }
+                        : { chatCompletionsPath: event.target.value },
+                    )
+                  }
                 />
               </label>
               <div className="flex items-center justify-between gap-3">
@@ -933,12 +945,7 @@ export function ProvidersSection({
                   className="shrink-0"
                   disabled={kind !== "openai"}
                   checked={draft.useResponseApi === true}
-                  onCheckedChange={(useResponseApi) =>
-                    patchDraft({
-                      useResponseApi,
-                      chatCompletionsPath: defaultPathForKind("openai", useResponseApi),
-                    })
-                  }
+                  onCheckedChange={(useResponseApi) => patchDraft({ useResponseApi })}
                 />
               </div>
             </div>

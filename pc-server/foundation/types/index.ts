@@ -40,6 +40,11 @@ export interface Provider {
   baseUrl: string;
   chatCompletionsPath?: string;
   useResponseApi?: boolean;
+  // 对齐安卓 ProviderSetting.responsesPath(commit §2.3):Responses API 的请求路径,
+  // 默认 /responses,仅 useResponseApi 开启时生效。Azure/自建网关把 Responses 挂在
+  // 非标准路径时由用户改这里;留空回落 /responses。与 chatCompletionsPath 同语义、
+  // 互斥生效(同一时刻只有一个路径被 endpointFor 采用)。
+  responsesPath?: string;
   // 对齐安卓 commit e63d017：OpenAI provider 是否在历史回放里把
   // assistant 的 reasoning_content 也回传给上游。默认 true（保持过去行为）；
   // 用户可以为某些代理/平台关闭，避免它们因为不识别这个字段而拒绝请求。
@@ -97,6 +102,11 @@ export interface ProxyConfig {
   // 例 "*.internal.corp,10.0.0.0/8,git.company.com"。localhost/127.0.0.1/::1 永远 bypass(硬编码)。
   // 仅 mode=auto/manual 生效; env(Docker) / direct 忽略。
   bypassRules: string;
+  // 自定义 User-Agent(对齐安卓 networkSetting.userAgent)。空串 = 用品牌默认
+  // RikkaHub-Desktop/<version>(resolveUserAgent)。仅填了才覆盖默认值。
+  // 备份面:随 proxyConfig 走——给安卓的 settings.json 剥离 proxyConfig(其 userAgent 在
+  // networkSetting 下,本就不透传);pc-backup.json 完整保留(PC→PC 跨机恢复带上,合理)。
+  userAgent?: string;
 }
 
 export interface Assistant {
@@ -150,8 +160,18 @@ export interface Assistant {
   allowConversationPromptInjection: boolean;
 }
 
+/** 桌面端原生支持的 ASR 判别符。ASR 无注册表,这是「本端认识且能跑」的单源;
+ *  android-contract-sync.test.ts 会核它与安卓 ASRProviderSetting 的交集不放肆扩张。 */
+export const PC_KNOWN_ASR_TYPES = ["openai_realtime", "dashscope", "volcengine"] as const;
+export type PcNativeAsrType = (typeof PC_KNOWN_ASR_TYPES)[number];
+
+/** ASR type 是跨端共享枚举(APP ASRProviderSetting 现有 openai_realtime/dashscope/volcengine
+ *  /mimo/step 5 家)。mimo/step 是 APP 独家的 HTTP 一次性识别,桌面端暂不实现;但导入/导出
+ *  往返必须在存储层原样保留它们的判别符(否则 PC 会把配置无声重置成 openai_realtime,见
+ *  media/asr.ts normalizeAsrProviders 头注)。故 type 放开为 string,识别与降级由运行时守卫
+ *  (PC_KNOWN_ASR_TYPES / transcribeAudioWithAsrProvider / startAsrRealtimeSession 的 else 分支)。 */
 export interface AsrProvider {
-  type: "openai_realtime" | "dashscope" | "volcengine";
+  type: PcNativeAsrType | (string & {});
   id: string;
   name: string;
   apiKey: string;
@@ -167,7 +187,16 @@ export interface AsrProvider {
 }
 
 export interface TtsProvider {
-  type: "system" | "openai" | "gemini" | "minimax" | "qwen" | "groq" | "xai" | "mimo";
+  // type 是跨端共享枚举：PC 导出的备份会被 Android kotlinx.serialization 反序列化，
+  // 新增取值必须逐字等于 Android TTSProviderSetting 的 @SerialName（§4.5）。
+  // 判别符放开为 string(取并字面量保留自动补全):移动端新增的类型 PC 尚未实现时,导入/导出
+  // 往返必须在存储层原样保留其判别符——若在 normalize 处收敛成 "system",用户配置会被无声改写,
+  // 重新导出回 APP 即崩(见 media/tts.ts normalizeTtsProviders 头注)。识别与降级由运行时守卫
+  // (tts-providers/registry 的 TTS_PROVIDER_TYPES / generateSpeechWithTtsProvider 的查表未命中)。
+  type:
+    | "system" | "openai" | "gemini" | "minimax" | "qwen" | "groq" | "xai" | "mimo"
+    | "elevenlabs" | "step" | "fish-audio" | "volcengine"
+    | (string & {});
   id: string;
   name: string;
   apiKey: string;
@@ -177,11 +206,32 @@ export interface TtsProvider {
   voiceName?: string;
   voiceId?: string;
   language?: string;
+  // languageType 仅旧版 qwen3-tts 使用;qwen-audio-3.0 起改用 format/sampleRate,字段保留防丢数据。
   languageType?: string;
   emotion?: string;
   speed?: number;
   speechRate?: number;
   pitch?: number;
+  // qwen-audio-3.0 / fish-audio / step 的音频格式与采样率。
+  format?: string;
+  sampleRate?: number;
+  // elevenlabs
+  stability?: number;
+  similarityBoost?: number;
+  // step(camelCase 协议; instruction 仅 stepaudio-2.5-tts 生效)
+  responseFormat?: string;
+  volume?: number;
+  instruction?: string;
+  // fish-audio(referenceId=克隆音色; prosody 用 speed)
+  referenceId?: string;
+  temperature?: number;
+  topP?: number;
+  chunkLength?: number;
+  normalize?: boolean;
+  latency?: string;
+  // volcengine(豆包语音;speaker=音色 ID,resourceId 与开通服务绑定)
+  speaker?: string;
+  resourceId?: string;
 }
 
 export interface Message {
@@ -595,6 +645,9 @@ export interface AuxiliaryTextOptions {
   onDelta?: (text: string) => void;
   /** 取消信号（压缩等可被用户中止的辅助调用）：中止立即撕底层连接，不空耗轮次。 */
   signal?: AbortSignal;
+  /** 会话身份（§7.4/#1902）：标题/压缩等有会话上下文的调用传真实 conversationId；
+   *  缺省时注入层兜底随机 UUID（OpenCode Zen 拒收无会话头请求）。 */
+  conversationId?: string;
 }
 
 export interface AsrRealtimeSession {
@@ -609,4 +662,7 @@ export interface AsrRealtimeSession {
   finished: boolean;
   startedAt: number;
   volcSequence: number;
+  /** 语音模式去抖:上一个已发 turn_end 的 utterance 文本。Volcengine 的 definite=true 会随
+   *  累积 full-text 重复到达,凭此只在文本真正前进时才推一次「这句说完了」,防重复入队。 */
+  lastTurnEndText: string;
 }
