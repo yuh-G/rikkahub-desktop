@@ -2942,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "rikkahub"
-version = "2.0.0-preview-v3"
+version = "2.0.0-preview-v4"
 dependencies = [
  "image",
  "serde",

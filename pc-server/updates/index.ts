@@ -22,7 +22,7 @@ export function writeSkippedVersion(version: string) {
 // 一次同步本处 + tauri.conf.json + Cargo.toml 三处；请勿手改单处（CI 的
 // check-version-sync.ts 会红灯）。更新检查用本值对比 GitHub release tag，
 // 关于页也原样展示。
-export const APP_VERSION = "2.0.0-preview-v3";
+export const APP_VERSION = "2.0.0-preview-v4";
 
 export async function fetchGithubLatestRelease(repo: string): Promise<GithubRelease> {
   const res = await fetchWithTimeout(`https://api.github.com/repos/${repo}/releases/latest`, {
