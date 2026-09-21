@@ -1,0 +1,48 @@
+<!doctype html>
+<!--
+  Tauri 壳启动页(仅桌面安装形态使用,src-tauri/tauri.conf.json 的 window.url 指向它)。
+  为什么存在:窗口创建即开始加载,而后端 sidecar 要晚数百毫秒~数秒才绑定端口——
+  初始 URL 若直指 http://localhost:8080,这段空窗里用户看到的是 WebView2 的
+  「无法访问此页面 / ERR_CONNECTION_REFUSED」。本页是内嵌本地资源,零网络依赖,
+  永远画得出来;后端就绪后由壳(lib.rs 的端口标记守卫)eval 重导航到真实端口。
+  双生子约束:视觉必须与 app/root.tsx 的 HydrateFallback(SPA 启动屏)逐像素一致——
+  版式/色值/字号/动画任一处改动,两边同步改,否则两页接力时会出现可见跳变。
+  已知取舍:明暗只能跟 prefers-color-scheme(本页 origin 是 tauri.localhost,读不到
+  localhost:8080 的 localStorage 预绘制键);显式暗色+浅色系统的用户会在接力瞬间
+  看到一帧浅色——仍优于此前的整屏报错页。
+  严禁在本页设置 window.__RIKKAHUB_APP__:那是壳判断「SPA 已就位、无需重导航」的旗标。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RikkaHub</title>
+<style>
+html,body{margin:0;height:100%;background:oklch(.992 .002 240)}
+#rikkahub-splash{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:44px;background:oklch(.992 .002 240);color:oklch(.18 .005 240)}
+#rikkahub-splash .sp-brand{display:flex;align-items:center;gap:16px;transform:translateY(-6%)}
+#rikkahub-splash .sp-brand svg{width:38px;height:54px}
+#rikkahub-splash .sp-brand span{font:650 48px/1 system-ui,"Segoe UI",-apple-system,sans-serif;letter-spacing:-.02em}
+#rikkahub-splash .sp-dots{display:flex;gap:7px}
+#rikkahub-splash .sp-dots i{width:9px;height:9px;border-radius:9999px;background:oklch(.55 .01 240);animation:rikkahub-splash-bounce 1s infinite}
+@keyframes rikkahub-splash-bounce{0%,100%{transform:translateY(-30%);animation-timing-function:cubic-bezier(.8,0,1,1)}50%{transform:none;animation-timing-function:cubic-bezier(0,0,.2,1)}}
+@media (prefers-color-scheme:dark){
+html,body{background:oklch(.12 .006 240)}
+#rikkahub-splash{background:oklch(.12 .006 240);color:oklch(.93 .006 240)}
+#rikkahub-splash .sp-dots i{background:oklch(.65 .01 240)}
+}
+</style>
+</head>
+<body>
+<div id="rikkahub-splash">
+  <div class="sp-brand">
+    <svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="227 79 680 976" fill="currentColor" stroke="currentColor" stroke-width="20" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+      <path d="M876.11 661.31 777.97 491.4c-7.69-13.37-17.78-24.86-30.02-34.32-3.4-2.64-4.91-6.56-4.16-10.34l29.27-128.16c2.01-8.7 2.01-18.04 0-26.87l-35.45-155.78C731.3 108.3 707.09 89 678.7 89h-31.03c-28.38 0-52.47 19.3-58.78 46.93l-22.08 96.75-22.07-96.75C538.43 108.3 514.34 89 485.96 89h-31.03c-28.39 0-52.6 19.3-58.91 46.93l-35.45 155.78c-2.02 8.83-2.02 18.17 0 26.87l29.14 128.16c.88 3.78-.63 7.7-4.03 10.34-12.24 9.46-22.33 20.95-30.03 34.32l-98.13 169.91c-27.38 47.55-27.38 106.59 0 154.01l87.91 152.38c27.5 47.44 78.59 76.95 133.46 76.95h175.85c54.87 0 105.96-29.51 133.45-76.95l87.92-152.38c13.75-23.71 20.56-50.32 20.56-76.94s-6.81-53.23-20.56-77.07M832.34 790.1l-87.92 152.38c-18.41 31.91-52.73 51.72-89.68 51.72H478.89c-36.95 0-71.27-19.81-89.68-51.72L301.16 790.1c-18.42-31.91-18.42-71.65.12-103.57l98.02-169.9c4.41-7.57 10.21-14.26 17.28-19.68 18.8-14.51 27.62-38.6 22.33-61.44l-29.14-128.16c-.38-1.38-.38-2.9 0-4.41l35.44-155.78c1.01-4.55 5.05-7.7 9.72-7.7h31.03c4.66 0 8.58 3.15 9.59 7.7l35.57 155.78c.25 1.51.25 3.03 0 4.41l-23.09 101.3c-4.16 18.03.13 36.7 11.6 51.08 11.49 14.38 28.77 22.71 47.18 22.71 18.42 0 35.7-8.33 47.18-22.71s15.77-33.05 11.6-51.08l-23.08-101.3c-.25-1.38-.25-2.9 0-4.41l35.57-155.78c1.01-4.55 4.92-7.7 9.59-7.7h31.03c4.67 0 8.58 3.15 9.72 7.7l35.44 155.78c.38 1.51.38 3.03 0 4.41l-29.14 128.16c-5.29 22.84 3.53 46.93 22.33 61.44 7.07 5.42 12.87 12.11 17.28 19.68l98.01 169.9c18.55 31.92 18.55 71.66 0 103.57M557.22 419.87l9.59-42.13 9.59 42.13c1.01 4.04-.76 7.06-1.89 8.46-1.14 1.38-3.53 3.65-7.7 3.65-4.16 0-6.55-2.27-7.69-3.65-1.14-1.4-2.91-4.42-1.9-8.46" />
+      <path d="M464.71 879c-18.69 0-33.84-15.14-33.84-33.83V712.86c0-18.69 15.15-33.83 33.84-33.83 18.68 0 33.83 15.14 33.83 33.83v132.31c0 18.69-15.15 33.83-33.83 33.83m203 0c-18.69 0-33.83-15.14-33.83-33.83V712.86c0-18.69 15.14-33.83 33.83-33.83s33.83 15.14 33.83 33.83v132.31c0 18.69-15.14 33.83-33.83 33.83" />
+    </svg>
+    <span>RikkaHub</span>
+  </div>
+  <div class="sp-dots"><i></i><i style="animation-delay:.15s"></i><i style="animation-delay:.3s"></i></div>
+</div>
+</body>
+</html>

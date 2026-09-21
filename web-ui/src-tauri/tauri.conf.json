@@ -15,7 +15,7 @@
         "label": "main",
         "visible": false,
         "title": "RikkaHub",
-        "url": "http://localhost:8080",
+        "url": "splash.html",
         "width": 1280,
         "height": 840,
         "minWidth": 880,

@@ -375,6 +375,9 @@ export default function App() {
 // 启动加载屏:样式完全来自 Layout <head> 的内联关键 CSS(不依赖 app.css),
 // 因此从 index.html 解析那一刻起就能正确显示,覆盖"CSS/JS 尚未就绪"的空窗期。
 // Logo 组件 fill/stroke 均为 currentColor,预渲染成静态 SVG 后随容器 color 明暗自适应。
+// 双生子约束:web-ui/public/splash.html(Tauri 壳启动页,窗口创建到后端就绪之间的
+// 占位)与本屏逐像素一致——版式/色值/字号/动画任一处改动,两边同步改(那里是原生
+// HTML,暗色走 prefers-color-scheme 而非 .dark 类)。
 export function HydrateFallback() {
   return (
     <div id="rikkahub-splash">
