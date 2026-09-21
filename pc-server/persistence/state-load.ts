@@ -87,14 +87,28 @@ export function normalizeState(input: Partial<State>): State {
     launchCount: typeof input.launchCount === "number" ? input.launchCount : 0,
   };
   const defaults = defaultSettings();
-  normalized.settings.providers = mergeById(normalized.settings.providers ?? [], defaults.providers);
+  // 预置项删除墓碑(R1-12 搜索服务同款):mergeById 会把缺省的预置供应商/助手无条件补回,
+  // 用户删掉的预置项重启即复活。墓碑住 settings、由删除端点写入、保存/重加撤销,随备份
+  // 天然往返(pc-backup 带走、安卓 zip 忽略未知键)。只拦"缺省补齐"——显式存在于列表的
+  // 条目永远保留(备份恢复带回的旧列表以在场为准)。老数据无该字段 → 空墓碑,行为不变。
+  normalized.settings.dismissedProviderIds = uniqueStrings(getStringArray(normalized.settings.dismissedProviderIds));
+  normalized.settings.dismissedAssistantIds = uniqueStrings(getStringArray(normalized.settings.dismissedAssistantIds));
+  const dismissedProviderIds = new Set(normalized.settings.dismissedProviderIds);
+  const dismissedAssistantIds = new Set(normalized.settings.dismissedAssistantIds);
+  normalized.settings.providers = mergeById(
+    normalized.settings.providers ?? [],
+    defaults.providers.filter((item) => !dismissedProviderIds.has(item.id)),
+  );
   normalized.settings.providers = normalized.settings.providers.map((providerItem) => ({
     ...providerItem,
     promptCaching: providerItem.type === "claude" ? providerItem.promptCaching === true : providerItem.promptCaching,
     promptCacheTtl: providerItem.promptCacheTtl === "1h" ? "1h" : "5m",
     models: (providerItem.models ?? []).map((item) => enrichModel(item)),
   }));
-  normalized.settings.assistants = mergeById(normalized.settings.assistants ?? [], defaults.assistants);
+  normalized.settings.assistants = mergeById(
+    normalized.settings.assistants ?? [],
+    defaults.assistants.filter((item) => !dismissedAssistantIds.has(item.id)),
+  );
   // D7(复查):默认提示词曾把秒级 "Time: {{cur_datetime}}" 改为天级 "Date: {{cur_date}}"
   // (a63d46b,秒级时间让 system 每条消息都变、前缀缓存从该行起全部失效),但存量用户的
   // 助手仍带旧串。与 R1-11 同一模式:仅对"与旧默认逐字相等"的提示词做一次性替换,

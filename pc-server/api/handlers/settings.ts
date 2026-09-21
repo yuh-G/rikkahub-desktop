@@ -140,6 +140,8 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
       assistants: state.settings.assistants.some((item) => item.id === assistant.id)
         ? state.settings.assistants.map((item) => (item.id === assistant.id ? assistant : item))
         : [...state.settings.assistants, assistant],
+      // 保存/重加预置助手 id → 撤销其删除墓碑(同供应商保存语义)。
+      dismissedAssistantIds: state.settings.dismissedAssistantIds.filter((item) => item !== assistant.id),
     });
     // 助手改名后刷新 assistant_memory.json 里的 assistantName 快照(§12.4-22),推前端同步。
     memoryStore.refreshAssistantNames(state.settings.assistants);
@@ -158,9 +160,14 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
       invalidateContextSnapshots();
       broadcastMemoryUpdate();
     }
+    // 删的是预置助手 → 记墓碑(同供应商删除;否则 mergeById 缺省补齐下次启动复活默认助手)。
+    const isPresetAssistant = defaultSettings().assistants.some((item) => item.id === idValue);
     updateSettings({
       ...state.settings,
       assistants,
+      dismissedAssistantIds: isPresetAssistant
+        ? uniqueStrings([...state.settings.dismissedAssistantIds, idValue])
+        : state.settings.dismissedAssistantIds,
       assistantId: state.settings.assistantId === idValue ? assistants[0].id : state.settings.assistantId,
     });
     return json({ status: "deleted" });
@@ -806,6 +813,9 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
           };
         })
         : [...state.settings.providers, { ...body, id: body.id || id(), builtIn: false }],
+      // 保存/重加预置 id → 撤销其删除墓碑(同搜索服务 detail 的 R1-12 语义;新增的自定义
+      // id 从未进过墓碑,filter 为天然 no-op)。
+      dismissedProviderIds: state.settings.dismissedProviderIds.filter((item) => item !== body.id),
     });
     return json({ status: "ok" });
   }
@@ -813,7 +823,16 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
   if (providerDelete && request.method === "DELETE") {
     const idValue = decodeURIComponent(providerDelete[1]);
     if (state.settings.providers.length <= 1) return error("At least one provider is required", 400);
-    updateSettings({ ...state.settings, providers: state.settings.providers.filter((item) => item.id !== idValue) });
+    // 删的是预置供应商 → 记墓碑,防 state-load 的缺省补齐在下次启动复活它(同 R1-12
+    // 搜索服务)。自定义供应商 id 不在默认清单,不产生墓碑。
+    const isPresetProvider = defaultSettings().providers.some((item) => item.id === idValue);
+    updateSettings({
+      ...state.settings,
+      providers: state.settings.providers.filter((item) => item.id !== idValue),
+      dismissedProviderIds: isPresetProvider
+        ? uniqueStrings([...state.settings.dismissedProviderIds, idValue])
+        : state.settings.dismissedProviderIds,
+    });
     return json({ status: "deleted" });
   }
   if (path === "settings/provider/reorder" && request.method === "POST") {

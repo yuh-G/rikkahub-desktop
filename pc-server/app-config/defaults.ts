@@ -107,6 +107,10 @@ export function defaultSettings(): Settings {
     selectedTTSProviderId: DEFAULT_SYSTEM_TTS_ID,
     assistantId: assistant.id,
     providers: defaultProviders(),
+    // 预置项删除墓碑(R1-12 同款,见 model-layer.ts 字段注释):老 state 无此字段 → 空墓碑,
+    // 行为与旧版完全一致。
+    dismissedProviderIds: [],
+    dismissedAssistantIds: [],
     assistants: [
       assistant,
       {
