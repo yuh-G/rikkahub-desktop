@@ -2,14 +2,20 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 import { handleAuthTokenRequest, handleSetWebPassword, handleWebAuthStatus, isWebAuthAuthorized, stripAuthSecrets, webAuthEnabled } from "./auth";
-import { setState, state } from "../persistence/json-store";
+import { flushSaveState, setState, state } from "../persistence/json-store";
 import type { State } from "../foundation/types";
 
 // 测试进程无 --password/RIKKAHHUB_PASSWORD → cliPassword=null,密码源只剩 settings.webPasswordHash。
 // 测试进程没跑 loadState,注入最小 state(对齐 sse-broadcast.test.ts 惯例),每个用例前重置密码字段。
 const priorState = state;
 beforeAll(() => setState({ settings: { webPasswordHash: undefined, webServerJwtEnabled: false } } as unknown as State));
-afterAll(() => setState(priorState));
+afterAll(async () => {
+  // handleSetWebPassword → updateSettings → saveState 是 fire-and-forget:先 drain 在途落盘
+  // 再复位——若先把 state 复位回 undefined,尾随写读 state.appliedMigrations 即抛 TypeError
+  // (Linux CI #22 曾因此产生 1 个 unhandled error,本地时序碰巧不触发)。
+  await flushSaveState();
+  setState(priorState);
+});
 
 function resetPassword() {
   state.settings = { ...state.settings, webPasswordHash: undefined, webServerJwtEnabled: false };

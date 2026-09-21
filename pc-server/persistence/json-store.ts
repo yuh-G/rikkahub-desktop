@@ -332,6 +332,9 @@ export function saveState(): void {
         // Snapshot the latest state — performStateSave reads `state` at call time, so
         // re-running it will pick up any changes that landed during the previous write.
         activeSaveStatePromise = run();
+        // 尾随写与主路径(本函数尾部)同契约:fire-and-forget,rejection 落 console——
+        // 此前漏挂 .catch,尾随写一旦拒绝即成 unhandled rejection。
+        activeSaveStatePromise.catch((err) => console.warn("saveState failed", err));
       } else {
         activeSaveStatePromise = null;
       }
