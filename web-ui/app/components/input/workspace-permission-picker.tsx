@@ -23,7 +23,8 @@ import type { WorkspaceDto } from "~/types";
 // 三档语义(与 pc-server/workspace/approval.ts 一致,2026-08-01 改版):
 // - confirm_each 询问批准:write/edit/bash 均审批;read 免审
 // - balanced 默认权限(新建默认,并记住上次选择):区内写免审,仅危险命令/区外写入审批
-// - full_access 完全访问:全部免审,读写不限于区内(系统目录仍硬拒)
+// - full_access 完全访问:全部免审,读写不限于区内、无路径黑名单(2026-08-23 起
+//   系统目录/pc-data 也可写;恒生效的只剩体积闸门与 Windows 保留设备名阻断)
 
 type Preset = WorkspaceDto["permissionPreset"];
 

@@ -305,7 +305,8 @@ export interface Conversation {
 export type WorkspaceType = "managed" | "folder";
 
 /** 审批档位(§3.2):read 恒免审;confirm_each=write/edit/bash 全审批;
- *  balanced=区内写免审、bash 审批;full_access=全免审(危险命令拦截独立于档位,恒生效)。 */
+ *  balanced=区内写免审、bash 审批;full_access=全免审——连危险命令静态拦截也跳过
+ *  (runtime.ts 执行层显式排除,用户选档即知情;恒生效的只剩体积闸门与保留设备名阻断)。 */
 export type WorkspacePermissionPreset = "confirm_each" | "balanced" | "full_access";
 
 /** 运行时健康状态(计算属性,不落库):missing = 根目录丢失(对齐安卓 BROKEN 语义,不静默删记录)。 */
