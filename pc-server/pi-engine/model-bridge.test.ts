@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 
 import { piAgentDir } from "../foundation/paths";
+import { isOAuthProvider } from "../model-providers/auth";
 import { model, provider } from "../model-providers";
 import { createPiModelRuntime, mapProviderModelToPi, piApiFor, PI_THINKING_BUDGETS, piThinkingLevelFor } from "./model-bridge";
 
@@ -350,6 +351,36 @@ describe("createPiModelRuntime 内存注册闭环", () => {
 
     // 零落盘:客房目录整个不存在(auth 用内存存储,models 用内存 store,方案 §3.5 红线)。
     expect(existsSync(piAgentDir)).toBe(false);
+  });
+});
+
+describe("订阅供应商(OAuth)桥接契约", () => {
+  it("mapping 携带 provider,isOAuthProvider 据此判 true → createPiModelRuntime 跳过 registerProvider", () => {
+    // 订阅供应商(authMode:"oauth"):凭证在宿主 state(刷新权唯一在核心),pi 侧走内置
+    // provider id + createPiCredentialStore,不能用 apiKey 形态的 registerProvider 注册。
+    // 锁的是「跳过注册」的判定依据:mapping.provider 必须是原始 provider(带 authMode)。
+    const oauthProvider = makeProvider({
+      id: "98d0557b-0700-41e5-b1d6-ee875a53ae5a",
+      name: "ChatGPT",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      authMode: "oauth",
+      useResponseApi: true,
+      oauth: { flow: "openai-codex", credential: { type: "oauth", access: "a", refresh: "r", expires: 9999999999000 }, signedInAt: 1 },
+    });
+    const mapped = mapProviderModelToPi(oauthProvider, model("gpt-5.2", "GPT 5.2"));
+    if (!mapped.ok) throw new Error(mapped.reason);
+    // mapping.provider 是 createPiModelRuntime 里 isOAuthProvider(...) 的判定输入
+    expect(isOAuthProvider(mapped.mapping.provider)).toBe(true);
+    expect(mapped.mapping.provider.authMode).toBe("oauth");
+  });
+
+  it("apiKey 供应商 isOAuthProvider 判 false → 正常走 registerProvider", () => {
+    const mapped = mapProviderModelToPi(
+      makeProvider({ id: "p-key", name: "K", baseUrl: "https://relay.example/v1" }),
+      model("gpt-4.1", "GPT 4.1"),
+    );
+    if (!mapped.ok) throw new Error(mapped.reason);
+    expect(isOAuthProvider(mapped.mapping.provider)).toBe(false);
   });
 });
 

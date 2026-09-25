@@ -52,6 +52,16 @@ export const OAUTH_FLOWS: Record<OAuthFlowId, OAuthFlowMeta> = {
 
 const cache = new Map<OAuthFlowId, Promise<PiOAuthAuth>>();
 
+/** 测试注入点:替换 flow 的 pi-ai 实现(如锁 toAuth 不触网)。生产代码不调。 */
+export function overrideOAuthFlow(flowId: OAuthFlowId, impl: PiOAuthAuth): void {
+  cache.set(flowId, Promise.resolve(impl));
+}
+
+/** 清除测试注入,恢复懒加载真实实现。生产代码不调。 */
+export function clearOAuthFlowOverride(flowId: OAuthFlowId): void {
+  cache.delete(flowId);
+}
+
 /** 懒加载 flow 的 pi-ai OAuthAuth 实现(动态 import 经变量 specifier,bundler 不可静态
  *  跟进——openai-codex.ts 用 node:http/node:crypto,顶层 import 会炸浏览器构建)。 */
 export function loadOAuthFlow(flowId: OAuthFlowId): Promise<PiOAuthAuth> {

@@ -7,10 +7,9 @@
 //   4. 取消/失败 → 不残留半成品 oauth 行。
 //   5. 全程凭据不出本模块:access/refresh 不落日志、不进 SSE 载荷。
 
-import { randomUUID } from "node:crypto";
 import type { OAuthCredential, ProviderAuthInteraction } from "../../../pi/packages/ai/src/auth/types.ts";
 import { updateSettings } from "../../app-config";
-import type { Provider } from "../../foundation/types";
+import type { OAuthFlowId, Provider } from "../../foundation/types";
 import { reportError } from "../../observability/app-errors";
 import { state } from "../../persistence/json-store";
 import { OAUTH_FLOWS, loadOAuthFlow } from "./flows";
@@ -64,7 +63,7 @@ function emit(event: ProviderAuthEvent, attempt?: AttemptState): void {
   }
 }
 
-const LOGIN_TOTAL_TIMEOUT_MS = 10 * 60 * 1000;
+const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 
 function cleanup(providerId: string): void {
   const attempt = attempts.get(providerId);
@@ -80,8 +79,9 @@ function finish(providerId: string, event: ProviderAuthEvent): void {
 }
 
 /** 登录成功落盘:写 oauth + authMode=oauth + enabled=true。CAS 由调用方独占(此时
- *  attempt 已独占该 provider 的写通道),直接读-改-写即可。 */
-function commitLogin(providerId: string, credential: OAuthCredential): boolean {
+ *  attempt 已独占该 provider 的写通道),直接读-改-写即可。flowId 从 startLogin 显式传入
+ *  (它已做过"oauth 行 → 登记表"的判定),这里不再推断、不落兜底值。 */
+function commitLogin(providerId: string, flowId: OAuthFlowId, credential: OAuthCredential): boolean {
   const provider = state.settings.providers.find((p) => p.id === providerId);
   if (!provider) return false;
   const providers = state.settings.providers.map((p): Provider =>
@@ -91,7 +91,7 @@ function commitLogin(providerId: string, credential: OAuthCredential): boolean {
           authMode: "oauth" as const,
           enabled: true,
           oauth: {
-            flow: p.oauth?.flow ?? (provider.authMode === "oauth" ? p.oauth?.flow : undefined) ?? "openai-codex",
+            flow: flowId,
             credential: credential as unknown as Record<string, import("../../foundation/types").JsonValue>,
             signedInAt: Date.now(),
           },
@@ -198,13 +198,27 @@ export function resumePrompt(providerId: string, input: string): boolean {
   return true;
 }
 
+/** 预置订阅供应商的固定 id(与 model-providers/index.ts 的 OAUTH_PROVIDER_IDS 对齐)。
+ *  未登录的预置供应商(无 oauth 行)用它反查 flow——固定 UUID 一经发布不可变,比
+ *  按 baseUrl host 嗅探稳。 */
+const PRESET_OAUTH_PROVIDER_IDS: Readonly<Record<string, string>> = {
+  "98d0557b-0700-41e5-b1d6-ee875a53ae5a": "openai-codex", // ChatGPT
+  "f9622c8b-5037-4540-b875-3d301521367b": "kimi-coding", // Kimi Code
+};
+
+function inferFlowForProvider(provider: Provider): OAuthFlowId | undefined {
+  return PRESET_OAUTH_PROVIDER_IDS[provider.id] as OAuthFlowId | undefined;
+}
+
 export async function startLogin(providerId: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const provider = state.settings.providers.find((p) => p.id === providerId);
   if (!provider) return { ok: false, error: "provider not found" };
   if (provider.authMode !== "oauth") return { ok: false, error: "provider is not an OAuth provider" };
   if (attempts.has(providerId)) return { ok: false, error: "login already in progress" };
 
-  const flowId = provider.oauth?.flow;
+  // flow 判定:已登录的行存了 oauth.flow;未登录的订阅供应商(预置 ChatGPT/Kimi Code)
+  // 没有 oauth 行,从预置固定 id 反查(inferFlowForProvider)。
+  const flowId = provider.oauth?.flow ?? inferFlowForProvider(provider);
   if (!flowId || !OAUTH_FLOWS[flowId]) return { ok: false, error: "unknown OAuth flow" };
 
   const controller = new AbortController();
@@ -212,7 +226,7 @@ export async function startLogin(providerId: string): Promise<{ ok: true } | { o
     controller,
     timeout: setTimeout(() => {
       cancelLogin(providerId);
-    }, LOGIN_TOTAL_TIMEOUT_MS),
+    }, LOGIN_TIMEOUT_MS),
   };
   attempts.set(providerId, attempt);
 
@@ -223,7 +237,7 @@ export async function startLogin(providerId: string): Promise<{ ok: true } | { o
 
     const credential = await oauth.login(makeInteraction(providerId, flowId, attempt));
     if (controller.signal.aborted) return { ok: false, error: "cancelled" };
-    const ok = commitLogin(providerId, credential);
+    const ok = commitLogin(providerId, flowId, credential);
     if (!ok) {
       finish(providerId, { providerId, flow: flowId, phase: "error", message: "登录成功但凭据落盘失败,请重试" });
       return { ok: false, error: "commit failed" };
@@ -244,8 +258,4 @@ export async function startLogin(providerId: string): Promise<{ ok: true } | { o
 /** 查询当前是否有进行中的登录尝试(前端恢复连接时对齐状态)。 */
 export function loginInProgress(providerId: string): boolean {
   return attempts.has(providerId);
-}
-
-export function randomLoginTraceId(): string {
-  return randomUUID();
 }

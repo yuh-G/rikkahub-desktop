@@ -82,3 +82,50 @@ describe("APP→PC:导入侧头像改写", () => {
     expect(out.url).toBe("/api/files/3/content");
   });
 });
+
+describe("PC→APP:订阅供应商 OAuth 凭证剥离(方案 §3 决策④)", () => {
+  test("to-android 剥 authMode/oauth 但保留供应商行;refresh token 不进移动端 zip", () => {
+    const settings = {
+      providers: [
+        {
+          id: "p-codex",
+          name: "ChatGPT",
+          authMode: "oauth",
+          oauth: {
+            flow: "openai-codex",
+            signedInAt: 1,
+            credential: { type: "oauth", access: "acc", refresh: "ref-secret", expires: 9999999999000 },
+          },
+        },
+        { id: "p-plain", name: "OpenAI", apiKey: "sk-x" }, // 无 oauth → 不动
+      ],
+      chatModelId: "p-codex", // 引用仍可解析(行保留)
+    };
+    const out = rewriteAvatarsInSettings(settings, PC_AVATAR_TYPE_TO_ANDROID, "to-android");
+    const codex = out.providers.find((p: any) => p.id === "p-codex");
+    // authMode/oauth 都被剥(APP 侧表现同「未填 key」),行与其余字段保留
+    expect(codex.authMode).toBeUndefined();
+    expect(codex.oauth).toBeUndefined();
+    expect(codex.name).toBe("ChatGPT");
+    const text = JSON.stringify(out);
+    expect(text).not.toContain("ref-secret");
+    // 引用不悬空
+    expect(out.chatModelId).toBe("p-codex");
+    // 无 oauth 的供应商行原样
+    expect(out.providers.find((p: any) => p.id === "p-plain")).toEqual({ id: "p-plain", name: "OpenAI", apiKey: "sk-x" });
+  });
+
+  test("to-pc 方向不剥(PC→PC 跨机恢复带上凭证,免重登,与 apiKey 同策略)", () => {
+    const settings = {
+      providers: [
+        {
+          id: "p-codex",
+          authMode: "oauth",
+          oauth: { flow: "openai-codex", signedInAt: 1, credential: { type: "oauth", access: "acc", refresh: "ref-secret", expires: 1 } },
+        },
+      ],
+    };
+    const out = rewriteAvatarsInSettings(settings, ANDROID_AVATAR_TYPE_TO_PC, "to-pc");
+    expect(out.providers[0].oauth.credential.refresh).toBe("ref-secret");
+  });
+});

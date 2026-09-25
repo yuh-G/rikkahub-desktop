@@ -109,4 +109,25 @@ describe("pi credential store", () => {
     const store = createPiCredentialStore();
     expect(await store.read("nonexistent")).toBeUndefined();
   });
+
+  test("pi provider id 反查:刷新回写落到宿主行(宿主 id ≠ pi id 时不丢刷新)", async () => {
+    // 预置订阅供应商的真实形态:state 行 id 是宿主固定 UUID,而 pi 侧 resolveProviderAuth /
+    // Models.getAuth 以 pi 内置 id("openai-codex")为键。modify 的 CAS 必须锁「反查到的
+    // 那行的宿主 id」,否则刷新后的新 refresh token 因 p.id !== piId 失配而永远落不了盘。
+    const HOST_UUID = "98d0557b-0700-41e5-b1d6-ee875a53ae5a";
+    // 重置为只有这一个宿主行(去掉 beforeEach 的 "p1" 占位)。
+    setState({ ...state, settings: { ...state.settings, providers: [] } } as any);
+    seedProvider(HOST_UUID, "r-old");
+    const store = createPiCredentialStore();
+    // 以 pi 内置 id 为键做读-改-写(模拟 resolve.ts 的 resolveProviderAuth 调用)。
+    const next = await store.modify("openai-codex", async (cur) => {
+      expect(cur?.refresh).toBe("r-old"); // 反查读到了宿主行的旧凭证
+      return { type: "oauth", access: "a-new", refresh: "r-new", expires: 9999999999000 };
+    });
+    expect(next?.refresh).toBe("r-new");
+    // 关键断言:宿主行的凭证被实际更新(回写命中,不是返回了新值但 state 仍旧)。
+    expect(currentRefresh(HOST_UUID)).toBe("r-new");
+    // 再以 pi id 读,应读到回写后的新凭证。
+    expect((await store.read("openai-codex"))?.refresh).toBe("r-new");
+  });
 });

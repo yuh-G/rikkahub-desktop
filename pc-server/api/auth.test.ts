@@ -146,4 +146,42 @@ describe("web-auth/status(敏感边界:绝不泄露哈希)", () => {
     expect(typeof state.settings.webPasswordHash).toBe("string"); // 原对象仍在
     expect(sanitized.webServerJwtEnabled).toBe(true); // 其余字段不动
   });
+
+  test("stripAuthSecrets 剥 OAuth 凭证为 oauthStatus 安全视图(refresh token 永不下发)", () => {
+    // 订阅供应商(方案 §3):oauth.credential 含长效 refresh token,「值单向进不出」。
+    // 前端只见登录态/账号/过期,不见 token 本身。
+    const settings = {
+      providers: [
+        {
+          id: "p-codex",
+          authMode: "oauth",
+          oauth: {
+            flow: "openai-codex",
+            signedInAt: 1727000000000,
+            credential: { type: "oauth", access: "acc-secret", refresh: "ref-secret", expires: 9999999999000, accountId: "acct_123" },
+          },
+        },
+        { id: "p-plain", apiKey: "sk-x" }, // 无 oauth 行 → 不动
+      ],
+    };
+    const sanitized = stripAuthSecrets(settings) as any;
+    const codex = sanitized.providers.find((p: any) => p.id === "p-codex");
+    // oauth 凭证整个被剥,替换为安全视图
+    expect(codex.oauth).toBeUndefined();
+    expect(codex.oauthStatus).toEqual({
+      signedIn: true,
+      flow: "openai-codex",
+      signedInAt: 1727000000000,
+      expiresAt: 9999999999000,
+      accountId: "acct_123",
+    });
+    // 响应文本里绝不出现 access/refresh token
+    const text = JSON.stringify(sanitized);
+    expect(text).not.toContain("acc-secret");
+    expect(text).not.toContain("ref-secret");
+    // 无 oauth 的供应商行原样保留
+    expect(sanitized.providers.find((p: any) => p.id === "p-plain")).toEqual({ id: "p-plain", apiKey: "sk-x" });
+    // 原对象不被改
+    expect((settings.providers[0] as any).oauth.credential.refresh).toBe("ref-secret");
+  });
 });
