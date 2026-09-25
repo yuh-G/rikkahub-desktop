@@ -247,6 +247,8 @@
       "waiting_browser": "请在浏览器中完成登录",
       "open_browser": "打开浏览器",
       "copy_url": "复制链接",
+      "waiting_input": "登录前需要确认一个信息",
+      "text_input_submit": "确认",
       "waiting_device_code": "请在手机或另一台设备上打开下方链接，输入验证码",
       "device_code_label": "验证码",
       "copy_code": "复制验证码",

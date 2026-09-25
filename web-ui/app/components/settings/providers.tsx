@@ -72,6 +72,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
   const { t } = useTranslation();
   const [authEvent, setAuthEvent] = React.useState<ProviderAuthEventDto | null>(null);
   const [manualCode, setManualCode] = React.useState("");
+  const [textInput, setTextInput] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const signedIn = provider.oauthStatus?.signedIn === true;
   const inProgress = authEvent != null && !["success", "error", "cancelled"].includes(authEvent.phase);
@@ -179,6 +180,18 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
       toast.error((error as Error).message);
     }
   };
+  // waiting_input(如 Copilot 企业域名):空串有语义(留空 = 用默认),所以不设非空门槛。
+  const submitTextInput = async () => {
+    setSubmitting(true);
+    try {
+      await api.post("settings/provider/oauth/manual-code", { providerId: provider.id, input: textInput.trim() });
+      setTextInput("");
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
   const copy = async (text: string) => {
     try {
       await copyTextToClipboard(text);
@@ -212,11 +225,30 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
         <div className="flex items-center gap-2 text-sm font-medium">
           <Loader2 className="size-4 animate-spin" />
           {authEvent.phase === "select_method" && t("settings:providers.oauth.select_method")}
+          {authEvent.phase === "waiting_input" && t("settings:providers.oauth.waiting_input")}
           {authEvent.phase === "waiting_browser" && t("settings:providers.oauth.waiting_browser")}
           {authEvent.phase === "waiting_device_code" && t("settings:providers.oauth.waiting_device_code")}
           {authEvent.phase === "exchanging" && t("settings:providers.oauth.exchanging")}
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
+          {authEvent.phase === "waiting_input" ? (
+            <div className="w-full space-y-2">
+              {authEvent.message ? <p className="text-xs text-muted-foreground">{authEvent.message}</p> : null}
+              <div className="flex gap-2">
+                <Input
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  placeholder={authEvent.placeholder ?? ""}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !submitting) void submitTextInput();
+                  }}
+                />
+                <Button size="sm" onClick={() => void submitTextInput()} disabled={submitting}>
+                  {t("settings:providers.oauth.text_input_submit")}
+                </Button>
+              </div>
+            </div>
+          ) : null}
           {authEvent.phase === "select_method" && authEvent.methods ? (
             authEvent.methods.map((method) => (
               <Button key={method.id} variant="outline" size="sm" onClick={() => void submitMethod(method.id)} disabled={submitting}>

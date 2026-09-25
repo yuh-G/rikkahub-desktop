@@ -247,6 +247,8 @@
       "waiting_browser": "Complete sign-in in your browser",
       "open_browser": "Open browser",
       "copy_url": "Copy link",
+      "waiting_input": "One detail needed before sign-in",
+      "text_input_submit": "Confirm",
       "waiting_device_code": "Open the link below on your phone or another device and enter the code",
       "device_code_label": "Verification code",
       "copy_code": "Copy code",
