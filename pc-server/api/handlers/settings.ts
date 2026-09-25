@@ -804,13 +804,20 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
       providers: state.settings.providers.some((item) => item.id === body.id)
         ? state.settings.providers.map((item) => {
           if (item.id !== body.id) return item;
+          // 订阅供应商(方案 §3):前端只见 oauthStatus 安全视图,绝不会回传 credential;
+          // 若直接 {...item, ...body},body 缺 oauth 会把服务端凭证清空。这里强制保留现凭证,
+          // 登录/注销只能走 oauth/start|logout 端点(它们才是凭证写路径)。
+          const preservedOAuth = item.oauth;
+          const preservedAuthMode = item.authMode;
           // 全面审查 R5-3:凭据/端点字段变更即撤销"已验证"(对齐 search/service/detail 的
           // 失效规则)——apiKey/baseUrl 都换了,旧测试结论不再成立,徽章不能继续绿着。
           // 未变更时保持既有语义:测过一次即保留,防止无关字段编辑抖掉测试状态。
-          if (providerAuthChanged(item, body)) return { ...item, ...body, testPassed: false, testPassedAt: 0 };
+          if (providerAuthChanged(item, body)) return { ...item, ...body, oauth: preservedOAuth, authMode: preservedAuthMode, testPassed: false, testPassedAt: 0 };
           return {
             ...item,
             ...body,
+            oauth: preservedOAuth,
+            authMode: preservedAuthMode,
             testPassed: item.testPassed === true ? true : body.testPassed,
             testPassedAt: item.testPassed === true ? item.testPassedAt : body.testPassedAt,
           };

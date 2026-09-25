@@ -169,11 +169,31 @@ export function webPasswordConfigured(): boolean {
 /** 下发前端前剥掉认证敏感字段。webPasswordHash 是认证者(非凭证):泄露它在暴力破解前
  *  即可冒充访问全部数据,代价高于 providers 的 apiKey(那些是凭证,本明文下发——可信本地
  *  UI 模型)。故 settings 的 GET/SSE 两个暴露面统一经此净化;state.json 与备份不受影响
- *  (它们读 state.settings 原值,不经这里)。 */
+ *  (它们读 state.settings 原值,不经这里)。
+ *
+ *  订阅供应商(方案 §3):oauth.credential 含长效 refresh token,是「值单向进不出」的凭证
+ *  (Cherry/dsh 同款纪律)——剥成 oauthStatus 安全视图,前端只见登录态/账号/过期,不见 token。 */
 export function stripAuthSecrets<T>(settings: T): T {
   if (settings == null || typeof settings !== "object") return settings;
   const copy = { ...(settings as Record<string, unknown>) };
   delete copy.webPasswordHash;
+  if (Array.isArray(copy.providers)) {
+    copy.providers = copy.providers.map((p: any) => {
+      if (!p || typeof p !== "object" || !p.oauth) return p;
+      const { oauth, ...rest } = p;
+      const credential = (oauth?.credential ?? {}) as Record<string, unknown>;
+      return {
+        ...rest,
+        oauthStatus: {
+          signedIn: true,
+          flow: oauth.flow,
+          signedInAt: oauth.signedInAt,
+          expiresAt: typeof credential.expires === "number" ? credential.expires : undefined,
+          accountId: typeof credential.accountId === "string" ? credential.accountId : undefined,
+        },
+      };
+    });
+  }
   return copy as T;
 }
 

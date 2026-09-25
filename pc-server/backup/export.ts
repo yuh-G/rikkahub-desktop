@@ -245,6 +245,18 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
           : (isRecord(kept[0]) ? String(kept[0].id ?? "") : "");
       }
     }
+    // 订阅制供应商 OAuth 凭证(方案 §3 决策④):refresh token 是长效凭证,不扩散到移动端 zip。
+    // 剥 authMode/oauth 但保留供应商行——chatModelId/favoriteModels 等引用仍可解析,APP 侧表现
+    // 同「未填 key」。pc-backup(PC→PC)不剥,跨机恢复带上(免重登,与 apiKey 同策略)。
+    if (Array.isArray(copy.providers)) {
+      copy.providers = copy.providers.map((p: any) => {
+        if (!isRecord(p) || (p.authMode === undefined && p.oauth === undefined)) return p;
+        const stripped = { ...p };
+        delete stripped.authMode;
+        delete stripped.oauth;
+        return stripped;
+      });
+    }
     // 快速模型收敛:PC 内部统一用 fastModelId(对齐 APP)。导出前清掉 2.4.16 之前残留的
     // titleModelId / suggestionModelId——新版 Android 的 Settings 数据类已删除这两个字段,
     // 发未知键会被其序列化器拒收(state-load 正常路径已删,这里兜备份合并等异常残留)。

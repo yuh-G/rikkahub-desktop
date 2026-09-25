@@ -414,11 +414,20 @@ export async function runProviderCheck(providerItem: Provider, mode: "non_stream
 
 /** 全面审查 R5-3:凭据/端点字段是否变更。变更即旧测试结论失效——settings/provider 保存
  *  时撤销 testPassed;markProviderTestResult 落章前复核(测试飞行期间用户改了配置,
- *  结论属于旧配置,不能给新配置盖章)。 */
+ *  结论属于旧配置,不能给新配置盖章)。
+ *  订阅供应商:oauth 凭证本身变化(登录/注销/刷新轮换)也视为凭据变更。 */
 export function providerAuthChanged(prev: Provider, next: Provider): boolean {
   const fields = ["type", "apiKey", "baseUrl", "chatCompletionsPath"] as const;
-  return fields.some((key) => String(prev[key] ?? "") !== String(next[key] ?? ""))
-    || (prev.useResponseApi === true) !== (next.useResponseApi === true);
+  if (fields.some((key) => String(prev[key] ?? "") !== String(next[key] ?? ""))) return true;
+  if ((prev.useResponseApi === true) !== (next.useResponseApi === true)) return true;
+  // oauth 凭据判同:都在且 refresh 相同 = 未变(刷新轮换会换 refresh,故用 refresh 作指纹)。
+  const prevRefresh = prev.oauth?.credential?.refresh;
+  const nextRefresh = next.oauth?.credential?.refresh;
+  const prevHas = prev.oauth != null;
+  const nextHas = next.oauth != null;
+  if (prevHas !== nextHas) return true;
+  if (prevHas && nextHas && prevRefresh !== nextRefresh) return true;
+  return false;
 }
 
 export function markProviderTestResult(providerItem: Provider, checks: Array<{ mode: string; ok: boolean }>) {
