@@ -43,24 +43,6 @@
 
 感谢两位补上了这些发行版的空缺。
 
-## ⬆️ 升级须知
-
-<!-- [LEGACY-MIGRATION: pre-v4-ui-origin] 本节描述 v2.0.0-preview-v4 的默认端口变更,随旧版迁移脚手架到期一并删除 -->
-
-**v2.0.0-preview-v4 起，桌面与裸二进制形态的默认端口由 8080 改为 17455**（8080 是 Web 生态最拥挤的端口，
-常与其他软件冲突，详见 issue #62）。
-
-- **桌面用户（安装版 / 便携版）：无需任何操作。** 首次启动会把旧地址下保存的界面状态（标签页与分栏布局、
-  主题、语言、字号、代理测试地址、网页访问登录态）自动搬到新地址；会话、设置、API Key 完全不受影响。
-  便携版用户请把浏览器收藏夹里的 `localhost:8080` 改成新端口。
-- **非 Docker 自托管用户（Linux 裸二进制、局域网、反向代理）：访问地址变了。** 请把书签 / nginx
-  `proxy_pass` / 防火墙规则改到新端口，或固定回 8080：
-  ```bash
-  ./rikkahub-pc --port 8080   # 或 PORT=8080 环境变量，或在 设置→网络 填写 8080
-  ```
-- **Docker 用户：不受影响。** 容器内端口固定 8080（镜像契约，`ENV PORT=8080` 钉死），现有
-  `-p 8080:8080` 映射照常工作。
-
 ## ✨ 功能特色
 
 - 🎨 多套主题色（Claude / RikkaHub / Mono / 自定义） + 🌙 深色模式
@@ -173,7 +155,7 @@ cd ../pc-server && bun run compile:linux
 
 ```bash
 ./dist/rikkahub-pc
-# 浏览器打开 http://localhost:17455（桌面/裸二进制默认端口，见「升级须知」）
+# 浏览器打开 http://localhost:17455
 # 数据保存在 ./pc-data/
 ```
 
@@ -208,9 +190,7 @@ docker run -d \
   rikkahub-pc
 ```
 
-然后浏览器打开 `http://localhost:8080`。容器内端口固定为 8080（镜像契约，`ENV PORT=8080`
-钉死），与桌面默认端口（17455）无关；如需自定义可用 `-e PORT=...` 覆盖。镜像基于
-`distroless/base-debian12`，已内置
+然后浏览器打开 `http://localhost:8080`。镜像基于 `distroless/base-debian12`，已内置
 `unzip`/`zip`；剪贴板和 TTS 在无头容器内不可用。
 
 **局域网 / 公网部署安全注记:** AI 的 `scrape_web` 工具会在容器内直接抓取模型给出的
@@ -239,8 +219,7 @@ server {
     # ssl_certificate ...; ssl_certificate_key ...;
 
     location / {
-        # 此处 8080 对应上面的 Docker -p 映射;裸二进制用其默认端口 17455
-        # (或给二进制加 --port 8080 钉回 8080)
+        # 8080 对应上面的 Docker 映射;裸二进制默认 17455
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;              # 保住 Origin/Host CSRF 校验
         proxy_http_version 1.1;
