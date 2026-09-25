@@ -41,7 +41,6 @@ describe("OAUTH_PROVIDER_SHAPING 声明表", () => {
 
   test("Copilot 动态头语义与 pi buildCopilotDynamicHeaders 逐字段一致(真漂移锁,直接对跑)", () => {
     const { buildCopilotDynamicHeaders } = require("../../../pi/packages/ai/src/api/github-copilot-headers.ts");
-    type Msg = { role: string; content: unknown };
     const cases: Array<{ role: string; hasImages: boolean }> = [
       { role: "user", hasImages: false },
       { role: "assistant", hasImages: false },
