@@ -32,6 +32,33 @@ export function uiOrigin(port: number): string {
   return `http://${UI_HOST}:${port}`;
 }
 
+/** 容器固定端口:镜像契约(EXPOSE 8080、用户的 docker -p 8080:8080 映射、README nginx
+ *  示例都锚定它)。Dockerfile 同值设 ENV PORT=8080 双保险——Podman 放的是
+ *  /run/.containerenv 而非 /.dockerenv,容器检测在 Podman 下不成立,只靠检测会让
+ *  Podman 用户被换到桌面默认端口、-p 8080:8080 映射失效。用户仍可 -e PORT=... 覆盖
+ *  (env 优先级高于本默认、低于 --port)。 */
+export const CONTAINER_PORT = 8080;
+
+/** 桌面默认端口(issue #62:8080 是 Web 生态最热的端口,Windows 套接字共存语义下任何
+ *  默认监听它的程序都可能接走 localhost 流量;回环整组占有已治本,换冷门端口再把
+ *  「被别人占着触发顺延」从常见情形压到罕见)。选号核验(2026-09-25 定稿,改号须重做
+ *  下面全部核验,IANA 与常见默认端口两条缺一不可):
+ *  - IANA 注册表:17455 位于 17236-17499 Unassigned 段,顺延段 17455-17474 全未分配;
+ *    最近的已注册端口 17500(Dropbox LanSync)在顺延段之外;
+ *  - > 10080:Chromium kRestrictedPorts 的最大值,WebView2 拒绝加载这些端口上的页面;
+ *  - < 32768:Linux ip_local_port_range 下界(Windows 动态段 49152+ 更高,自然满足);
+ *  - 不在常见开发/工具默认端口及其 ±19 顺延段内(3000/5173/7890/8080/8188/8888/
+ *    11434/17500/18080/27015-27050…);
+ *  - 本机 netsh excludedportrange 未命中;网页检索未发现任何软件以 17455 为默认端口。
+ *  注意:IANA「未分配」只说明没人登记,不代表没人用(热门软件的默认端口多数从不登记,
+ *  如 Ollama 11434),所以「常见默认端口」核验与 IANA 核验缺一不可。 */
+export const DESKTOP_DEFAULT_PORT = 17455;
+
+/** 默认端口的唯一出口:容器 = 镜像契约端口,其余 = 桌面冷门默认。 */
+export function defaultPreferredPort(inContainer: boolean): number {
+  return inContainer ? CONTAINER_PORT : DESKTOP_DEFAULT_PORT;
+}
+
 /** 本机能否绑 IPv6 回环。Bun.listen 同步,零点几毫秒。 */
 export function probeIpv6Loopback(): boolean {
   try {

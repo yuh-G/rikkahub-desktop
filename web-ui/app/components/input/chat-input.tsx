@@ -77,10 +77,7 @@ const SLASH_MENU_ID = "chat-slash-command-menu";
 const EMPTY_SLASH_COMMANDS: SlashCommandDto[] = [];
 
 function websocketApiUrl(path: string) {
-  const base =
-    typeof window === "undefined"
-      ? "ws://localhost:8080"
-      : window.location.origin.replace(/^http/i, "ws");
+  const base = window.location.origin.replace(/^http/i, "ws");
   // WebSocket 无法携带 Authorization header，启用 web 鉴权时 token 走 access_token query
   return `${base}${appendWebAuthQuery(`/api/${path.replace(/^\/+/, "")}`)}`;
 }

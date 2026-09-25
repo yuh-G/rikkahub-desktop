@@ -1,7 +1,7 @@
 import { dataDir, statePath, uiOriginRecordPath } from "./foundation/paths";
 import { RUNNING_IN_CONTAINER } from "./foundation/platform";
 import { setActualServingPort } from "./foundation/net";
-import { bindFirstUsable, isLoopbackHostname, planBindAttempts, resolveListenHostnames, stopListeners, uiOrigin } from "./foundation/port-binding";
+import { bindFirstUsable, DESKTOP_DEFAULT_PORT, defaultPreferredPort, isLoopbackHostname, planBindAttempts, resolveListenHostnames, stopListeners, uiOrigin } from "./foundation/port-binding";
 import { planOriginRelay } from "./foundation/origin-relay";
 import { createOriginRelayApi, readUiOriginRecord } from "./api/origin-relay";
 import { flushSaveState, peekPreferredPort, saveState } from "./persistence/json-store";
@@ -97,8 +97,10 @@ const hadStateBeforeBoot = existsSync(statePath);
 const peekedPreferredPort = !RUNNING_IN_CONTAINER ? peekPreferredPort() : null;
 
 // Resolve the preferred port by priority: explicit `--port` flag > `PORT` env > user setting
-// > 8080. Containerized deploys skip the user setting — inside a container the port is fixed
-// by the image / `docker -p` mapping, so honoring a UI change there would be misleading.
+// > platform default (container = image contract port, desktop = the cold default in
+// foundation/port-binding). Containerized deploys skip the user setting — inside a container
+// the port is fixed by the image / `docker -p` mapping, so honoring a UI change there would
+// be misleading.
 function resolvePreferredPort(): number {
   if (portValue) {
     const cli = Number(portValue);
@@ -109,7 +111,7 @@ function resolvePreferredPort(): number {
     if (envPort > 0 && envPort <= 65535) return envPort;
   }
   if (peekedPreferredPort) return peekedPreferredPort;
-  return 8080;
+  return defaultPreferredPort(RUNNING_IN_CONTAINER);
 }
 
 // 绑定地址：默认只监听 127.0.0.1，局域网内其他设备无法直接访问（服务器目前没有鉴权，
@@ -365,6 +367,15 @@ console.log(`RIKKAHUB_PORT:${port}`);
 
 console.log(`RikkaHub PC server running at ${uiOrigin(port)} (listening on ${servedHostnames.join(", ")})`);
 console.log(`Data directory: ${dataDir}`);
+// [LEGACY-MIGRATION: pre-v4-ui-origin] 默认端口由 8080 换成冷门端口的一次性提示:只在
+// 「本次用的是新默认」(未显式指定 --port/PORT、也没在设置里手设)且实际端口不在 8080
+// 上时打印,给非 Docker 自托管用户(浏览器书签/nginx 反代/防火墙规则都锚着 8080)一条
+// 明确出路。到期随脚手架拆除(§13.11)。
+if (!RUNNING_IN_CONTAINER && !portValue && !process.env.PORT && peekedPreferredPort === null && port !== 8080) {
+  console.log(
+    `[startup] 默认端口已由 8080 改为 ${DESKTOP_DEFAULT_PORT};如需保持 8080,请使用 --port 8080 / PORT=8080,或在 设置→网络 填写 8080。Docker 部署不受影响(容器内固定 8080)。`,
+  );
+}
 
 // R1-1:bootstrap(状态装载+全部一次性迁移)在端口标记打出之后异步执行。此前它在
 // Bun.serve 之前同步跑,重数据老用户的首启迁移超过壳的 20s 就绪超时即被连坐击杀,

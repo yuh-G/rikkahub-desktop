@@ -110,6 +110,11 @@ COPY icons/ ./icons/
 COPY fonts/ ./fonts/
 
 VOLUME ["/app/pc-data"]
+# 容器内端口钉在 8080(镜像契约:EXPOSE/用户的 -p 8080:8080 映射/README nginx 示例)。
+# Podman 放的是 /run/.containerenv 而非 /.dockerenv,服务端容器检测在 Podman 下不成立,
+# 会把这类实例误判成桌面形态换用冷门默认端口——ENV PORT 与检测构成双保险。优先级:
+# --port > -e PORT > 本值,用户显式覆盖仍然生效。
+ENV PORT=8080
 EXPOSE 8080
 
 ENTRYPOINT ["./rikkahub-pc", "--no-open"]

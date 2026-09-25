@@ -5,8 +5,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  CONTAINER_PORT,
+  DESKTOP_DEFAULT_PORT,
   UI_HOST,
   bindFirstUsable,
+  defaultPreferredPort,
   isLoopbackHostname,
   isPortUnusableError,
   planBindAttempts,
@@ -20,6 +23,17 @@ import {
 } from "./port-binding";
 
 const GROUP = ["127.0.0.1", "::1"] as const;
+
+describe("默认端口常量", () => {
+  test("容器=镜像契约 8080,桌面=冷门默认;默认端口落在选号安全区间", () => {
+    expect(CONTAINER_PORT).toBe(8080);
+    expect(defaultPreferredPort(true)).toBe(CONTAINER_PORT);
+    expect(defaultPreferredPort(false)).toBe(DESKTOP_DEFAULT_PORT);
+    // 选号标准的机器可检部分;IANA 段位/常见默认端口核验是人工记录,见常量注释
+    expect(DESKTOP_DEFAULT_PORT).toBeGreaterThan(10080); // Chromium kRestrictedPorts 最大值
+    expect(DESKTOP_DEFAULT_PORT).toBeLessThan(32768); // Linux 临时端口段下界
+  });
+});
 
 describe("isLoopbackHostname", () => {
   test("三种回环写法(含方括号与大小写)", () => {

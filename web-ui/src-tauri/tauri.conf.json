@@ -5,7 +5,7 @@
   "identifier": "com.rikkahub.pc",
   "build": {
     "beforeDevCommand": "bun run dev",
-    "devUrl": "http://localhost:8080",
+    "devUrl": "http://localhost:17455",
     "beforeBuildCommand": "bun run build",
     "frontendDist": "../build/client"
   },

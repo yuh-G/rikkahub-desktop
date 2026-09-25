@@ -22,6 +22,9 @@ interface ProxyStatus {
   containerMode: boolean;
   // 实际运行端口(顺延后可能与 preferredPort 不同), 端口 Card 显示
   runningPort: number | null;
+  // 平台默认端口(容器 8080/桌面冷门默认,后端 proxyStatusPayload 下发)——端口说明与
+  // 输入框占位符的唯一来源,前端不写死端口号
+  defaultPort: number;
   // 品牌默认 UA(后端 proxyStatusPayload 返回),UA 输入框占位符/重置目标。
   defaultUserAgent: string;
 }
@@ -128,6 +131,7 @@ export function ProxySection({
         mode: result.mode,
         containerMode: result.containerMode,
         runningPort: result.runningPort,
+        defaultPort: result.defaultPort,
         defaultUserAgent: result.defaultUserAgent,
       });
     },
@@ -524,14 +528,14 @@ export function ProxySection({
           <div>
             <div className="text-base font-medium">{t("settings:proxy.port_title")}</div>
             <div className="mt-1 text-xs text-muted-foreground">
-              {t("settings:proxy.port_desc")}
+              {t("settings:proxy.port_desc", { port: status?.defaultPort ?? "…" })}
             </div>
           </div>
           <label className="block space-y-2">
             <span className="text-sm font-medium">
               {t("settings:proxy.port_number")}{" "}
               <span className="text-xs font-normal text-muted-foreground">
-                {t("settings:proxy.port_number_hint")}
+                {t("settings:proxy.port_number_hint", { port: status?.defaultPort ?? "…" })}
               </span>
             </span>
             <Input
@@ -543,7 +547,7 @@ export function ProxySection({
                 portAutosave.markDirty();
                 setPortDraft(event.target.value);
               }}
-              placeholder="8080"
+              placeholder={status?.defaultPort != null ? String(status.defaultPort) : ""}
               min={1}
               max={65535}
               step={1}
