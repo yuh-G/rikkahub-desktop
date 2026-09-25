@@ -113,9 +113,11 @@ export function createPiCredentialStore(): CredentialStore {
     },
 
     async list() {
+      // pi 消费方(ModelRuntime storedProviders / getProviderAuthStatus)以 pi 内置 id 为键,
+      // 与 read/modify 的键口径一致——报宿主 UUID 会让 pi 认为「有凭证但不知道是谁的」。
       return (state?.settings?.providers ?? [])
         .filter((p) => p.oauth != null)
-        .map((p) => ({ providerId: p.id, type: "oauth" as const }));
+        .map((p) => ({ providerId: OAUTH_FLOWS[p.oauth!.flow]?.piProviderId ?? p.id, type: "oauth" as const }));
     },
 
     async modify(providerId, fn, options) {

@@ -98,11 +98,12 @@ describe("pi credential store", () => {
     expect(provider?.enabled).toBe(true); // delete 不动 enabled(由调用方决定)
   });
 
-  test("list enumerates oauth providers", async () => {
+  test("list enumerates oauth providers under their pi provider id (same key space as read/modify)", async () => {
     seedProvider("p2", "r2");
     const store = createPiCredentialStore();
     const list = await store.list();
-    expect(list.map((e) => e.providerId).sort()).toEqual(["p1", "p2"]);
+    // seed 的两行都是 openai-codex flow → 都以 pi id 上报(宿主 UUID 不是 pi 认识的键)。
+    expect(list.map((e) => e.providerId)).toEqual(["openai-codex", "openai-codex"]);
     expect(list.every((e) => e.type === "oauth")).toBe(true);
   });
 
