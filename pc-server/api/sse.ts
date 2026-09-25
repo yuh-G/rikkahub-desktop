@@ -5,6 +5,7 @@
 import type { EngineStatus, StreamHooksWithSink } from "../inference-engine/events";
 import { initWorkingSetSseGuard, markConversationRowDirty, markMessageNodeDirty, scheduleThrottledConvFlush } from "../conversations";
 import { initAppErrorBroadcast } from "../observability/app-errors";
+import { initProviderAuthBroadcast } from "../model-providers/auth";
 import type { Conversation, ConversationListInvalidateEventDto, ConversationNodeUpdateEventDto, ConversationSnapshotEventDto, ConversationTextDeltaEventDto, EngineStatusEventDto, JsonValue, MessageNode } from "../foundation/types";
 import { diffFingerprints, fingerprintNode, type NodeBroadcastFingerprint } from "./node-delta";
 import { conversationNegotiationToken } from "./snapshot-negotiation";
@@ -111,6 +112,11 @@ export function initSseWiring(): void {
   initWorkingSetSseGuard((convId) => (conversationClients.get(convId)?.size ?? 0) > 0);
   initAppErrorBroadcast((entry) => {
     broadcastTo(appClients, sseFrame("app_error", { type: "app_error", error: entry }));
+  });
+  // 订阅供应商登录进度(方案 §4.3 三态卡片):select_method/waiting_browser/
+  // waiting_device_code/exchanging/success/error/cancelled 全经此通道推给前端。
+  initProviderAuthBroadcast((event) => {
+    broadcastTo(appClients, sseFrame("provider_auth", event));
   });
 }
 const encoder = new TextEncoder();

@@ -41,6 +41,7 @@ import { PI_COMPACTION_PROMPT } from "../../pi-engine/compaction-prompt-text";
 import { updateSettings } from "../../app-config";
 import { markProviderTestResult, providerAuthChanged } from "../../model-providers/checks";
 import { endpointFor, fetchProviderBalance, fetchProviderModels, runProviderCheck } from "../../model-providers/checks";
+import { cancelLogin, logoutProvider, resumePrompt, startLogin } from "../../model-providers/auth";
 
 // 全面审查 R5-4:MCP 服务器写操作按 id 串行化。detail/sync 在 await 网络同步(秒级)
 // 期间存在并发写窗口——同 id 的第二个写请求先落地后,慢的那个整对象覆盖会吃掉它的改动
@@ -851,6 +852,32 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     const ordered = body.ids.map((itemId) => byId.get(itemId)).filter(Boolean) as Provider[];
     const rest = state.settings.providers.filter((item) => !body.ids.includes(item.id));
     updateSettings({ ...state.settings, providers: [...ordered, ...rest] });
+    return json({ status: "ok" });
+  }
+  // ── 订阅供应商 OAuth(方案 §4.3)────────────────────────────────────────────
+  // 凭据写路径只在 login.ts;这里只做编排转发。凭据永不下发前端(stripAuthSecrets
+  // 剥成 oauthStatus),前端经 SSE provider_auth 事件跟踪三态进度。
+  if (path === "settings/provider/oauth/start" && request.method === "POST") {
+    const body = await readJson<{ providerId: string }>(request);
+    const result = await startLogin(String(body.providerId ?? ""));
+    if (!result.ok) return error(result.error, 400);
+    return json({ status: "ok" });
+  }
+  if (path === "settings/provider/oauth/cancel" && request.method === "POST") {
+    const body = await readJson<{ providerId: string }>(request);
+    cancelLogin(String(body.providerId ?? ""));
+    return json({ status: "ok" });
+  }
+  if (path === "settings/provider/oauth/manual-code" && request.method === "POST") {
+    const body = await readJson<{ providerId: string; input: string }>(request);
+    const ok = resumePrompt(String(body.providerId ?? ""), String(body.input ?? ""));
+    if (!ok) return error("No pending prompt for this provider", 400);
+    return json({ status: "ok" });
+  }
+  if (path === "settings/provider/oauth/logout" && request.method === "POST") {
+    const body = await readJson<{ providerId: string }>(request);
+    const ok = logoutProvider(String(body.providerId ?? ""));
+    if (!ok) return error("Provider not signed in", 400);
     return json({ status: "ok" });
   }
   if (path === "settings/provider/balance" && request.method === "POST") {
