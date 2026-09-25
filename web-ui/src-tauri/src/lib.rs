@@ -31,6 +31,12 @@ use tauri_plugin_shell::{
     ShellExt,
 };
 
+/// 界面拨号主机:webview 导航到 `http://{UI_HOST}:{port}`。与 pc-server/foundation/port-binding.ts
+/// 的 UI_HOST 同值(pc-server 契约测试读本文件锁定)。拨 localhost 安全的前提是 sidecar 在回环
+/// 意图下同时占住 127.0.0.1 与 ::1(issue #62:只占 IPv4 时,localhost 先连的 ::1 可被任意程序接走)。
+/// 改这里 = 页面 origin 改变,按 origin 隔离的本地存储会整体重置,见 port-binding.ts 的说明。
+const UI_HOST: &str = "localhost";
+
 #[derive(Default)]
 struct SidecarState {
     child: Mutex<Option<CommandChild>>,
@@ -768,13 +774,15 @@ pub fn run() {
                 // 内嵌的 splash.html（本地资源，零网络依赖——旧实现直指 8080，启动空窗期
                 // 必然先落在 WebView2 的「无法访问此页面」，几乎每次启动都闪一次报错页）。
                 // 守卫用 SPA 在 <head> 内联脚本设置的 __RIKKAHUB_APP__ 旗标：旗标在且
-                // 端口对 → 页面活着，不打扰；否则（splash 页或端口顺延后的旧页）重导航到
-                // 实际端口。splash 页视觉与 SPA 的 HydrateFallback 逐像素一致，用户感知为
-                // 一整段连续的品牌启动屏。
+                // origin 对 → 页面活着，不打扰；否则（splash 页、端口顺延或改拨主机后的旧页）
+                // 重导航到实际地址。比完整 origin 而非仅端口：主机名变化也能迁走；经 URL 规范化
+                // 后默认端口（80）的页面也不会被误判而反复重载。splash 页视觉与 SPA 的
+                // HydrateFallback 逐像素一致，用户感知为一整段连续的品牌启动屏。
                 // （更旧的实现只在非 8080 时导航、用 location.href 猜测，修不了 8080 死页。）
                 if let Some(window) = wait_handle.get_webview_window("main") {
                     let js = format!(
-                        "(function(){{var t='http://localhost:{p}';try{{if(!window.__RIKKAHUB_APP__||location.port!=='{p}'){{location.replace(t)}}}}catch(e){{location.replace(t)}}}})()",
+                        "(function(){{var t='http://{h}:{p}';try{{if(!window.__RIKKAHUB_APP__||location.origin!==new URL(t).origin){{location.replace(t)}}}}catch(e){{location.replace(t)}}}})()",
+                        h = UI_HOST,
                         p = actual_port
                     );
                     for _ in 0..3 {

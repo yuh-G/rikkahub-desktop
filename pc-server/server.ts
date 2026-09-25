@@ -1,6 +1,7 @@
 import { dataDir } from "./foundation/paths";
 import { RUNNING_IN_CONTAINER } from "./foundation/platform";
 import { setActualServingPort } from "./foundation/net";
+import { bindFirstUsable, isLoopbackHostname, planBindAttempts, resolveListenHostnames, stopListeners, uiOrigin } from "./foundation/port-binding";
 import { flushSaveState, peekPreferredPort, saveState } from "./persistence/json-store";
 import { asrRealtimeSessions, sendAsrAudio, startAsrRealtimeSession, stopAsrRealtimeSession } from "./media/asr";
 import { error, json } from "./api/request";
@@ -50,6 +51,13 @@ function emitStartupFatal(code: number, message: string): void {
   bootNote("startupFatal", `[code ${code}] ${message}`);
 }
 
+/** 启动期致命失败的唯一出口:壳可见的 FATAL 标记 + stderr + 退出码。 */
+function abortStartup(code: number, message: string, logLine = message): never {
+  emitStartupFatal(code, message);
+  console.error(`[rikkahub-server] ${logLine}`);
+  process.exit(code);
+}
+
 // 1-5/R1-1:dataDir 单实例互斥必须先于绑端口——若后到实例先绑了端口再发现锁被占,
 // 壳已拿到端口标记并导航,只会看到一扇死窗口。锁是纯文件操作,不拖慢端口标记。
 // bootstrap(状态装载+迁移链)则移到 Bun.serve 之后异步执行,见文件尾。
@@ -57,11 +65,7 @@ try {
   acquireDataDirLock();
   bootMilestone("已拿数据目录锁");
 } catch (err) {
-  if (err instanceof DataDirLockedError) {
-    emitStartupFatal(3, err.message);
-    console.error(`[rikkahub-server] ${err.message}`);
-    process.exit(3);
-  }
+  if (err instanceof DataDirLockedError) abortStartup(3, err.message);
   throw err;
 }
 
@@ -140,7 +144,7 @@ function isAllowedOrigin(request: Request): boolean {
   }
   if (parsed.protocol === "tauri:") return true;
   const host = parsed.hostname.toLowerCase();
-  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "tauri.localhost") return true;
+  if (isLoopbackHostname(host) || host === "tauri.localhost") return true;
   const requestHost = request.headers.get("host");
   if (requestHost && parsed.host.toLowerCase() === requestHost.trim().toLowerCase()) return true;
   return false;
@@ -149,179 +153,176 @@ const preferredPort = resolvePreferredPort();
 // Try the preferred port first; on a port-unusable error walk upward. Containers don't walk — a
 // port collision inside a container is unexpected, and silently hopping would hide a real problem.
 const MAX_PORT_ATTEMPTS = RUNNING_IN_CONTAINER ? 1 : 20;
+const lastWalkPort = Math.min(preferredPort + MAX_PORT_ATTEMPTS - 1, 65535);
 
-// 专题10-①:候选端口序列。非容器部署在顺延耗尽后追加 0(交给操作系统分配随机空闲端口)
-// 兜底——端口是启动期配置,启动失败意味着用户永远进不了设置页改端口(死锁),必须保证应用
-// 总能起来;实际端口经 RIKKAHUB_PORT 标记交给壳导航,UI 的"当前运行端口"照常显示。
-// 容器不顺延不兜底:端口由镜像/-p 映射约定,漂移只会掩盖真问题。
-const candidatePorts: number[] = [];
-for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt += 1) {
-  const p = preferredPort + attempt;
-  if (p <= 65535) candidatePorts.push(p);
+// 每个监听地址一个 Bun.serve 实例(回环意图下 127.0.0.1 与 ::1 各一个,见 foundation/port-binding)。
+// handler 内一律用回调参数 server:requestIP/upgrade/timeout 天然落在收到该请求的那个监听器上。
+function serveOn(hostname: string, port: number) {
+  return Bun.serve({
+    hostname,
+    port,
+    idleTimeout: 0,
+    // Default is 128 MB — way too small. Users have reported backup zips of 10+ GB
+    // (months of conversations + image attachments). The streaming `data/import` path
+    // never holds the full body in memory anyway (pipes request.body directly to disk),
+    // so this just acts as a sanity-check ceiling against truly absurd uploads.
+    maxRequestBodySize: 64 * 1024 * 1024 * 1024,
+    async fetch(request, server) {
+      server.timeout(request, 0);
+      const url = new URL(request.url);
+      try {
+        if (url.pathname.startsWith("/api/") && !isAllowedOrigin(request)) {
+          return error("Forbidden: cross-origin request blocked", 403);
+        }
+        // R1-1 启动闸门:端口已绑定但 bootstrap(装载+迁移)还在后台跑。状态端点
+        // 始终可达且免鉴权(不含机密;state 未装载时也评估不了鉴权),供前端迁移
+        // 进度页轮询。未就绪时其余 /api 一律 503(shutdown 除外——壳可能在迁移中
+        // 退出,flushAllStateBeforeExit 内部有未就绪守卫);静态资源照常放行,
+        // 前端才有页面可渲染进度。
+        if (url.pathname === "/api/startup/status") {
+          return json(getStartupStatus());
+        }
+        if (!isStartupReady() && url.pathname.startsWith("/api/") && url.pathname !== "/api/app/shutdown") {
+          return error("服务端正在启动(数据装载/迁移进行中),请稍候重试", 503);
+        }
+        // 全面审查 8-2/1-1:优雅停机端点。Windows 上 Tauri 壳 kill=TerminateProcess,
+        // SIGTERM 钩子不运行——壳退出前先 POST 本端点,服务端把全部状态刷盘后才返回
+        // 200,壳收到即可放心硬杀,数据零丢失。仅接受本机回环调用(先于 Web 鉴权:
+        // 壳不持有 token;局域网/远程客户端被 IP 拦住,不能停别人的服务)。
+        if (url.pathname === "/api/app/shutdown" && request.method === "POST") {
+          // 批次二 R5-1:本机架 nginx/caddy 反代时,远程请求到达 Bun 的 remote address
+          // 也是 127.0.0.1,裸回环判定会被穿透——任何互联网客户端 POST 本端点即可无鉴权
+          // 停服。Tauri 壳直连本端口、绝不经代理,故带任一代理转发头的请求一定不是壳
+          // 发的,直接拒绝;回环判定继续拦真正的远程直连。
+          const ip = server.requestIP(request)?.address ?? "";
+          if (hasProxyForwardHeaders(request) || !isLoopbackAddress(ip)) {
+            return error("Forbidden: shutdown is loopback-only", 403);
+          }
+          await flushAllStateBeforeExit();
+          // 响应发出后再停服自退;100ms 让 200 先落到壳侧。
+          setTimeout(() => {
+            stopListeners(listeners);
+            process.exit(0);
+          }, 100);
+          return json({ ok: true });
+        }
+        // Web 鉴权（阶段 5.2）：仅在配置了访问密码时生效。auth/token 端点先于
+        // 鉴权检查处理（它就是换 token 的入口）；其余 /api/* 一律要求有效 token。
+        if (url.pathname === "/api/auth/token" && request.method === "POST") {
+          return await handleAuthTokenRequest(request);
+        }
+        // web-auth/status 只回布尔(enabled/configured/lockedByDeployment),不含机密;
+        // 暴露横幅在"无密码(无 token)"时必须能拿到它——放进鉴权闸内会永远 401,横幅失效。
+        if (url.pathname === "/api/web-auth/status" && request.method === "GET") {
+          return handleWebAuthStatus();
+        }
+        if (url.pathname.startsWith("/api/") && !isWebAuthAuthorized(request, url)) {
+          return error("Unauthorized", 401);
+        }
+        if (url.pathname === "/api/asr/realtime" && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+          const upgraded = server.upgrade(request, { data: { kind: "asr" } as any });
+          return upgraded ? undefined : error("WebSocket upgrade failed", 400);
+        }
+        if (url.pathname.startsWith("/api/")) {
+          // 回环上下文标记:"仅限本机"端点(如 data/export/to-path 向宿主路径写文件)
+          // 在 handler 层经 net-context 查询;判定语义与上方 shutdown 闸同源。
+          markRequestNetworkContext(request, server.requestIP(request)?.address ?? "");
+          return await routeApi(request, url);
+        }
+        return await routeStatic(url);
+      } catch (err) {
+        console.error(err);
+        // 9-1:此前只进 stdout(Tauri release 下无处可看)。请求方拿到 500,
+        // 错误中心同步留痕,支持自查。
+        reportError("internal", "error", `接口处理异常：${url.pathname}`, err, "api_exception", { path: url.pathname });
+        return error(err instanceof Error ? err.message : String(err), 500);
+      }
+    },
+    websocket: {
+      message(ws, data) {
+        if ((ws.data as { kind?: string } | undefined)?.kind !== "asr") return;
+        if (typeof data === "string") {
+          // 批次二 R5-6:裸 JSON.parse 会让恶意/损坏的文本帧抛进 uncaughtException
+          // 安全网(进程不死但每帧一条错误中心记录)。解析失败静默丢帧即可——
+          // 合法客户端只发 start/stop 两种 JSON。
+          let payload: { type?: string; providerId?: string };
+          try {
+            payload = JSON.parse(data || "{}") as { type?: string; providerId?: string };
+          } catch {
+            return;
+          }
+          if (payload.type === "start") startAsrRealtimeSession(ws, payload.providerId);
+          if (payload.type === "stop") stopAsrRealtimeSession(ws);
+          return;
+        }
+        const session = asrRealtimeSessions.get(ws);
+        if (!session) return;
+        const buffer = data instanceof ArrayBuffer
+          ? data
+          : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+        sendAsrAudio(session, buffer);
+      },
+      close(ws) {
+        if ((ws.data as { kind?: string } | undefined)?.kind === "asr") stopAsrRealtimeSession(ws);
+      },
+    },
+  });
 }
-if (!RUNNING_IN_CONTAINER) candidatePorts.push(0);
 
-const { server, port } = (() => {
-  for (const tryPort of candidatePorts) {
-    if (tryPort === 0) {
-      console.warn(
-        `[startup] Ports ${preferredPort}-${candidatePorts[candidatePorts.length - 2]} all unusable; falling back to an OS-assigned random port.`,
-      );
+// 专题10-①:候选端口顺延,非容器部署耗尽后交给操作系统分配随机空闲端口兜底——端口是启动期
+// 配置,启动失败意味着用户永远进不了设置页改端口(死锁),必须保证应用总能起来;实际端口经
+// RIKKAHUB_PORT 标记交给壳导航,UI 的"当前运行端口"照常显示。容器不顺延不兜底:端口由镜像/-p
+// 映射约定,漂移只会掩盖真问题。issue #62:回环意图下每个候选端口都要 127.0.0.1 与 ::1 整组绑上。
+const listenHostnames = resolveListenHostnames(bindHostname);
+const bound = bindFirstUsable(
+  planBindAttempts({ preferredPort, walk: MAX_PORT_ATTEMPTS, osAssignedFallback: !RUNNING_IN_CONTAINER, hostnames: listenHostnames }),
+  serveOn,
+  (failure, next) => {
+    const reason = failure.error instanceof Error ? failure.error.message : String(failure.error);
+    if (failure.attempt.port === preferredPort && next && next.port !== 0) {
+      console.warn(`[startup] Port ${preferredPort} unusable on ${failure.hostname} (${reason}), trying alternatives up to ${lastWalkPort}...`);
+    } else if (failure.attempt.port !== 0 && next?.port === 0) {
+      console.warn(`[startup] Ports ${preferredPort}-${failure.attempt.port} all unusable; falling back to an OS-assigned random port.`);
+    } else if (failure.attempt.port === 0 && next) {
+      console.warn(`[startup] OS-assigned port ${failure.port} unusable on ${failure.hostname}; retrying.`);
     }
-    try {
-      const bound = Bun.serve({
-          hostname: bindHostname,
-          port: tryPort,
-          idleTimeout: 0,
-          // Default is 128 MB — way too small. Users have reported backup zips of 10+ GB
-          // (months of conversations + image attachments). The streaming `data/import` path
-          // never holds the full body in memory anyway (pipes request.body directly to disk),
-          // so this just acts as a sanity-check ceiling against truly absurd uploads.
-          maxRequestBodySize: 64 * 1024 * 1024 * 1024,
-          async fetch(request, server) {
-            server.timeout(request, 0);
-            const url = new URL(request.url);
-            try {
-              if (url.pathname.startsWith("/api/") && !isAllowedOrigin(request)) {
-                return error("Forbidden: cross-origin request blocked", 403);
-              }
-              // R1-1 启动闸门:端口已绑定但 bootstrap(装载+迁移)还在后台跑。状态端点
-              // 始终可达且免鉴权(不含机密;state 未装载时也评估不了鉴权),供前端迁移
-              // 进度页轮询。未就绪时其余 /api 一律 503(shutdown 除外——壳可能在迁移中
-              // 退出,flushAllStateBeforeExit 内部有未就绪守卫);静态资源照常放行,
-              // 前端才有页面可渲染进度。
-              if (url.pathname === "/api/startup/status") {
-                return json(getStartupStatus());
-              }
-              if (!isStartupReady() && url.pathname.startsWith("/api/") && url.pathname !== "/api/app/shutdown") {
-                return error("服务端正在启动(数据装载/迁移进行中),请稍候重试", 503);
-              }
-              // 全面审查 8-2/1-1:优雅停机端点。Windows 上 Tauri 壳 kill=TerminateProcess,
-              // SIGTERM 钩子不运行——壳退出前先 POST 本端点,服务端把全部状态刷盘后才返回
-              // 200,壳收到即可放心硬杀,数据零丢失。仅接受本机回环调用(先于 Web 鉴权:
-              // 壳不持有 token;局域网/远程客户端被 IP 拦住,不能停别人的服务)。
-              if (url.pathname === "/api/app/shutdown" && request.method === "POST") {
-                // 批次二 R5-1:本机架 nginx/caddy 反代时,远程请求到达 Bun 的 remote address
-                // 也是 127.0.0.1,裸回环判定会被穿透——任何互联网客户端 POST 本端点即可无鉴权
-                // 停服。Tauri 壳直连本端口、绝不经代理,故带任一代理转发头的请求一定不是壳
-                // 发的,直接拒绝;回环判定继续拦真正的远程直连。
-                const ip = server.requestIP(request)?.address ?? "";
-                if (hasProxyForwardHeaders(request) || !isLoopbackAddress(ip)) {
-                  return error("Forbidden: shutdown is loopback-only", 403);
-                }
-                await flushAllStateBeforeExit();
-                // 响应发出后再停服自退;100ms 让 200 先落到壳侧。
-                setTimeout(() => {
-                  try { server.stop(true); } catch { /* already stopping */ }
-                  process.exit(0);
-                }, 100);
-                return json({ ok: true });
-              }
-              // Web 鉴权（阶段 5.2）：仅在配置了访问密码时生效。auth/token 端点先于
-              // 鉴权检查处理（它就是换 token 的入口）；其余 /api/* 一律要求有效 token。
-              if (url.pathname === "/api/auth/token" && request.method === "POST") {
-                return await handleAuthTokenRequest(request);
-              }
-              // web-auth/status 只回布尔(enabled/configured/lockedByDeployment),不含机密;
-              // 暴露横幅在"无密码(无 token)"时必须能拿到它——放进鉴权闸内会永远 401,横幅失效。
-              if (url.pathname === "/api/web-auth/status" && request.method === "GET") {
-                return handleWebAuthStatus();
-              }
-              if (url.pathname.startsWith("/api/") && !isWebAuthAuthorized(request, url)) {
-                return error("Unauthorized", 401);
-              }
-              if (url.pathname === "/api/asr/realtime" && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
-                const upgraded = server.upgrade(request, { data: { kind: "asr" } as any });
-                return upgraded ? undefined : error("WebSocket upgrade failed", 400);
-              }
-              if (url.pathname.startsWith("/api/")) {
-                // 回环上下文标记:"仅限本机"端点(如 data/export/to-path 向宿主路径写文件)
-                // 在 handler 层经 net-context 查询;判定语义与上方 shutdown 闸同源。
-                markRequestNetworkContext(request, server.requestIP(request)?.address ?? "");
-                return await routeApi(request, url);
-              }
-              return await routeStatic(url);
-            } catch (err) {
-              console.error(err);
-              // 9-1:此前只进 stdout(Tauri release 下无处可看)。请求方拿到 500,
-              // 错误中心同步留痕,支持自查。
-              reportError("internal", "error", `接口处理异常：${url.pathname}`, err, "api_exception", { path: url.pathname });
-              return error(err instanceof Error ? err.message : String(err), 500);
-            }
-          },
-          websocket: {
-            message(ws, data) {
-              if ((ws.data as { kind?: string } | undefined)?.kind !== "asr") return;
-              if (typeof data === "string") {
-                // 批次二 R5-6:裸 JSON.parse 会让恶意/损坏的文本帧抛进 uncaughtException
-                // 安全网(进程不死但每帧一条错误中心记录)。解析失败静默丢帧即可——
-                // 合法客户端只发 start/stop 两种 JSON。
-                let payload: { type?: string; providerId?: string };
-                try {
-                  payload = JSON.parse(data || "{}") as { type?: string; providerId?: string };
-                } catch {
-                  return;
-                }
-                if (payload.type === "start") startAsrRealtimeSession(ws, payload.providerId);
-                if (payload.type === "stop") stopAsrRealtimeSession(ws);
-                return;
-              }
-              const session = asrRealtimeSessions.get(ws);
-              if (!session) return;
-              const buffer = data instanceof ArrayBuffer
-                ? data
-                : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-              sendAsrAudio(session, buffer);
-            },
-            close(ws) {
-              if ((ws.data as { kind?: string } | undefined)?.kind === "asr") stopAsrRealtimeSession(ws);
-            },
-          },
-      });
-      return { server: bound, port: bound.port ?? tryPort };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      // 专题10-①:"端口不可用"类错误一律顺延。除 EADDRINUSE 外,EACCES/EPERM(Windows 的
-      // Hyper-V/WSL 保留端口段 netsh excludedportrange、Linux 特权端口)对用户同样是
-      // "换个端口就好",旧逻辑直接 fatal 会把应用锁死在"起不来→进不了设置→改不了端口"。
-      // 其余错误(非法 hostname 等配置问题)与 port 0 兜底也失败的情况仍立即暴露。
-      // 同时检查 err.code 与 message:Bun 的报错文案不保证含错误码字样(如 EADDRINUSE 的文案是
-      // "Is port X in use?"),而 code 字段才是稳定契约。
-      const errCode = (err as NodeJS.ErrnoException | null)?.code ?? "";
-      const portUnusable = /EADDRINUSE|EACCES|EPERM|address already in use|in use|permission denied|access permissions|10013/i.test(`${errCode} ${message}`);
-      if (!portUnusable || tryPort === 0) {
-        emitStartupFatal(1, `本地服务无法在端口 ${tryPort === 0 ? "(系统分配)" : tryPort} 启动:${message}`);
-        console.error(`[rikkahub-server] Failed to start on port ${tryPort}: ${message}`);
-        process.exit(1);
-      }
-      if (tryPort === preferredPort && candidatePorts.length > 1) {
-        console.warn(
-          `[startup] Port ${tryPort} unusable (${message}), trying alternatives up to ${Math.min(preferredPort + MAX_PORT_ATTEMPTS - 1, 65535)}...`,
-        );
-      }
-    }
+  },
+);
+if (!bound.ok) {
+  const { failure } = bound;
+  const reason = failure.error instanceof Error ? failure.error.message : String(failure.error);
+  // R1-4:打出壳解析的 RIKKAHUB_FATAL 标记弹出真实原因(旧 port_in_use: 标记是从未被壳解析过的
+  // 死契约,已废除)。D6(复查):容器单端口不重试,且"到设置里换端口"在容器内是死路(端口固定、
+  // 启动时跳过该设置)——正确出路是排查镜像内进程或调整宿主机 docker -p 映射,文案必须指对方向。
+  if (bound.kind === "exhausted" && RUNNING_IN_CONTAINER) {
+    abortStartup(
+      2,
+      `容器内端口 ${preferredPort} 被占用(容器端口固定,不做重试)。请检查镜像内是否有其他进程占用;如需换宿主机端口,用 docker run -p <宿主机端口>:${preferredPort} 调整映射即可,无需改容器内端口。`,
+    );
   }
-  // 候选端口全部耗尽。R1-4:打出壳解析的 RIKKAHUB_FATAL 标记弹出真实原因
-  // (旧 port_in_use: 标记是从未被壳解析过的死契约,已废除)。
-  const top = Math.min(preferredPort + MAX_PORT_ATTEMPTS - 1, 65535);
-  // D6(复查):容器分支单端口不重试,且"到设置里换端口"在容器内是死路(端口固定、启动时
-  // 跳过该设置)——正确出路是排查镜像内进程或调整宿主机 docker -p 映射,文案必须指对方向。
-  const exhaustedMessage = RUNNING_IN_CONTAINER
-    ? `容器内端口 ${preferredPort} 被占用(容器端口固定,不做重试)。请检查镜像内是否有其他进程占用;如需换宿主机端口,用 docker run -p <宿主机端口>:${preferredPort} 调整映射即可,无需改容器内端口。`
-    : `端口 ${preferredPort}-${top} 全部被其他程序占用。请关闭占用这些端口的程序,或在 设置 → 网络 中更换端口后重新启动。`;
-  emitStartupFatal(2, exhaustedMessage);
-  console.error(`[rikkahub-server] ${exhaustedMessage}`);
-  process.exit(2);
-})();
+  // 非端口类错误,或非容器部署连 OS 分配端口兜底都失败。
+  abortStartup(
+    1,
+    `本地服务无法在端口 ${failure.port === 0 ? "(系统分配)" : failure.port} 启动:${reason}`,
+    `Failed to start on port ${failure.port} (${failure.hostname}): ${reason}`,
+  );
+}
+const { listeners, port } = bound;
+const servedHostnames = bound.attempt.hostnames;
+if (servedHostnames.length < listenHostnames.length) {
+  console.warn(
+    `[startup] Could not pair ${listenHostnames.slice(servedHostnames.length).join(", ")} with an OS-assigned port; serving ${servedHostnames.join(", ")} only.`,
+  );
+}
 
 // Machine-readable marker parsed by the Tauri shell (src-tauri/src/lib.rs) to learn which port
 // the sidecar actually bound to — the shell navigates the webview here when 8080 was taken.
 // Keep it a single line with the exact `RIKKAHUB_PORT:<port>` prefix.
 setActualServingPort(port);
-bootMilestone("端口已绑定", `port=${port}`);
+bootMilestone("端口已绑定", `port=${port} hosts=${servedHostnames.join(",")}`);
 console.log(`RIKKAHUB_PORT:${port}`);
 
-console.log(`RikkaHub PC server running at http://localhost:${port}`);
+console.log(`RikkaHub PC server running at ${uiOrigin(port)} (listening on ${servedHostnames.join(", ")})`);
 console.log(`Data directory: ${dataDir}`);
 
 // R1-1:bootstrap(状态装载+全部一次性迁移)在端口标记打出之后异步执行。此前它在
@@ -416,7 +417,7 @@ async function flushAllStateBeforeExit(): Promise<void> {
 }
 
 async function shutdown() {
-  server.stop(true);
+  stopListeners(listeners);
   // 工作区 bash 残留子进程清扫(M1-5)：detached 进程组不随宿主退出，不杀会变孤儿。
   killTrackedDetachedChildren();
   await flushAllStateBeforeExit();
@@ -431,9 +432,10 @@ process.on("SIGHUP", shutdown);
 
 if (!args.has("--dev") && !args.has("--no-open")) {
   const opener = process.platform === "win32" ? "cmd" : "sh";
+  const target = uiOrigin(port);
   const command = process.platform === "win32"
-    ? ["/c", "start", `http://localhost:${port}`]
-    : ["-c", `open http://localhost:${port} || xdg-open http://localhost:${port}`];
+    ? ["/c", "start", target]
+    : ["-c", `open ${target} || xdg-open ${target}`];
   Bun.spawn([opener, ...command], { stdout: "ignore", stderr: "ignore" });
 }
 

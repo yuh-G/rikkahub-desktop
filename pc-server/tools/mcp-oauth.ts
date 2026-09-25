@@ -294,7 +294,8 @@ function sweepExpiredPending(): void {
  *  授权服务器会以 invalid redirect_uri 拒绝,且报错发生在浏览器侧、应用内无提示。
  *  回调地址已变时:支持动态注册就换新身份重注册(旧授权作废属预期);不支持则
  *  应用内明确报错。existing.redirectUri 缺失 = 预配置 clientId 或本字段引入前的
- *  旧授权状态 → 不动(不能擅自换预配置身份;旧状态在下次授权成功时自愈,见回调)。 */
+ *  旧授权状态 → 不动(不能擅自换预配置身份;旧状态在下次授权成功时自愈,见回调)。
+ *  只换了回环写法(见 isSameLoopbackCallback)不算漂移:keep 并沿用已注册的那个。 */
 export function redirectUriDriftAction(
   existing: McpOAuthStateRecord | null,
   currentRedirectUri: string,
@@ -302,8 +303,28 @@ export function redirectUriDriftAction(
 ): "keep" | "reregister" | "fail" {
   const clientId = existing?.clientId ?? null;
   const registered = existing?.redirectUri ?? null;
-  if (!clientId || !registered || registered === currentRedirectUri) return "keep";
+  if (!clientId || !registered || isSameLoopbackCallback(registered, currentRedirectUri)) return "keep";
   return hasRegistrationEndpoint ? "reregister" : "fail";
+}
+
+/** 两个回调地址是否送达同一处:逐字相同,或仅主机在 localhost / 127.0.0.1 之间互换(scheme、端口、
+ *  路径、查询都一致)。服务端在回环意图下同时占住 127.0.0.1 与 ::1(issue #62,foundation/port-binding),
+ *  这两种写法的回调都只会落到本进程——页面换了写法(浏览器手敲 127.0.0.1,或界面改拨字面 IP)就不该
+ *  让动态注册换身份、让不支持动态注册的服务报错。[::1] 不在此列:本机无 IPv6 回环、仅 IPv4 监听时它不可达。 */
+export function isSameLoopbackCallback(a: string, b: string): boolean {
+  if (a === b) return true;
+  let left: URL;
+  let right: URL;
+  try {
+    left = new URL(a);
+    right = new URL(b);
+  } catch {
+    return false; // 非法地址不做等价推断,按漂移处理
+  }
+  const interchangeable = (host: string) => host === "localhost" || host === "127.0.0.1";
+  return interchangeable(left.hostname) && interchangeable(right.hostname)
+    && left.protocol === right.protocol && left.port === right.port
+    && left.pathname === right.pathname && left.search === right.search;
 }
 
 export async function startMcpOAuth(serverId: string, redirectUri: string): Promise<{ authorizationUrl: string }> {
@@ -341,6 +362,9 @@ export async function startMcpOAuth(serverId: string, redirectUri: string): Prom
     clientId = null;
     clientSecret = null;
   }
+  // 沿用旧 clientId 且有注册记录时,授权与换码逐字使用注册时的回调——它可能是与当前等价的另一种
+  // 回环写法,授权服务器只认注册过的那个字符串。
+  const callbackUri = clientId && registeredRedirectUri ? registeredRedirectUri : redirectUri;
   let registeredNow = false;
   if (!clientId) {
     if (!metadata.registration_endpoint) throw new Error("授权服务器不支持动态注册,且未预配置 client_id");
@@ -368,7 +392,7 @@ export async function startMcpOAuth(serverId: string, redirectUri: string): Prom
   pendingAuthorizations.set(stateParam, {
     serverId,
     codeVerifier: pkce.verifier,
-    redirectUri,
+    redirectUri: callbackUri,
     clientId,
     clientSecret,
     tokenEndpoint,
@@ -382,7 +406,7 @@ export async function startMcpOAuth(serverId: string, redirectUri: string): Prom
   const authUrl = new URL(authorizationEndpoint);
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("client_id", clientId);
-  authUrl.searchParams.set("redirect_uri", redirectUri);
+  authUrl.searchParams.set("redirect_uri", callbackUri);
   authUrl.searchParams.set("code_challenge", pkce.challenge);
   authUrl.searchParams.set("code_challenge_method", "S256");
   authUrl.searchParams.set("state", stateParam);

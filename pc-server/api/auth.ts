@@ -18,6 +18,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { error, json, readJson } from "./request";
 import { state } from "../persistence/json-store";
 import { updateSettings } from "../app-config";
+import { isLoopbackHostname } from "../foundation/port-binding";
 
 const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 天，前端 localStorage 按 expiresAt 自行过期
 const TOKEN_PREFIX = "v1";
@@ -235,8 +236,7 @@ export function handleWebAuthStatus(): Response {
 
 /** 启动时提示：绑定了非回环地址却没配密码 → 全部数据对同网络裸奔，必须让用户知道。 */
 export function warnIfExposedWithoutAuth(bindHostname: string): void {
-  const loopback = bindHostname === "127.0.0.1" || bindHostname === "localhost" || bindHostname === "::1";
-  if (loopback || webAuthEnabled()) return;
+  if (isLoopbackHostname(bindHostname) || webAuthEnabled()) return;
   console.warn(
     "[security] 服务绑定在 " + bindHostname + " 且未设置访问密码：同一网络内任何设备都能读取全部会话与 API Key。" +
     "可在设置 → 数据中设置访问密码,或通过 --password <密码> / 环境变量 RIKKAHUB_PASSWORD 注入。",

@@ -20,8 +20,10 @@ import { Button } from "~/components/ui/button";
 
 function isLocalhostHost(): boolean {
   if (typeof window === "undefined") return true;
+  // URL 规范里 IPv6 的 hostname 带方括号("[::1]")——服务端回环意图下也在 ::1 上监听,
+  // 从 http://[::1]:端口 打开同样是本机。
   const host = window.location.hostname.toLowerCase();
-  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
 }
 
 /** 服务是否可能被本机之外访问:非安全上下文(http 裸 IP)或 hostname 已是局域网/公网地址。 */
