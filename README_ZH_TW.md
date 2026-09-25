@@ -261,3 +261,7 @@ server {
 ## 📄 授權條款
 
 [License](LICENSE)
+
+## 🔗 友情連結
+
+- [LINUX DO](https://linux.do/) — 新的理想型社群
