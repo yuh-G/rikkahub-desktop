@@ -16,6 +16,12 @@
 //
 // 本模块只管「怎么绑」,提示文案与退出码留在 server.ts。
 
+import { LOOPBACK_GROUP, isLoopbackHostname } from "./loopback";
+
+// 回环主机名判定收在 loopback.ts(纯模块,web-ui 可经 @server 打包);此处 re-export
+// 保持「绑定策略」的既有导入面,server.ts / api/auth.ts 不必改导入路径。
+export { isLoopbackHostname };
+
 /** 界面拨号主机:Tauri 壳导航(web-ui/src-tauri/src/lib.rs 同名常量,契约测试锁一致)、便携模式
  *  自动打开的浏览器、启动日志都拨它。拨名字安全的前提是上方不变量(同样有测试锁定)。
  *  改拨字面 IP(RFC 8252 §8.3 的推荐)只需改这里与 lib.rs 两处,但页面 origin 随之改变——按 origin
@@ -24,15 +30,6 @@ export const UI_HOST = "localhost";
 
 export function uiOrigin(port: number): string {
   return `http://${UI_HOST}:${port}`;
-}
-
-/** 回环意图下的绑定组。首个为主地址:OS 分配端口时由它取号,退化兜底时只留它。 */
-const LOOPBACK_GROUP = ["127.0.0.1", "::1"] as const;
-
-/** 「仅本机」意图的三种写法(含 URL 里带方括号的 IPv6 形态),大小写不敏感。 */
-export function isLoopbackHostname(hostname: string): boolean {
-  const host = hostname.trim().toLowerCase();
-  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
 }
 
 /** 本机能否绑 IPv6 回环。Bun.listen 同步,零点几毫秒。 */

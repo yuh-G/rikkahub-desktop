@@ -1,7 +1,7 @@
 // api/static.ts — 内嵌 web-ui 静态文件服务（SPA fallback 与缓存策略）
 // 纪律：只负责静态资源定位与 Cache-Control；API 路由在 server.ts / api/handlers。
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { executableDir, rootDir } from "../foundation/paths";
 import { mime } from "./request";
@@ -17,9 +17,11 @@ import { mime } from "./request";
 //   base-uri 'self'     —— 禁 <base href> 劫持相对路径(API/资源请求被重定向到攻击者域)
 //   form-action 'self'  —— 禁表单向外域提交(凭据/内容外发)
 //   frame-ancestors 'self' —— Web 托管模式防点击劫持(Tauri 顶层窗口不受影响)
-const HTML_CSP = "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'";
+export const HTML_CSP = "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'";
 
-export async function routeStatic(url: URL) {
+// 静态根定位独立导出:origin 接力的临时监听(api/origin-relay.ts)要用同一套候选目录读
+// splash.html 作接力页底版——两处清单必须同源,否则发布产物换个布局就会静默分叉。
+export function resolveStaticRoot(): string | null {
   const candidates = [
     resolve(executableDir, "web-ui", "build", "client"),
     resolve(executableDir, "web-ui", "build"),
@@ -27,7 +29,11 @@ export async function routeStatic(url: URL) {
     resolve(rootDir, "web-ui", "build"),
     resolve(rootDir, "web-ui", "dist"),
   ];
-  const staticRoot = candidates.find((candidate) => existsSync(join(candidate, "index.html")));
+  return candidates.find((candidate) => existsSync(join(candidate, "index.html"))) ?? null;
+}
+
+export async function routeStatic(url: URL, headInjection?: string) {
+  const staticRoot = resolveStaticRoot();
   if (!staticRoot) {
     return new Response("web-ui is not built. Run `cd web-ui && bun install && bun run build`.", { status: 200 });
   }
@@ -37,6 +43,9 @@ export async function routeStatic(url: URL) {
   // 兄弟目录(/x/build/client2/... 通过 /x/build/client 的校验),是经典穿越模式。
   if (target.startsWith(staticRoot + sep) && existsSync(target)) {
     const contentType = mime(target);
+    if (headInjection && contentType.startsWith("text/html")) {
+      return htmlWithHeadInjection(target, headInjection);
+    }
     const headers: Record<string, string> = {
       "Content-Type": contentType,
       "Cache-Control": staticCacheControl(url.pathname, target),
@@ -46,7 +55,28 @@ export async function routeStatic(url: URL) {
   }
   // SPA fallback (index.html): 绝不缓存。覆盖安装后 WebView2 每次都拿最新的 index.html,
   // 它引用的 hash 化 css/js 会自然跟到新版本,彻底杜绝"装了新版还在跑旧前端"的缓存污染。
+  if (headInjection) {
+    return htmlWithHeadInjection(join(staticRoot, "index.html"), headInjection);
+  }
   return new Response(Bun.file(join(staticRoot, "index.html")), {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": HTML_CSP,
+    },
+  });
+}
+
+/** 仅 origin 接力落地时使用:读 html 文本、把数据块插到 <head> 开头、no-store 返回。
+ *  只有这一条路径读整份文本,其余静态响应保持流式 Bun.file——不为一次性机制给日常路径
+ *  买单。<head> 缺失(理论不可能)时原样返回:落地判定不受影响,数据这次不导入(记录已
+ *  写,不会再有下次),退化即「界面状态重置一次」,与接力失败同款兜底。 */
+function htmlWithHeadInjection(filePath: string, injection: string): Response {
+  const html = readFileSync(filePath, "utf8");
+  const body = /<head[^>]*>/i.test(html)
+    ? html.replace(/<head[^>]*>/i, (headOpen) => headOpen + injection)
+    : html;
+  return new Response(body, {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",

@@ -1,7 +1,9 @@
-import { dataDir } from "./foundation/paths";
+import { dataDir, statePath, uiOriginRecordPath } from "./foundation/paths";
 import { RUNNING_IN_CONTAINER } from "./foundation/platform";
 import { setActualServingPort } from "./foundation/net";
 import { bindFirstUsable, isLoopbackHostname, planBindAttempts, resolveListenHostnames, stopListeners, uiOrigin } from "./foundation/port-binding";
+import { planOriginRelay } from "./foundation/origin-relay";
+import { createOriginRelayApi, readUiOriginRecord } from "./api/origin-relay";
 import { flushSaveState, peekPreferredPort, saveState } from "./persistence/json-store";
 import { asrRealtimeSessions, sendAsrAudio, startAsrRealtimeSession, stopAsrRealtimeSession } from "./media/asr";
 import { error, json } from "./api/request";
@@ -19,6 +21,7 @@ import { loadModelsDev } from "./inference-engine/providers";
 import { checkpointConversationsDb, flushConvDirtyNow, getConversation, persistConversation } from "./conversations";
 
 import process from "node:process";
+import { existsSync } from "node:fs";
 import { installProcessSafetyNet, reportError } from "./observability/app-errors";
 import { bootCleanExit, bootMilestone, bootNote, bootTraceStartup, readPreviousCrashLog } from "./observability/boot-trace";
 import { killTrackedDetachedChildren } from "./workspace/tools/shell";
@@ -87,6 +90,12 @@ if (process.platform === "linux") {
   }
 }
 
+// [LEGACY-MIGRATION: pre-v4-ui-origin] hadStateBeforeBoot/peekedPreferredPort 是「旧版界面
+// 落脚点推断」的输入(见 foundation/origin-relay.ts inferPreV4UiOrigin),与端口窥探同一
+// 时刻采集(绑定端口前),到期随推断一起拆。
+const hadStateBeforeBoot = existsSync(statePath);
+const peekedPreferredPort = !RUNNING_IN_CONTAINER ? peekPreferredPort() : null;
+
 // Resolve the preferred port by priority: explicit `--port` flag > `PORT` env > user setting
 // > 8080. Containerized deploys skip the user setting — inside a container the port is fixed
 // by the image / `docker -p` mapping, so honoring a UI change there would be misleading.
@@ -99,11 +108,7 @@ function resolvePreferredPort(): number {
     const envPort = Number(process.env.PORT);
     if (envPort > 0 && envPort <= 65535) return envPort;
   }
-  if (!RUNNING_IN_CONTAINER) {
-    // R1-1:state 此刻尚未装载(迁移后置到绑端口之后),对 state.json 做轻量端口窥探。
-    const peeked = peekPreferredPort();
-    if (peeked) return peeked;
-  }
+  if (peekedPreferredPort) return peekedPreferredPort;
   return 8080;
 }
 
@@ -123,6 +128,12 @@ function resolveBindHostname(): string {
 
 const bindHostname = resolveBindHostname();
 // warnIfExposedWithoutAuth 读 state.settings(是否已设访问密码),在 bootstrap 就绪后执行。
+
+// 界面消费者:Tauri 壳 spawn sidecar 时带 --ui-shell,或便携模式会自动开浏览器。二者都
+// 没有(如 Linux 上 --no-open 的无头服务、--dev)时绝不启用 origin 接力——旧端口可能正被
+// nginx 指着,为无头实例挂临时监听只会添乱。
+const willOpenBrowser = !args.has("--dev") && !args.has("--no-open");
+const uiConsumer = args.has("--ui-shell") || willOpenBrowser;
 
 // Origin 白名单：拦截恶意网页对本机服务的跨站请求（浏览器会自动带上 Origin，
 // 而 localhost 服务默认不受同源策略保护——任意网页都能 fetch http://127.0.0.1:8080）。
@@ -201,6 +212,7 @@ function serveOn(hostname: string, port: number) {
           await flushAllStateBeforeExit();
           // 响应发出后再停服自退;100ms 让 200 先落到壳侧。
           setTimeout(() => {
+            originRelay.stopAll();
             stopListeners(listeners);
             process.exit(0);
           }, 100);
@@ -229,7 +241,9 @@ function serveOn(hostname: string, port: number) {
           markRequestNetworkContext(request, server.requestIP(request)?.address ?? "");
           return await routeApi(request, url);
         }
-        return await routeStatic(url);
+        // origin 接力落地判定(内部只对桌面 origin 的 document 请求有副作用,其余 no-op):
+        // 写落脚点记录,接力待取数据匹配凭证时返回注入 index.html <head> 的数据块。
+        return await routeStatic(url, originRelay.noteDocumentLanding(request, url));
       } catch (err) {
         console.error(err);
         // 9-1:此前只进 stdout(Tauri release 下无处可看)。请求方拿到 500,
@@ -315,11 +329,38 @@ if (servedHostnames.length < listenHostnames.length) {
   );
 }
 
-// Machine-readable marker parsed by the Tauri shell (src-tauri/src/lib.rs) to learn which port
-// the sidecar actually bound to — the shell navigates the webview here when 8080 was taken.
-// Keep it a single line with the exact `RIKKAHUB_PORT:<port>` prefix.
+// 界面 origin 接力(issue #62 换默认端口配套;决策纯函数与白名单见 foundation/origin-relay.ts,
+// HTTP 面见 api/origin-relay.ts)。任何失败只退化成「界面状态重置一次」,不影响启动。
+const currentOrigin = uiOrigin(port);
+const recordedUiOrigin = readUiOriginRecord(uiOriginRecordPath);
+const originRelay = createOriginRelayApi({ recordPath: uiOriginRecordPath, currentOrigin, recordedOrigin: recordedUiOrigin });
+const relayPlan = planOriginRelay({
+  recordedOrigin: recordedUiOrigin,
+  currentOrigin,
+  uiConsumer,
+  loopbackIntent: isLoopbackHostname(bindHostname),
+  inContainer: RUNNING_IN_CONTAINER,
+  hadStateBeforeBoot,
+  peekedPreferredPort,
+});
+const relaySession = relayPlan.kind === "relay" ? originRelay.startSession(relayPlan.fromOrigin) : null;
+if (relayPlan.kind === "relay") {
+  if (relaySession) {
+    console.log(`[startup] UI origin relay armed: ${relayPlan.fromOrigin} -> ${currentOrigin}`);
+  } else {
+    // 旧端口被别人占着 = 旧 origin 已不归我们,接力放弃;旧 origin 下的界面状态重置一次。
+    console.warn(`[startup] origin relay skipped: ${relayPlan.fromOrigin} unusable`);
+  }
+}
+
+// Machine-readable markers parsed by the Tauri shell (src-tauri/src/lib.rs): UI_ORIGIN = 界面
+// 最终地址;UI_ENTRY = 首跳(接力时先去旧 origin 的接力页,由它带数据跳回 UI_ORIGIN;无接力
+// 时同为最终 origin 根路径)。顺序固定:UI_* 在前,RIKKAHUB_PORT 收尾(端口标记语义不变,
+// e2e 助手与优雅停机依赖它)。均保持单行、前缀逐字。
 setActualServingPort(port);
-bootMilestone("端口已绑定", `port=${port} hosts=${servedHostnames.join(",")}`);
+bootMilestone("端口已绑定", `port=${port} hosts=${servedHostnames.join(",")}${relaySession ? ` relay=${relaySession.fromOrigin}` : ""}`);
+console.log(`RIKKAHUB_UI_ORIGIN:${currentOrigin}`);
+console.log(`RIKKAHUB_UI_ENTRY:${relaySession ? relaySession.entryUrl : `${currentOrigin}/`}`);
 console.log(`RIKKAHUB_PORT:${port}`);
 
 console.log(`RikkaHub PC server running at ${uiOrigin(port)} (listening on ${servedHostnames.join(", ")})`);
@@ -417,6 +458,7 @@ async function flushAllStateBeforeExit(): Promise<void> {
 }
 
 async function shutdown() {
+  originRelay.stopAll();
   stopListeners(listeners);
   // 工作区 bash 残留子进程清扫(M1-5)：detached 进程组不随宿主退出，不杀会变孤儿。
   killTrackedDetachedChildren();
@@ -430,9 +472,11 @@ process.on("SIGTERM", shutdown);
 // Unix 终端断开。dev 形态下"直接关终端"是高频操作,不挂就走硬杀留假崩溃档(日志问题 2)。
 process.on("SIGHUP", shutdown);
 
-if (!args.has("--dev") && !args.has("--no-open")) {
+if (willOpenBrowser) {
   const opener = process.platform === "win32" ? "cmd" : "sh";
-  const target = uiOrigin(port);
+  // 接力生效时先开旧 origin 的接力页(视觉即启动屏,读出旧界面状态后自动跳新 origin);
+  // 无接力直开最终地址。
+  const target = relaySession ? relaySession.entryUrl : uiOrigin(port);
   const command = process.platform === "win32"
     ? ["/c", "start", target]
     : ["-c", `open ${target} || xdg-open ${target}`];

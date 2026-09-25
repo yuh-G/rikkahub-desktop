@@ -28,6 +28,10 @@ export const customFontsDir = join(dataDir, "fonts");
 // 清掉残留,会话上下文每轮从会话行确定性重建(pi-engine/context-encoder)。
 export const piAgentDir = join(dataDir, "pi-agent");
 export const statePath = join(dataDir, "state.json");
+// 界面 origin 接力的落脚点记录(api/origin-relay.ts 读写):只描述「这台机器上的浏览器
+// 存储在哪」,跨机恢复带过去只会误导——绝不进任何备份(备份是 export.ts 显式组装的,
+// 不会扫到这里;改动备份逻辑时保持这一点)。
+export const uiOriginRecordPath = join(dataDir, "ui-origin.json");
 // 会话活库（SQLite，WAL）。1.2.6：会话从 state.json 迁出，改用 SQLite 增量写——流式只
 // upsert 当前在长的那个节点行，不再每 200ms 全量重写 state.json。与备份库（导出时现场
 // 生成、Android 兼容）是不同文件/表名/schema：活库 pc_conversation/pc_message_node 为 PC
