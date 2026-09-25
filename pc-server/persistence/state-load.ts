@@ -22,7 +22,7 @@ import { getConversationsDb, migrateConversationsIntoDbBatched, openConversation
 import { setStartupPhase } from "../foundation/startup-gate";
 import { countConversations } from "../conversations/read-queries";
 import { GLOBAL_MEMORY_ID, memoryStore } from "../memory";
-import { DEFAULT_AUTO_MODEL_ID, NA_API_PRESET_MODELS, NA_API_PROVIDER_ID, SUNSET_PROVIDER_IDS, TENCENT_PROVIDER_ID, builtinProviderRank, enrichModel, inferModelAbilities, model } from "../model-providers";
+import { DEFAULT_AUTO_MODEL_ID, NA_API_PRESET_MODELS, NA_API_PROVIDER_ID, SUNSET_PROVIDER_IDS, TENCENT_PROVIDER_ID, builtinProviderRank, enrichModel, inferModelAbilities, model, placeOAuthProvidersAfterAnchors } from "../model-providers";
 import { normalizeTtsProviders } from "../media/tts";
 import { normalizeAsrProviders } from "../media/asr";
 import { normalizeS3Config, normalizeWebDavConfig } from "../app-config/backup-config";
@@ -99,6 +99,9 @@ export function normalizeState(input: Partial<State>): State {
     normalized.settings.providers ?? [],
     defaults.providers.filter((item) => !dismissedProviderIds.has(item.id)),
   );
+  // 订阅供应商「贴同家 API」邻接归位(方案 §6.1):新补插的 OAuth 预置被 mergeById 追加到
+  // 尾部,这里把它们移到同家 API 锚点之后。幂等——只在不在正确邻位时动,不推翻用户手动排序。
+  normalized.settings.providers = placeOAuthProvidersAfterAnchors(normalized.settings.providers);
   normalized.settings.providers = normalized.settings.providers.map((providerItem) => ({
     ...providerItem,
     promptCaching: providerItem.type === "claude" ? providerItem.promptCaching === true : providerItem.promptCaching,

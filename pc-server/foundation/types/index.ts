@@ -28,6 +28,21 @@ export interface Model {
   manuallyAdded?: boolean;
 }
 
+// ── 订阅制供应商登录(OAuth)────────────────────────────────────────────────
+// 授权流标识,与 pi-ai 内建 provider id 同名(openai-codex 等)——是跨「我们 / pi /
+// dsh 的 llm-pi-ai/<id> record」三方的公共键。credential 存 pi-ai OAuthCredential
+// 原样 opaque JSON(含 access/refresh/expires 及厂商扩展字段),刷新权唯一在核心
+// (model-providers/auth/),引擎只拿短命 access。
+export type OAuthFlowId = "openai-codex" | "kimi-coding" | "github-copilot" | "xai" | "anthropic" | "openrouter";
+
+export interface ProviderOAuth {
+  flow: OAuthFlowId;
+  /** pi-ai OAuthCredential 原样 opaque JSON。refresh token 是长效凭证:永不下发前端
+   *  (stripAuthSecrets 剥成 oauthStatus)、PC→APP 导出剥离(不扩散到移动端 zip)。 */
+  credential: Record<string, JsonValue>;
+  signedInAt: number;
+}
+
 export interface Provider {
   type: "openai" | "google" | "claude";
   id: string;
@@ -37,6 +52,10 @@ export interface Provider {
   shortDescription: string;
   description: string;
   apiKey: string;
+  // 订阅制登录:缺省 "apiKey"(老数据零感知);"oauth" 时凭证在 oauth、apiKey 恒为空。
+  // Provider.type 枚举不变(跨端共享,备份契约),Codex=openai+useResponseApi、Kimi/Claude=claude。
+  authMode?: "apiKey" | "oauth";
+  oauth?: ProviderOAuth;
   baseUrl: string;
   chatCompletionsPath?: string;
   useResponseApi?: boolean;

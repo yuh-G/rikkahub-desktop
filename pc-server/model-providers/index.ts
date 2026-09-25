@@ -145,6 +145,27 @@ export const NA_API_PRESET_MODELS = [
   "deepseek-ai/DeepSeek-V4-Pro",
 ];
 
+// ── 订阅制供应商预置(OAuth,方案 §6)────────────────────────────────────────
+// 固定 UUID 一经发布不可改(老用户 state/备份引用它)。P1 先落 Codex + Kimi Code;
+// 其余 flow(Copilot/xAI/Claude)在 P2/P3 各自分期再加,此处只预留键位。
+export const OAUTH_PROVIDER_IDS: Record<string, string> = {
+  "openai-codex": "98d0557b-0700-41e5-b1d6-ee875a53ae5a", // ChatGPT(Codex 订阅)
+  "kimi-coding": "f9622c8b-5037-4540-b875-3d301521367b", // Kimi Code
+  "github-copilot": "55bff930-76fb-47e4-a19c-6b48e201bf48", // P2
+  xai: "5ec4bda4-5511-4e86-9c3f-b08d37d23dc1", // xAI SuperGrok,P2
+  anthropic: "d4f86913-80d5-45e4-84ea-3e652ac63cda", // Claude Pro/Max,P3(仅工作区)
+};
+
+// 订阅供应商「贴同家 API」的锚点(用户拍板 2026-09-25):补插/归位时移到锚点之后。
+// 锚点 = 同家 API 预置的 id;锚点被用户删除/墓碑时归位跳过(保持补插的尾部默认位)。
+// Copilot 无同家 API 预置,不登记——落订阅组末尾(mergeById 追加即末尾)。
+export const OAUTH_PROVIDER_ANCHOR_AFTER: Record<string, string> = {
+  [OAUTH_PROVIDER_IDS["openai-codex"]]: "1eeea727-9ee5-4cae-93e6-6fb01a4d051e", // → OpenAI
+  [OAUTH_PROVIDER_IDS["kimi-coding"]]: "d6c4d8c6-3f62-4ca9-a6f3-7ade6b15ecc3", // → 月之暗面
+  [OAUTH_PROVIDER_IDS["xai"]]: "ff3cde7e-0f65-43d7-8fb2-6475c99f5990", // → xAI(P2)
+  [OAUTH_PROVIDER_IDS["anthropic"]]: "b2c7e1a4-9f3d-4a6e-8c1b-5d7f9e2a3b14", // → Anthropic(P3)
+};
+
 // 1.1.1 预置供应商期望顺序(按 id)。老用户也按此重排——内置(builtIn)供应商排到
 // 对应位置,用户新增的自定义供应商不受影响,统一保留在内置供应商之后(保持其相对顺序)。
 // 排序是幂等的:重复执行结果一致,不会反复改动已排好的 state。
@@ -174,6 +195,31 @@ export function builtinProviderRank(providerItem: Provider): number {
   return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
 }
 
+// 订阅供应商「贴同家 API」邻接归位(方案 §6.1):把列表中每个有锚点的 OAuth 预置移到其
+// 锚点供应商之后。仅当目标当前不在正确邻位时改动 → 幂等,不推翻用户已排好的其它供应商,
+// 也不依赖 appliedMigrations(避免 pc-backup 恢复丢标记后复活重排,R1-12 教训)。
+// 锚点缺失(被用户删除/墓碑)时该订阅供应商保持原位,不强行挪动。
+export function placeOAuthProvidersAfterAnchors(providers: Provider[]): Provider[] {
+  const list = [...providers];
+  // 按锚点在列表中的先后序处理,保证多锚点归位互不覆盖相对位置。
+  const entries = Object.entries(OAUTH_PROVIDER_ANCHOR_AFTER)
+    .map(([oauthId, anchorId]) => ({ oauthId, anchorId, anchorIdx: list.findIndex((p) => p.id === anchorId) }))
+    .filter((entry) => entry.anchorIdx !== -1)
+    .sort((a, b) => a.anchorIdx - b.anchorIdx);
+  for (const { oauthId, anchorId } of entries) {
+    const oauthIdx = list.findIndex((p) => p.id === oauthId);
+    if (oauthIdx === -1) continue; // 未补插(墓碑豁免/用户删除)——不动
+    const anchorIdx = list.findIndex((p) => p.id === anchorId);
+    if (anchorIdx === -1) continue; // 竞态防御(上面已过滤,双检)
+    if (oauthIdx === anchorIdx + 1) continue; // 已在正确邻位——幂等短路
+    const [moved] = list.splice(oauthIdx, 1);
+    // 若 oauth 原本在锚点之前,删除后锚点下标前移一位,需用新下标定位插入点。
+    const newAnchorIdx = list.findIndex((p) => p.id === anchorId);
+    list.splice(newAnchorIdx + 1, 0, moved);
+  }
+  return list;
+}
+
 export function defaultProviders(): Provider[] {
   return [
     provider({
@@ -182,6 +228,16 @@ export function defaultProviders(): Provider[] {
       baseUrl: "https://api.openai.com/v1",
       shortDescription: "OpenAI 官方 API",
       models: [model("gpt-4.1"), model("gpt-4.1-mini"), model("gpt-4o-mini")],
+    }),
+    // 订阅制供应商(authMode:"oauth"),紧跟同家 API 预置(用户拍板 2026-09-25:各家贴近各家)。
+    // 出厂 enabled:false、apiKey:""、模型目录随包(catalog.ts 在 P1-4 注入)。凭证只在登录后落 oauth 字段。
+    provider({
+      id: OAUTH_PROVIDER_IDS["openai-codex"],
+      name: "ChatGPT",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      shortDescription: "使用 ChatGPT Plus/Pro 订阅登录,无需 API Key",
+      authMode: "oauth",
+      useResponseApi: true,
     }),
     provider({
       id: "b2c7e1a4-9f3d-4a6e-8c1b-5d7f9e2a3b14",
@@ -217,6 +273,15 @@ export function defaultProviders(): Provider[] {
       name: "月之暗面",
       baseUrl: "https://api.moonshot.cn/v1",
       balanceOption: { enabled: true, apiPath: "/users/me/balance", resultPath: "data.available_balance" },
+    }),
+    // Kimi Code 订阅紧跟「月之暗面」(同家)。
+    provider({
+      id: OAUTH_PROVIDER_IDS["kimi-coding"],
+      type: "claude",
+      name: "Kimi Code",
+      baseUrl: "https://api.kimi.com/coding",
+      shortDescription: "使用 Kimi 订阅登录,无需 API Key",
+      authMode: "oauth",
     }),
     provider({ id: "f4f8870e-82d3-495b-9b64-d58e508b3b2c", name: "阶跃星辰", baseUrl: "https://api.stepfun.com/v1" }),
     provider({
