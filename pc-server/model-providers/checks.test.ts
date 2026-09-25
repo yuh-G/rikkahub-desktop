@@ -3,12 +3,41 @@
 import { describe, expect, it } from "bun:test";
 
 import { upstreamHttpError } from "../inference-engine/providers";
-import { endpointFor } from "./checks";
+import { endpointFor, fetchProviderModels } from "./checks";
 import { modelsEndpointFor, provider, providerHeaders } from "./index";
 
 function make(input: Parameters<typeof provider>[0]) {
   return provider({ apiKey: "sk-test", ...input });
 }
+
+describe("fetchProviderModels:订阅供应商走随包目录,不打上游 /models", () => {
+  it("Kimi Code(未登录也一样)直接返回捆绑目录,零网络;既有 id 按 modelId 保留", async () => {
+    const originalFetch = globalThis.fetch;
+    let networkCalls = 0;
+    globalThis.fetch = (async () => {
+      networkCalls += 1;
+      throw new Error("network must not be touched");
+    }) as unknown as typeof fetch;
+    try {
+      const kimi = make({
+        id: "f9622c8b-5037-4540-b875-3d301521367b",
+        name: "Kimi Code",
+        baseUrl: "https://api.kimi.com/coding",
+        type: "claude",
+        apiKey: "",
+        authMode: "oauth",
+      });
+      kimi.models = [{ ...kimi.models[0], id: "keep-k3", modelId: "k3", displayName: "K3", abilities: [], inputModalities: ["TEXT"], outputModalities: ["TEXT"], tools: [], type: "CHAT" }];
+      const result = await fetchProviderModels(kimi);
+      expect(networkCalls).toBe(0);
+      expect(result.endpoint).toBe("bundled-catalog://kimi-coding");
+      expect(result.models.length).toBeGreaterThan(0);
+      expect(result.models.find((m) => m.modelId === "k3")?.id).toBe("keep-k3");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
 
 describe("endpointFor URL 拼接", () => {
   it("claude 归一化(A):剥尾部 /v1 拼 /v1/messages,带不带 /v1、尾斜杠、中转深路径都收敛到同一形态", () => {

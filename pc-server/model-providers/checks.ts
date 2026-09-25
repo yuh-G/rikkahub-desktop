@@ -9,7 +9,7 @@ import { state } from "../persistence/json-store";
 import { addLog } from "../api/logs";
 import { findAssistant } from "../assistants";
 import { applyCustomBody, jsonBody, modelsEndpointFor, normalizeFetchedModels, applyRequestHeaders, providerTestCorePassed, providerTestModel, textBody } from "./index";
-import { resolveProviderAuthForProvider } from "./auth";
+import { bundledModelsFor, isOAuthProvider, oauthFlowFor, resolveProviderAuthForProvider } from "./auth";
 import { hostOfProvider } from "../inference-engine/message-builder";
 import { deltaReasoningContent, deltaTextContent, modelsDevCache, parseSseChunks, responseEventToDelta, upstreamHttpError } from "../inference-engine/providers";
 import { internalOutputCap } from "./model-limits";
@@ -41,6 +41,18 @@ async function headersForProvider(providerItem: Provider): Promise<Record<string
 }
 
 export async function fetchProviderModels(providerItem: Provider) {
+  // 订阅供应商:模型目录随包(pi 内建目录),不打上游 /models——Codex 后端与 Kimi coding
+  // 端点都没有可用的模型列表接口,打了只会 401/404 让「获取模型列表」和「测试连接」
+  // 在第一步就失败。既有 id 按 modelId 保留,刷新目录不换 id。
+  if (isOAuthProvider(providerItem)) {
+    const flow = oauthFlowFor(providerItem);
+    const models = flow ? bundledModelsFor(flow.id, providerItem.models) : [];
+    return {
+      endpoint: `bundled-catalog://${flow?.piProviderId ?? "unknown"}`,
+      models,
+      preview: `订阅供应商的模型目录随应用内置(${models.length} 个模型),不经上游模型列表接口获取。`,
+    };
+  }
   const endpoint = modelsEndpointFor(providerItem);
   const started = Date.now();
   const headers = await headersForProvider(providerItem);
