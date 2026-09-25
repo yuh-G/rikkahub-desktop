@@ -118,3 +118,93 @@ describe("订阅供应商凭据解析(headersForProvider)", () => {
     expect(h.Authorization).toBe("Bearer ");
   });
 });
+
+describe("providerAuthChanged:OAuth 登录/注销/轮换", () => {
+  it("登录(从无到有)不算凭据变更——赋能而非配置退化", () => {
+    const prev = make({ id: "t", name: "T", baseUrl: "https://x/v1" });
+    const next = make({
+      id: "t",
+      name: "T",
+      baseUrl: "https://x/v1",
+      authMode: "oauth" as const,
+      oauth: {
+        flow: "openai-codex" as const,
+        signedInAt: Date.now(),
+        credential: { type: "oauth" as const, access: "acc", refresh: "ref", expires: 9999999999000 },
+      },
+    });
+    const { providerAuthChanged } = require("./checks");
+    expect(providerAuthChanged(prev, next)).toBe(false);
+  });
+
+  it("注销(从有到无)算凭据变更", () => {
+    const prev = make({
+      id: "t",
+      name: "T",
+      baseUrl: "https://x/v1",
+      authMode: "oauth" as const,
+      oauth: {
+        flow: "openai-codex" as const,
+        signedInAt: 1,
+        credential: { type: "oauth" as const, access: "acc", refresh: "ref", expires: 9999999999000 },
+      },
+    });
+    const next = make({ id: "t", name: "T", baseUrl: "https://x/v1", authMode: "apiKey" as const });
+    const { providerAuthChanged } = require("./checks");
+    expect(providerAuthChanged(prev, next)).toBe(true);
+  });
+
+  it("刷新轮换(refresh token 变化)算凭据变更", () => {
+    const prev = make({
+      id: "t",
+      name: "T",
+      baseUrl: "https://x/v1",
+      authMode: "oauth" as const,
+      oauth: {
+        flow: "openai-codex" as const,
+        signedInAt: 1,
+        credential: { type: "oauth" as const, access: "old-acc", refresh: "old-ref", expires: 1 },
+      },
+    });
+    const next = make({
+      id: "t",
+      name: "T",
+      baseUrl: "https://x/v1",
+      authMode: "oauth" as const,
+      oauth: {
+        flow: "openai-codex" as const,
+        signedInAt: 1,
+        credential: { type: "oauth" as const, access: "new-acc", refresh: "new-ref", expires: 2 },
+      },
+    });
+    const { providerAuthChanged } = require("./checks");
+    expect(providerAuthChanged(prev, next)).toBe(true);
+  });
+
+  it("OAuth 凭证不变(refresh 相同)不算变更", () => {
+    const prev = make({
+      id: "t",
+      name: "T",
+      baseUrl: "https://x/v1",
+      authMode: "oauth" as const,
+      oauth: {
+        flow: "openai-codex" as const,
+        signedInAt: 1,
+        credential: { type: "oauth" as const, access: "acc1", refresh: "same-ref", expires: 1 },
+      },
+    });
+    const next = make({
+      id: "t",
+      name: "T",
+      baseUrl: "https://x/v1",
+      authMode: "oauth" as const,
+      oauth: {
+        flow: "openai-codex" as const,
+        signedInAt: 1,
+        credential: { type: "oauth" as const, access: "acc2", refresh: "same-ref", expires: 2 },
+      },
+    });
+    const { providerAuthChanged } = require("./checks");
+    expect(providerAuthChanged(prev, next)).toBe(false);
+  });
+});
