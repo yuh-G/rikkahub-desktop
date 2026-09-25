@@ -32,6 +32,18 @@ export interface AppEventMap {
   app_error: AppErrorPushEventDto;
   invalidate: ConversationListInvalidateEventDto;
   mcp_health: McpHealthSnapshotDto;
+  provider_auth: ProviderAuthEventDto;
+}
+
+/** 订阅供应商登录进度(方案 §4.3 三态卡片)。凭据永不下发——只载阶段/验证码/地址。 */
+export interface ProviderAuthEventDto {
+  providerId: string;
+  flow: string;
+  phase: "select_method" | "waiting_browser" | "waiting_device_code" | "exchanging" | "success" | "error" | "cancelled";
+  methods?: ReadonlyArray<{ id: string; labelKey: string }>;
+  authUrl?: string;
+  deviceCode?: { userCode: string; verificationUri: string; expiresInSeconds?: number };
+  message?: string;
 }
 
 type AppEventName = keyof AppEventMap;

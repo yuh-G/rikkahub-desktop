@@ -229,7 +229,37 @@
     "model_id_exists": "已存在 modelId 为「{{id}}」的模型，请换一个 ID",
     "model_added": "模型已添加",
     "model_saved": "模型已保存",
-    "model_deleted": "模型已删除"
+    "model_deleted": "模型已删除",
+    "oauth": {
+      "badge": "订阅",
+      "login": "登录",
+      "logout": "退出登录",
+      "logout_confirm": "退出登录后，该供应商将停用，需重新登录才能使用。确认退出？",
+      "signed_in": "已登录",
+      "signed_in_at": "登录时间：{{time}}",
+      "account": "账号：{{id}}",
+      "not_signed_in": "使用订阅登录，无需 API Key",
+      "select_method": "选择登录方式",
+      "method": {
+        "browser": "浏览器登录（推荐）",
+        "device_code": "设备码登录（无浏览器环境）"
+      },
+      "waiting_browser": "请在浏览器中完成登录",
+      "open_browser": "打开浏览器",
+      "copy_url": "复制链接",
+      "waiting_device_code": "请在手机或另一台设备上打开下方链接，输入验证码",
+      "device_code_label": "验证码",
+      "copy_code": "复制验证码",
+      "device_code_expires": "验证码有效期 {{minutes}} 分钟",
+      "exchanging": "正在完成登录…",
+      "success": "登录成功",
+      "error": "登录失败",
+      "cancelled": "已取消登录",
+      "cancel": "取消登录",
+      "manual_code_hint": "若浏览器未自动跳转，请把重定向后的完整链接粘贴到此处",
+      "manual_code_placeholder": "http://localhost:1455/auth/callback?code=…",
+      "manual_code_submit": "提交"
+    }
   },
   "assistants": {
     "title": "助手",

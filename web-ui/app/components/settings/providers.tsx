@@ -30,6 +30,7 @@ import { isBalanceResultPathValid } from "~/lib/json-expression";
 import { createId } from "~/lib/id";
 import { openExternal } from "~/lib/external-link";
 import api, { appendWebAuthQuery } from "~/services/api";
+import { onAppEvent, type ProviderAuthEventDto } from "~/services/app-events";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { ProviderModel, ProviderProfile, Settings } from "~/types";
 import {
@@ -62,6 +63,152 @@ interface ProviderTestInfo {
   modelCount: number;
   preview: string;
   checks?: ProviderTestCheck[];
+}
+
+/** 订阅供应商登录面板(方案 §4.3 三态卡片)。inline 卡片非模态——用户需要看着验证码
+ *  操作手机,浏览器登录经系统浏览器完成。凭据永不下发,状态全经 SSE provider_auth。 */
+function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
+  const { t } = useTranslation();
+  const [authEvent, setAuthEvent] = React.useState<ProviderAuthEventDto | null>(null);
+  const [manualCode, setManualCode] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
+  const signedIn = provider.oauthStatus?.signedIn === true;
+  const inProgress = authEvent != null && !["success", "error", "cancelled"].includes(authEvent.phase);
+
+  React.useEffect(() => {
+    const off = onAppEvent("provider_auth", (event) => {
+      if (event.providerId !== provider.id) return;
+      setAuthEvent(event);
+      if (event.phase === "success") {
+        toast.success(t("settings:providers.oauth.success"));
+        setAuthEvent(null);
+      } else if (event.phase === "error") {
+        toast.error(event.message || t("settings:providers.oauth.error"));
+      }
+    });
+    return off;
+  }, [provider.id, t]);
+
+  const start = async (methodId?: string) => {
+    setSubmitting(true);
+    try {
+      await api.post("settings/provider/oauth/start", { providerId: provider.id });
+      if (methodId) await api.post("settings/provider/oauth/manual-code", { providerId: provider.id, input: methodId });
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  const cancel = async () => {
+    await api.post("settings/provider/oauth/cancel", { providerId: provider.id });
+    setAuthEvent(null);
+  };
+  const logout = async () => {
+    const ok = await confirmDialog({ title: t("settings:providers.oauth.logout"), description: t("settings:providers.oauth.logout_confirm") });
+    if (!ok) return;
+    await api.post("settings/provider/oauth/logout", { providerId: provider.id });
+  };
+  const submitManualCode = async () => {
+    if (!manualCode.trim()) return;
+    await api.post("settings/provider/oauth/manual-code", { providerId: provider.id, input: manualCode.trim() });
+    setManualCode("");
+  };
+
+  if (signedIn) {
+    return (
+      <div className="rounded-md border border-emerald-200 bg-emerald-50/50 px-3 py-3 md:col-span-2 dark:border-emerald-900 dark:bg-emerald-950/30">
+        <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+          <CheckCircle2 className="size-4" />
+          {t("settings:providers.oauth.signed_in")}
+        </div>
+        <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+          {provider.oauthStatus?.accountId ? <div>{t("settings:providers.oauth.account", { id: provider.oauthStatus.accountId })}</div> : null}
+          {provider.oauthStatus?.signedInAt ? <div>{t("settings:providers.oauth.signed_in_at", { time: new Date(provider.oauthStatus.signedInAt).toLocaleString() })}</div> : null}
+        </div>
+        <Button variant="outline" size="sm" className="mt-3" onClick={() => void logout()}>
+          {t("settings:providers.oauth.logout")}
+        </Button>
+      </div>
+    );
+  }
+
+  if (inProgress && authEvent) {
+    return (
+      <div className="rounded-md border px-3 py-3 md:col-span-2">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Loader2 className="size-4 animate-spin" />
+          {authEvent.phase === "select_method" && t("settings:providers.oauth.select_method")}
+          {authEvent.phase === "waiting_browser" && t("settings:providers.oauth.waiting_browser")}
+          {authEvent.phase === "waiting_device_code" && t("settings:providers.oauth.waiting_device_code")}
+          {authEvent.phase === "exchanging" && t("settings:providers.oauth.exchanging")}
+        </div>
+        {authEvent.phase === "select_method" && authEvent.methods ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {authEvent.methods.map((method) => (
+              <Button key={method.id} variant="outline" size="sm" onClick={() => void start(method.id)} disabled={submitting}>
+                {t(method.labelKey)}
+              </Button>
+            ))}
+          </div>
+        ) : null}
+        {authEvent.phase === "waiting_browser" && authEvent.authUrl ? (
+          <div className="mt-3 space-y-2">
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => void openExternal(authEvent.authUrl!)}>
+                <ExternalLink className="mr-1 size-3" />
+                {t("settings:providers.oauth.open_browser")}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void navigator.clipboard.writeText(authEvent.authUrl!)}>
+                {t("settings:providers.oauth.copy_url")}
+              </Button>
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">{t("settings:providers.oauth.manual_code_hint")}</p>
+              <div className="flex gap-2">
+                <Input value={manualCode} onChange={(e) => setManualCode(e.target.value)} placeholder={t("settings:providers.oauth.manual_code_placeholder")} className="font-mono text-xs" />
+                <Button size="sm" onClick={() => void submitManualCode()} disabled={!manualCode.trim()}>
+                  {t("settings:providers.oauth.manual_code_submit")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {authEvent.phase === "waiting_device_code" && authEvent.deviceCode ? (
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center gap-3 rounded-md bg-muted px-3 py-2">
+              <span className="font-mono text-2xl font-bold tracking-widest">{authEvent.deviceCode.userCode}</span>
+              <Button variant="ghost" size="sm" onClick={() => void navigator.clipboard.writeText(authEvent.deviceCode!.userCode)}>
+                {t("settings:providers.oauth.copy_code")}
+              </Button>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="break-all">{authEvent.deviceCode.verificationUri}</span>
+              <Button variant="outline" size="sm" onClick={() => void openExternal(authEvent.deviceCode!.verificationUri)}>
+                <ExternalLink className="size-3" />
+              </Button>
+            </div>
+            {authEvent.deviceCode.expiresInSeconds ? (
+              <p className="text-xs text-muted-foreground">{t("settings:providers.oauth.device_code_expires", { minutes: Math.ceil(authEvent.deviceCode.expiresInSeconds / 60) })}</p>
+            ) : null}
+          </div>
+        ) : null}
+        <Button variant="ghost" size="sm" className="mt-3" onClick={() => void cancel()}>
+          {t("settings:providers.oauth.cancel")}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-dashed px-3 py-3 md:col-span-2">
+      <p className="text-sm text-muted-foreground">{t("settings:providers.oauth.not_signed_in")}</p>
+      <Button size="sm" className="mt-2" onClick={() => void start()} disabled={submitting}>
+        {submitting ? <Loader2 className="mr-1 size-4 animate-spin" /> : null}
+        {t("settings:providers.oauth.login")}
+      </Button>
+    </div>
+  );
 }
 
 // Best-effort model-type inference from model id; falls back to CHAT when nothing matches.
@@ -560,7 +707,8 @@ export function ProvidersSection({
     }
   };
   const fetchModels = async () => {
-    if (!textValue(draft.apiKey).trim()) {
+    // 订阅供应商:凭据在服务端 oauth 里,前端 apiKey 恒空——闸门看 oauthStatus 而非 apiKey。
+    if (draft.authMode !== "oauth" && !textValue(draft.apiKey).trim()) {
       toast.error(t("settings:providers.key_required_fetch"));
       return;
     }
@@ -592,7 +740,8 @@ export function ProvidersSection({
       return;
     }
     // 空列表：先持久化当前配置（让服务端拿到最新 baseUrl / apiKey），再拉取上游模型
-    if (!textValue(draft.apiKey).trim()) {
+    // 订阅供应商:凭据在服务端 oauth 里,前端 apiKey 恒空——闸门看 oauthStatus 而非 apiKey。
+    if (draft.authMode !== "oauth" && !textValue(draft.apiKey).trim()) {
       toast.error(t("settings:providers.key_required_enable"));
       return;
     }
@@ -815,12 +964,17 @@ export function ProvidersSection({
               onSelect={() => setSelectedId(provider.id)}
               onMove={moveProvider}
             >
-              <span className="grid min-w-0 grid-cols-[28px_10px_minmax(0,1fr)_16px] items-center gap-2 text-left">
+              <span className="grid min-w-0 grid-cols-[28px_10px_minmax(0,1fr)_auto_16px] items-center gap-2 text-left">
                 <AIIcon name={provider.name} size={24} className="justify-self-start" />
                 <span
                   className={`size-2 rounded-full ${provider.enabled ? "bg-success" : "bg-muted-foreground/40"}`}
                 />
                 <span className="min-w-0 flex-1 truncate">{provider.name}</span>
+                {provider.authMode === "oauth" ? (
+                  <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                    {t("settings:providers.oauth.badge")}
+                  </span>
+                ) : null}
                 {provider.builtIn ? <Check className="size-3 text-primary" /> : null}
               </span>
             </SortableRow>
@@ -876,32 +1030,38 @@ export function ProvidersSection({
                 </SelectContent>
               </Select>
             </label>
-            <label className="space-y-2 md:col-span-2">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">API Key</span>
-                {providerGetKeyUrl(textValue(draft.baseUrl)) ? (
-                  <button
-                    type="button"
-                    onClick={() => void openExternal(providerGetKeyUrl(textValue(draft.baseUrl))!)}
-                    className="ml-auto inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                    title={t("settings:providers.get_key_title")}
-                  >
-                    <ExternalLink className="size-3" />
-                    {t("settings:providers.get_key")}
-                  </button>
-                ) : null}
-              </div>
-              <PasswordInput
-                value={textValue(draft.apiKey)}
-                onChange={(apiKey) => patchDraft({ apiKey })}
-              />
-            </label>
+            {draft.authMode === "oauth" ? (
+              <ProviderLoginPanel provider={draft} />
+            ) : (
+              <label className="space-y-2 md:col-span-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">API Key</span>
+                  {providerGetKeyUrl(textValue(draft.baseUrl)) ? (
+                    <button
+                      type="button"
+                      onClick={() => void openExternal(providerGetKeyUrl(textValue(draft.baseUrl))!)}
+                      className="ml-auto inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                      title={t("settings:providers.get_key_title")}
+                    >
+                      <ExternalLink className="size-3" />
+                      {t("settings:providers.get_key")}
+                    </button>
+                  ) : null}
+                </div>
+                <PasswordInput
+                  value={textValue(draft.apiKey)}
+                  onChange={(apiKey) => patchDraft({ apiKey })}
+                />
+              </label>
+            )}
             <label className="space-y-2 md:col-span-2">
               <span className="text-sm font-medium">Base URL</span>
               <Input
                 value={textValue(draft.baseUrl)}
                 onChange={(event) => patchDraft({ baseUrl: event.target.value })}
                 placeholder={DEFAULT_BASE_URLS[kind]}
+                readOnly={draft.authMode === "oauth"}
+                className={draft.authMode === "oauth" ? "opacity-60" : undefined}
               />
               <span className="block break-all text-xs text-muted-foreground">
                 {t("settings:providers.chat_url", { url: endpointPreview(draft) })}

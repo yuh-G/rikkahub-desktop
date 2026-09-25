@@ -256,6 +256,16 @@ export interface ProviderProfile {
   promptCacheKey?: boolean;
   /** OpenAI providers only — 是否在历史回放里把 reasoning_content 回传给上游（默认开启）。对齐安卓 e63d017。 */
   includeHistoryReasoning?: boolean;
+  /** 订阅制登录:缺省 "apiKey";"oauth" 时凭证在服务端,前端只见 oauthStatus 安全视图。 */
+  authMode?: "apiKey" | "oauth";
+  /** 订阅登录状态(stripAuthSecrets 剥 credential 后的安全视图,永不含 token)。 */
+  oauthStatus?: {
+    signedIn: boolean;
+    flow: string;
+    signedInAt: number;
+    expiresAt?: number;
+    accountId?: string;
+  };
   [key: string]: unknown;
 }
 
