@@ -809,7 +809,9 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
           // 若直接 {...item, ...body},body 缺 oauth 会把服务端凭证清空。这里强制保留现凭证,
           // 登录/注销只能走 oauth/start|logout 端点(它们才是凭证写路径)。
           const preservedOAuth = item.oauth;
-          const preservedAuthMode = item.authMode;
+          // 订阅供应商的 authMode 由服务端唯一写路径(登录/注销端点)管理,前端 draft 的
+          // authMode 可能滞后于 SSE 同步(如登录成功后 draft 仍是旧值),直接采信会丢登录态。
+          const preservedAuthMode = item.authMode === "oauth" ? item.authMode : body.authMode;
           // 全面审查 R5-3:凭据/端点字段变更即撤销"已验证"(对齐 search/service/detail 的
           // 失效规则)——apiKey/baseUrl 都换了,旧测试结论不再成立,徽章不能继续绿着。
           // 未变更时保持既有语义:测过一次即保留,防止无关字段编辑抖掉测试状态。
@@ -878,6 +880,26 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     const body = await readJson<{ providerId: string }>(request);
     const ok = logoutProvider(String(body.providerId ?? ""));
     if (!ok) return error("Provider not signed in", 400);
+    return json({ status: "ok" });
+  }
+  // 恢复订阅供应商形态:用户数据里若因旧 bug(滞后 draft 回写)把 authMode 冲成了
+  //  apiKey,此端点把 authMode 拨回 oauth(不动凭证,仅拨形态)。前端在「卡片/徽章消失」
+  //  且供应商确为订阅供应商时调它自愈。
+  if (path === "settings/provider/oauth/restore" && request.method === "POST") {
+    const body = await readJson<{ providerId: string }>(request);
+    const providerId = String(body.providerId ?? "");
+    const provider = state.settings.providers.find((item) => item.id === providerId);
+    if (!provider) return error("Provider not found", 404);
+    // 只有「预置订阅供应商 id」或「已有 oauth 行」的行才允许拨回——防止任意供应商被误拨。
+    const isPresetOAuth = providerId === "98d0557b-0700-41e5-b1d6-ee875a53ae5a" || providerId === "f9622c8b-5037-4540-b875-3d301521367b";
+    if (!isPresetOAuth && !provider.oauth) return error("Not an OAuth provider", 400);
+    if (provider.authMode === "oauth") return json({ status: "ok" }); // 已是 oauth,幂等
+    updateSettings({
+      ...state.settings,
+      providers: state.settings.providers.map((item) =>
+        item.id === providerId ? { ...item, authMode: "oauth" as const } : item,
+      ),
+    });
     return json({ status: "ok" });
   }
   if (path === "settings/provider/balance" && request.method === "POST") {

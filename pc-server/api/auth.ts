@@ -179,8 +179,11 @@ export function stripAuthSecrets<T>(settings: T): T {
   delete copy.webPasswordHash;
   if (Array.isArray(copy.providers)) {
     copy.providers = copy.providers.map((p: any) => {
-      if (!p || typeof p !== "object" || !p.oauth) return p;
+      if (!p || typeof p !== "object") return p;
       const { oauth, ...rest } = p;
+      // 订阅供应商(authMode:"oauth"):凭证永不下发。有 oauth 行 → 剥成 oauthStatus 安全视图;
+      // 无 oauth 行(未登录)→ 只删 oauth 字段,authMode 保留(否则前端认不出这是订阅供应商)。
+      if (oauth == null) return rest;
       const credential = (oauth?.credential ?? {}) as Record<string, unknown>;
       return {
         ...rest,

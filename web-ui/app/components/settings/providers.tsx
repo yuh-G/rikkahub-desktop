@@ -100,6 +100,8 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
       if (methodId) await api.post("settings/provider/oauth/manual-code", { providerId: provider.id, input: methodId });
     } catch (error) {
       toast.error((error as Error).message);
+      // 请求失败即重置——服务端 attempt 可能已挂,前端必须回到可重试态。
+      setAuthEvent(null);
     } finally {
       setSubmitting(false);
     }
@@ -395,6 +397,26 @@ export function ProvidersSection({
   const [draft, setDraft] = React.useState<ProviderProfile | null>(
     selected ? clone(selected) : null,
   );
+  // 订阅供应商自愈:若 SSE 下发的供应商行无 authMode=oauth 但确为预置订阅供应商
+  // ( oauthStatus 或固定 id),说明旧 bug 把 authMode 冲成了 apiKey——调 restore 端点拨回。
+  React.useEffect(() => {
+    if (!selected) return;
+    const isPresetOAuth =
+      selected.id === "98d0557b-0700-41e5-b1d6-ee875a53ae5a" ||
+      selected.id === "f9622c8b-5037-4540-b875-3d301521367b" ||
+      selected.oauthStatus != null;
+    if (isPresetOAuth && selected.authMode !== "oauth") {
+      void api
+        .post("settings/provider/oauth/restore", { providerId: selected.id })
+        .then(() => {
+          // 拨回成功后同步前端 draft,避免用户继续编辑时把 apiKey 形态再传回去。
+          if (draft?.id === selected.id) setDraft({ ...draft, authMode: "oauth" });
+        })
+        .catch(() => {
+          // 拨回失败不打扰用户——下次选中/刷新还会再试
+        });
+    }
+  }, [selected]);
   const [testing, setTesting] = React.useState(false);
   const [fetchingModels, setFetchingModels] = React.useState(false);
   const [testResult, setTestResult] = React.useState("");

@@ -184,4 +184,18 @@ describe("web-auth/status(敏感边界:绝不泄露哈希)", () => {
     // 原对象不被改
     expect((settings.providers[0] as any).oauth.credential.refresh).toBe("ref-secret");
   });
+
+  test("stripAuthSecrets 保留未登录订阅供应商的 authMode(无 oauth 行时不隐藏)", () => {
+    // 预置订阅供应商未登录时 authMode:"oauth" 但无 oauth 行——若把 authMode 也剥了,
+    // 前端就认不出这是订阅供应商,登录卡片/「订阅」徽章会消失。
+    const settings = {
+      providers: [
+        { id: "p-kimi", authMode: "oauth", name: "Kimi Code" }, // 无 oauth 行
+      ],
+    };
+    const sanitized = stripAuthSecrets(settings) as any;
+    expect(sanitized.providers[0].authMode).toBe("oauth");
+    expect(sanitized.providers[0].oauthStatus).toBeUndefined();
+    expect(sanitized.providers[0].name).toBe("Kimi Code");
+  });
 });
