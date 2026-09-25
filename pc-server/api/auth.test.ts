@@ -174,6 +174,7 @@ describe("web-auth/status(敏感边界:绝不泄露哈希)", () => {
       signedInAt: 1727000000000,
       expiresAt: 9999999999000,
       accountId: "acct_123",
+      chatCapable: true,
     });
     // 响应文本里绝不出现 access/refresh token
     const text = JSON.stringify(sanitized);
@@ -187,16 +188,23 @@ describe("web-auth/status(敏感边界:绝不泄露哈希)", () => {
 
   test("stripAuthSecrets 保留未登录订阅供应商的 authMode(无 oauth 行时不隐藏)", () => {
     // 预置订阅供应商未登录时 authMode:"oauth" 但无 oauth 行——若把 authMode 也剥了,
-    // 前端就认不出这是订阅供应商,登录卡片/「订阅」徽章会消失。
+    // 前端就认不出这是订阅供应商,登录卡片/「订阅」徽章会消失。未登录也发安全视图
+    // (signedIn:false + flow/chatCapable):登录卡要在首登前挂「仅工作区/合规」提示。
+    // 预置 UUID 反查得到 flow;Claude 订阅的 chatCapable:false 是登录卡提示与选择器
+    // 过滤的依据。非预置 id(异常行)flow 给空串、按可对话处理。
     const settings = {
       providers: [
-        { id: "p-kimi", authMode: "oauth", name: "Kimi Code" }, // 无 oauth 行
+        { id: "p-kimi", authMode: "oauth", name: "Kimi Code" }, // 无 oauth 行、非预置 UUID
+        { id: "d4f86913-80d5-45e4-84ea-3e652ac63cda", authMode: "oauth", name: "Claude" }, // Claude 订阅预置,未登录
+        { id: "98d0557b-0700-41e5-b1d6-ee875a53ae5a", authMode: "oauth", name: "ChatGPT" }, // Codex 预置,未登录
       ],
     };
     const sanitized = stripAuthSecrets(settings) as any;
     expect(sanitized.providers[0].authMode).toBe("oauth");
-    expect(sanitized.providers[0].oauthStatus).toBeUndefined();
     expect(sanitized.providers[0].name).toBe("Kimi Code");
+    expect(sanitized.providers[0].oauthStatus).toEqual({ signedIn: false, flow: "", chatCapable: true });
+    expect(sanitized.providers[1].oauthStatus).toEqual({ signedIn: false, flow: "anthropic", chatCapable: false });
+    expect(sanitized.providers[2].oauthStatus).toEqual({ signedIn: false, flow: "openai-codex", chatCapable: true });
   });
 
   test("stripAuthSecrets 丢弃 state 里残留的 oauthStatus,只按 oauth 现算(登出后卡片不得仍显示已登录)", () => {
@@ -214,8 +222,8 @@ describe("web-auth/status(敏感边界:绝不泄露哈希)", () => {
       ],
     };
     const sanitized = stripAuthSecrets(settings) as any;
-    expect(sanitized.providers[0].oauthStatus).toBeUndefined();
+    expect(sanitized.providers[0].oauthStatus).toEqual({ signedIn: false, flow: "", chatCapable: true });
     // 有 oauth 行时以 oauth 现算,残留视图的字段(accountId:"stale")不得渗出。
-    expect(sanitized.providers[1].oauthStatus).toEqual({ signedIn: true, flow: "openai-codex", signedInAt: 2, expiresAt: 3, accountId: undefined });
+    expect(sanitized.providers[1].oauthStatus).toEqual({ signedIn: true, flow: "openai-codex", signedInAt: 2, expiresAt: 3, accountId: undefined, chatCapable: true });
   });
 });

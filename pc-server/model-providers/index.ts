@@ -245,6 +245,17 @@ export function defaultProviders(): Provider[] {
       shortDescription: "Anthropic Claude 原生 API",
       models: [model("claude-opus-4-6"), model("claude-sonnet-4-6"), model("claude-haiku-4-5-20251001")],
     }),
+    // Claude 订阅紧跟「Anthropic」(同家)。仅工作区可用(chatCapable:false,方案 §6 决策②):
+    // 凭证要求 Claude Code 全套伪装(pi 内建),宿主聊天引擎不接(resolve 处闸门),模型也
+    // 不进聊天选择器。登录卡须挂法律与合规提示。
+    provider({
+      id: OAUTH_PROVIDER_IDS["anthropic"],
+      type: "claude",
+      name: "Claude",
+      baseUrl: "https://api.anthropic.com/v1",
+      shortDescription: "使用 Claude Pro/Max 订阅登录,仅工作区可用",
+      authMode: "oauth",
+    }),
     provider({
       id: "6ab18148-c138-4394-a46f-1cd8c8ceaa6d",
       type: "google",

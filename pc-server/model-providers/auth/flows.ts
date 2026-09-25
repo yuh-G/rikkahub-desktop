@@ -26,6 +26,10 @@ export interface OAuthFlowMeta {
    *  是「宿主 provider 行 ↔ flow」在未登录(尚无 oauth 行)时的唯一反查键:登录起流、
    *  pi 引擎取内建身份、restore 端点判定都经 oauthFlowFor 走这里,不得在别处复制表。 */
   presetProviderId: string;
+  /** 是否可进对话引擎(缺省 true)。Claude Pro/Max 的凭证要求 Claude Code 全套伪装
+   *  (pi api/anthropic-messages.ts 内建),宿主聊天引擎不接:resolve 处闸门拦宿主全路径,
+   *  前端据此隐藏聊天选择器入口、登录卡挂「仅工作区 + 合规」提示。 */
+  chatCapable?: boolean;
 }
 
 export const OAUTH_FLOWS: Record<OAuthFlowId, OAuthFlowMeta> = {
@@ -66,6 +70,7 @@ export const OAUTH_FLOWS: Record<OAuthFlowId, OAuthFlowMeta> = {
     loginMethods: null,
     piProviderId: "anthropic",
     presetProviderId: "d4f86913-80d5-45e4-84ea-3e652ac63cda", // Claude Pro/Max,P3(仅工作区)
+    chatCapable: false,
   },
 };
 

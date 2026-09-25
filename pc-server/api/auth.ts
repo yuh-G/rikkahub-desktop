@@ -19,6 +19,8 @@ import { error, json, readJson } from "./request";
 import { state } from "../persistence/json-store";
 import { updateSettings } from "../app-config";
 import { isLoopbackHostname } from "../foundation/port-binding";
+import { OAUTH_FLOWS, oauthFlowFor } from "../model-providers/auth/flows";
+import type { OAuthFlowId } from "../foundation/types";
 
 const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 天，前端 localStorage 按 expiresAt 自行过期
 const TOKEN_PREFIX = "v1";
@@ -184,8 +186,20 @@ export function stripAuthSecrets<T>(settings: T): T {
       // 回传的视图原样落进 state,登出后残留 signedIn:true。无论 state 里有没有,一律丢弃重算。
       const { oauth, oauthStatus: _persisted, ...rest } = p;
       // 订阅供应商(authMode:"oauth"):凭证永不下发。有 oauth 行 → 剥成 oauthStatus 安全视图;
-      // 无 oauth 行(未登录)→ 只删 oauth 字段,authMode 保留(否则前端认不出这是订阅供应商)。
-      if (oauth == null) return rest;
+      // 无 oauth 行(未登录)→ 也发安全视图(signedIn:false):登录卡要在首登前挂「仅工作区/
+      // 合规」提示、聊天选择器要按 chatCapable 过滤,flow 经预置 UUID 反查(查不到给空串)。
+      if (oauth == null) {
+        if (p.authMode !== "oauth") return rest;
+        const flow = oauthFlowFor(p);
+        return {
+          ...rest,
+          oauthStatus: {
+            signedIn: false,
+            flow: flow?.id ?? "",
+            chatCapable: flow?.chatCapable !== false,
+          },
+        };
+      }
       const credential = (oauth?.credential ?? {}) as Record<string, unknown>;
       return {
         ...rest,
@@ -195,6 +209,7 @@ export function stripAuthSecrets<T>(settings: T): T {
           signedInAt: oauth.signedInAt,
           expiresAt: typeof credential.expires === "number" ? credential.expires : undefined,
           accountId: typeof credential.accountId === "string" ? credential.accountId : undefined,
+          chatCapable: OAUTH_FLOWS[oauth.flow as OAuthFlowId]?.chatCapable !== false,
         },
       };
     });

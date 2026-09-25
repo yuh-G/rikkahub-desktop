@@ -168,3 +168,20 @@ describe("会话身份头(§7.4)", () => {
     expect(aih["X-Session-ID"]).toBe("c2");
   });
 });
+
+describe("订阅预置行(§6.1 贴同家 API)+ flow 元数据", () => {
+  it("Claude 订阅紧跟 Anthropic 预置,且 anthropic flow chatCapable:false(仅工作区,§6 决策②)", () => {
+    const providers = defaultProviders();
+    const anchor = providers.findIndex((p) => p.id === "b2c7e1a4-9f3d-4a6e-8c1b-5d7f9e2a3b14");
+    const claudeSub = providers[anchor + 1];
+    expect(claudeSub?.id).toBe("d4f86913-80d5-45e4-84ea-3e652ac63cda");
+    expect(claudeSub?.authMode).toBe("oauth");
+    expect(claudeSub?.type).toBe("claude");
+    // flow 元数据是前端过滤与闸门的单源:anthropic 关对话,其余订阅均可对话。
+    const { OAUTH_FLOWS } = require("./auth/flows");
+    expect(OAUTH_FLOWS.anthropic.chatCapable).toBe(false);
+    for (const flowId of ["openai-codex", "kimi-coding", "github-copilot", "xai"]) {
+      expect(OAUTH_FLOWS[flowId].chatCapable ?? true).toBe(true);
+    }
+  });
+});

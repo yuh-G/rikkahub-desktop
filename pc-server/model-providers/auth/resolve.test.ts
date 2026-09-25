@@ -45,6 +45,26 @@ describe("resolveProviderAuthForProvider", () => {
     expect(resolved.headers).toEqual({ "x-api-key": "sk-ant", "anthropic-version": "2023-06-01" });
   });
 
+  test("chatCapable:false 的订阅(Claude Pro/Max)在宿主全路径闸门拒绝,人话报错(仅工作区可用)", async () => {
+    // 宿主引擎的凭证都经本函数:对话/辅助/图像/连通性测试在此统一拦下。pi 引擎(工作区)
+    // 走 createPiCredentialStore,不经过本函数——闸门不能误伤工作区。
+    const provider = makeProvider({
+      authMode: "oauth",
+      oauth: {
+        flow: "anthropic",
+        signedInAt: 1,
+        credential: { type: "oauth", access: "ant-acc", refresh: "ant-ref", expires: Date.now() + 3600_000 },
+      },
+    });
+    setState({ ...state, settings: { ...state.settings, providers: [provider] } } as any);
+    try {
+      await resolveProviderAuthForProvider(provider);
+      throw new Error("expected gate rejection");
+    } catch (error) {
+      expect((error as Error).message).toContain("仅在工作区可用");
+    }
+  });
+
   test("oauth provider with credential: resolves via pi-ai (toAuth 不触网)", async () => {
     // 注入假 toAuth——真实 openai-codex 的 toAuth 会解码 JWT 提 accountId,不触网;
     // 但为防未来 pi 实现变化引入网络依赖,这里显式替身,测试锁定「解析归一」语义。

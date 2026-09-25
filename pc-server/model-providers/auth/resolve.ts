@@ -43,6 +43,13 @@ export async function resolveProviderAuthForProvider(
 
   const flow = OAUTH_FLOWS[provider.oauth.flow];
   if (!flow) throw new Error(`OAuth flow not registered: ${provider.oauth.flow}`);
+  // 仅工作区的订阅(chatCapable:false,Claude Pro/Max)在宿主全路径(对话/辅助/图像/
+  // 连通性测试——它们的凭证都经本函数)统一拦下:它的凭证要求 Claude Code 全套伪装头
+  // 与系统提示词首块(pi api/anthropic-messages.ts 内建),宿主引擎发裸请求必被上游拒绝。
+  // pi 引擎经 createPiCredentialStore 直取凭证、不经过本函数,工作区不受影响。
+  if (flow.chatCapable === false) {
+    throw new Error("Claude 订阅(Claude Pro/Max)仅在工作区可用,不接入对话模型。请在工作区任务中使用该供应商的模型。");
+  }
   const oauth = await loadOAuthFlow(flow.id);
 
   const result = await resolveProviderAuth(
