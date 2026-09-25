@@ -16,10 +16,10 @@ import {
   customFormValue,
   findModel,
   jsonBody,
-  providerHeaders,
   textBody,
 } from "../model-providers";
 import { modelExists } from "../conversations/auxiliary";
+import { resolveProviderAuthForProvider } from "../model-providers/auth";
 import { addLog } from "../api/logs";
 
 // 6-2:生图 provider 普遍分钟级(尤其批量/高分辨率),默认 30s 会误杀;5 分钟硬上限防永挂。
@@ -128,6 +128,9 @@ export async function callImageGeneration(input: {
   const picked = findModel(input.overrideModelUuid || state.settings.imageGenerationModelId);
   const providerItem = picked.provider;
   const modelItem = picked.model;
+  // 订阅供应商感知:oauth 轨经核心解析(可能触发锁内刷新),apiKey 轨返回 providerHeaders()
+  // 原样(行为逐字节不变)。直用 providerHeaders 会对 oauth 供应商发出空 Bearer(§13.3)。
+  const resolvedAuth = await resolveProviderAuthForProvider(providerItem, { signal: input.signal });
   const selectedModel = modelItem.modelId === "auto" ? "gpt-image-2" : modelItem.modelId;
   const count = Math.min(4, Math.max(1, Number(input.numberOfImages) || 1));
   const sizes = imageSize(input.aspectRatio);
@@ -145,7 +148,7 @@ export async function callImageGeneration(input: {
     }, modelItem);
     const response = await fetchWithTimeout(endpoint, {
       method: "POST",
-      headers: applyModelRequestHeaders({ "Content-Type": "application/json", ...providerHeaders(providerItem) }, providerItem, modelItem),
+      headers: applyModelRequestHeaders({ "Content-Type": "application/json", ...resolvedAuth.headers }, providerItem, modelItem),
       body: JSON.stringify(body),
       timeoutMs: IMAGE_GEN_TIMEOUT_MS,
       signal: input.signal,
@@ -181,8 +184,8 @@ export async function callImageGeneration(input: {
     throw new Error("Image generation is supported for OpenAI-compatible and Google providers");
   }
 
-  const base = providerItem.baseUrl.replace(/\/+$/, "");
-  const headers = applyModelRequestHeaders(providerHeaders(providerItem), providerItem, modelItem);
+  const base = resolvedAuth.baseUrl?.replace(/\/+$/, "") ?? providerItem.baseUrl.replace(/\/+$/, "");
+  const headers = applyModelRequestHeaders({ ...resolvedAuth.headers }, providerItem, modelItem);
   if (references.length > 0) {
     const endpoint = `${base}/images/edits`;
     const form = new FormData();

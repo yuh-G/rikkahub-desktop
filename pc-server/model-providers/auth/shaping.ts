@@ -12,6 +12,9 @@ export interface ProviderShaping {
   dropBodyFields?: string[];
   /** 需要强制附加的 body 字段(如 Codex 的 include 列表)。 */
   mergeBody?: Record<string, unknown>;
+  /** 该端点只收 SSE(pi/Cherry 对 Codex 均全流式):宿主的非流式出站路径(标题/建议/
+   *  提示词优化等辅助调用)必须改走流式收集,直发 stream:false 会被 400。 */
+  streamingOnly?: boolean;
   /** 登录后是否自动启用供应商(方案 §4.3:登录成功即 enabled=true)。 */
   autoEnable?: boolean;
 }
@@ -28,6 +31,7 @@ export const OAUTH_PROVIDER_SHAPING: Record<string, ProviderShaping> = {
     credentialHeaders: { "chatgpt-account-id": "accountId" },
     dropBodyFields: ["max_output_tokens"],
     mergeBody: { include: ["reasoning.encrypted_content"] },
+    streamingOnly: true,
     autoEnable: true,
   },
   // Kimi Coding:Anthropic 协议,Authorization: Bearer 而非 x-api-key。

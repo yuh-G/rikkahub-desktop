@@ -9,7 +9,7 @@ import { state } from "../persistence/json-store";
 import { addLog } from "../api/logs";
 import { findAssistant } from "../assistants";
 import { applyCustomBody, jsonBody, modelsEndpointFor, normalizeFetchedModels, applyRequestHeaders, providerTestCorePassed, providerTestModel, textBody } from "./index";
-import { bundledModelsFor, isOAuthProvider, oauthFlowFor, resolveProviderAuthForProvider } from "./auth";
+import { applyShaping, bundledModelsFor, isOAuthProvider, oauthFlowFor, resolveProviderAuthForProvider } from "./auth";
 import { hostOfProvider } from "../inference-engine/message-builder";
 import { deltaReasoningContent, deltaTextContent, modelsDevCache, parseSseChunks, responseEventToDelta, upstreamHttpError } from "../inference-engine/providers";
 import { internalOutputCap } from "./model-limits";
@@ -349,6 +349,11 @@ export async function runProviderCheck(providerItem: Provider, mode: "non_stream
     providerItem,
     modelItem,
   );
+  // 订阅供应商整形与生成链路同一时机:body 定稿后。缺 chatgpt-account-id/OpenAI-Beta 头
+  // 的探测请求会被 Codex 后端 400,测试连接对订阅供应商假红(§13.3 整形全路径覆盖)。
+  if (providerItem.authMode === "oauth" && providerItem.oauth) {
+    applyShaping(providerItem.oauth.flow, headers, body, providerItem.oauth.credential);
+  }
   let response: Response;
   try {
     response = await fetchWithTimeout(url, {

@@ -237,3 +237,65 @@ describe("providerAuthChanged:OAuth 登录/注销/轮换", () => {
     expect(providerAuthChanged(prev, next)).toBe(false);
   });
 });
+
+describe("runProviderCheck:订阅供应商整形(§13.3 整形全路径覆盖)", () => {
+  it("探测请求带凭证派生头与 body 整形(chatgpt-account-id / include / 无 max_output_tokens)", async () => {
+    const { setState, state } = await import("../persistence/json-store");
+    const { defaultSettings } = await import("../app-config/defaults");
+    const { overrideOAuthFlow } = await import("./auth/flows");
+    overrideOAuthFlow("openai-codex", {
+      name: "Test Codex",
+      login: async () => {
+        throw new Error("not in test");
+      },
+      refresh: async () => {
+        throw new Error("not in test");
+      },
+      toAuth: async (cred: { access: string }) => ({ apiKey: cred.access }),
+    });
+    const codex = make({
+      id: "98d0557b-0700-41e5-b1d6-ee875a53ae5a",
+      name: "ChatGPT(Codex)",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      type: "openai",
+      useResponseApi: true,
+      apiKey: "",
+      authMode: "oauth" as const,
+      oauth: {
+        flow: "openai-codex" as const,
+        signedInAt: 1,
+        credential: { type: "oauth" as const, access: "acc-x", refresh: "r-x", expires: 9999999999000, accountId: "acct_42" },
+      },
+    });
+    // runProviderCheck 会 addLog(读 state.stats/logs):测试进程未跑 bootstrap,补最小字段。
+    setState({
+      ...state,
+      stats: { totalRequests: 0, failedRequests: 0, byProvider: {}, byGroup: {} },
+      logs: [],
+      settings: { ...structuredClone(defaultSettings()), providers: [codex] },
+    } as any);
+    const originalFetch = globalThis.fetch;
+    let captured: { url: string; headers: Record<string, string>; body: Record<string, unknown> } | null = null;
+    globalThis.fetch = (async (_url: string, init: { headers: Record<string, string>; body: string }) => {
+      captured = { url: _url, headers: init.headers, body: JSON.parse(init.body) };
+      return new Response("ok", { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      const { runProviderCheck } = await import("./checks");
+      const result = await runProviderCheck(codex, "non_stream", "gpt-5");
+      expect(result.ok).toBe(true);
+      const hit = captured as unknown as { url: string; headers: Record<string, string>; body: Record<string, unknown> } | null;
+      expect(hit).not.toBeNull();
+      expect(hit!.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+      expect(hit!.headers.Authorization).toBe("Bearer acc-x");
+      expect(hit!.headers["chatgpt-account-id"]).toBe("acct_42");
+      expect(hit!.headers["OpenAI-Beta"]).toBe("responses=experimental");
+      expect(hit!.headers.originator).toBe("rikkahub");
+      expect((hit!.body.include as string[])).toContain("reasoning.encrypted_content");
+      expect("max_output_tokens" in hit!.body).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      setState({ ...state, settings: { ...state.settings, providers: [] } } as any);
+    }
+  });
+});

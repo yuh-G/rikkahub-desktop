@@ -6,7 +6,7 @@ import { applyPlaceholders, id, isRecord, localeDisplayName, message, textFromPa
 import { state } from "../persistence/json-store";
 import { broadcastConversation, broadcastEngineStatus } from "../api/sse";
 import { DEFAULT_AUTO_MODEL_ID, applyCustomBody, applyRequestHeaders, findModel } from "../model-providers";
-import { applyShaping, resolveProviderAuthForProvider } from "../model-providers/auth";
+import { applyShaping, resolveProviderAuthForProvider, shapingFor } from "../model-providers/auth";
 import { endpointFor } from "../model-providers/checks";
 import { openAiMaxTokensField, reasoningLevelNormalized } from "../model-providers/request-dialect";
 import { internalOutputCap, requiredOutputCap } from "../model-providers/model-limits";
@@ -126,7 +126,7 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
   const selectedModel = modelItem.modelId === "auto" ? "gpt-4o-mini" : modelItem.modelId;
   const maxTokens = options.maxTokens ?? null;
   const reasoningLevel = options.reasoningLevel ?? null;
-  const stream = options.stream === true;
+  let stream = options.stream === true;
   // 取消信号:仅压缩链路(带 signal 调用)生效,其余调用方 undefined —— 与既有不传 signal 行为逐字节一致。
   const signal = options.signal;
   const pushDelta = (text: string) => {
@@ -150,6 +150,11 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
   // 订阅供应商:凭据在服务端 oauth 里,apiKey 恒空——先经 resolveProviderAuthForProvider
   // 解析(可能触发锁内刷新),后续注入点统一用 credentialHeaders 而非裸 apiKey。
   const resolvedAuth = await resolveProviderAuthForProvider(providerItem, { signal });
+  // 只收 SSE 的订阅端点(声明 streamingOnly,如 Codex):非流式直发会被拒,强制走流式
+  // 收集——收集器返回完整文本,标题/建议这类无 onDelta 的调用方对差异无感。
+  if (providerItem.authMode === "oauth" && providerItem.oauth && shapingFor(providerItem.oauth.flow).streamingOnly) {
+    stream = true;
+  }
   const headers = applyRequestHeaders(
     { "Content-Type": "application/json", ...resolvedAuth.headers },
     assistant,

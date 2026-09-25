@@ -18,6 +18,13 @@ describe("OAUTH_PROVIDER_SHAPING 声明表", () => {
     expect(s.dropBodyFields).toContain("max_output_tokens");
     expect(s.mergeBody?.include).toContain("reasoning.encrypted_content");
   });
+
+  test("streamingOnly:仅 Codex 声明(端点只收 SSE),其余 flow 非流式可用", () => {
+    expect(OAUTH_PROVIDER_SHAPING["openai-codex"]?.streamingOnly).toBe(true);
+    for (const flowId of ["kimi-coding", "github-copilot", "xai", "anthropic"]) {
+      expect(OAUTH_PROVIDER_SHAPING[flowId]?.streamingOnly ?? false).toBe(false);
+    }
+  });
 });
 
 describe("applyShaping 解释器", () => {

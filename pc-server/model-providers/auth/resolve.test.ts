@@ -89,4 +89,59 @@ describe("resolveProviderAuthForProvider", () => {
     setState({ ...state, settings: { ...state.settings, providers: [provider] } } as any);
     await expect(resolveProviderAuthForProvider(provider)).rejects.toThrow("not registered");
   });
+
+  test("凭证进入刷新窗口(<5min):锁内刷新恰好一次,轮换后的 refresh 回写宿主行,后续解析不再刷", async () => {
+    // 长对话跨刷新窗口压测(P1 遗留)的单元锁:临期触发一次自动刷新 → 新 access 立即生效
+    // → 轮换 refresh 落盘(CAS)→ 凭证新鲜后同一请求链不再刷新(无感继续生成)。
+    let refreshCalls = 0;
+    overrideOAuthFlow("openai-codex", {
+      name: "Test Codex",
+      login: async () => {
+        throw new Error("not in test");
+      },
+      refresh: async () => {
+        refreshCalls += 1;
+        return { type: "oauth", access: `a-${refreshCalls}`, refresh: `r-${refreshCalls}`, expires: Date.now() + 30 * 60_000 };
+      },
+      toAuth: async (cred) => ({ apiKey: cred.access }),
+    });
+    const provider = makeProvider({
+      authMode: "oauth",
+      oauth: { flow: "openai-codex", credential: { type: "oauth", access: "a-old", refresh: "r-old", expires: Date.now() + 60_000 }, signedInAt: 1 },
+      apiKey: "",
+    });
+    setState({ ...state, settings: { ...state.settings, providers: [provider] } } as any);
+    const resolved = await resolveProviderAuthForProvider(provider);
+    expect(refreshCalls).toBe(1);
+    expect(resolved.headers.Authorization).toBe("Bearer a-1");
+    expect(state.settings.providers[0]?.oauth?.credential?.refresh).toBe("r-1");
+    const again = await resolveProviderAuthForProvider(state.settings.providers[0]);
+    expect(refreshCalls).toBe(1);
+    expect(again.headers.Authorization).toBe("Bearer a-1");
+  });
+
+  test("minOAuthValidityMs 要求更长余量:默认窗口内但余量不足 → 同样触发刷新(读即新鲜语义)", async () => {
+    let refreshCalls = 0;
+    overrideOAuthFlow("openai-codex", {
+      name: "Test Codex",
+      login: async () => {
+        throw new Error("not in test");
+      },
+      refresh: async () => {
+        refreshCalls += 1;
+        return { type: "oauth", access: "a-fresh", refresh: "r-fresh", expires: Date.now() + 30 * 60_000 };
+      },
+      toAuth: async (cred) => ({ apiKey: cred.access }),
+    });
+    const provider = makeProvider({
+      authMode: "oauth",
+      // 距过期 6 分钟:>默认 5min 窗口,<调用方要求的 10min —— 必须刷新。
+      oauth: { flow: "openai-codex", credential: { type: "oauth", access: "a-old", refresh: "r-old", expires: Date.now() + 6 * 60_000 }, signedInAt: 1 },
+      apiKey: "",
+    });
+    setState({ ...state, settings: { ...state.settings, providers: [provider] } } as any);
+    const resolved = await resolveProviderAuthForProvider(provider, { minOAuthValidityMs: 10 * 60_000 });
+    expect(refreshCalls).toBe(1);
+    expect(resolved.headers.Authorization).toBe("Bearer a-fresh");
+  });
 });
