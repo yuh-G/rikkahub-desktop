@@ -17,8 +17,10 @@ import { internalOutputCap } from "./model-limits";
 /** 连通性测试的输出预算(我们的探测,不是用户的选择;经 internalOutputCap 收进模型上限)。 */
 const PROVIDER_TEST_OUTPUT_TOKENS = 4096;
 
-export function endpointFor(providerItem: Provider) {
-  const base = providerItem.baseUrl.replace(/\/+$/, "");
+/** 消息端点 URL。baseUrlOverride:订阅供应商凭据派生的 baseUrl 接力(Copilot 的
+ *  toAuth().baseUrl 由 access token 的 proxy-ep / 企业域名推导,可能与预置默认不同)。 */
+export function endpointFor(providerItem: Provider, baseUrlOverride?: string) {
+  const base = (baseUrlOverride?.trim() || providerItem.baseUrl).replace(/\/+$/, "");
   if (providerItem.type === "openai") {
     // responsesPath 留空回落 /responses(对齐安卓 §2.3,适配 Azure/网关非标准路径)。
     return providerItem.useResponseApi
@@ -46,7 +48,7 @@ export async function fetchProviderModels(providerItem: Provider) {
   // 在第一步就失败。既有 id 按 modelId 保留,刷新目录不换 id。
   if (isOAuthProvider(providerItem)) {
     const flow = oauthFlowFor(providerItem);
-    const models = flow ? bundledModelsFor(flow.id, providerItem.models) : [];
+    const models = flow ? bundledModelsFor(flow.id, providerItem.models, providerItem.oauth?.credential) : [];
     return {
       endpoint: `bundled-catalog://${flow?.piProviderId ?? "unknown"}`,
       models,
@@ -191,7 +193,7 @@ function providerTestAssistant(modelItem?: Model): Assistant {
   } as Assistant;
 }
 
-function providerTestPayload(providerItem: Provider, mode: "non_stream" | "stream" | "tools", selectedModel: string) {
+function providerTestPayload(providerItem: Provider, mode: "non_stream" | "stream" | "tools", selectedModel: string, baseUrlOverride?: string) {
   if (providerItem.type === "google") {
     const body: any = {
       contents: [{ role: "user", parts: [{ text: mode === "tools" ? "Use the get_current_time tool." : "hello" }] }],
@@ -201,7 +203,7 @@ function providerTestPayload(providerItem: Provider, mode: "non_stream" | "strea
       body.tools = [{ functionDeclarations: [{ name: "get_current_time", description: "Get the current date and time.", parameters: { type: "object", properties: {} } }] }];
     }
     const suffix = mode === "stream" ? "streamGenerateContent?alt=sse" : "generateContent";
-    return { url: `${providerItem.baseUrl.replace(/\/+$/, "")}/models/${selectedModel}:${suffix}`, body };
+    return { url: `${(baseUrlOverride?.trim() || providerItem.baseUrl).replace(/\/+$/, "")}/models/${selectedModel}:${suffix}`, body };
   }
   if (providerItem.type === "claude") {
     const body: any = {
@@ -218,7 +220,7 @@ function providerTestPayload(providerItem: Provider, mode: "non_stream" | "strea
       body.tools = [{ name: "get_current_time", description: "Get the current date and time.", input_schema: { type: "object", properties: {} } }];
       body.tool_choice = { type: "tool", name: "get_current_time" };
     }
-    return { url: endpointFor(providerItem), body };
+    return { url: endpointFor(providerItem, baseUrlOverride), body };
   }
   if (providerItem.useResponseApi) {
     const body: any = {
@@ -234,7 +236,7 @@ function providerTestPayload(providerItem: Provider, mode: "non_stream" | "strea
       body.tools = [{ type: "function", name: "get_current_time", description: "Get the current date and time.", parameters: { type: "object", properties: {} } }];
       body.tool_choice = { type: "function", name: "get_current_time" };
     }
-    return { url: endpointFor(providerItem), body };
+    return { url: endpointFor(providerItem, baseUrlOverride), body };
   }
   const body: any = {
     model: selectedModel,
@@ -256,7 +258,7 @@ function providerTestPayload(providerItem: Provider, mode: "non_stream" | "strea
     // will call the tool under "auto" mode.
     body.tool_choice = "auto";
   }
-  return { url: endpointFor(providerItem), body };
+  return { url: endpointFor(providerItem, baseUrlOverride), body };
 }
 
 async function readProviderTestStream(response: Response, providerItem: Provider) {
@@ -335,10 +337,12 @@ async function readProviderTestStream(response: Response, providerItem: Provider
 export async function runProviderCheck(providerItem: Provider, mode: "non_stream" | "stream" | "tools", selectedModel: string, fetchedModels: Model[] = []) {
   const modelItem = providerTestModel(providerItem, selectedModel, fetchedModels);
   const assistant = providerTestAssistant(modelItem);
-  const { url, body: rawBody } = providerTestPayload(providerItem, mode, selectedModel);
-  const body = applyCustomBody(rawBody, assistant, modelItem);
   const started = Date.now();
-  const credentialHeaders = await headersForProvider(providerItem);
+  // 先解析凭据(可能触发锁内刷新)再拼 URL:订阅供应商的 baseUrl 可能由凭证派生(Copilot)。
+  const resolved = await resolveProviderAuthForProvider(providerItem);
+  const { url, body: rawBody } = providerTestPayload(providerItem, mode, selectedModel, resolved.baseUrl);
+  const body = applyCustomBody(rawBody, assistant, modelItem);
+  const credentialHeaders = resolved.headers;
   const headers = applyRequestHeaders(
     {
       "Content-Type": "application/json",

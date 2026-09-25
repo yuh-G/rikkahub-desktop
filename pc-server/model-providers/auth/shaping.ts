@@ -15,8 +15,30 @@ export interface ProviderShaping {
   /** 该端点只收 SSE(pi/Cherry 对 Codex 均全流式):宿主的非流式出站路径(标题/建议/
    *  提示词优化等辅助调用)必须改走流式收集,直发 stream:false 会被 400。 */
   streamingOnly?: boolean;
+  /** 按请求上下文现算的头(Copilot 的 X-Initiator / Openai-Intent / Copilot-Vision-Request)。
+   *  ??= 语义同 ensureHeaders。 */
+  dynamicHeaders?: (context: ShapingContext) => Record<string, string>;
   /** 登录后是否自动启用供应商(方案 §4.3:登录成功即 enabled=true)。 */
   autoEnable?: boolean;
+}
+
+/** 动态头的请求上下文。生成链路由 orchestrator 按消息现算;辅助调用走缺省
+ *  (用户发起、无图)——标题/压缩/翻译这类探测没有图、总是用户触发。 */
+export interface ShapingContext {
+  /** 最后一条消息的 role;非 "user" 视为 agent 发起(Copilot X-Initiator)。 */
+  lastMessageRole?: string;
+  /** 请求是否携带图片(Copilot-Vision-Request)。 */
+  hasImages?: boolean;
+}
+
+/** Copilot 动态头(pi api/github-copilot-headers.ts 同款语义,升级 pi 时核对取值)。 */
+function copilotDynamicHeaders(context: ShapingContext): Record<string, string> {
+  const headers: Record<string, string> = {
+    "X-Initiator": context.lastMessageRole && context.lastMessageRole !== "user" ? "agent" : "user",
+    "Openai-Intent": "conversation-edits",
+  };
+  if (context.hasImages) headers["Copilot-Vision-Request"] = "true";
+  return headers;
 }
 
 export const OAUTH_PROVIDER_SHAPING: Record<string, ProviderShaping> = {
@@ -38,7 +60,19 @@ export const OAUTH_PROVIDER_SHAPING: Record<string, ProviderShaping> = {
   "kimi-coding": {
     autoEnable: true,
   },
-  "github-copilot": { autoEnable: true },
+  // GitHub Copilot:身份头缺一可能 401(P1-R2 教训),静态头与 pi auth/oauth/github-copilot.ts
+  // 的 COPILOT_HEADERS + COPILOT_API_VERSION 逐字同步,pi 升级时核对。
+  "github-copilot": {
+    ensureHeaders: {
+      "User-Agent": "GitHubCopilotChat/0.35.0",
+      "Editor-Version": "vscode/1.107.0",
+      "Editor-Plugin-Version": "copilot-chat/0.35.0",
+      "Copilot-Integration-Id": "vscode-chat",
+      "X-GitHub-Api-Version": "2026-06-01",
+    },
+    dynamicHeaders: copilotDynamicHeaders,
+    autoEnable: true,
+  },
   xai: { autoEnable: true },
   anthropic: { autoEnable: true },
 };
@@ -49,16 +83,23 @@ export function shapingFor(flowId: string): ProviderShaping {
 
 /** 把声明应用到请求头与 body。headers 用 ??= 语义(用户/引擎显式设置的优先),
  *  body 字段直接增删。调用时机:body 定稿后、applyCustomBody 前。
- *  credential = 该供应商当前的 oauth.credential(凭证派生头用;apiKey 轨不传)。 */
+ *  credential = 该供应商当前的 oauth.credential(凭证派生头用;apiKey 轨不传)。
+ *  context = 动态头取值依据(生成链路按消息现算;缺省=辅助调用形态)。 */
 export function applyShaping(
   flowId: string,
   headers: Record<string, string>,
   body: Record<string, unknown>,
   credential?: Record<string, unknown> | null,
+  context?: ShapingContext,
 ): void {
   const shaping = shapingFor(flowId);
   if (shaping.ensureHeaders) {
     for (const [key, value] of Object.entries(shaping.ensureHeaders)) {
+      headers[key] ??= value;
+    }
+  }
+  if (shaping.dynamicHeaders) {
+    for (const [key, value] of Object.entries(shaping.dynamicHeaders(context ?? {}))) {
       headers[key] ??= value;
     }
   }

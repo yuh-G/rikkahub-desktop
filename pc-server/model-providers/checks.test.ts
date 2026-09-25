@@ -86,6 +86,17 @@ describe("endpointFor URL 拼接", () => {
         make({ id: "o3", name: "O", baseUrl: "https://x.example.com", chatCompletionsPath: "/api/chat" }),
       ),
     ).toBe("https://x.example.com/api/chat");
+    // baseUrlOverride:订阅供应商凭据派生的 baseUrl 接力(Copilot 企业域名/proxy-ep)。
+    // 空白 override 回落预设 baseUrl。
+    expect(endpointFor(make({ id: "cp", name: "C", baseUrl: "https://api.individual.githubcopilot.com" }), "https://company.ghe.com")).toBe(
+      "https://company.ghe.com/chat/completions",
+    );
+    expect(endpointFor(make({ id: "cp2", name: "C", baseUrl: "https://api.individual.githubcopilot.com" }), "   ")).toBe(
+      "https://api.individual.githubcopilot.com/chat/completions",
+    );
+    expect(endpointFor(make({ id: "cp3", name: "C", baseUrl: "https://api.individual.githubcopilot.com", useResponseApi: true }), "https://api.business.githubcopilot.com")).toBe(
+      "https://api.business.githubcopilot.com/responses",
+    );
     expect(
       endpointFor(make({ id: "g", name: "G", baseUrl: "https://generativelanguage.googleapis.com/v1beta", type: "google" })),
     ).toBe("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");

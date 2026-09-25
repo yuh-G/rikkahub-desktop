@@ -17,6 +17,7 @@ import { OAUTH_FLOWS, loadOAuthFlow, oauthFlowFor } from "./flows";
 
 export type LoginPhase =
   | "select_method"
+  | "waiting_input"
   | "waiting_browser"
   | "waiting_device_code"
   | "exchanging"
@@ -35,6 +36,8 @@ export interface ProviderAuthEvent {
   /** waiting_device_code 时的验证码/地址/倒计时。 */
   deviceCode?: { userCode: string; verificationUri: string; expiresInSeconds?: number };
   message?: string;
+  /** waiting_input 时的输入框占位提示(Copilot 的企业域名)。 */
+  placeholder?: string;
 }
 
 type AttemptState = {
@@ -92,7 +95,7 @@ function commitLogin(providerId: string, flowId: OAuthFlowId, credential: OAuthC
   const provider = state.settings.providers.find((p) => p.id === providerId);
   if (!provider) return false;
   // 仅在「当前无模型」时铺捆绑目录——用户若已手动加过模型,不覆盖其裁剪结果。
-  const bundled = provider.models.length > 0 ? provider.models : bundledModelsFor(flowId);
+  const bundled = provider.models.length > 0 ? provider.models : bundledModelsFor(flowId, [], credential as unknown as Record<string, unknown>);
   const providers = state.settings.providers.map((p): Provider =>
     p.id === providerId
       ? {
@@ -190,6 +193,13 @@ function makeInteraction(providerId: string, flow: string, attempt: AttemptState
         // 前端整帧替换后「打开浏览器 / 复制链接 / 手贴授权码」整块会消失,只剩转圈。
         emit(
           { providerId, flow, phase: "waiting_browser", authUrl: attempt.lastEvent?.authUrl, message: prompt.message },
+          attempt,
+        );
+      } else if (prompt.type === "text" || prompt.type === "secret") {
+        // 文本输入(Copilot 的企业域名,空串=github.com)。与 select/manual_code 同一
+        // manual-code 端点回传,前端只多渲染一个输入框。
+        emit(
+          { providerId, flow, phase: "waiting_input", message: prompt.message, placeholder: prompt.placeholder },
           attempt,
         );
       }

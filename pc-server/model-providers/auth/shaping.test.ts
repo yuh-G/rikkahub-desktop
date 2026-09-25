@@ -25,6 +25,44 @@ describe("OAUTH_PROVIDER_SHAPING 声明表", () => {
       expect(OAUTH_PROVIDER_SHAPING[flowId]?.streamingOnly ?? false).toBe(false);
     }
   });
+
+  test("Copilot 静态身份头逐字锁定(pi auth/oauth/github-copilot.ts 私有常量的当刻取值;pi 升级须核对)", () => {
+    // pi 的 COPILOT_HEADERS/COPILOT_API_VERSION 是模块私有,拿不到直接对比——这里锁死
+    // 抄录时刻的值;pi 升级改了值,这里就是需要人工核对的核对项(P1-R2:缺一可能 401)。
+    const s = OAUTH_PROVIDER_SHAPING["github-copilot"];
+    expect(s.ensureHeaders).toEqual({
+      "User-Agent": "GitHubCopilotChat/0.35.0",
+      "Editor-Version": "vscode/1.107.0",
+      "Editor-Plugin-Version": "copilot-chat/0.35.0",
+      "Copilot-Integration-Id": "vscode-chat",
+      "X-GitHub-Api-Version": "2026-06-01",
+    });
+  });
+
+  test("Copilot 动态头语义与 pi buildCopilotDynamicHeaders 逐字段一致(真漂移锁,直接对跑)", () => {
+    const { buildCopilotDynamicHeaders } = require("../../../pi/packages/ai/src/api/github-copilot-headers.ts");
+    type Msg = { role: string; content: unknown };
+    const cases: Array<{ role: string; hasImages: boolean }> = [
+      { role: "user", hasImages: false },
+      { role: "assistant", hasImages: false },
+      { role: "user", hasImages: true },
+      { role: "assistant", hasImages: true },
+    ];
+    for (const { role, hasImages } of cases) {
+      const piHeaders = buildCopilotDynamicHeaders({
+        messages: [{ role, content: hasImages ? [{ type: "image" }] : "hi" }] as never,
+        hasImages,
+      });
+      const ours: Record<string, string> = {};
+      applyShaping("github-copilot", ours, {}, null, { lastMessageRole: role, hasImages });
+      // 架构差异:pi 在请求点把静态身份头与动态头合并,我们的 applyShaping 声明层全并——
+      // 所以逐字段比对动态三头,静态头由上面的字面量锁负责。
+      expect(ours["X-Initiator"]).toBe(piHeaders["X-Initiator"]);
+      expect(ours["Openai-Intent"]).toBe(piHeaders["Openai-Intent"]);
+      expect(ours["Copilot-Vision-Request"]).toBe(piHeaders["Copilot-Vision-Request"]);
+      expect("Copilot-Vision-Request" in piHeaders).toBe(hasImages);
+    }
+  });
 });
 
 describe("applyShaping 解释器", () => {
@@ -85,5 +123,17 @@ describe("applyShaping 解释器", () => {
     applyShaping("kimi-coding", headers, body);
     expect(headers).toEqual({}); // 不注入任何头
     expect(body).toEqual({ model: "kimi" }); // 不动 body
+  });
+
+  test("Copilot 动态头:缺省 context(辅助调用形态)= 用户发起、无图;??= 不覆盖已设值", () => {
+    const aux: Record<string, string> = {};
+    applyShaping("github-copilot", aux, {}, null);
+    expect(aux["X-Initiator"]).toBe("user");
+    expect(aux["Openai-Intent"]).toBe("conversation-edits");
+    expect("Copilot-Vision-Request" in aux).toBe(false);
+    // 用户显式设置优先。
+    const custom: Record<string, string> = { "Openai-Intent": "custom-intent" };
+    applyShaping("github-copilot", custom, {}, null, { lastMessageRole: "user" });
+    expect(custom["Openai-Intent"]).toBe("custom-intent");
   });
 });

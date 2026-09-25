@@ -27,15 +27,25 @@ function toHostModel(entry: PiModel<Api>, existingId?: string): Model {
 }
 
 /** 该 flow 的捆绑目录(宿主 Model 形状)。existing 用于保留同 modelId 的既有 id。
+ *  credential 带非空 availableModelIds 时按白名单过滤(Copilot:企业账号可能只开了部分
+ *  模型,登录时 pi 写进凭证)。
  *  pi 快照里没有该 provider(vendor 基线异常)时返回空数组——调用方按「无目录」处理,
  *  用户仍可手动添加模型(pi 桥对目录外 id 有模板克隆兜底)。 */
-export function bundledModelsFor(flowId: OAuthFlowId, existing: readonly Model[] = []): Model[] {
+export function bundledModelsFor(
+  flowId: OAuthFlowId,
+  existing: readonly Model[] = [],
+  credential?: Record<string, unknown> | null,
+): Model[] {
   const piProviderId = OAUTH_FLOWS[flowId].piProviderId as BuiltinProvider;
+  const whitelist = Array.isArray(credential?.availableModelIds)
+    ? (credential.availableModelIds as unknown[]).filter((id): id is string => typeof id === "string")
+    : null;
   const existingIdByModelId = new Map(existing.map((m) => [m.modelId, m.id]));
   const seen = new Set<string>();
   const models: Model[] = [];
   for (const entry of getBuiltinModels(piProviderId) as PiModel<Api>[]) {
     if (seen.has(entry.id)) continue;
+    if (whitelist && !whitelist.includes(entry.id)) continue;
     seen.add(entry.id);
     models.push(toHostModel(entry, existingIdByModelId.get(entry.id)));
   }

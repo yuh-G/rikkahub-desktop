@@ -255,6 +255,15 @@ export function defaultProviders(): Provider[] {
       models: [model("gemini-2.5-flash"), model("gemini-2.5-pro")],
     }),
     provider({ id: "ff3cde7e-0f65-43d7-8fb2-6475c99f5990", name: "xAI", baseUrl: "https://api.x.ai/v1", useResponseApi: true }),
+    // Grok 订阅紧跟「xAI」(同家)。pi 口径:api.x.ai/v1 responses(scope 含 api:access)。
+    provider({
+      id: OAUTH_PROVIDER_IDS["xai"],
+      name: "Grok",
+      baseUrl: "https://api.x.ai/v1",
+      shortDescription: "使用 SuperGrok / X Premium 订阅登录,无需 API Key",
+      authMode: "oauth",
+      useResponseApi: true,
+    }),
     provider({
       id: "f099ad5b-ef03-446d-8e78-7e36787f780b",
       name: "DeepSeek",
@@ -331,6 +340,15 @@ export function defaultProviders(): Provider[] {
       name: "MIMO",
       baseUrl: "https://api.xiaomimimo.com/v1",
       shortDescription: "小米 MiMo 官方 OpenAI 兼容 API",
+    }),
+    // GitHub Copilot 订阅:无同家 API 预置,落列表末尾(§6.1)。chat-completions 形态;
+    // 每账号 baseUrl 登录后由 access token 的 proxy-ep 推导(toAuth().baseUrl),此处是默认值。
+    provider({
+      id: OAUTH_PROVIDER_IDS["github-copilot"],
+      name: "GitHub Copilot",
+      baseUrl: "https://api.individual.githubcopilot.com",
+      shortDescription: "使用 GitHub Copilot 订阅登录,无需 API Key",
+      authMode: "oauth",
     }),
   ];
 }

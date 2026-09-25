@@ -162,7 +162,7 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
     modelItem,
     options.conversationId,
   );
-  let endpoint = endpointFor(providerItem);
+  let endpoint = endpointFor(providerItem, resolvedAuth.baseUrl);
   let body: Record<string, any>;
   // 订阅供应商整形(Codex:删 max_output_tokens、并 include、补 originator/OpenAI-Beta 头)与主生成
   // 路径同一时机:body 定稿后、applyCustomBody 前。辅助调用漏整形 = 标题/建议在 Codex 上 400。
@@ -342,7 +342,7 @@ async function fetchAuxiliaryOcrText(imageUrl: string) {
   // 订阅供应商:凭据在服务端 oauth 里,apiKey 恒空——先解析(可能触发锁内刷新)。
   const resolvedAuth = await resolveProviderAuthForProvider(providerItem);
   const headers = applyRequestHeaders({ "Content-Type": "application/json", ...resolvedAuth.headers }, assistant, providerItem, modelItem);
-  let endpoint = endpointFor(providerItem);
+  let endpoint = endpointFor(providerItem, resolvedAuth.baseUrl);
   let body: Record<string, any>;
   // 订阅供应商整形,同 fetchAuxiliaryText:body 定稿后、applyCustomBody 前。
   const shaped = (draft: Record<string, any>) => {

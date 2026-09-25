@@ -45,4 +45,30 @@ describe("bundledModelsFor", () => {
     const other = refreshed.find((m) => m.modelId !== "k3")!;
     expect(other.id).toMatch(UUID_RE);
   });
+
+  test("GitHub Copilot 目录非空(三家协议的模型全收录;宿主聊天引擎的协议取舍在供应商行)", () => {
+    const models = bundledModelsFor("github-copilot");
+    expect(models.length).toBeGreaterThan(10);
+    expect(models.every((m) => m.id !== m.modelId)).toBe(true);
+  });
+
+  test("availableModelIds 白名单过滤(Copilot 企业账号可能只开部分模型);缺字段/非数组不过滤", () => {
+    const all = bundledModelsFor("github-copilot");
+    expect(all.length).toBeGreaterThan(1);
+    const keep = all[0];
+    const filtered = bundledModelsFor("github-copilot", [], { availableModelIds: [keep.modelId] });
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].modelId).toBe(keep.modelId);
+    // 空数组 = 白名单存在但为空 → 空目录(诚实反映凭证,不假装全量)。
+    expect(bundledModelsFor("github-copilot", [], { availableModelIds: [] })).toHaveLength(0);
+    // 白名单外的 id 不出现;同 modelId 的既有 id 保留逻辑在过滤后仍生效。
+    const partial = bundledModelsFor("github-copilot", [{ ...all[1], id: "keep-two" }], {
+      availableModelIds: [all[1].modelId],
+    });
+    expect(partial).toHaveLength(1);
+    expect(partial[0].id).toBe("keep-two");
+    // 凭证没带 availableModelIds(pi 侧未写)→ 全量返回。
+    expect(bundledModelsFor("github-copilot", [], null)).toHaveLength(all.length);
+    expect(bundledModelsFor("github-copilot", [], { other: 1 })).toHaveLength(all.length);
+  });
 });

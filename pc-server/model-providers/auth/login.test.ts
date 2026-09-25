@@ -228,6 +228,29 @@ describe("login orchestration", () => {
     expect(events.some((e) => e.phase === "success")).toBe(true);
   });
 
+  test("text prompt (Copilot enterprise domain): waiting_input frame with placeholder, answered via resumePrompt", async () => {
+    overrideOAuthFlow("openai-codex", {
+      name: "Test",
+      login: async (interaction) => {
+        const domain = await interaction.prompt({ type: "text", message: "GitHub Enterprise URL", placeholder: "company.ghe.com" });
+        return { type: "oauth", access: `token-for:${domain || "github.com"}`, refresh: "r", expires: 9999999999000 };
+      },
+      refresh: async () => {
+        throw new Error("not in test");
+      },
+      toAuth: async (cred) => ({ apiKey: cred.access }),
+    });
+    const result = await startLogin(CODEX_PROVIDER_ID);
+    if (!result.ok) throw new Error(result.error);
+    const frame = events.find((e) => e.phase === "waiting_input");
+    expect(frame?.message).toBe("GitHub Enterprise URL");
+    expect(frame?.placeholder).toBe("company.ghe.com");
+    // 空串回传 = 用户留空用 github.com(pi 流程对空串的语义),不能被当成"没有输入"拒收。
+    expect(resumePrompt(CODEX_PROVIDER_ID, "")).toBe(true);
+    expect((await result.completion).ok).toBe(true);
+    expect(state.settings.providers.find((p) => p.id === CODEX_PROVIDER_ID)?.oauth?.credential?.access).toBe("token-for:github.com");
+  });
+
   test("loginInProgress reflects attempt state and cancel finishes it", async () => {
     expect(loginInProgress(CODEX_PROVIDER_ID)).toBe(false);
     // 注入一个挂起的 login(永不 resolve,模拟用户未操作)。
