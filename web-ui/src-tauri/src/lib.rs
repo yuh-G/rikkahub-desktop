@@ -31,11 +31,28 @@ use tauri_plugin_shell::{
     ShellExt,
 };
 
-/// 界面拨号主机:webview 导航到 `http://{UI_HOST}:{port}`。与 pc-server/foundation/port-binding.ts
-/// 的 UI_HOST 同值(pc-server 契约测试读本文件锁定)。拨 localhost 安全的前提是 sidecar 在回环
-/// 意图下同时占住 127.0.0.1 与 ::1(issue #62:只占 IPv4 时,localhost 先连的 ::1 可被任意程序接走)。
-/// 改这里 = 页面 origin 改变,按 origin 隔离的本地存储会整体重置,见 port-binding.ts 的说明。
-const UI_HOST: &str = "localhost";
+/// 界面地址的启动标记包:sidecar 按固定顺序打出 RIKKAHUB_UI_ORIGIN(最终 origin)、
+/// RIKKAHUB_UI_ENTRY(首跳;origin 接力生效时先去旧 origin 的接力页)、RIKKAHUB_PORT。
+/// 界面地址由服务端单源下发(origin 接力换首跳、将来换拨号主机,壳零改动);UI_* 缺失时
+/// 的兜底也在这里(理论不可能——pc-server 契约测试锁服务端必打,顺序 UI_* 在前)。
+#[derive(Debug, Clone)]
+struct UiStartup {
+    port: u16,
+    ui_origin: String,
+    ui_entry: String,
+}
+
+impl UiStartup {
+    /// UI_* 标记缺失时的兜底:与 port-binding.ts 的 UI_HOST("localhost")同值的回退地址。
+    /// 契约测试读本文件锁定该字面量与服务端一致。
+    fn fallback(port: u16) -> Self {
+        Self {
+            port,
+            ui_origin: format!("http://localhost:{port}"),
+            ui_entry: format!("http://localhost:{port}/"),
+        }
+    }
+}
 
 #[derive(Default)]
 struct SidecarState {
@@ -248,16 +265,16 @@ fn exe_dir() -> PathBuf {
 }
 
 /// Block until the sidecar prints its `RIKKAHUB_PORT:<n>` marker (meaning Bun.serve bound
-/// successfully) or the child dies. R1-1：服务端已改为"先绑端口打标记、迁移后置"，标记
-/// 正常应在数秒内到达；子进程仍存活就继续等——旧的 20s 硬超时会把正在迁移大数据的
-/// 后端连坐杀死（迁移下次从头再来），形成"每次启动都超时被杀"的死循环。真正的失败
-/// （端口耗尽/数据目录被锁/迁移崩溃）都会让子进程退出，由 child_dead 分支兜住并展示
-/// RIKKAHUB_FATAL 标记带出的真实原因（R1-4）。
-fn wait_for_sidecar_port(
-    port_rx: std::sync::mpsc::Receiver<u16>,
+/// successfully — the UI_* markers arrive earlier on the same stream) or the child dies.
+/// R1-1：服务端已改为"先绑端口打标记、迁移后置"，标记正常应在数秒内到达；子进程仍存活
+/// 就继续等——旧的 20s 硬超时会把正在迁移大数据的后端连坐杀死（迁移下次从头再来），
+/// 形成"每次启动都超时被杀"的死循环。真正的失败（端口耗尽/数据目录被锁/迁移崩溃）
+/// 都会让子进程退出，由 child_dead 分支兜住并展示 RIKKAHUB_FATAL 标记带出的真实原因（R1-4）。
+fn wait_for_sidecar_startup(
+    port_rx: std::sync::mpsc::Receiver<UiStartup>,
     child_dead: &AtomicBool,
     fatal_message: &Mutex<Option<String>>,
-) -> Result<u16, String> {
+) -> Result<UiStartup, String> {
     let started = Instant::now();
     let mut last_log = Instant::now();
     loop {
@@ -265,7 +282,7 @@ fn wait_for_sidecar_port(
             return Err(startup_failure_message(fatal_message));
         }
         match port_rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(port) => return Ok(port),
+            Ok(startup) => return Ok(startup),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 if last_log.elapsed() >= Duration::from_secs(10) {
                     last_log = Instant::now();
@@ -301,7 +318,7 @@ type FatalMessage = Arc<Mutex<Option<String>>>;
 
 fn spawn_sidecar(
     app: &AppHandle,
-) -> Result<(CommandChild, Arc<AtomicBool>, FatalMessage, std::sync::mpsc::Receiver<u16>), String> {
+) -> Result<(CommandChild, Arc<AtomicBool>, FatalMessage, std::sync::mpsc::Receiver<UiStartup>), String> {
     let data_dir = resolve_data_dir(app);
     fs::create_dir_all(&data_dir)
         .map_err(|e| format!("Failed to create data dir {}: {e}", data_dir.display()))?;
@@ -313,7 +330,10 @@ fn spawn_sidecar(
         // `--no-open` skips the sidecar's "auto-launch system browser" behavior, which is
         // meant for portable / standalone use. Inside the Tauri shell the webview already
         // navigates to the same URL, so a second browser window would just be noise.
-        .args(["--no-open"])
+        // `--ui-shell` tells the sidecar there IS a UI consumer behind it: origin 接力
+        // (界面 origin 变化时在旧 origin 挂临时接力页搬界面状态)只在有界面消费者时
+        // 启用——否则无头实例会在可能是生产端口的旧端口上挂监听。
+        .args(["--no-open", "--ui-shell"])
         .env("RIKKAHUB_PC_DATA_DIR", &data_dir);
         // NOTE: we deliberately do NOT pass PORT here. The sidecar now picks its own port
         // (8080 by default, walking up on conflict) and reports the actual value via the
@@ -342,28 +362,45 @@ fn spawn_sidecar(
     let fatal: FatalMessage = Arc::new(Mutex::new(None));
     let fatal_clone = fatal.clone();
 
-    // The sidecar prints a single `RIKKAHUB_PORT:<n>` line on stdout once Bun.serve binds.
-    // We parse it here and forward the value over a channel so the setup routine can navigate
-    // the webview to the correct port — the window opens on the bundled splash page (a local
-    // asset, so the user never sees a connection-refused page), and is re-navigated to the
-    // real origin once this resolves.
-    let (port_tx, port_rx) = std::sync::mpsc::channel::<u16>();
+    // The sidecar prints its startup markers on stdout once Bun.serve binds:
+    // `RIKKAHUB_UI_ORIGIN:<url>` / `RIKKAHUB_UI_ENTRY:<url>`(in that order, both before
+    // the port line — server contract) and a final `RIKKAHUB_PORT:<n>`. We accumulate the
+    // UI_* pair and forward the whole bundle when the port line arrives, so the waiting
+    // thread that receives it is guaranteed to have both addresses (missing → fallback).
+    let (port_tx, port_rx) = std::sync::mpsc::channel::<UiStartup>();
     let port_tx_clone = port_tx.clone();
 
     // Pipe sidecar stdout/stderr to the host stdout so `cargo tauri dev` users see logs.
     // In release this is silent because of the `windows_subsystem = "windows"` attribute.
     tauri::async_runtime::spawn(async move {
+        let mut ui_origin: Option<String> = None;
+        let mut ui_entry: Option<String> = None;
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(line) => {
                     if let Ok(text) = String::from_utf8(line) {
                         let trimmed = text.trim_end();
                         eprintln!("[sidecar] {}", trimmed);
-                        // `RIKKAHUB_PORT:8082` → Some(8082). Only the first hit matters; the
-                        // channel is consumed once by the setup wait.
-                        if let Some(rest) = trimmed.strip_prefix("RIKKAHUB_PORT:") {
+                        // Only the first hit matters; the channel is consumed once by the
+                        // setup wait.
+                        if let Some(rest) = trimmed.strip_prefix("RIKKAHUB_UI_ORIGIN:") {
+                            let value = rest.trim();
+                            if !value.is_empty() && ui_origin.is_none() {
+                                ui_origin = Some(value.to_string());
+                            }
+                        } else if let Some(rest) = trimmed.strip_prefix("RIKKAHUB_UI_ENTRY:") {
+                            let value = rest.trim();
+                            if !value.is_empty() && ui_entry.is_none() {
+                                ui_entry = Some(value.to_string());
+                            }
+                        } else if let Some(rest) = trimmed.strip_prefix("RIKKAHUB_PORT:") {
                             if let Ok(p) = rest.trim().parse::<u16>() {
-                                let _ = port_tx_clone.send(p);
+                                // 成对出现才可信;缺一即整体回退,保证 origin/entry 是同一套地址。
+                                let startup = match (ui_origin.take(), ui_entry.take()) {
+                                    (Some(origin), Some(entry)) => UiStartup { port: p, ui_origin: origin, ui_entry: entry },
+                                    _ => UiStartup::fallback(p),
+                                };
+                                let _ = port_tx_clone.send(startup);
                             }
                         }
                         // R1-4：`RIKKAHUB_FATAL:<code>:<message>`。code 对齐退出码，目前
@@ -754,9 +791,8 @@ pub fn run() {
             // 但极端情况（安全软件拦截、磁盘极慢）下可能更久——在主线程上等会冻结窗口。
             let wait_handle = handle.clone();
             thread::spawn(move || {
-                let actual_port = match wait_for_sidecar_port(port_rx, &child_dead, &fatal_message)
-                {
-                    Ok(port) => port,
+                let startup = match wait_for_sidecar_startup(port_rx, &child_dead, &fatal_message) {
+                    Ok(startup) => startup,
                     Err(msg) => {
                         show_startup_error(&wait_handle, &msg);
                         wait_handle.exit(1);
@@ -765,7 +801,7 @@ pub fn run() {
                 };
 
                 if let Some(state) = wait_handle.try_state::<SidecarState>() {
-                    state.port.store(actual_port, Ordering::Relaxed);
+                    state.port.store(startup.port, Ordering::Relaxed);
                 }
 
                 wait_handle.emit("sidecar://ready", true).ok();
@@ -773,17 +809,22 @@ pub fn run() {
                 // 端口标记到达 = Bun.serve 已在监听。窗口初始 URL（tauri.conf.json）指向
                 // 内嵌的 splash.html（本地资源，零网络依赖——旧实现直指 8080，启动空窗期
                 // 必然先落在 WebView2 的「无法访问此页面」，几乎每次启动都闪一次报错页）。
-                // 守卫用 SPA 在 <head> 内联脚本设置的 __RIKKAHUB_APP__ 旗标：旗标在且
-                // origin 对 → 页面活着，不打扰；否则（splash 页、端口顺延或改拨主机后的旧页）
-                // 重导航到实际地址。比完整 origin 而非仅端口：主机名变化也能迁走；经 URL 规范化
-                // 后默认端口（80）的页面也不会被误判而反复重载。splash 页视觉与 SPA 的
-                // HydrateFallback 逐像素一致，用户感知为一整段连续的品牌启动屏。
-                // （更旧的实现只在非 8080 时导航、用 location.href 猜测，修不了 8080 死页。）
+                // 守卫按三面旗判定：
+                //   __RIKKAHUB_APP__ + origin===最终 origin → SPA 已就位,不打扰(比完整
+                //     origin 而非仅端口:端口顺延/将来改拨主机后的旧页也会被迁走);
+                //   __RIKKAHUB_RELAY__ / __RIKKAHUB_NAV__ → 接力页进行中/本文档已发起导航,
+                //     不打断(避免把接力页拉回最终 origin 白跑一趟);
+                //   其余(splash 页、错误页、旧 origin 活页)→ 发起导航:只有启动屏
+                //     (__RIKKAHUB_SPLASH__)才去首跳 ENTRY——origin 接力生效时它指向旧 origin
+                //     的接力页,由接力页读出旧界面状态后带凭证跳回;其余文档一律直达最终
+                //     origin。3 次 × 700ms 的冗余保留:单次 eval 可能落空(文档切换瞬间)。
+                // splash 页视觉与 SPA 的 HydrateFallback 逐像素一致,用户感知为一整段连续
+                // 的品牌启动屏。
                 if let Some(window) = wait_handle.get_webview_window("main") {
                     let js = format!(
-                        "(function(){{var t='http://{h}:{p}';try{{if(!window.__RIKKAHUB_APP__||location.origin!==new URL(t).origin){{location.replace(t)}}}}catch(e){{location.replace(t)}}}})()",
-                        h = UI_HOST,
-                        p = actual_port
+                        "(function(){{var e={e:?},f={f:?};try{{if(window.__RIKKAHUB_APP__&&location.origin===f)return;if(window.__RIKKAHUB_RELAY__||window.__RIKKAHUB_NAV__)return;window.__RIKKAHUB_NAV__=1;location.replace(window.__RIKKAHUB_SPLASH__?e:f)}}catch(x){{location.replace(f)}}}})()",
+                        e = startup.ui_entry,
+                        f = startup.ui_origin,
                     );
                     for _ in 0..3 {
                         let _ = window.eval(&js);

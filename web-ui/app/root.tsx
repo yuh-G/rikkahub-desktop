@@ -37,8 +37,26 @@ import { useAppErrorsStore } from "./stores/app-errors-store";
 import { startUsageActivityBeacon } from "./services/usage-activity";
 import { useApprovalNotifications } from "./lib/approval-notification";
 import api from "~/services/api";
+import {
+  LEGACY_RELAY_KEYS,
+  ORIGIN_RELAY_KEYS,
+  RELAY_QUERY_KEY,
+  RELAY_SCRIPT_ID,
+} from "@server/foundation/origin-relay";
 
 const queryClient = new QueryClient();
+
+// 【origin 接力·导入脚本】见 Layout 里 <head> 首个脚本的注释。内联串在模块装配期拼好:
+// 白名单/键名经 JSON.stringify 嵌入,无手拼引号;两个 try 各自兜底(隐私模式下
+// localStorage 抛错、非常规 URL),失败只是不导入/URL 留参,页面照常起。
+const ORIGIN_RELAY_KEYS_JSON = JSON.stringify([...ORIGIN_RELAY_KEYS, ...LEGACY_RELAY_KEYS]);
+const ORIGIN_RELAY_IMPORT_SCRIPT =
+  `try{var el=document.getElementById(${JSON.stringify(RELAY_SCRIPT_ID)});if(el){` +
+  `var d=JSON.parse(el.textContent||"{}"),k=${ORIGIN_RELAY_KEYS_JSON};` +
+  `for(var i=0;i<k.length;i++)if(typeof d[k[i]]==="string")localStorage.setItem(k[i],d[k[i]]);el.remove()}}catch(e){}` +
+  `try{var u=new URL(location.href);if(u.searchParams.has(${JSON.stringify(RELAY_QUERY_KEY)})){` +
+  `u.searchParams.delete(${JSON.stringify(RELAY_QUERY_KEY)});` +
+  `history.replaceState(history.state,"",u.pathname+u.search+u.hash)}}catch(e){}`;
 
 export const links: Route.LinksFunction = () => [
   { rel: "icon", href: "/favicon.ico", type: "image/x-icon", sizes: "any" },
@@ -60,6 +78,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        {/* 【origin 接力·导入】服务端在 <head> 开头注入过数据块时,同步写回白名单
+            localStorage 并删除数据块,再剥掉凭证查询参数。必须是 <head> 第一个脚本——
+            下方两段预绘制脚本要读到搬来的值,标签 store 模块初始化时读到的就是旧布局。
+            导入是覆盖(用户最后待在旧 origin,旧数据才是最新);无数据块时零操作,
+            日常启动恒走空路径。白名单与键名从服务端纯模块 @server 引用,单一来源。 */}
+        <script dangerouslySetInnerHTML={{ __html: ORIGIN_RELAY_IMPORT_SCRIPT }} />
         {/* R1-1:Tauri 壳(lib.rs)用此旗标区分"本应用已加载"与"连接失败错误页",
             决定是否需要重导航到 sidecar 实际端口。必须内联在 <head> 里尽早执行。 */}
         <script dangerouslySetInnerHTML={{ __html: "window.__RIKKAHUB_APP__=1" }} />

@@ -67,6 +67,20 @@ function presetRecord(dataDir: string, origin: string): void {
   writeFileSync(join(dataDir, "ui-origin.json"), serializeUiOriginRecord(origin, Date.now()), "utf8");
 }
 
+/** Windows 下刚 kill 的子进程可能还攥着 data 目录句柄几百毫秒,rmSync 会 EBUSY——
+ *  小睡重试;仍失败就留给 OS 临时目录清理(此时断言已全部完成,残留不影响结论)。 */
+function cleanupTempDir(dir: string): void {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch {
+      if (attempt >= 5) return;
+      Bun.sleepSync(150);
+    }
+  }
+}
+
 describe("界面 origin 接力(真实服务端)", () => {
   test("主链路:标记顺序 → 接力页 → POST → 带凭证落地注入 → 记录 → 一次性 → 关闭", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rkh-relay-e2e-"));
@@ -120,7 +134,7 @@ describe("界面 origin 接力(真实服务端)", () => {
       expect(await probeClosed(`http://localhost:${Q}/`)).toBe("closed");
     } finally {
       proc.kill();
-      rmSync(dataDir, { recursive: true, force: true });
+      cleanupTempDir(dataDir);
     }
   }, 40_000);
 
@@ -137,7 +151,7 @@ describe("界面 origin 接力(真实服务端)", () => {
       expect(await probeClosed(`http://localhost:${Q}/`)).toBe("closed");
     } finally {
       proc.kill();
-      rmSync(dataDir, { recursive: true, force: true });
+      cleanupTempDir(dataDir);
     }
   }, 40_000);
 
@@ -174,7 +188,7 @@ describe("界面 origin 接力(真实服务端)", () => {
     } finally {
       proc.kill();
       squatter.stop(true);
-      rmSync(dataDir, { recursive: true, force: true });
+      cleanupTempDir(dataDir);
     }
   }, 40_000);
 });

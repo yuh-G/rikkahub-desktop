@@ -305,7 +305,7 @@ describe.skipIf(!ipv6)("真实套接字(本机有 IPv6 回环)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 契约:界面拨号主机解析到的每个地址都在回环绑定组内;壳与服务端拨同一个主机
+// 契约:界面拨号主机解析到的每个地址都在回环绑定组内;壳的界面地址由服务端标记单源下发
 // ---------------------------------------------------------------------------
 
 describe("界面拨号契约", () => {
@@ -315,14 +315,58 @@ describe("界面拨号契约", () => {
     expect(uiOrigin(8080)).toBe(`http://${UI_HOST}:8080`);
   });
 
-  test("Tauri 壳导航用同一个 UI_HOST,且守卫按完整 origin 判定", () => {
+  test("壳:界面地址由服务端标记单源下发(--ui-shell + UI_* 解析),兜底主机与服务端 UI_HOST 一致", () => {
     const shell = readFileSync(join(import.meta.dir, "..", "..", "web-ui", "src-tauri", "src", "lib.rs"), "utf8");
-    expect(shell.match(/const UI_HOST: &str = "([^"]+)";/)?.[1]).toBe(UI_HOST);
-    // 导航目标由常量拼出,不得回退成写死的主机;守卫比 origin 而非仅端口——改拨主机时,
-    // 停在旧主机同端口上的页面才会被迁走。
-    expect(shell).toContain("var t='http://{h}:{p}'");
-    expect(shell).toContain("h = UI_HOST");
-    expect(shell).toContain("location.origin!==new URL(t).origin");
-    expect(shell).not.toMatch(/'http:\/\/(localhost|127\.0\.0\.1):\{p\}'/);
+    // 壳告知服务端「有界面消费者」,origin 接力只在此时启用
+    expect(shell).toContain('.args(["--no-open", "--ui-shell"])');
+    expect(shell).toContain('strip_prefix("RIKKAHUB_UI_ORIGIN:")');
+    expect(shell).toContain('strip_prefix("RIKKAHUB_UI_ENTRY:")');
+    // UI_* 缺失的兜底地址(理论不可能——origin-relay.e2e 锁服务端必打、UI_* 先于端口行)
+    expect(shell).toContain(`format!("http://${UI_HOST}:{port}")`);
+    expect(shell).toContain(`format!("http://${UI_HOST}:{port}/")`);
+    // 壳不得再有自己的 UI_HOST 常量——界面地址的唯一来源是服务端标记
+    expect(shell).not.toMatch(/const UI_HOST/);
+  });
+
+  test("壳守卫格式串:代入值在模拟 window/location 上执行,五种情形全部正确", () => {
+    const shell = readFileSync(join(import.meta.dir, "..", "..", "web-ui", "src-tauri", "src", "lib.rs"), "utf8");
+    const formatStr = /let js = format!\(\s*"([^"]+)"/.exec(shell)?.[1];
+    expect(formatStr).toBeDefined();
+    // 格式串不得写死主机——地址全部来自代入值(服务端单源)
+    expect(formatStr!).not.toContain("localhost");
+
+    const ENTRY = "http://localhost:9000/"; // 模拟接力首跳(旧 origin 上的接力页)
+    const FINAL = "http://localhost:17455";
+    const run = (env: { app?: boolean; relay?: boolean; nav?: boolean; splash?: boolean; origin: string }) => {
+      // Rust format 串 → 可执行 JS:{{ }} 还原成字面量花括号,{e:?}/{f:?} 换成 JSON 字符串
+      const source = formatStr!
+        .replace(/\{\{/g, "{")
+        .replace(/\}\}/g, "}")
+        .replace(/\{e:\?\}/g, JSON.stringify(ENTRY))
+        .replace(/\{f:\?\}/g, JSON.stringify(FINAL));
+      const fakeWindow: Record<string, unknown> = {};
+      if (env.app) fakeWindow.__RIKKAHUB_APP__ = 1;
+      if (env.relay) fakeWindow.__RIKKAHUB_RELAY__ = 1;
+      if (env.nav) fakeWindow.__RIKKAHUB_NAV__ = 1;
+      if (env.splash) fakeWindow.__RIKKAHUB_SPLASH__ = 1;
+      const replaces: string[] = [];
+      const fakeLocation = { origin: env.origin, replace: (url: string) => replaces.push(url) };
+      new Function("window", "location", source)(fakeWindow, fakeLocation);
+      return { replaces, window: fakeWindow };
+    };
+
+    // ① SPA 已在最终 origin:不打扰,也不立 NAV 旗
+    expect(run({ app: true, origin: FINAL }).replaces).toEqual([]);
+    // ② 启动屏:去首跳(接力时 = 旧 origin 接力页),并立 NAV 旗防后续 eval 打断
+    const splashRun = run({ splash: true, origin: "http://tauri.localhost" });
+    expect(splashRun.replaces).toEqual([ENTRY]);
+    expect(splashRun.window.__RIKKAHUB_NAV__).toBe(1);
+    // ③ 接力页进行中:不打断(它自己会带凭证跳回最终 origin)
+    expect(run({ relay: true, origin: "http://localhost:9000" }).replaces).toEqual([]);
+    // ④ 同一文档已发起导航:不打断
+    expect(run({ nav: true, splash: true, origin: "http://tauri.localhost" }).replaces).toEqual([]);
+    // ⑤ 错误页(无旗标)与旧 origin 活页面(APP 在但 origin 不对):一律直达最终 origin
+    expect(run({ origin: "http://localhost:17456" }).replaces).toEqual([FINAL]);
+    expect(run({ app: true, origin: "http://localhost:8080" }).replaces).toEqual([FINAL]);
   });
 });

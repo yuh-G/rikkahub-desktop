@@ -11,10 +11,13 @@
   localhost:8080 的 localStorage 预绘制键);显式暗色+浅色系统的用户会在接力瞬间
   看到一帧浅色——仍优于此前的整屏报错页。
   严禁在本页设置 window.__RIKKAHUB_APP__:那是壳判断「SPA 已就位、无需重导航」的旗标。
+  必须设置 window.__RIKKAHUB_SPLASH__:壳守卫据此识别「当前文档是启动屏」——origin 接力
+  生效时只有启动屏才去首跳(旧 origin 上的接力页),其余文档一律直达最终 origin。
 -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
+<script>window.__RIKKAHUB_SPLASH__=1</script>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>RikkaHub</title>
 <style>
