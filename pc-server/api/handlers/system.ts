@@ -11,6 +11,7 @@ import { findModel } from "../../model-providers";
 import { contextWindowFor } from "../../model-providers/model-limits";
 import { error, json, readJson } from "../request";
 import { isLoopbackRequest } from "../net-context";
+import { stripAuthSecrets } from "../auth";
 import { appClients, mcpHealthSnapshotFrame, openSse } from "../sse";
 import { memoryStore } from "../../memory/index";
 import { recentAppErrors } from "../../observability/app-errors";
@@ -36,10 +37,13 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
   }
   // 单一应用事件通道(连接预算纪律,详见 api/sse.ts 顶部注释):设置/记忆/错误/列表失效
   // 四域合一。连接即推各域完整快照——重连本身就是状态补偿,客户端无需另发 GET。
+  // settings 首帧与 broadcastSettings 增量同经 stripAuthSecrets:首帧裸发会把
+  // webPasswordHash / oauth.credential(refresh token)整份漏给浏览器,且首帧缺 oauthStatus
+  // 会让订阅卡片在刷新后先显示「未登录」,直到下一次设置变更才纠正。
   if (path === "events") {
     return openSse(
       () => [
-        ["settings", state.settings],
+        ["settings", stripAuthSecrets(state.settings)],
         ["memory", memoryStore.getSnapshot()],
         ["app_errors_snapshot", { type: "snapshot", errors: recentAppErrors() }],
         ["invalidate", { type: "invalidate", assistantId: state.settings.assistantId, timestamp: Date.now() }],

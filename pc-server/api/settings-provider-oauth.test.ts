@@ -2,7 +2,10 @@
 // 关键不变量(方案 §3):
 //   1. 已登录的订阅供应商(authMode=oauth):前端 draft 的滞后 authMode 不得覆盖服务端真值;
 //   2. 未登录的订阅供应商(authMode=oauth):服务端真值同样优先,前端误传 apiKey 不得改形态;
-//   3. apiKey 供应商:authMode 正常跟随 body(用户可切形态)。
+//   3. apiKey 供应商:authMode 正常跟随 body(用户可切形态);
+//   4. 前端回传的派生视图 oauthStatus 不得落进 state。
+// (历史数据里已被冲成 apiKey 的预置行由 normalizeState 加载时拨回,见 persistence 的
+//  provider-oauth-status-strip.test.ts;不再有 restore 端点。)
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
@@ -25,16 +28,6 @@ async function postProvider(body: Record<string, unknown>): Promise<Response | n
     body: JSON.stringify(body),
   });
   return handleSettingsRoutes(request, url, "settings/provider");
-}
-
-async function postRestore(body: Record<string, unknown>): Promise<Response | null> {
-  const url = new URL("http://127.0.0.1/api/settings/provider/oauth/restore");
-  const request = new Request(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return handleSettingsRoutes(request, url, "settings/provider/oauth/restore");
 }
 
 function seedProvider(overrides: Record<string, unknown>): void {
@@ -88,17 +81,26 @@ describe("settings/provider POST:订阅供应商 authMode 保护", () => {
     expect(p?.authMode).toBe("apiKey");
   });
 
-  test("restore 端点:把被冲成 apiKey 的预置订阅供应商拨回 oauth", async () => {
-    seedProvider({ authMode: "apiKey", oauth: undefined });
-    const res = await postRestore({ providerId: KIMI_ID });
+  test("前端回传的 oauthStatus 派生视图不得落进 state(否则登出后残留 signedIn:true)", async () => {
+    // 前端 draft 是 stripAuthSecrets 下发的形状(带 oauthStatus),整对象回传是常态。
+    const res = await postProvider({
+      id: KIMI_ID,
+      name: "Kimi Code (renamed)",
+      authMode: "oauth",
+      oauthStatus: { signedIn: true, flow: "kimi-coding", signedInAt: 1 },
+    });
     expect(res?.status).toBe(200);
-    const p = state.settings.providers.find((x) => x.id === KIMI_ID);
-    expect(p?.authMode).toBe("oauth");
+    const p = state.settings.providers.find((x) => x.id === KIMI_ID) as Record<string, unknown> | undefined;
+    expect(p?.name).toBe("Kimi Code (renamed)");
+    expect("oauthStatus" in (p ?? {})).toBe(false);
+    // 服务端凭证照旧保留
+    expect((p?.oauth as { credential?: { refresh?: string } } | undefined)?.credential?.refresh).toBe("r");
   });
 
-  test("restore 端点:非预置且无 oauth 行的供应商拒绝拨回", async () => {
-    seedProvider({ id: "custom-provider", authMode: "apiKey", oauth: undefined });
-    const res = await postRestore({ providerId: "custom-provider" });
-    expect(res?.status).toBe(400);
+  test("oauth/status 端点:无进行中尝试时 inProgress=false、event=null", async () => {
+    const url = new URL(`http://127.0.0.1/api/settings/provider/oauth/status?providerId=${KIMI_ID}`);
+    const res = await handleSettingsRoutes(new Request(url), url, "settings/provider/oauth/status");
+    expect(res?.status).toBe(200);
+    expect(await res!.json()).toEqual({ inProgress: false, event: null });
   });
 });

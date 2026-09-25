@@ -258,7 +258,10 @@
       "cancel": "Cancel sign-in",
       "manual_code_hint": "If the browser did not redirect automatically, paste the full redirected URL here",
       "manual_code_placeholder": "http://localhost:1455/auth/callback?code=…",
-      "manual_code_submit": "Submit"
+      "manual_code_submit": "Submit",
+      "logout_success": "Signed out",
+      "copied": "Copied",
+      "copy_failed": "Copy failed — please select and copy manually"
     }
   },
   "assistants": {

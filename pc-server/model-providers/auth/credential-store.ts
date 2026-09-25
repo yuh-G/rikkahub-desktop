@@ -82,9 +82,12 @@ function commitCredential(providerId: string, expectRefresh: string | undefined,
   const providers = state.settings.providers.map((p): Provider => {
     if (p.id !== target.id) return p;
     if (next === undefined) {
+      // 删凭证 = 登出(refresh 被拒等 terminal 路径)。authMode 保持 "oauth"——订阅供应商是
+      // OAuth-only 形态,与 login.ts logoutProvider 同一口径;拨成 apiKey 会让前端认不出
+      // 订阅卡片、startLogin 拒绝再登录。enabled 由调用方决定,这里不动。
       const rest = { ...p };
       delete rest.oauth;
-      return { ...rest, authMode: p.authMode === "oauth" ? "apiKey" : p.authMode };
+      return rest;
     }
     return {
       ...p,

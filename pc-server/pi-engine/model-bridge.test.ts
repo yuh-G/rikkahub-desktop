@@ -1,14 +1,37 @@
-// model-bridge 单测：协议映射矩阵、URL 口径差、鉴权占位、registerProvider 内存注册闭环。
-import { describe, expect, it } from "bun:test";
+// model-bridge 单测：协议映射矩阵、URL 口径差、鉴权占位、registerProvider 内存注册闭环、
+// 订阅供应商内建身份往返(真实 pi 运行时)。
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 
+import { defaultSettings } from "../app-config/defaults";
 import { piAgentDir } from "../foundation/paths";
-import { isOAuthProvider } from "../model-providers/auth";
+import type { Provider } from "../foundation/types";
+import { bundledModelsFor, isOAuthProvider, OAUTH_FLOWS } from "../model-providers/auth";
 import { model, provider } from "../model-providers";
-import { createPiModelRuntime, mapProviderModelToPi, piApiFor, PI_THINKING_BUDGETS, piThinkingLevelFor } from "./model-bridge";
+import { setState, state } from "../persistence/json-store";
+import {
+  createPiModelRuntime,
+  mapProviderModelToPi as mapAny,
+  piApiFor,
+  PI_THINKING_BUDGETS,
+  type PiModelMapping,
+  piThinkingLevelFor,
+} from "./model-bridge";
 
 function makeProvider(input: Parameters<typeof provider>[0]) {
   return provider({ apiKey: "sk-test", ...input });
+}
+
+type RegisteredMapping = Extract<PiModelMapping, { kind: "registered" }>;
+
+/** 本文件多数用例断言 apiKey 供应商的 registerProvider 配置(config)。包一层把返回窄成
+ *  registered 变体,订阅供应商(builtin 变体)的用例直接用 mapAny。 */
+function mapProviderModelToPi(
+  ...args: Parameters<typeof mapAny>
+): { ok: true; mapping: RegisteredMapping } | { ok: false; reason: string } {
+  const result = mapAny(...args);
+  if (result.ok && result.mapping.kind !== "registered") throw new Error("expected a registered (apiKey) mapping");
+  return result as { ok: true; mapping: RegisteredMapping } | { ok: false; reason: string };
 }
 
 describe("piApiFor 协议映射矩阵", () => {
@@ -354,33 +377,115 @@ describe("createPiModelRuntime 内存注册闭环", () => {
   });
 });
 
-describe("订阅供应商(OAuth)桥接契约", () => {
-  it("mapping 携带 provider,isOAuthProvider 据此判 true → createPiModelRuntime 跳过 registerProvider", () => {
-    // 订阅供应商(authMode:"oauth"):凭证在宿主 state(刷新权唯一在核心),pi 侧走内置
-    // provider id + createPiCredentialStore,不能用 apiKey 形态的 registerProvider 注册。
-    // 锁的是「跳过注册」的判定依据:mapping.provider 必须是原始 provider(带 authMode)。
-    const oauthProvider = makeProvider({
-      id: "98d0557b-0700-41e5-b1d6-ee875a53ae5a",
-      name: "ChatGPT",
-      baseUrl: "https://chatgpt.com/backend-api/codex",
+describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运行时)", () => {
+  // 2026-09-26 实战回归:Kimi Code 订阅在工作区报「pi 运行时未返回已注册模型 <宿主UUID>/k3」。
+  // 根因是桥只「跳过 registerProvider」却仍拿宿主 UUID 去 getModel——两种身份空间在同一个
+  // 字段里混用,而旧测试只锁了一个谓词、从未走完往返。这里锁的是往返本身。
+  const KIMI = OAUTH_FLOWS["kimi-coding"];
+  const CODEX = OAUTH_FLOWS["openai-codex"];
+
+  function seedSignedIn(flow: typeof KIMI, extra: Partial<Provider> = {}): Provider {
+    const row: Provider = {
+      ...(flow === KIMI
+        ? makeProvider({ id: flow.presetProviderId, name: "Kimi Code", baseUrl: "https://api.kimi.com/coding", type: "claude", apiKey: "" })
+        : makeProvider({ id: flow.presetProviderId, name: "ChatGPT", baseUrl: "https://chatgpt.com/backend-api/codex", useResponseApi: true, apiKey: "" })),
       authMode: "oauth",
-      useResponseApi: true,
-      oauth: { flow: "openai-codex", credential: { type: "oauth", access: "a", refresh: "r", expires: 9999999999000 }, signedInAt: 1 },
-    });
-    const mapped = mapProviderModelToPi(oauthProvider, model("gpt-5.2", "GPT 5.2"));
+      enabled: true,
+      oauth: { flow: flow.id, credential: { type: "oauth", access: "acc", refresh: "ref", expires: 9999999999000 }, signedInAt: 1 },
+      models: bundledModelsFor(flow.id),
+      ...extra,
+    };
+    setState({ settings: { ...structuredClone(defaultSettings()), providers: [row] } } as any);
+    return row;
+  }
+
+  beforeEach(() => setState({ settings: structuredClone(defaultSettings()) } as any));
+  afterEach(() => setState({ ...state, settings: { ...state.settings, providers: [] } } as any));
+
+  it("Kimi Code:身份译成 pi 内建 kimi-coding,取回内建 k3(anthropic-messages + 官方 coding 端点),鉴权由我们的 store 供给", async () => {
+    const row = seedSignedIn(KIMI);
+    const k3 = row.models.find((m) => m.modelId === "k3")!;
+    const mapped = mapAny(row, k3, undefined, "conv-ws");
     if (!mapped.ok) throw new Error(mapped.reason);
-    // mapping.provider 是 createPiModelRuntime 里 isOAuthProvider(...) 的判定输入
-    expect(isOAuthProvider(mapped.mapping.provider)).toBe(true);
-    expect(mapped.mapping.provider.authMode).toBe("oauth");
+    expect(mapped.mapping.kind).toBe("builtin");
+    expect(mapped.mapping.providerId).toBe("kimi-coding");
+
+    const { runtime, model: piModel } = await createPiModelRuntime(mapped.mapping);
+    expect(piModel.provider).toBe("kimi-coding");
+    expect(piModel.id).toBe("k3");
+    expect(piModel.api).toBe("anthropic-messages");
+    expect(piModel.baseUrl).toBe("https://api.kimi.com/coding");
+    // 内建定义为权威:上游维护的 compat/档位表原样保留,不被宿主覆盖。
+    expect((piModel.compat as Record<string, unknown> | undefined)?.forceAdaptiveThinking).toBe(true);
+    // 宿主只叠加自己独有的东西:会话身份头(§7.4)。
+    expect(piModel.headers?.["X-Session-ID"]).toBe("conv-ws");
+    // 凭证来自宿主 state(经 createPiCredentialStore 的 pi id → flow → 行 反查)。
+    expect(runtime.hasConfiguredAuth("kimi-coding")).toBe(true);
+    const auth = await runtime.getAuth(piModel);
+    expect(auth?.auth.apiKey ?? auth?.auth.headers?.Authorization).toContain("acc");
+    // 零落盘不变。
+    expect(existsSync(piAgentDir)).toBe(false);
   });
 
-  it("apiKey 供应商 isOAuthProvider 判 false → 正常走 registerProvider", () => {
-    const mapped = mapProviderModelToPi(
+  it("ChatGPT:身份译成 pi 内建 openai-codex,取回 Codex 专用 api(openai-codex-responses),不是宿主形态的 openai-responses", async () => {
+    const row = seedSignedIn(CODEX);
+    const target = row.models[0]!;
+    const mapped = mapAny(row, target);
+    if (!mapped.ok) throw new Error(mapped.reason);
+    expect(mapped.mapping.providerId).toBe("openai-codex");
+    const { model: piModel } = await createPiModelRuntime(mapped.mapping);
+    expect(piModel.provider).toBe("openai-codex");
+    expect(piModel.id).toBe(target.modelId);
+    expect(piModel.api).toBe("openai-codex-responses");
+  });
+
+  it("登录后铺入的捆绑目录里每个模型都能在 pi 内建目录取回(catalog.ts 与 pi 快照同源的机械化核对)", async () => {
+    for (const flow of [KIMI, CODEX]) {
+      const row = seedSignedIn(flow);
+      expect(row.models.length).toBeGreaterThan(0);
+      for (const m of row.models) {
+        const mapped = mapAny(row, m);
+        if (!mapped.ok) throw new Error(mapped.reason);
+        const { runtime, model: piModel } = await createPiModelRuntime(mapped.mapping);
+        expect(runtime.getModel(flow.piProviderId, m.modelId)).toBeDefined();
+        expect(piModel.id).toBe(m.modelId);
+      }
+    }
+  });
+
+  it("内建目录滞后于厂商:用户手动加的新 id 按同供应商模板克隆,api/baseUrl 沿用、id/能力取宿主行", async () => {
+    const row = seedSignedIn(KIMI);
+    const fresh = model("k4-preview", "Kimi K4 Preview");
+    fresh.abilities.push("REASONING");
+    const mapped = mapAny(row, fresh);
+    if (!mapped.ok) throw new Error(mapped.reason);
+    const { model: piModel } = await createPiModelRuntime(mapped.mapping);
+    expect(piModel.provider).toBe("kimi-coding");
+    expect(piModel.id).toBe("k4-preview");
+    expect(piModel.name).toBe("Kimi K4 Preview");
+    expect(piModel.reasoning).toBe(true);
+    expect(piModel.api).toBe("anthropic-messages");
+    expect(piModel.baseUrl).toBe("https://api.kimi.com/coding");
+  });
+
+  it("未登录的预置订阅供应商(无 oauth 行)仍能按固定 UUID 译出内建身份;鉴权缺失由 pi getAuth 在请求时报,不在映射期拦", async () => {
+    const row = seedSignedIn(KIMI, { oauth: undefined, enabled: false });
+    const mapped = mapAny(row, row.models[0]!);
+    if (!mapped.ok) throw new Error(mapped.reason);
+    expect(mapped.mapping.providerId).toBe("kimi-coding");
+    const { runtime } = await createPiModelRuntime(mapped.mapping);
+    expect(runtime.hasConfiguredAuth("kimi-coding")).toBe(false);
+  });
+
+  it("apiKey 供应商 isOAuthProvider 判 false → registered 变体,正常走 registerProvider", () => {
+    const mapped = mapAny(
       makeProvider({ id: "p-key", name: "K", baseUrl: "https://relay.example/v1" }),
       model("gpt-4.1", "GPT 4.1"),
     );
     if (!mapped.ok) throw new Error(mapped.reason);
+    expect(mapped.mapping.kind).toBe("registered");
     expect(isOAuthProvider(mapped.mapping.provider)).toBe(false);
+    expect(mapped.mapping.providerId).toBe("p-key");
   });
 });
 

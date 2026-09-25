@@ -180,7 +180,9 @@ export function stripAuthSecrets<T>(settings: T): T {
   if (Array.isArray(copy.providers)) {
     copy.providers = copy.providers.map((p: any) => {
       if (!p || typeof p !== "object") return p;
-      const { oauth, ...rest } = p;
+      // oauthStatus 是这里现算的派生视图,不是存储字段——旧版 settings/provider POST 曾把前端
+      // 回传的视图原样落进 state,登出后残留 signedIn:true。无论 state 里有没有,一律丢弃重算。
+      const { oauth, oauthStatus: _persisted, ...rest } = p;
       // 订阅供应商(authMode:"oauth"):凭证永不下发。有 oauth 行 → 剥成 oauthStatus 安全视图;
       // 无 oauth 行(未登录)→ 只删 oauth 字段,authMode 保留(否则前端认不出这是订阅供应商)。
       if (oauth == null) return rest;

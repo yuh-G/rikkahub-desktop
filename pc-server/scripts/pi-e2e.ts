@@ -68,9 +68,14 @@ async function main(): Promise<void> {
 
 	const mapped = mapProviderModelToPi(provider, model);
 	if (!mapped.ok) throw new Error(`映射失败: ${mapped.reason}`);
-	console.log(`[pi-e2e] pi api: ${mapped.mapping.config.api}, baseUrl: ${mapped.mapping.config.baseUrl}`);
+	if (mapped.mapping.kind === "registered") {
+		console.log(`[pi-e2e] pi api: ${mapped.mapping.config.api}, baseUrl: ${mapped.mapping.config.baseUrl}`);
+	} else {
+		console.log(`[pi-e2e] pi builtin provider: ${mapped.mapping.providerId} (订阅供应商,内建定义为权威)`);
+	}
 
 	const { runtime, model: piModel } = await createPiModelRuntime(mapped.mapping);
+	console.log(`[pi-e2e] resolved: ${piModel.provider}/${piModel.id} api=${piModel.api} baseUrl=${piModel.baseUrl}`);
 
 	const tmpRoot = mkdtempSync(join(tmpdir(), "pi-e2e-"));
 	try {

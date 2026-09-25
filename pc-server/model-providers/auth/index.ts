@@ -4,8 +4,8 @@
 import type { Provider } from "../../foundation/types";
 
 export { createPiCredentialStore } from "./credential-store";
-export { loadOAuthFlow, OAUTH_FLOWS } from "./flows";
-export { cancelLogin, initProviderAuthBroadcast, loginInProgress, logoutProvider, resumePrompt, startLogin } from "./login";
+export { isPresetOAuthProviderId, loadOAuthFlow, OAUTH_FLOWS, oauthFlowFor } from "./flows";
+export { cancelLogin, currentLoginEvent, initProviderAuthBroadcast, loginInProgress, logoutProvider, resumePrompt, startLogin } from "./login";
 export { resolveProviderAuthForProvider } from "./resolve";
 export { OAUTH_PROVIDER_SHAPING, applyShaping, shapingFor } from "./shaping";
 export { bundledModelsFor } from "./catalog";

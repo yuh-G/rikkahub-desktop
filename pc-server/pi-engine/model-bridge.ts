@@ -13,7 +13,7 @@ import type { ProviderConfigInput } from "../../pi/packages/coding-agent/src/cor
 import type { Model, Provider } from "../foundation/types";
 import { hostOfProvider } from "../inference-engine/message-builder";
 import { applyModelRequestHeaders } from "../model-providers";
-import { createPiCredentialStore, isOAuthProvider } from "../model-providers/auth";
+import { createPiCredentialStore, isOAuthProvider, oauthFlowFor } from "../model-providers/auth";
 import {
   ARK_SEED2_EFFORT_BY_LEVEL,
   budgetTokensFor,
@@ -33,15 +33,37 @@ import {
   ZHIPU_GLM53_EFFORT_BY_LEVEL,
 } from "../model-providers/request-dialect";
 
-export interface PiModelMapping {
-  /** 我们的 provider UUID 直接作 pi providerId：与 pi 内建 id 永不冲突，注册面完全由我们权威。 */
-  providerId: string;
-  /** 上游模型 id（进请求体的 model 字段）。 */
-  modelId: string;
-  config: ProviderConfigInput;
-  /** 原始 Provider(订阅供应商判定用:isOAuthProvider 决定是否跳过 registerProvider)。 */
-  provider: Provider;
-}
+/** 宿主 (provider, model) 在 pi 侧的身份——两种形态,两种身份空间,这里是唯一的翻译点:
+ *
+ *  - registered(apiKey 供应商):宿主 provider UUID 直接作 pi providerId(与 pi 内建 id 永不
+ *    冲突),经 registerProvider 把宿主配置译成 pi 的 ProviderConfigInput,注册面完全由我们权威。
+ *  - builtin(订阅供应商):pi 侧身份 = flow.piProviderId(openai-codex / kimi-coding …)。凭证不
+ *    是 apiKey 而是 15 分钟级会过期的 OAuth access,必须由 pi 的 getAuth 每请求经我们的
+ *    CredentialStore 锁内刷新;Codex 还有专用 api(openai-codex-responses,/codex 路径 +
+ *    account-id 头 + 加密推理回传)——这些 pi 内建 provider 原生具备,重新 registerProvider
+ *    等于把上游已维护的整形再抄一遍。故内建定义(api/baseUrl/compat/档位表/上限)为权威,
+ *    宿主只叠加自己独有的东西:会话身份头 + 模型级自定义头(headers),以及内建目录滞后
+ *    于厂商时按模板克隆新 id(template)。 */
+export type PiModelMapping =
+  | {
+      kind: "registered";
+      providerId: string;
+      /** 上游模型 id(进请求体的 model 字段)。 */
+      modelId: string;
+      config: ProviderConfigInput;
+      provider: Provider;
+    }
+  | {
+      kind: "builtin";
+      /** pi 内建 provider id(OAUTH_FLOWS[flow].piProviderId)。 */
+      providerId: string;
+      modelId: string;
+      provider: Provider;
+      /** 叠加到内建模型 headers 上的宿主侧请求头(??= 语义由 pi 的合并顺序保证:model.headers 先、options 后)。 */
+      headers: Record<string, string>;
+      /** 宿主模型行:内建目录无此 id 时,克隆同供应商模板并按此行的 id/名称/能力改写。 */
+      template: Pick<Model, "modelId" | "displayName" | "abilities" | "inputModalities">;
+    };
 
 export type PiMappingResult = { ok: true; mapping: PiModelMapping } | { ok: false; reason: string };
 
@@ -287,6 +309,34 @@ function piThinkingOverridesFor(
  *  sessionId:会话身份头(台账 §7.4;X-Session-ID + opencode 特例)经注册头带进 pi 的每轮
  *  请求——主会话与压缩会话都传 ctx.conversationId;缺省(纯测试/冒烟)不注入,不发明 ID。 */
 export function mapProviderModelToPi(provider: Provider, model: Model, limits?: PiModelLimits, sessionId?: string): PiMappingResult {
+  if (!model.modelId) return { ok: false, reason: "模型缺少 modelId，无法映射到 pi 引擎" };
+
+  // 订阅供应商:身份译成 pi 内建 provider id,其余交给内建定义(见 PiModelMapping 头注)。
+  // 宿主 baseUrl / 协议类型在这条轨上不参与判定——它们只是聊天引擎那侧的形态描述,pi 侧
+  // 由内建 provider 自带;未登录(无 oauth 行)不在这里拦,pi getAuth 会以「凭证不可用」报错。
+  if (isOAuthProvider(provider)) {
+    const flow = oauthFlowFor(provider);
+    if (!flow) return { ok: false, reason: `订阅供应商 ${provider.name} 未登记 OAuth flow，无法映射到 pi 引擎` };
+    const headers: Record<string, string> = {};
+    applyModelRequestHeaders(headers, provider, model, sessionId);
+    return {
+      ok: true,
+      mapping: {
+        kind: "builtin",
+        providerId: flow.piProviderId,
+        modelId: model.modelId,
+        provider,
+        headers,
+        template: {
+          modelId: model.modelId,
+          displayName: model.displayName,
+          abilities: model.abilities,
+          inputModalities: model.inputModalities,
+        },
+      },
+    };
+  }
+
   const api = piApiFor(provider);
   if (!api) {
     return {
@@ -297,7 +347,6 @@ export function mapProviderModelToPi(provider: Provider, model: Model, limits?: 
           : `provider 类型 ${provider.type} 无法映射到 pi 引擎`,
     };
   }
-  if (!model.modelId) return { ok: false, reason: "模型缺少 modelId，无法映射到 pi 引擎" };
 
   // 复用聊天引擎的请求头语义（模型级自定义头 + 主机特例 + 会话身份头），保证两个引擎行为逐字一致。
   const headers: Record<string, string> = {};
@@ -352,13 +401,40 @@ export function mapProviderModelToPi(provider: Provider, model: Model, limits?: 
       },
     ],
   };
-  return { ok: true, mapping: { providerId: provider.id, modelId: model.modelId, config, provider } };
+  return { ok: true, mapping: { kind: "registered", providerId: provider.id, modelId: model.modelId, config, provider } };
 }
 
-/** 为一次工作区会话构造 pi 模型运行时：内存注册单 provider 单模型，零落盘。
- *  订阅供应商:oauth 凭证在宿主 state(刷新权唯一在核心),credentials 换
- *  createPiCredentialStore()——pi 的 Models.getAuth 锁内刷新跑在我们的 per-provider
- *  串行队列上,凭据不落 pi 的 auth.json。 */
+/** 订阅供应商:从 pi 内建目录取模型并叠加宿主侧请求头。目录无此 id(厂商新模型、pi 快照
+ *  滞后)时按同供应商任一内建模型为模板克隆——api/baseUrl/compat 是供应商级的,同供应商
+ *  新模型走同一条通道;宿主行提供 id/名称/推理与图像能力。pi 不要求模型在注册表内:
+ *  会话直接持有 model 对象,鉴权按 model.provider 查内建 provider,刷新经我们的 store。 */
+function resolveBuiltinPiModel(
+  runtime: ModelRuntime,
+  mapping: Extract<PiModelMapping, { kind: "builtin" }>,
+): PiModel<Api> {
+  const exact = runtime.getModel(mapping.providerId, mapping.modelId);
+  const template = exact ?? runtime.getModels(mapping.providerId)[0];
+  if (!template) {
+    throw new Error(`pi 内建目录没有订阅供应商 ${mapping.providerId}（vendor 快照缺该 provider，请检查 pi 基线）`);
+  }
+  const base: PiModel<Api> = exact
+    ? template
+    : {
+        ...template,
+        id: mapping.template.modelId,
+        name: mapping.template.displayName || mapping.template.modelId,
+        reasoning: mapping.template.abilities.includes("REASONING"),
+        input: mapping.template.inputModalities.includes("IMAGE") ? ["text", "image"] : ["text"],
+      };
+  if (Object.keys(mapping.headers).length === 0) return base;
+  return { ...base, headers: { ...base.headers, ...mapping.headers } };
+}
+
+/** 为一次工作区会话构造 pi 模型运行时:零落盘。
+ *  - registered:内存注册单 provider 单模型(registerProvider,宿主 UUID 作 providerId)。
+ *  - builtin:不注册,直接用 pi 内建 provider(见 PiModelMapping 头注);oauth 凭证在宿主
+ *    state(刷新权唯一在核心),credentials 换 createPiCredentialStore()——pi 的
+ *    Models.getAuth 锁内刷新跑在我们的 per-provider 串行队列上,凭据不落 pi 的 auth.json。 */
 export async function createPiModelRuntime(
   mapping: PiModelMapping,
 ): Promise<{ runtime: ModelRuntime; model: PiModel<Api> }> {
@@ -369,11 +445,10 @@ export async function createPiModelRuntime(
     credentials: createPiCredentialStore() as unknown as AuthStorage,
     modelsPath: null,
   });
-  // 订阅供应商:oauth 凭证在 createPiCredentialStore() 里,pi 内置 provider id 已注册;
-  // registerProvider 仅用于 apiKey 供应商(把宿主配置翻译成 pi 的 ProviderConfigInput)。
-  if (!isOAuthProvider(mapping.provider)) {
-    runtime.registerProvider(mapping.providerId, mapping.config);
+  if (mapping.kind === "builtin") {
+    return { runtime, model: resolveBuiltinPiModel(runtime, mapping) };
   }
+  runtime.registerProvider(mapping.providerId, mapping.config);
   const model = runtime.getModel(mapping.providerId, mapping.modelId);
   if (!model) {
     throw new Error(`pi 运行时未返回已注册模型 ${mapping.providerId}/${mapping.modelId}`);

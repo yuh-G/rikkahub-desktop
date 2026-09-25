@@ -198,4 +198,24 @@ describe("web-auth/status(敏感边界:绝不泄露哈希)", () => {
     expect(sanitized.providers[0].oauthStatus).toBeUndefined();
     expect(sanitized.providers[0].name).toBe("Kimi Code");
   });
+
+  test("stripAuthSecrets 丢弃 state 里残留的 oauthStatus,只按 oauth 现算(登出后卡片不得仍显示已登录)", () => {
+    // 旧版 settings/provider POST 把前端回传的派生视图落进了 state。登出剥掉 oauth 后,
+    // 若 stripAuthSecrets 原样透传残留的 oauthStatus,前端会永远看到 signedIn:true。
+    const settings = {
+      providers: [
+        { id: "p-kimi", authMode: "oauth", oauthStatus: { signedIn: true, flow: "kimi-coding", signedInAt: 1 } }, // 已登出但视图残留
+        {
+          id: "p-codex",
+          authMode: "oauth",
+          oauthStatus: { signedIn: true, flow: "openai-codex", signedInAt: 1, accountId: "stale" }, // 残留的旧视图
+          oauth: { flow: "openai-codex", signedInAt: 2, credential: { type: "oauth", access: "a", refresh: "r", expires: 3 } },
+        },
+      ],
+    };
+    const sanitized = stripAuthSecrets(settings) as any;
+    expect(sanitized.providers[0].oauthStatus).toBeUndefined();
+    // 有 oauth 行时以 oauth 现算,残留视图的字段(accountId:"stale")不得渗出。
+    expect(sanitized.providers[1].oauthStatus).toEqual({ signedIn: true, flow: "openai-codex", signedInAt: 2, expiresAt: 3, accountId: undefined });
+  });
 });

@@ -13,7 +13,7 @@ import type { OAuthFlowId, Provider } from "../../foundation/types";
 import { reportError } from "../../observability/app-errors";
 import { state } from "../../persistence/json-store";
 import { bundledModelsFor } from "./catalog";
-import { OAUTH_FLOWS, loadOAuthFlow } from "./flows";
+import { OAUTH_FLOWS, loadOAuthFlow, oauthFlowFor } from "./flows";
 
 export type LoginPhase =
   | "select_method"
@@ -73,9 +73,15 @@ function cleanup(providerId: string): void {
   attempts.delete(providerId);
 }
 
-function finish(providerId: string, event: ProviderAuthEvent): void {
-  const attempt = attempts.get(providerId);
-  emit(event, attempt);
+/** 终局:广播 + 清理。传入 owner 时只在「表里仍是这一次尝试」才清理——后台流程是异步收尾的,
+ *  用户取消后立刻重新登录,旧流程的迟到终局不能把新尝试从表里删掉。 */
+function finish(providerId: string, event: ProviderAuthEvent, owner?: AttemptState): void {
+  const current = attempts.get(providerId);
+  if (owner && current !== owner) {
+    emit(event);
+    return;
+  }
+  emit(event, current);
   cleanup(providerId);
 }
 
@@ -106,17 +112,22 @@ function commitLogin(providerId: string, flowId: OAuthFlowId, credential: OAuthC
   return true;
 }
 
-/** 登出:剥 oauth + authMode 回 apiKey + enabled 回落 false。 */
+/** 登出:剥 oauth + enabled 回落 false。authMode 保持 "oauth"——订阅供应商是 OAuth-only
+ *  形态,登出只是「没凭证」,不是「变成 API Key 供应商」(拨成 apiKey 会让前端认不出订阅
+ *  卡片、startLogin 也会拒绝再登录,只能靠 restore 端点自愈)。
+ *  同时清掉可能被旧版 settings/provider POST 回写进 state 的派生视图 oauthStatus——它本
+ *  该只由 stripAuthSecrets 现算,残留一份 signedIn:true 会让卡片在登出后仍显示已登录。 */
 export function logoutProvider(providerId: string): boolean {
   const provider = state.settings.providers.find((p) => p.id === providerId);
-  if (!provider?.oauth) return false;
+  if (!provider) return false;
+  const staleStatus = (provider as Provider & { oauthStatus?: unknown }).oauthStatus != null;
+  if (!provider.oauth && !staleStatus) return false;
   // 若有进行中的登录尝试,先取消。
   cancelLogin(providerId);
   const providers = state.settings.providers.map((p): Provider => {
     if (p.id !== providerId) return p;
-    const rest = { ...p };
-    delete rest.oauth;
-    return { ...rest, authMode: "apiKey" as const, enabled: false };
+    const { oauth: _oauth, oauthStatus: _stale, ...rest } = p as Provider & { oauthStatus?: unknown };
+    return { ...rest, enabled: false };
   });
   updateSettings({ ...state.settings, providers });
   return true;
@@ -175,7 +186,12 @@ function makeInteraction(providerId: string, flow: string, attempt: AttemptState
           attempt,
         );
       } else if (prompt.type === "manual_code") {
-        emit({ providerId, flow, phase: "waiting_browser", message: prompt.message }, attempt);
+        // pi 的浏览器流是 notify(auth_url) 紧接 prompt(manual_code):这一帧若不带 authUrl,
+        // 前端整帧替换后「打开浏览器 / 复制链接 / 手贴授权码」整块会消失,只剩转圈。
+        emit(
+          { providerId, flow, phase: "waiting_browser", authUrl: attempt.lastEvent?.authUrl, message: prompt.message },
+          attempt,
+        );
       }
       return new Promise<string>((resolve, reject) => {
         attempt.pendingPrompt = { reject };
@@ -202,28 +218,25 @@ export function resumePrompt(providerId: string, input: string): boolean {
   return true;
 }
 
-/** 预置订阅供应商的固定 id(与 model-providers/index.ts 的 OAUTH_PROVIDER_IDS 对齐)。
- *  未登录的预置供应商(无 oauth 行)用它反查 flow——固定 UUID 一经发布不可变,比
- *  按 baseUrl host 嗅探稳。 */
-const PRESET_OAUTH_PROVIDER_IDS: Readonly<Record<string, string>> = {
-  "98d0557b-0700-41e5-b1d6-ee875a53ae5a": "openai-codex", // ChatGPT
-  "f9622c8b-5037-4540-b875-3d301521367b": "kimi-coding", // Kimi Code
-};
+export type LoginOutcome = { ok: true } | { ok: false; error: string };
 
-function inferFlowForProvider(provider: Provider): OAuthFlowId | undefined {
-  return PRESET_OAUTH_PROVIDER_IDS[provider.id] as OAuthFlowId | undefined;
-}
-
-export async function startLogin(providerId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+/** 启动登录。只等到「尝试已登记 + flow 模块已加载」就返回——真正的授权流(选方式 →
+ *  开浏览器/设备码 → 等用户 → 换 token)可能持续数分钟,全程进度经 SSE provider_auth
+ *  推送,终局也在那里。若在这里 await 整个流程,oauth/start 这个 HTTP 请求会一直挂着:
+ *  前端按钮锁在 submitting、ky 30s 超时后又把面板误判为失败,而服务端尝试仍活着。
+ *  `completion` 是后台流程的终局(永不 reject),给测试/编排方对齐用;HTTP 层忽略它。 */
+export async function startLogin(
+  providerId: string,
+): Promise<{ ok: true; completion: Promise<LoginOutcome> } | { ok: false; error: string }> {
   const provider = state.settings.providers.find((p) => p.id === providerId);
   if (!provider) return { ok: false, error: "provider not found" };
   if (provider.authMode !== "oauth") return { ok: false, error: "provider is not an OAuth provider" };
   if (attempts.has(providerId)) return { ok: false, error: "login already in progress" };
 
-  // flow 判定:已登录的行存了 oauth.flow;未登录的订阅供应商(预置 ChatGPT/Kimi Code)
-  // 没有 oauth 行,从预置固定 id 反查(inferFlowForProvider)。
-  const flowId = provider.oauth?.flow ?? inferFlowForProvider(provider);
-  if (!flowId || !OAUTH_FLOWS[flowId]) return { ok: false, error: "unknown OAuth flow" };
+  // flow 判定:已登录的行存了 oauth.flow;未登录的预置订阅供应商没有 oauth 行,按固定
+  // UUID 反查(oauthFlowFor,与 pi 引擎取内建身份同一函数)。
+  const flowId = oauthFlowFor(provider)?.id;
+  if (!flowId) return { ok: false, error: "unknown OAuth flow" };
 
   const controller = new AbortController();
   const attempt: AttemptState = {
@@ -234,19 +247,38 @@ export async function startLogin(providerId: string): Promise<{ ok: true } | { o
   };
   attempts.set(providerId, attempt);
 
+  let oauth: Awaited<ReturnType<typeof loadOAuthFlow>>;
   try {
-    const flow = OAUTH_FLOWS[flowId];
-    const oauth = await loadOAuthFlow(flowId);
-    emit({ providerId, flow: flowId, phase: "select_method", methods: flow.loginMethods ?? undefined, message: oauth.loginLabel ?? oauth.name }, attempt);
+    oauth = await loadOAuthFlow(flowId);
+  } catch (error) {
+    // 模块加载失败是同步可知的环境问题(打包缺 loader 等),直接让 HTTP 层报错,不进后台。
+    const message = error instanceof Error ? error.message : String(error);
+    reportError("provider", "warn", `OAuth flow load failed for ${providerId}`, error, "oauth_login_failed", { providerId, flow: flowId });
+    finish(providerId, { providerId, flow: flowId, phase: "error", message }, attempt);
+    return { ok: false, error: message };
+  }
+  // 加载期间被取消(cancelLogin 已广播 cancelled 并清理 attempt),不再起流。
+  if (controller.signal.aborted) return { ok: false, error: "cancelled" };
 
+  return { ok: true, completion: runLogin(providerId, flowId, oauth, attempt) };
+}
+
+async function runLogin(
+  providerId: string,
+  flowId: OAuthFlowId,
+  oauth: Awaited<ReturnType<typeof loadOAuthFlow>>,
+  attempt: AttemptState,
+): Promise<LoginOutcome> {
+  const { controller } = attempt;
+  try {
     const credential = await oauth.login(makeInteraction(providerId, flowId, attempt));
     if (controller.signal.aborted) return { ok: false, error: "cancelled" };
     const ok = commitLogin(providerId, flowId, credential);
     if (!ok) {
-      finish(providerId, { providerId, flow: flowId, phase: "error", message: "登录成功但凭据落盘失败,请重试" });
+      finish(providerId, { providerId, flow: flowId, phase: "error", message: "登录成功但凭据落盘失败,请重试" }, attempt);
       return { ok: false, error: "commit failed" };
     }
-    finish(providerId, { providerId, flow: flowId, phase: "success", message: "登录成功" });
+    finish(providerId, { providerId, flow: flowId, phase: "success", message: "登录成功" }, attempt);
     return { ok: true };
   } catch (error) {
     const cancelled = controller.signal.aborted || (error instanceof Error && /cancelled/i.test(error.message));
@@ -254,7 +286,11 @@ export async function startLogin(providerId: string): Promise<{ ok: true } | { o
     if (!cancelled) {
       reportError("provider", "warn", `OAuth login failed for ${providerId}`, error, "oauth_login_failed", { providerId, flow: flowId });
     }
-    finish(providerId, { providerId, flow: flowId, phase: cancelled ? "cancelled" : "error", message });
+    // 经 cancelLogin 取消的:它已广播 cancelled 并清理,不再补发第二帧。
+    // 流程自行以 cancelled 结束(未经 cancelLogin)或出错:正常终局。
+    if (!cancelled || attempts.get(providerId) === attempt) {
+      finish(providerId, { providerId, flow: flowId, phase: cancelled ? "cancelled" : "error", message }, attempt);
+    }
     return { ok: false, error: message };
   }
 }
@@ -262,4 +298,11 @@ export async function startLogin(providerId: string): Promise<{ ok: true } | { o
 /** 查询当前是否有进行中的登录尝试(前端恢复连接时对齐状态)。 */
 export function loginInProgress(providerId: string): boolean {
   return attempts.has(providerId);
+}
+
+/** 进行中尝试的最近一帧。前端面板是按 SSE 增量拼三态的,刷新页面后帧就丢了——面板挂载时
+ *  用这一帧把「选方式 / 等浏览器 / 等设备码」视图原样接回来,否则用户只剩一个会被
+ *  "login already in progress" 拒绝的登录按钮,连取消都点不到。无进行中尝试返回 null。 */
+export function currentLoginEvent(providerId: string): ProviderAuthEvent | null {
+  return attempts.get(providerId)?.lastEvent ?? null;
 }

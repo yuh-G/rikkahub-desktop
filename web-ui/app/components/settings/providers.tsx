@@ -28,7 +28,8 @@ import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { cn } from "~/lib/utils";
 import { isBalanceResultPathValid } from "~/lib/json-expression";
 import { createId } from "~/lib/id";
-import { openExternal } from "~/lib/external-link";
+import { copyTextToClipboard } from "~/lib/clipboard";
+import { isDesktopShell, openExternal } from "~/lib/external-link";
 import api, { appendWebAuthQuery } from "~/services/api";
 import { onAppEvent, type ProviderAuthEventDto } from "~/services/app-events";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -75,10 +76,43 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
   const signedIn = provider.oauthStatus?.signedIn === true;
   const inProgress = authEvent != null && !["success", "error", "cancelled"].includes(authEvent.phase);
 
+  // 三态视图靠 SSE 增量拼出来,刷新页面/切换供应商后帧就丢了;服务端保留了进行中尝试的
+  // 最近一帧,挂载时取回接上——否则用户只剩一个会被「已在登录中」拒绝的登录按钮。
+  // 只「补上」进行中的帧,从不据此清空——GET 在途时用户可能已点登录,SSE 帧先到,迟到的
+  // 「无尝试」回包不能把刚拼出的面板抹掉;终态清空只由 SSE 的 success/error/cancelled 驱动。
+  const providerIdRef = React.useRef(provider.id);
+  providerIdRef.current = provider.id;
+  const syncLoginStatus = React.useCallback(async () => {
+    const providerId = provider.id;
+    try {
+      const status = await api.get<{ inProgress: boolean; event: ProviderAuthEventDto | null }>(
+        "settings/provider/oauth/status",
+        { searchParams: { providerId } },
+      );
+      // 回包期间用户切了供应商,这帧属于旧供应商,丢弃。
+      if (providerIdRef.current !== providerId) return;
+      if (status.inProgress && status.event) setAuthEvent(status.event);
+    } catch {
+      // 对齐失败只是少了恢复视图,后续 SSE 帧仍会驱动面板;不打扰用户
+    }
+  }, [provider.id]);
+
+  React.useEffect(() => {
+    setAuthEvent(null);
+    void syncLoginStatus();
+  }, [syncLoginStatus]);
+
+  // 浏览器登录:授权 URL 首次到达时在桌面壳里直接拉起系统浏览器(pi 只给 URL 不开浏览器)。
+  // 纯浏览器环境 window.open 不在用户手势内会被拦截,留给「打开浏览器」按钮。
+  const openedAuthUrlRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     const off = onAppEvent("provider_auth", (event) => {
       if (event.providerId !== provider.id) return;
       setAuthEvent(event);
+      if (event.phase === "waiting_browser" && event.authUrl && openedAuthUrlRef.current !== event.authUrl) {
+        openedAuthUrlRef.current = event.authUrl;
+        if (isDesktopShell()) void openExternal(event.authUrl);
+      }
       if (event.phase === "success") {
         toast.success(t("settings:providers.oauth.success"));
         setAuthEvent(null);
@@ -93,32 +127,65 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
     return off;
   }, [provider.id, t]);
 
-  const start = async (methodId?: string) => {
+  // start 只等服务端登记完尝试就返回(授权流在后台跑、进度走 SSE),submitting 只锁这一瞬。
+  const start = async () => {
     setSubmitting(true);
     try {
       await api.post("settings/provider/oauth/start", { providerId: provider.id });
-      if (methodId) await api.post("settings/provider/oauth/manual-code", { providerId: provider.id, input: methodId });
     } catch (error) {
       toast.error((error as Error).message);
-      // 请求失败即重置——服务端 attempt 可能已挂,前端必须回到可重试态。
-      setAuthEvent(null);
+      // 失败原因可能是服务端已有进行中的尝试(如刷新前发起的),按服务端真值对齐视图。
+      await syncLoginStatus();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  const submitMethod = async (methodId: string) => {
+    setSubmitting(true);
+    try {
+      await api.post("settings/provider/oauth/manual-code", { providerId: provider.id, input: methodId });
+    } catch (error) {
+      toast.error((error as Error).message);
+      // 失败时保持当前 phase（不 setAuthEvent(null)），让用户看到错误后可以重试其他方法
     } finally {
       setSubmitting(false);
     }
   };
   const cancel = async () => {
-    await api.post("settings/provider/oauth/cancel", { providerId: provider.id });
+    try {
+      await api.post("settings/provider/oauth/cancel", { providerId: provider.id });
+    } catch (error) {
+      toast.error((error as Error).message);
+      return;
+    }
     setAuthEvent(null);
   };
   const logout = async () => {
     const ok = await confirmDialog({ title: t("settings:providers.oauth.logout"), description: t("settings:providers.oauth.logout_confirm") });
     if (!ok) return;
-    await api.post("settings/provider/oauth/logout", { providerId: provider.id });
+    try {
+      await api.post("settings/provider/oauth/logout", { providerId: provider.id });
+      toast.success(t("settings:providers.oauth.logout_success"));
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
   };
   const submitManualCode = async () => {
     if (!manualCode.trim()) return;
-    await api.post("settings/provider/oauth/manual-code", { providerId: provider.id, input: manualCode.trim() });
-    setManualCode("");
+    try {
+      await api.post("settings/provider/oauth/manual-code", { providerId: provider.id, input: manualCode.trim() });
+      setManualCode("");
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
+  };
+  const copy = async (text: string) => {
+    try {
+      await copyTextToClipboard(text);
+      toast.success(t("settings:providers.oauth.copied"));
+    } catch {
+      toast.error(t("settings:providers.oauth.copy_failed"));
+    }
   };
 
   if (signedIn) {
@@ -152,7 +219,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {authEvent.phase === "select_method" && authEvent.methods ? (
             authEvent.methods.map((method) => (
-              <Button key={method.id} variant="outline" size="sm" onClick={() => void start(method.id)} disabled={submitting}>
+              <Button key={method.id} variant="outline" size="sm" onClick={() => void submitMethod(method.id)} disabled={submitting}>
                 {t(method.labelKey)}
               </Button>
             ))
@@ -168,7 +235,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
                 <ExternalLink className="mr-1 size-3" />
                 {t("settings:providers.oauth.open_browser")}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => void navigator.clipboard.writeText(authEvent.authUrl!)}>
+              <Button variant="outline" size="sm" onClick={() => void copy(authEvent.authUrl!)}>
                 {t("settings:providers.oauth.copy_url")}
               </Button>
             </div>
@@ -187,7 +254,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
           <div className="mt-3 space-y-2">
             <div className="flex items-center gap-3 rounded-md bg-muted px-3 py-2">
               <span className="font-mono text-2xl font-bold tracking-widest">{authEvent.deviceCode.userCode}</span>
-              <Button variant="ghost" size="sm" onClick={() => void navigator.clipboard.writeText(authEvent.deviceCode!.userCode)}>
+              <Button variant="ghost" size="sm" onClick={() => void copy(authEvent.deviceCode!.userCode)}>
                 {t("settings:providers.oauth.copy_code")}
               </Button>
             </div>
@@ -397,26 +464,6 @@ export function ProvidersSection({
   const [draft, setDraft] = React.useState<ProviderProfile | null>(
     selected ? clone(selected) : null,
   );
-  // 订阅供应商自愈:若 SSE 下发的供应商行无 authMode=oauth 但确为预置订阅供应商
-  // ( oauthStatus 或固定 id),说明旧 bug 把 authMode 冲成了 apiKey——调 restore 端点拨回。
-  React.useEffect(() => {
-    if (!selected) return;
-    const isPresetOAuth =
-      selected.id === "98d0557b-0700-41e5-b1d6-ee875a53ae5a" ||
-      selected.id === "f9622c8b-5037-4540-b875-3d301521367b" ||
-      selected.oauthStatus != null;
-    if (isPresetOAuth && selected.authMode !== "oauth") {
-      void api
-        .post("settings/provider/oauth/restore", { providerId: selected.id })
-        .then(() => {
-          // 拨回成功后同步前端 draft,避免用户继续编辑时把 apiKey 形态再传回去。
-          if (draft?.id === selected.id) setDraft({ ...draft, authMode: "oauth" });
-        })
-        .catch(() => {
-          // 拨回失败不打扰用户——下次选中/刷新还会再试
-        });
-    }
-  }, [selected]);
   const [testing, setTesting] = React.useState(false);
   const [fetchingModels, setFetchingModels] = React.useState(false);
   const [testResult, setTestResult] = React.useState("");
@@ -484,6 +531,21 @@ export function ProvidersSection({
       setTestModelId(next?.models?.find((model) => model.modelId !== "auto")?.modelId ?? "");
     }
   }, [selectedId]);
+
+  // 登录/登出是服务端写路径(commitLogin 置 enabled=true 并铺入捆绑模型,logoutProvider 置
+  // enabled=false 剥 oauth),而 draft 刻意不随 SSE 刷新(防键击被覆盖)。只在登录态翻转
+  // 这一离散时刻把 draft 重新对齐服务端真值,否则模型列表/启用开关要等重新选中才更新,
+  // 且后续自动保存会把过期的 enabled 回写。
+  const signedIn = selected?.oauthStatus?.signedIn === true;
+  const lastSignedInRef = React.useRef(signedIn);
+  React.useEffect(() => {
+    if (lastSignedInRef.current === signedIn) return;
+    lastSignedInRef.current = signedIn;
+    if (!selected) return;
+    setDraft(clone(selected));
+    autosave.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedIn, selected?.id]);
 
   if (!draft) return null;
   const balanceOption = balanceOptionOf(draft);
@@ -1059,7 +1121,9 @@ export function ProvidersSection({
               </label>
             ) : null}
             {draft.authMode === "oauth" ? (
-              <ProviderLoginPanel provider={draft} />
+              // 登录态读 SSE 真值(selected)而非 draft:draft 只在切换供应商/登录态翻转时重对齐,
+              // 用 draft 会让卡片在登出/登录后仍停留在旧状态。
+              <ProviderLoginPanel provider={selected ?? draft} />
             ) : (
               <label className="space-y-2 md:col-span-2">
                 <div className="flex items-center gap-2">

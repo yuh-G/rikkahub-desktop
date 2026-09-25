@@ -5,6 +5,7 @@ import type { Assistant, JsonValue, Model, Provider } from "../foundation/types"
 import { id, isRecord, mergeObjects, uniqueStrings } from "../foundation/utils";
 import { hostOfProvider } from "../inference-engine/message-builder";
 import { state } from "../persistence/json-store";
+import { OAUTH_FLOWS } from "./auth/flows";
 import { isKimiK3Model, isKimiReasoningModel } from "./request-dialect";
 
 export const DEFAULT_AUTO_MODEL_ID = "b7055fb4-39f9-4042-a88a-0d80ed76cf08";
@@ -146,15 +147,12 @@ export const NA_API_PRESET_MODELS = [
 ];
 
 // ── 订阅制供应商预置(OAuth,方案 §6)────────────────────────────────────────
-// 固定 UUID 一经发布不可改(老用户 state/备份引用它)。P1 先落 Codex + Kimi Code;
-// 其余 flow(Copilot/xAI/Claude)在 P2/P3 各自分期再加,此处只预留键位。
-export const OAUTH_PROVIDER_IDS: Record<string, string> = {
-  "openai-codex": "98d0557b-0700-41e5-b1d6-ee875a53ae5a", // ChatGPT(Codex 订阅)
-  "kimi-coding": "f9622c8b-5037-4540-b875-3d301521367b", // Kimi Code
-  "github-copilot": "55bff930-76fb-47e4-a19c-6b48e201bf48", // P2
-  xai: "5ec4bda4-5511-4e86-9c3f-b08d37d23dc1", // xAI SuperGrok,P2
-  anthropic: "d4f86913-80d5-45e4-84ea-3e652ac63cda", // Claude Pro/Max,P3(仅工作区)
-};
+// 固定 UUID 一经发布不可改(老用户 state/备份引用它)。真值只在 auth/flows.ts 的
+// OAUTH_FLOWS[*].presetProviderId 一处(登录起流 / pi 引擎内建身份 / restore 判定同源),
+// 这里只是按 flow id 索引的投影,供预置清单与锚点表引用。
+export const OAUTH_PROVIDER_IDS: Record<string, string> = Object.fromEntries(
+  Object.values(OAUTH_FLOWS).map((flow) => [flow.id, flow.presetProviderId]),
+);
 
 // 订阅供应商「贴同家 API」的锚点(用户拍板 2026-09-25):补插/归位时移到锚点之后。
 // 锚点 = 同家 API 预置的 id;锚点被用户删除/墓碑时归位跳过(保持补插的尾部默认位)。

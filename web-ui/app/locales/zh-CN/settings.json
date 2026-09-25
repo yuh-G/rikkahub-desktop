@@ -258,7 +258,10 @@
       "cancel": "取消登录",
       "manual_code_hint": "若浏览器未自动跳转，请把重定向后的完整链接粘贴到此处",
       "manual_code_placeholder": "http://localhost:1455/auth/callback?code=…",
-      "manual_code_submit": "提交"
+      "manual_code_submit": "提交",
+      "logout_success": "已退出登录",
+      "copied": "已复制",
+      "copy_failed": "复制失败，请手动选择复制"
     }
   },
   "assistants": {

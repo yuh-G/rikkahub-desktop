@@ -41,7 +41,7 @@ import { PI_COMPACTION_PROMPT } from "../../pi-engine/compaction-prompt-text";
 import { updateSettings } from "../../app-config";
 import { markProviderTestResult, providerAuthChanged } from "../../model-providers/checks";
 import { endpointFor, fetchProviderBalance, fetchProviderModels, runProviderCheck } from "../../model-providers/checks";
-import { cancelLogin, logoutProvider, resumePrompt, startLogin } from "../../model-providers/auth";
+import { cancelLogin, currentLoginEvent, loginInProgress, logoutProvider, resumePrompt, startLogin } from "../../model-providers/auth";
 
 // 全面审查 R5-4:MCP 服务器写操作按 id 串行化。detail/sync 在 await 网络同步(秒级)
 // 期间存在并发写窗口——同 id 的第二个写请求先落地后,慢的那个整对象覆盖会吃掉它的改动
@@ -799,7 +799,9 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     return json({ status: "ok" });
   }
   if (path === "settings/provider" && request.method === "POST") {
-    const body = await readJson<Provider>(request);
+    // oauthStatus 是 stripAuthSecrets 下发给前端的派生视图,前端 draft 整对象回传时会带上它;
+    // 落进 state 就成了不随 oauth 同步的僵尸字段(登出后仍 signedIn:true)。入口即剥。
+    const { oauthStatus: _view, ...body } = await readJson<Provider & { oauthStatus?: unknown }>(request);
     updateSettings({
       ...state.settings,
       providers: state.settings.providers.some((item) => item.id === body.id)
@@ -861,9 +863,15 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
   // 剥成 oauthStatus),前端经 SSE provider_auth 事件跟踪三态进度。
   if (path === "settings/provider/oauth/start" && request.method === "POST") {
     const body = await readJson<{ providerId: string }>(request);
+    // startLogin 只等到尝试登记完成即返回;授权流本身在后台跑、进度与终局全走 SSE。
     const result = await startLogin(String(body.providerId ?? ""));
     if (!result.ok) return error(result.error, 400);
     return json({ status: "ok" });
+  }
+  // 面板挂载/刷新后对齐:进行中的尝试把最近一帧原样给回去,前端据此恢复三态视图。
+  if (path === "settings/provider/oauth/status" && request.method === "GET") {
+    const providerId = url.searchParams.get("providerId") ?? "";
+    return json({ inProgress: loginInProgress(providerId), event: currentLoginEvent(providerId) });
   }
   if (path === "settings/provider/oauth/cancel" && request.method === "POST") {
     const body = await readJson<{ providerId: string }>(request);
@@ -880,26 +888,6 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     const body = await readJson<{ providerId: string }>(request);
     const ok = logoutProvider(String(body.providerId ?? ""));
     if (!ok) return error("Provider not signed in", 400);
-    return json({ status: "ok" });
-  }
-  // 恢复订阅供应商形态:用户数据里若因旧 bug(滞后 draft 回写)把 authMode 冲成了
-  //  apiKey,此端点把 authMode 拨回 oauth(不动凭证,仅拨形态)。前端在「卡片/徽章消失」
-  //  且供应商确为订阅供应商时调它自愈。
-  if (path === "settings/provider/oauth/restore" && request.method === "POST") {
-    const body = await readJson<{ providerId: string }>(request);
-    const providerId = String(body.providerId ?? "");
-    const provider = state.settings.providers.find((item) => item.id === providerId);
-    if (!provider) return error("Provider not found", 404);
-    // 只有「预置订阅供应商 id」或「已有 oauth 行」的行才允许拨回——防止任意供应商被误拨。
-    const isPresetOAuth = providerId === "98d0557b-0700-41e5-b1d6-ee875a53ae5a" || providerId === "f9622c8b-5037-4540-b875-3d301521367b";
-    if (!isPresetOAuth && !provider.oauth) return error("Not an OAuth provider", 400);
-    if (provider.authMode === "oauth") return json({ status: "ok" }); // 已是 oauth,幂等
-    updateSettings({
-      ...state.settings,
-      providers: state.settings.providers.map((item) =>
-        item.id === providerId ? { ...item, authMode: "oauth" as const } : item,
-      ),
-    });
     return json({ status: "ok" });
   }
   if (path === "settings/provider/balance" && request.method === "POST") {

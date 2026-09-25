@@ -3,7 +3,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import type { AssistantMemoryFile, Conversation, GlobalMemoryFile, JsonValue, State, StoredFile, WriteStrategy } from "../foundation/types";
+import type { AssistantMemoryFile, Conversation, GlobalMemoryFile, JsonValue, Provider, State, StoredFile, WriteStrategy } from "../foundation/types";
 import { getStringArray, id, isRecord, mergeById, uniqueStrings } from "../foundation/utils";
 import { assistantMemoryPath, dataDir, filesDir, globalMemoryPath, pendingMemoryPath, skillsDir, statePath } from "../foundation/paths";
 import { normalizeProxyConfig, normalizePreferredPort } from "../foundation/net";
@@ -23,6 +23,7 @@ import { setStartupPhase } from "../foundation/startup-gate";
 import { countConversations } from "../conversations/read-queries";
 import { GLOBAL_MEMORY_ID, memoryStore } from "../memory";
 import { DEFAULT_AUTO_MODEL_ID, NA_API_PRESET_MODELS, NA_API_PROVIDER_ID, SUNSET_PROVIDER_IDS, TENCENT_PROVIDER_ID, builtinProviderRank, enrichModel, inferModelAbilities, model, placeOAuthProvidersAfterAnchors } from "../model-providers";
+import { isPresetOAuthProviderId } from "../model-providers/auth/flows";
 import { normalizeTtsProviders } from "../media/tts";
 import { normalizeAsrProviders } from "../media/asr";
 import { normalizeS3Config, normalizeWebDavConfig } from "../app-config/backup-config";
@@ -219,6 +220,17 @@ export function normalizeState(input: Partial<State>): State {
   normalized.settings.providers = normalized.settings.providers.filter(
     (providerItem) => !SUNSET_PROVIDER_IDS.has(providerItem.id) || String(providerItem.apiKey ?? "").trim() !== "",
   );
+  // 订阅供应商形态修复(两处历史 bug 的存量自愈,每次加载无条件执行,备份恢复带回的旧值同样覆盖):
+  // ① oauthStatus 是 stripAuthSecrets 下发前端的派生视图,不是存储字段。旧版 settings/provider
+  //    POST 曾把前端回传的视图落进 state(登出后残留 signedIn:true 让卡片一直显示已登录)。
+  // ② 预置订阅供应商是 OAuth-only 形态,authMode 恒为 "oauth"。旧版登出 / 滞后 draft 回写曾把它
+  //    冲成 apiKey——前端认不出订阅卡片、startLogin 拒绝再登录。
+  normalized.settings.providers = normalized.settings.providers.map((providerItem) => {
+    const { oauthStatus: _view, ...rest } = providerItem as Provider & { oauthStatus?: unknown };
+    const authMode = isPresetOAuthProviderId(rest.id) ? ("oauth" as const) : rest.authMode;
+    if (!("oauthStatus" in providerItem) && authMode === rest.authMode) return providerItem;
+    return authMode === undefined ? rest : { ...rest, authMode };
+  });
   // 1.1.1 供应商迁移:
   // (a) 腾讯 Hunyuan 改名为"腾讯混元"(mergeById 保留老 name,这里强制按 id 改名,配置不变)。
   // (b) 钠API 给从未配置过的老用户(models 为空)补上预置模型;已自定义 models 的不覆盖。

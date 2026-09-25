@@ -2,7 +2,7 @@
 // 关键不变量(方案 §2.4):
 //   1. 同一 provider 的 modify 串行化(并发刷新不双刷被轮换的 refresh token);
 //   2. CAS:mutate 期间 refresh 被别处改写 → 本次写丢弃,返回当前实际凭证;
-//   3. delete 剥 oauth + authMode 回 apiKey + enabled=false;
+//   3. delete 剥 oauth,authMode 保持 oauth(订阅供应商 OAuth-only 形态),enabled 不动;
 //   4. read/list 只读,不改 state。
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -88,12 +88,13 @@ describe("pi credential store", () => {
     expect(currentRefresh("p1")).toBe("rX");
   });
 
-  test("delete strips oauth and resets authMode/enabled", async () => {
+  test("delete strips oauth but keeps the subscription shape (authMode=oauth)", async () => {
     const store = createPiCredentialStore();
     await store.delete("p1");
     const provider = state.settings.providers.find((p) => p.id === "p1");
     expect(provider?.oauth).toBeUndefined();
-    expect(provider?.authMode).toBe("apiKey");
+    // 与 logoutProvider 同口径:登出 ≠ 变成 API Key 供应商。
+    expect(provider?.authMode).toBe("oauth");
     expect(provider?.enabled).toBe(true); // delete 不动 enabled(由调用方决定)
   });
 

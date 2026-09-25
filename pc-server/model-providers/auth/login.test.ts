@@ -4,12 +4,13 @@
 //   2. 成功 → 写 oauth(带 flowId)+ authMode=oauth + enabled=true,广播 success;
 //   3. 取消 → 广播 cancelled,不写 oauth;
 //   4. 失败 → 广播 error,不写 oauth;
-//   5. 登出 → 剥 oauth + authMode=apiKey + enabled=false。
+//   5. 登出 → 剥 oauth + enabled=false;authMode 保持 oauth(订阅供应商是 OAuth-only 形态);
+//   6. startLogin 不等授权流跑完就返回(HTTP 层不能挂着等用户操作),终局经 completion/SSE。
 // seed 对齐真实预置(固定 UUID + authMode:"oauth"),因为 startLogin 的 flow 判定走
-// PRESET_OAUTH_PROVIDER_IDS(id → flow),不是按 host 嗅探。
+// oauthFlowFor(flows.ts 的 presetProviderId 反查),不是按 host 嗅探。
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cancelLogin, initProviderAuthBroadcast, loginInProgress, logoutProvider, startLogin, type ProviderAuthEvent } from "./login";
+import { cancelLogin, currentLoginEvent, initProviderAuthBroadcast, loginInProgress, logoutProvider, resumePrompt, startLogin, type ProviderAuthEvent } from "./login";
 import { clearOAuthFlowOverride, overrideOAuthFlow } from "./flows";
 import { setState, state } from "../../persistence/json-store";
 import { defaultSettings } from "../../app-config/defaults";
@@ -68,7 +69,7 @@ describe("login orchestration", () => {
     expect(events.filter((e) => e.providerId === CODEX_PROVIDER_ID)).toHaveLength(0);
   });
 
-  test("logoutProvider strips oauth and resets authMode/enabled", async () => {
+  test("logoutProvider strips oauth, disables, and keeps the subscription shape (authMode=oauth)", async () => {
     // 先手动种一个已登录的 oauth 行
     const providers = state.settings.providers.map((p) =>
       p.id === CODEX_PROVIDER_ID
@@ -85,12 +86,123 @@ describe("login orchestration", () => {
     expect(ok).toBe(true);
     const provider = state.settings.providers.find((p) => p.id === CODEX_PROVIDER_ID);
     expect(provider?.oauth).toBeUndefined();
-    expect(provider?.authMode).toBe("apiKey");
+    // 登出 ≠ 变成 API Key 供应商:形态不变,前端仍渲染订阅卡片、startLogin 仍可再登录。
+    expect(provider?.authMode).toBe("oauth");
     expect(provider?.enabled).toBe(false);
   });
 
-  test("logoutProvider on non-oauth provider returns false", () => {
+  test("logoutProvider also clears a stale persisted oauthStatus view (legacy POST write-back)", () => {
+    // 旧版 settings/provider POST 把前端回传的派生视图落进了 state:oauth 已无、oauthStatus 还在
+    // ——正是「退出登录后卡片仍显示已登录」的数据形态。登出必须能清掉它。
+    const providers = state.settings.providers.map((p) =>
+      p.id === CODEX_PROVIDER_ID
+        ? { ...p, authMode: "oauth" as const, enabled: false, oauthStatus: { signedIn: true, flow: "openai-codex", signedInAt: 1 } }
+        : p,
+    );
+    setState({ ...state, settings: { ...state.settings, providers } } as any);
+    expect(logoutProvider(CODEX_PROVIDER_ID)).toBe(true);
+    const provider = state.settings.providers.find((p) => p.id === CODEX_PROVIDER_ID) as Record<string, unknown> | undefined;
+    expect(provider?.oauthStatus).toBeUndefined();
+    expect(provider?.oauth).toBeUndefined();
+    expect(provider?.authMode).toBe("oauth");
+  });
+
+  test("logoutProvider on a signed-out provider returns false", () => {
     expect(logoutProvider(CODEX_PROVIDER_ID)).toBe(false);
+  });
+
+  test("startLogin returns before the flow completes; completion resolves with the outcome", async () => {
+    // 授权流卡在「等用户」:startLogin 必须先返回(否则 oauth/start 请求挂到 ky 超时,
+    // 前端按钮锁在 submitting——ChatGPT 选登录方式的两个按钮点不动就是这么来的)。
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    overrideOAuthFlow("openai-codex", {
+      name: "Test",
+      login: async (interaction) => {
+        interaction.notify({ type: "auth_url", url: "https://example.com/auth", instructions: "" });
+        await gate;
+        return { type: "oauth", access: "a", refresh: "r", expires: 9999999999000 };
+      },
+      refresh: async () => { throw new Error("not in test"); },
+      toAuth: async (cred) => ({ apiKey: cred.access }),
+    });
+    const result = await startLogin(CODEX_PROVIDER_ID);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    // 已返回但流程仍在跑:attempt 存活、凭证未落盘、最近一帧可查(刷新页面后面板靠它恢复)。
+    expect(loginInProgress(CODEX_PROVIDER_ID)).toBe(true);
+    expect(state.settings.providers.find((p) => p.id === CODEX_PROVIDER_ID)?.oauth).toBeUndefined();
+    expect(currentLoginEvent(CODEX_PROVIDER_ID)?.phase).toBe("waiting_browser");
+    release();
+    const outcome = await result.completion;
+    expect(outcome.ok).toBe(true);
+    expect(loginInProgress(CODEX_PROVIDER_ID)).toBe(false);
+    expect(currentLoginEvent(CODEX_PROVIDER_ID)).toBeNull();
+    expect(state.settings.providers.find((p) => p.id === CODEX_PROVIDER_ID)?.oauth?.flow).toBe("openai-codex");
+  });
+
+  test("cancel then immediately restart: the old flow's late teardown must not kill the new attempt", async () => {
+    // 授权流在后台异步收尾:旧流程收到 abort 后要过几个 tick 才 reject。若这期间用户已重新
+    // 点了登录,旧流程的终局不能把表里的新尝试删掉(否则新流程在跑、状态却显示空闲)。
+    let rejectOld!: (err: Error) => void;
+    let calls = 0;
+    overrideOAuthFlow("openai-codex", {
+      name: "Test",
+      login: async (interaction) => {
+        calls += 1;
+        if (calls === 1) {
+          // 旧流程:不立即响应 abort,等测试手动 reject(模拟迟到的收尾)。
+          return new Promise((_, reject) => { rejectOld = reject; });
+        }
+        await new Promise((_, reject) => interaction.signal.addEventListener("abort", () => reject(new Error("Login cancelled"))));
+        throw new Error("unreachable");
+      },
+      refresh: async () => { throw new Error("not in test"); },
+      toAuth: async (cred) => ({ apiKey: cred.access }),
+    });
+    const first = await startLogin(CODEX_PROVIDER_ID);
+    if (!first.ok) throw new Error(first.error);
+    cancelLogin(CODEX_PROVIDER_ID);
+    const second = await startLogin(CODEX_PROVIDER_ID);
+    expect(second.ok).toBe(true);
+    expect(loginInProgress(CODEX_PROVIDER_ID)).toBe(true);
+    // 旧流程此时才 reject(controller 已 abort → 判为 cancelled)。
+    rejectOld(new Error("Login cancelled"));
+    expect((await first.completion).ok).toBe(false);
+    // 新尝试仍活着,没有被旧流程的收尾误删。
+    expect(loginInProgress(CODEX_PROVIDER_ID)).toBe(true);
+    cancelLogin(CODEX_PROVIDER_ID);
+    if (second.ok) await second.completion;
+    expect(loginInProgress(CODEX_PROVIDER_ID)).toBe(false);
+  });
+
+  test("browser flow: manual_code prompt frame keeps the authUrl from the preceding auth_url notify", async () => {
+    // pi 的浏览器流是 notify(auth_url) 紧接 prompt(manual_code)。前端整帧替换 authEvent,
+    // 第二帧若丢了 authUrl,「打开浏览器 / 复制链接 / 手贴授权码」整块会消失只剩转圈。
+    overrideOAuthFlow("openai-codex", {
+      name: "Test",
+      login: async (interaction) => {
+        interaction.notify({ type: "auth_url", url: "https://auth.example/login", instructions: "" });
+        const input = await interaction.prompt({ type: "manual_code", message: "paste code", placeholder: "" });
+        return { type: "oauth", access: input, refresh: "r", expires: 9999999999000 };
+      },
+      refresh: async () => { throw new Error("not in test"); },
+      toAuth: async (cred) => ({ apiKey: cred.access }),
+    });
+    const result = await startLogin(CODEX_PROVIDER_ID);
+    if (!result.ok) throw new Error(result.error);
+    // 两帧都是 waiting_browser,且第二帧(manual_code 提示)仍带 authUrl。
+    const frames = events.filter((e) => e.providerId === CODEX_PROVIDER_ID && e.phase === "waiting_browser");
+    expect(frames).toHaveLength(2);
+    expect(frames[0].authUrl).toBe("https://auth.example/login");
+    expect(frames[1].authUrl).toBe("https://auth.example/login");
+    expect(frames[1].message).toBe("paste code");
+    // 刷新后面板靠最近一帧恢复,同样得有 authUrl。
+    expect(currentLoginEvent(CODEX_PROVIDER_ID)?.authUrl).toBe("https://auth.example/login");
+    // 手贴授权码经 resumePrompt 注入,流程走到成功。
+    expect(resumePrompt(CODEX_PROVIDER_ID, "code-123")).toBe(true);
+    expect((await result.completion).ok).toBe(true);
+    expect(state.settings.providers.find((p) => p.id === CODEX_PROVIDER_ID)?.oauth?.credential?.access).toBe("code-123");
   });
 
   test("successful login commits oauth with the resolved flowId and bundles catalog models", async () => {
@@ -102,6 +214,8 @@ describe("login orchestration", () => {
     });
     const result = await startLogin(CODEX_PROVIDER_ID);
     expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect((await result.completion).ok).toBe(true);
     const provider = state.settings.providers.find((p) => p.id === CODEX_PROVIDER_ID);
     // 关键断言:flow 必须由 startLogin 判定后传入,不能落硬编码兜底(否则 Kimi 首登会被错标)。
     expect(provider?.oauth?.flow).toBe("openai-codex");
