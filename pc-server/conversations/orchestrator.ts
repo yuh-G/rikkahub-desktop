@@ -93,7 +93,7 @@ import {
   hasResumableToolParts,
   toolApprovalType,
 } from "./helpers";
-import { generateSuggestionsForConversation, generateTitleForConversation, limitAuxiliaryText, markCompactionBoundary, modelExists, resolveFastModelId, shouldAutoGenerateTitle } from "./auxiliary";
+import { generateSuggestionsForConversation, generateTitleForConversation, limitAuxiliaryText, markCompactionBoundary, modelExists, resolvePostGenerationModelIds, shouldAutoGenerateTitle } from "./auxiliary";
 
 /** 生成入口一次性解析的配置快照（P1-4）。流式生成横跨多个 await 点，用户中途改配置
  *  （换模型/改工具集/删助手）时，updateSettings 会整体替换 state.settings——持有入口
@@ -602,13 +602,14 @@ setOnQueuedGenerationDispatched((conversationId, item) => {
 
 async function runPostGenerationTasks(conversationId: string, snapshot: Conversation, assistantMessageId: string) {
   const liveConversation = () => getConversation(conversationId);
-  // 快速模型解析一次,两个后台任务共用。null = 没配(空/出厂哨兵/指向已删模型)→ 两者
-  // 都静默跳过:标题退成首条消息文本,建议不生成,不弹任何失败提示,也不擅自拿主模型
-  // 跑(建议回复每轮一次,用主模型不划算)。用户想要 AI 标题就去设置里配快速模型。
-  const fastModelId = resolveFastModelId();
-  if (shouldAutoGenerateTitle(snapshot) && fastModelId) {
+  // 快速模型解析一次,两个后台任务共用。null = 没配(空/出厂哨兵/指向已删模型)或对应
+  // 子功能被用户在设置里关停 → 两者都静默跳过:标题退成首条消息文本,建议不生成,不弹
+  // 任何失败提示,也不擅自拿主模型跑(建议回复每轮一次,用主模型不划算)。用户想要 AI
+  // 标题就去设置里配快速模型;只要其一就在快速模型卡的 Prompt 页关掉另一个。
+  const { title: titleModelId, suggestion: suggestionModelId } = resolvePostGenerationModelIds();
+  if (shouldAutoGenerateTitle(snapshot) && titleModelId) {
     try {
-      const title = await generateTitleForConversation(snapshot, fastModelId);
+      const title = await generateTitleForConversation(snapshot, titleModelId);
       const live = liveConversation();
       if (live && shouldAutoGenerateTitle(live)) {
         live.title = title;
@@ -652,9 +653,9 @@ async function runPostGenerationTasks(conversationId: string, snapshot: Conversa
     }
   }
 
-  if (!fastModelId) return;
+  if (!suggestionModelId) return;
   try {
-    const suggestions = await generateSuggestionsForConversation(snapshot, fastModelId);
+    const suggestions = await generateSuggestionsForConversation(snapshot, suggestionModelId);
     const live = liveConversation();
     const lastNode = live?.messages[live.messages.length - 1];
     const lastMessage = lastNode?.messages[lastNode.selectIndex] ?? lastNode?.messages[0];

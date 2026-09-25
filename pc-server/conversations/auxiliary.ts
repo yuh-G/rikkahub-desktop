@@ -276,6 +276,18 @@ export function resolveFastModelId(): string | null {
   return modelExists(configured) ? configured : null;
 }
 
+/** 标题/建议两个后生成任务各自的生效快速模型 id(唯一裁决点):快速模型没配,或对应
+ *  子功能被用户在设置里关停(快速模型卡的 Prompt 页开关),都为 null。为 null 时调用方
+ *  走既有的「未配置」路径——标题退首条消息文本命名、建议不生成,开关关停与从未配置的
+ *  外在行为完全一致,不新增第三类状态。 */
+export function resolvePostGenerationModelIds(): { title: string | null; suggestion: string | null } {
+  const fast = resolveFastModelId();
+  return {
+    title: state.settings.titleGenerationEnabled === false ? null : fast,
+    suggestion: state.settings.enableSuggestion === false ? null : fast,
+  };
+}
+
 /** OCR 模型(图片转文字备用通道)的生效解析:OCR 属于"报错档"功能(用户拍板:
  *  未配置不兜底、不静默)——没配就抛人话错误,由调用方落成图片 part 的失败态,
  *  前端在图片下方渲染提示并引导去设置。与标题/建议的"静默跳过"档刻意相反:OCR

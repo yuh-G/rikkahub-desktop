@@ -756,6 +756,9 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
       ...state.settings,
       chatModelId: String(body.chatModelId ?? state.settings.chatModelId),
       fastModelId: String(body.fastModelId ?? state.settings.fastModelId),
+      // 快速模型子功能开关:缺省不动现值(老前端/部分调用不回传布尔)。
+      enableSuggestion: typeof body.enableSuggestion === "boolean" ? body.enableSuggestion : state.settings.enableSuggestion,
+      titleGenerationEnabled: typeof body.titleGenerationEnabled === "boolean" ? body.titleGenerationEnabled : state.settings.titleGenerationEnabled,
       translateModeId: String(body.translateModeId ?? state.settings.translateModeId),
       imageGenerationModelId: String(body.imageGenerationModelId ?? state.settings.imageGenerationModelId),
       ocrModelId: String(body.ocrModelId ?? state.settings.ocrModelId),

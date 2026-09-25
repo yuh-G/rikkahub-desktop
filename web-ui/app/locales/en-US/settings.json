@@ -487,7 +487,7 @@
   "models": {
     "title": "Default models & prompts",
     "subtitle": "Pick a default model and prompt for chat, the fast model, translation, OCR, compression and more.",
-    "note": "Only models that passed the provider test are shown here. Title, translation, suggestion, OCR and compression prompts ship with sensible defaults — click the tool button on the right to view or restore them.",
+    "note": "Only models that passed the provider test are shown here. Title, translation, chat suggestion, OCR and compression prompts ship with sensible defaults — click the tool button on the right to view or restore them.",
     "not_set": "Not set",
     "not_set_fallback": "Not set (follows the conversation model)",
     "not_set_disabled": "Not set (feature unavailable)",
@@ -498,8 +498,8 @@
     "reset_default": "Reset to default",
     "done": "Done",
     "fast_tab": {
-      "title": "Title",
-      "suggestion": "Suggestions"
+      "title": "Auto Title",
+      "suggestion": "Chat Suggestions"
     },
     "compress_engine": {
       "chat": "Chat engine",
@@ -507,9 +507,9 @@
       "pi_note": "The workspace engine uses pi's native compaction. This prompt ships with the engine and is read-only. Incremental updates and oversized turns use dedicated variants of the same scheme."
     },
     "prompt": {
-      "title": "Title generation prompt",
+      "title": "Auto Title",
       "translate": "Translation prompt",
-      "suggestion": "Suggestion prompt",
+      "suggestion": "Chat Suggestions",
       "ocr": "OCR prompt",
       "compress": "Context compression prompt",
       "optimize": "Prompt optimization prompt"
@@ -533,7 +533,7 @@
       },
       "fast": {
         "title": "Fast model",
-        "desc": "Lightweight background tasks such as title generation and suggested replies share this model. When unset, titles fall back to the first message text and no suggestions are generated — no extra model usage. Use the button at the top right to edit the title and suggestion prompts separately."
+        "desc": "Lightweight background tasks such as auto title and chat suggestions share this model. When unset, titles fall back to the first message text and no suggestions are generated — no extra model usage. Use the button at the top right to toggle each feature and edit its prompt on its own page."
       },
       "translate": {
         "title": "Translation",

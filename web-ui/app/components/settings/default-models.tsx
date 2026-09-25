@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import api from "~/services/api";
 import type { Settings } from "~/types";
@@ -164,6 +165,8 @@ export function DefaultModelsSection({
   type Draft = {
     chatModelId: string;
     fastModelId: string;
+    enableSuggestion: boolean;
+    titleGenerationEnabled: boolean;
     translateModeId: string;
     imageGenerationModelId: string;
     ocrModelId: string;
@@ -186,6 +189,8 @@ export function DefaultModelsSection({
   const [draft, setDraft] = React.useState({
     chatModelId: textValue(settings.chatModelId),
     fastModelId: textValue(settings.fastModelId),
+    enableSuggestion: settings.enableSuggestion !== false,
+    titleGenerationEnabled: settings.titleGenerationEnabled !== false,
     translateModeId: textValue(settings.translateModeId),
     imageGenerationModelId: textValue(settings.imageGenerationModelId),
     ocrModelId: textValue(settings.ocrModelId),
@@ -213,6 +218,15 @@ export function DefaultModelsSection({
         ? "suggestionPrompt"
         : "titlePrompt"
       : editingPrompt;
+  // 快速模型的对话框是「子功能主页」:标题/建议两页各自在标题行右侧带启停开关,开关只决定
+  // 配了快速模型后该子功能跑不跑(标题关 = 首条消息文本命名,建议关 = 不生成)。其余卡的
+  // prompt 页无子功能概念,不带开关(它们的「开关」是模型选择器的「未设置」语义)。
+  const fastToggleKey: "enableSuggestion" | "titleGenerationEnabled" | null =
+    activePromptKey === "titlePrompt"
+      ? "titleGenerationEnabled"
+      : activePromptKey === "suggestionPrompt"
+        ? "enableSuggestion"
+        : null;
   React.useEffect(() => {
     // 懒加载:首次打开压缩 prompt 对话框才取 pi 原生 prompt(静态文本,取一次缓存)。
     if (editingPrompt !== "compressPrompt" || piCompactionPrompt !== null) return;
@@ -432,7 +446,17 @@ export function DefaultModelsSection({
       >
         <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>{activePrompt?.title ?? "Prompt"}</DialogTitle>
+            <div className="flex items-center justify-between gap-3 pr-8">
+              <DialogTitle>{activePrompt?.title ?? "Prompt"}</DialogTitle>
+              {fastToggleKey ? (
+                <Switch
+                  size="sm"
+                  checked={draft[fastToggleKey]}
+                  onCheckedChange={(checked) => setDraft({ ...draft, [fastToggleKey]: checked })}
+                  aria-label={activePrompt?.title}
+                />
+              ) : null}
+            </div>
             <DialogDescription>
               {activePromptKey === "compressPrompt" && compressEngineTab === "pi"
                 ? t("settings:models.compress_engine.pi_note")

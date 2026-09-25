@@ -487,7 +487,7 @@
   "models": {
     "title": "默认模型与提示词",
     "subtitle": "为聊天、快速模型、翻译、OCR、压缩等场景分别指定默认模型和 Prompt。",
-    "note": "这里只显示已通过供应商测试的模型。标题、翻译、建议回复、OCR 和压缩 Prompt 均预置了合理的默认模板，点右侧工具按钮可查看和恢复默认值。",
+    "note": "这里只显示已通过供应商测试的模型。标题、翻译、聊天建议、OCR 和压缩 Prompt 均预置了合理的默认模板，点右侧工具按钮可查看和恢复默认值。",
     "not_set": "未设置",
     "not_set_fallback": "未设置（自动跟随会话模型）",
     "not_set_disabled": "未设置（功能不可用）",
@@ -498,8 +498,8 @@
     "reset_default": "恢复默认",
     "done": "完成",
     "fast_tab": {
-      "title": "标题",
-      "suggestion": "建议回复"
+      "title": "标题自动生成",
+      "suggestion": "聊天建议"
     },
     "compress_engine": {
       "chat": "对话引擎",
@@ -507,9 +507,9 @@
       "pi_note": "工作区引擎使用 pi 原生压缩机制，此提示词随引擎内置、不可编辑。增量更新与超大回合另有同机制的专用变体。"
     },
     "prompt": {
-      "title": "标题生成 Prompt",
+      "title": "标题自动生成",
       "translate": "翻译 Prompt",
-      "suggestion": "建议回复 Prompt",
+      "suggestion": "聊天建议",
       "ocr": "OCR Prompt",
       "compress": "上下文压缩 Prompt",
       "optimize": "提示词优化 Prompt"
@@ -533,7 +533,7 @@
       },
       "fast": {
         "title": "快速模型",
-        "desc": "标题生成、建议回复等轻量后台任务共用这个模型。未设置时标题直接用首条消息文本命名、不生成建议回复，不额外消耗模型额度。点右上角可分别编辑标题与建议的 Prompt。"
+        "desc": "标题自动生成、聊天建议等轻量后台任务共用这个模型。未设置时标题直接用首条消息文本命名、不生成聊天建议，不额外消耗模型额度。点右上角可在两个功能页里分别开关与编辑 Prompt。"
       },
       "translate": {
         "title": "翻译",

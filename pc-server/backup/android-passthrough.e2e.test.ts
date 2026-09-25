@@ -82,6 +82,9 @@ describe("安卓独有字段透传(产品决策②)", () => {
       // 安卓 settings.json:PC 类型系统不认识的顶层字段 + 助手内字段
       const androidSettings = {
         fastModelId: "android-fast-model-uuid",
+        // APP 原生开关(手机端关掉了聊天建议):PC 未定制(出厂默认 true)→ 合并采纳 APP 值。
+        // titleGenerationEnabled 是 PC 先行字段,APP 备份没有 → 必须保 PC(默认 true)。
+        enableSuggestion: false,
         backupReminderConfig: { enabled: true, intervalDays: 7 },
         customThemes: [{ id: "t1", name: "AMOLED", seed: "#000000" }],
         assistants: [{
@@ -105,6 +108,8 @@ describe("安卓独有字段透传(产品决策②)", () => {
       // 导入后 PC 运行时 settings 里字段在场(saveState 写回的就是它)
       const settings = await (await fetch(`${base}/api/settings`)).json() as Record<string, unknown>;
       expect(settings.fastModelId).toBe("android-fast-model-uuid");
+      expect(settings.enableSuggestion).toBe(false); // APP 关闭态按标量语义采纳
+      expect(settings.titleGenerationEnabled).toBe(true); // APP 无此键 → 保 PC 默认
       expect((settings.backupReminderConfig as Record<string, unknown>).intervalDays).toBe(7);
       expect(Array.isArray(settings.customThemes) && (settings.customThemes as unknown[]).length).toBe(1);
       const importedAssistant = (settings.assistants as Array<Record<string, unknown>>)
@@ -120,6 +125,9 @@ describe("安卓独有字段透传(产品决策②)", () => {
       expect(entry).toBeDefined();
       const exported = JSON.parse(entry!.data.toString("utf8")) as Record<string, unknown>;
       expect(exported.fastModelId).toBe("android-fast-model-uuid");
+      // 关闭态随导出回带(APP 全量替换导入后建议仍是关的);PC 先行键原样携带,APP 安全忽略。
+      expect(exported.enableSuggestion).toBe(false);
+      expect(exported.titleGenerationEnabled).toBe(true);
       expect((exported.backupReminderConfig as Record<string, unknown>).intervalDays).toBe(7);
       expect(Array.isArray(exported.customThemes) && (exported.customThemes as unknown[]).length).toBe(1);
       const exportedAssistant = (exported.assistants as Array<Record<string, unknown>>)

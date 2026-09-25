@@ -89,6 +89,10 @@ export function defaultSettings(): Settings {
     favoriteModels: [],
     chatModelId: DEFAULT_AUTO_MODEL_ID,
     fastModelId: DEFAULT_AUTO_MODEL_ID,
+    // 快速模型子功能开关默认开(= 历史行为):老 state 无此字段经 normalize 回填 true,
+    // 行为不变;APP 备份带来的 enableSuggestion:false 以备份为准(parsedSettings 覆盖默认)。
+    enableSuggestion: true,
+    titleGenerationEnabled: true,
     translateModeId: DEFAULT_AUTO_MODEL_ID,
     translateThinkingBudget: 0,
     imageGenerationModelId: "",

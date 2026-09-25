@@ -22,7 +22,7 @@ process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-fastmodel-tes
 
 import type { Conversation, State } from "../foundation/types";
 import { setState, state } from "../persistence/json-store";
-import { conversationModelIdFor, modelExists, requireOcrModelId, resolveFastModelId } from "./auxiliary";
+import { conversationModelIdFor, modelExists, requireOcrModelId, resolveFastModelId, resolvePostGenerationModelIds } from "./auxiliary";
 import { DEFAULT_AUTO_MODEL_ID } from "../model-providers";
 
 const CONVERSATION = { id: "c1", assistantId: "a1" } as unknown as Conversation;
@@ -84,6 +84,41 @@ describe("resolveFastModelId:没配就是 null(调用方静默跳过)", () => {
   test("配过但模型已被删除 → null(残留 id 不该让它去猜)", () => {
     state.settings.fastModelId = "deleted-model-uuid";
     expect(resolveFastModelId()).toBeNull();
+  });
+});
+
+describe("resolvePostGenerationModelIds:子功能开关门控(唯一裁决点)", () => {
+  // 开关语义(用户拍板):标题关 = 退回未配模型的行为(首条消息命名);建议关 = 不生成。
+  // 关停与从未配置的外在行为一致,故裁决直接把对应通道归 null,调用方零分支新增。
+  test("老 state 无开关字段(升级前)→ 视同开启,行为与升级前一致", () => {
+    state.settings.fastModelId = "fast-model-uuid";
+    Reflect.deleteProperty(state.settings, "enableSuggestion");
+    Reflect.deleteProperty(state.settings, "titleGenerationEnabled");
+    expect(resolvePostGenerationModelIds()).toEqual({ title: "fast-model-uuid", suggestion: "fast-model-uuid" });
+  });
+
+  test("两开关默认开 → 两个通道都用快速模型", () => {
+    state.settings.enableSuggestion = true;
+    state.settings.titleGenerationEnabled = true;
+    expect(resolvePostGenerationModelIds()).toEqual({ title: "fast-model-uuid", suggestion: "fast-model-uuid" });
+  });
+
+  test("只关标题 → title 通道 null(走文本兜底),建议不受影响", () => {
+    state.settings.titleGenerationEnabled = false;
+    expect(resolvePostGenerationModelIds()).toEqual({ title: null, suggestion: "fast-model-uuid" });
+    state.settings.titleGenerationEnabled = true;
+  });
+
+  test("只关建议 → suggestion 通道 null(不生成),标题不受影响", () => {
+    state.settings.enableSuggestion = false;
+    expect(resolvePostGenerationModelIds()).toEqual({ title: "fast-model-uuid", suggestion: null });
+    state.settings.enableSuggestion = true;
+  });
+
+  test("开关让没配模型更没配:快速模型未配置时两通道本来就 null", () => {
+    state.settings.fastModelId = DEFAULT_AUTO_MODEL_ID;
+    expect(resolvePostGenerationModelIds()).toEqual({ title: null, suggestion: null });
+    state.settings.fastModelId = "fast-model-uuid";
   });
 });
 
