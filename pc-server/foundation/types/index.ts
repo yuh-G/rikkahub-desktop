@@ -33,7 +33,8 @@ export interface Model {
 // dsh 的 llm-pi-ai/<id> record」三方的公共键。credential 存 pi-ai OAuthCredential
 // 原样 opaque JSON(含 access/refresh/expires 及厂商扩展字段),刷新权唯一在核心
 // (model-providers/auth/),引擎只拿短命 access。
-export type OAuthFlowId = "openai-codex" | "kimi-coding" | "github-copilot" | "xai" | "anthropic" | "openrouter";
+// (openrouter 的订阅形态是余额制而非订阅,不纳入;flow 登记表见 model-providers/auth/flows.ts)
+export type OAuthFlowId = "openai-codex" | "kimi-coding" | "github-copilot" | "xai" | "anthropic";
 
 export interface ProviderOAuth {
   flow: OAuthFlowId;
