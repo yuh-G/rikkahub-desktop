@@ -11,6 +11,7 @@ import { state } from "../persistence/json-store";
 import { addLog } from "../api/logs";
 import { broadcastConversation, broadcastEngineStatus, broadcastList, broadcastNodeUpdate, touchStream } from "../api/sse";
 import { applyCustomBody, applyRequestHeaders, findModel } from "../model-providers";
+import { resolveProviderAuthForProvider, applyShaping } from "../model-providers/auth";
 import { endpointFor } from "../model-providers/checks";
 import { openAiMaxTokensField, reasoningLevelNormalized } from "../model-providers/request-dialect";
 import {
@@ -148,7 +149,11 @@ export async function callProvider(
   const providerItem = picked.provider;
   const selectedModel = picked.model.modelId === "auto" ? "gpt-4o-mini" : picked.model.modelId;
   const url = endpointFor(providerItem);
-  const headers = applyRequestHeaders({ "Content-Type": "application/json" }, assistant, providerItem, picked.model, conversation.id);
+  // 订阅供应商:凭据在服务端 oauth 里,apiKey 恒空——先经 resolveProviderAuthForProvider
+  // 解析(可能触发锁内刷新),后续注入点统一用 resolvedCredentialHeaders 而非裸 apiKey。
+  const resolvedAuth = await resolveProviderAuthForProvider(providerItem, { signal });
+  const credentialHeaders = resolvedAuth.headers;
+  const headers = applyRequestHeaders({ "Content-Type": "application/json", ...credentialHeaders }, assistant, providerItem, picked.model, conversation.id);
   // 对齐 e63d017：OpenAI 路径才让 includeHistoryReasoning 生效；
   // claude/google 不走 OpenAI assistant 序列化，一律保持 true。
   const includeHistoryReasoning =
@@ -159,7 +164,8 @@ export async function callProvider(
   if (providerItem.type === "google") {
     // issue10：Gemini 鉴权走 x-goog-api-key 头（与安卓非 Vertex 路径、Cherry Studio 一致）。
     // 此前用 ?key= query，官方两者都收，但主流中转网关只解析 header，query 会被判 invalid key。
-    headers["x-goog-api-key"] = providerItem.apiKey;
+    // 订阅供应商:google 暂无 oauth 形态,apiKey 恒空时 credentialHeaders 已含解析头。
+    if (providerItem.authMode !== "oauth") headers["x-goog-api-key"] = providerItem.apiKey;
     const baseUrl = providerItem.baseUrl;
     body = buildGoogleRequestBody(messagesForApi, picked.model, assistant);
     const finalBody = applyCustomBody(body, assistant, picked.model);
@@ -172,7 +178,9 @@ export async function callProvider(
   }
 
   if (providerItem.type === "claude") {
-    headers["x-api-key"] = providerItem.apiKey;
+    // 订阅供应商(Kimi/Claude):oauth 轨已在 credentialHeaders 注入 Authorization: Bearer;
+    // apiKey 轨保持 x-api-key。互斥,不双发。
+    if (providerItem.authMode !== "oauth") headers["x-api-key"] = providerItem.apiKey;
     headers["anthropic-version"] = "2023-06-01";
     const messages = messagesForApi;
     const systemContent = messages.find((item) => item.role === "system")?.content;
@@ -214,7 +222,7 @@ export async function callProvider(
     return fetchClaudeTextWithTools(url, headers, applyCustomBody(body, assistant, picked.model), providerItem, assistant, signal, hooks);
   }
 
-  headers.Authorization = `Bearer ${providerItem.apiKey}`;
+  if (providerItem.authMode !== "oauth") headers.Authorization = `Bearer ${providerItem.apiKey}`;
   // 台账 §7.4,对齐安卓 ChatCompletionsAPI.kt:262 —— OpenRouter 在请求体发 session_id(非
   // 头;网关据此把同会话路由到同一上游实例,前缀缓存更可能命中)。仅 chat-completions 形态
   // 有此事;responses 形态安卓无对应。conversation.id 即会话身份(与 prompt_cache_key 同物)。
@@ -249,6 +257,8 @@ export async function callProvider(
       ].filter(Boolean),
     };
     if (!body.tools.length) delete body.tools;
+    // 订阅供应商整形:Codex 需 include reasoning.encrypted_content、不识别 max_output_tokens。
+    if (providerItem.authMode === "oauth" && providerItem.oauth) applyShaping(providerItem.oauth.flow, headers, body);
     return fetchText(url, headers, applyCustomBody(body, assistant, picked.model), providerItem, (raw) => raw.output_text ?? raw.output?.flatMap((item: any) => item.content ?? []).map((item: any) => item.text ?? "").join("\n"), signal);
   }
   const tools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant, picked.model) : [];
@@ -282,8 +292,11 @@ export async function callProviderStreaming(
   const providerItem = picked.provider;
   const selectedModel = picked.model.modelId === "auto" ? "gpt-4o-mini" : picked.model.modelId;
   const url = endpointFor(providerItem);
+  // 订阅供应商:凭据在服务端 oauth 里,apiKey 恒空——先解析(可能触发锁内刷新),
+  // Authorization 由 credentialHeaders 供给,不再裸拼 apiKey。
+  const resolvedAuth = await resolveProviderAuthForProvider(providerItem, { signal: ctx.signal });
   const headers = applyRequestHeaders(
-    { "Content-Type": "application/json", Authorization: `Bearer ${providerItem.apiKey}` },
+    { "Content-Type": "application/json", ...resolvedAuth.headers },
     assistant,
     providerItem,
     picked.model,
@@ -347,6 +360,8 @@ export async function callProviderStreaming(
       ...(providerItem.promptCacheKey === true ? { prompt_cache_key: conversation.id } : {}),
       tools: responseTools.length ? responseTools : undefined,
     }, assistant, picked.model);
+    // 订阅供应商整形:Codex 需 include reasoning.encrypted_content、不识别 max_output_tokens。
+    if (providerItem.authMode === "oauth" && providerItem.oauth) applyShaping(providerItem.oauth.flow, headers, body);
     return fetchOpenAiTextStreaming(url, headers, body, providerItem, assistant, hooks, ctx.signal);
   }
   const body = applyCustomBody({

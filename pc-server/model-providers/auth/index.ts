@@ -7,7 +7,7 @@ export { createPiCredentialStore } from "./credential-store";
 export { loadOAuthFlow, OAUTH_FLOWS } from "./flows";
 export { cancelLogin, initProviderAuthBroadcast, loginInProgress, logoutProvider, resumePrompt, startLogin } from "./login";
 export { resolveProviderAuthForProvider } from "./resolve";
-export { OAUTH_PROVIDER_SHAPING, shapingFor } from "./shaping";
+export { OAUTH_PROVIDER_SHAPING, applyShaping, shapingFor } from "./shaping";
 export { bundledModelsFor } from "./catalog";
 
 /** 该 provider 是否为订阅制登录(authMode=oauth)。 */

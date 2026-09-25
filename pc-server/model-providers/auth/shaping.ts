@@ -36,3 +36,33 @@ export const OAUTH_PROVIDER_SHAPING: Record<string, ProviderShaping> = {
 export function shapingFor(flowId: string): ProviderShaping {
   return OAUTH_PROVIDER_SHAPING[flowId] ?? {};
 }
+
+/** 把声明应用到请求头与 body。headers 用 ??= 语义(用户/引擎显式设置的优先),
+ *  body 字段直接增删。调用时机:body 定稿后、applyCustomBody 前。 */
+export function applyShaping(
+  flowId: string,
+  headers: Record<string, string>,
+  body: Record<string, unknown>,
+): void {
+  const shaping = shapingFor(flowId);
+  if (shaping.ensureHeaders) {
+    for (const [key, value] of Object.entries(shaping.ensureHeaders)) {
+      headers[key] ??= value;
+    }
+  }
+  if (shaping.dropBodyFields) {
+    for (const field of shaping.dropBodyFields) {
+      delete body[field];
+    }
+  }
+  if (shaping.mergeBody) {
+    for (const [key, value] of Object.entries(shaping.mergeBody)) {
+      // include 等数组字段:与已有数组合并去重,不覆盖。
+      if (Array.isArray(value) && Array.isArray(body[key])) {
+        body[key] = [...new Set([...(body[key] as unknown[]), ...value])];
+      } else {
+        body[key] ??= value;
+      }
+    }
+  }
+}

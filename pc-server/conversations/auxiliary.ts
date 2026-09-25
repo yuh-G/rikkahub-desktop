@@ -6,6 +6,7 @@ import { applyPlaceholders, id, isRecord, localeDisplayName, message, textFromPa
 import { state } from "../persistence/json-store";
 import { broadcastConversation, broadcastEngineStatus } from "../api/sse";
 import { DEFAULT_AUTO_MODEL_ID, applyCustomBody, applyRequestHeaders, findModel } from "../model-providers";
+import { resolveProviderAuthForProvider } from "../model-providers/auth";
 import { endpointFor } from "../model-providers/checks";
 import { openAiMaxTokensField, reasoningLevelNormalized } from "../model-providers/request-dialect";
 import { internalOutputCap, requiredOutputCap } from "../model-providers/model-limits";
@@ -146,8 +147,11 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
       ? Object.entries(options.customBody).map(([key, value]) => ({ key, value }))
       : [],
   } as Assistant;
+  // 订阅供应商:凭据在服务端 oauth 里,apiKey 恒空——先经 resolveProviderAuthForProvider
+  // 解析(可能触发锁内刷新),后续注入点统一用 credentialHeaders 而非裸 apiKey。
+  const resolvedAuth = await resolveProviderAuthForProvider(providerItem, { signal });
   const headers = applyRequestHeaders(
-    { "Content-Type": "application/json" },
+    { "Content-Type": "application/json", ...resolvedAuth.headers },
     assistant,
     providerItem,
     modelItem,
@@ -158,7 +162,8 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
 
   if (providerItem.type === "google") {
     // issue10:Gemini 鉴权统一走 x-goog-api-key 头,URL 不再带 ?key=(中转网关只认 header)。
-    headers["x-goog-api-key"] = providerItem.apiKey;
+    // 订阅供应商:google 暂无 oauth 形态,apiKey 恒空时 credentialHeaders 已含解析头。
+    if (providerItem.authMode !== "oauth") headers["x-goog-api-key"] = providerItem.apiKey;
     endpoint = `${providerItem.baseUrl.replace(/\/+$/, "")}/models/${selectedModel}:generateContent`;
     body = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -178,7 +183,9 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
     return fetchText(endpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, (raw) => raw.candidates?.[0]?.content?.parts?.[0]?.text, signal);
   }
   if (providerItem.type === "claude") {
-    headers["x-api-key"] = providerItem.apiKey;
+    // 订阅供应商(Kimi/Claude):oauth 轨已在 credentialHeaders 注入 Authorization: Bearer;
+    // apiKey 轨保持 x-api-key。互斥,不双发。
+    if (providerItem.authMode !== "oauth") headers["x-api-key"] = providerItem.apiKey;
     headers["anthropic-version"] = "2023-06-01";
     body = {
       model: selectedModel,
@@ -207,7 +214,7 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
     }
     return fetchText(endpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, (raw) => raw.content?.map((item: { text?: string }) => item.text ?? "").join("\n"), signal);
   }
-  headers.Authorization = `Bearer ${providerItem.apiKey}`;
+  if (providerItem.authMode !== "oauth") headers.Authorization = `Bearer ${providerItem.apiKey}`;
   body = providerItem.useResponseApi
     ? {
         model: selectedModel,
@@ -321,14 +328,16 @@ async function fetchAuxiliaryOcrText(imageUrl: string) {
     mcpServers: [],
     localTools: [],
   } as Assistant;
-  const headers = applyRequestHeaders({ "Content-Type": "application/json" }, assistant, providerItem, modelItem);
+  // 订阅供应商:凭据在服务端 oauth 里,apiKey 恒空——先解析(可能触发锁内刷新)。
+  const resolvedAuth = await resolveProviderAuthForProvider(providerItem);
+  const headers = applyRequestHeaders({ "Content-Type": "application/json", ...resolvedAuth.headers }, assistant, providerItem, modelItem);
   let endpoint = endpointFor(providerItem);
   let body: Record<string, any>;
 
   if (providerItem.type === "google") {
     const parsed = parseDataUrl(dataUrl);
     if (!parsed) return "";
-    headers["x-goog-api-key"] = providerItem.apiKey;
+    if (providerItem.authMode !== "oauth") headers["x-goog-api-key"] = providerItem.apiKey;
     endpoint = `${providerItem.baseUrl.replace(/\/+$/, "")}/models/${selectedModel}:generateContent`;
     body = {
       contents: [{
@@ -345,7 +354,7 @@ async function fetchAuxiliaryOcrText(imageUrl: string) {
   if (providerItem.type === "claude") {
     const parsed = parseDataUrl(dataUrl);
     if (!parsed) return "";
-    headers["x-api-key"] = providerItem.apiKey;
+    if (providerItem.authMode !== "oauth") headers["x-api-key"] = providerItem.apiKey;
     headers["anthropic-version"] = "2023-06-01";
     body = {
       model: selectedModel,
@@ -361,7 +370,7 @@ async function fetchAuxiliaryOcrText(imageUrl: string) {
     return cleanAuxiliaryText(await fetchText(endpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, (raw) => raw.content?.map((item: { text?: string }) => item.text ?? "").join("\n")));
   }
 
-  headers.Authorization = `Bearer ${providerItem.apiKey}`;
+  if (providerItem.authMode !== "oauth") headers.Authorization = `Bearer ${providerItem.apiKey}`;
   body = providerItem.useResponseApi
     ? {
         model: selectedModel,
