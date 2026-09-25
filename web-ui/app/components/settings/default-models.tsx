@@ -140,8 +140,10 @@ export function DefaultModelsSection({
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
+  // 本页全是宿主引擎角色(默认聊天/标题/翻译/压缩/OCR…),仅工作区的订阅供应商
+  // (Claude Pro/Max,chatCapable=false)不列——宿主闸门会拒绝,选了即陷阱。
   const allModels = settings.providers.flatMap((provider) =>
-    provider.enabled
+    provider.enabled && provider.oauthStatus?.chatCapable !== false
       ? (provider.models ?? []).map((model) => ({ ...model, providerName: provider.name }))
       : [],
   );

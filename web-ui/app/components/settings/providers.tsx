@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -201,27 +202,56 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
     }
   };
 
+  // 仅工作区的订阅(Claude Pro/Max):法律与合规提示挂所有状态(登录前/登录中/已登录)——
+  // 凭据复用 Claude Code 客户端身份有 ToS 风险,且此订阅不进对话模式,选择器里不可见。
+  const workspaceOnlyWarning =
+    provider.oauthStatus?.chatCapable === false ? (
+      <div className="rounded-md border border-amber-300 bg-amber-50/60 px-3 py-2.5 md:col-span-2 dark:border-amber-900 dark:bg-amber-950/30">
+        <div className="flex items-start gap-2 text-sm font-medium text-amber-700 dark:text-amber-400">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+          {t("settings:providers.oauth.workspace_only_title")}
+        </div>
+        <p className="mt-1 pl-6 text-xs leading-relaxed text-amber-800/90 dark:text-amber-300/90">
+          {t("settings:providers.oauth.workspace_only_note")}
+        </p>
+        <a
+          href="https://code.claude.com/docs/en/legal-and-compliance"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1.5 inline-flex items-center gap-1 pl-6 text-xs font-medium text-amber-700 underline underline-offset-2 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300"
+        >
+          {t("settings:providers.oauth.legal_link")}
+          <ExternalLink className="size-3" />
+        </a>
+      </div>
+    ) : null;
+
   if (signedIn) {
     return (
-      <div className="rounded-md border border-emerald-200 bg-emerald-50/50 px-3 py-3 md:col-span-2 dark:border-emerald-900 dark:bg-emerald-950/30">
-        <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
-          <CheckCircle2 className="size-4" />
-          {t("settings:providers.oauth.signed_in")}
+      <>
+        {workspaceOnlyWarning}
+        <div className="rounded-md border border-emerald-200 bg-emerald-50/50 px-3 py-3 md:col-span-2 dark:border-emerald-900 dark:bg-emerald-950/30">
+          <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+            <CheckCircle2 className="size-4" />
+            {t("settings:providers.oauth.signed_in")}
+          </div>
+          <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+            {provider.oauthStatus?.accountId ? <div>{t("settings:providers.oauth.account", { id: provider.oauthStatus.accountId })}</div> : null}
+            {provider.oauthStatus?.signedInAt ? <div>{t("settings:providers.oauth.signed_in_at", { time: new Date(provider.oauthStatus.signedInAt).toLocaleString() })}</div> : null}
+          </div>
+          <Button variant="outline" size="sm" className="mt-3" onClick={() => void logout()}>
+            {t("settings:providers.oauth.logout")}
+          </Button>
         </div>
-        <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-          {provider.oauthStatus?.accountId ? <div>{t("settings:providers.oauth.account", { id: provider.oauthStatus.accountId })}</div> : null}
-          {provider.oauthStatus?.signedInAt ? <div>{t("settings:providers.oauth.signed_in_at", { time: new Date(provider.oauthStatus.signedInAt).toLocaleString() })}</div> : null}
-        </div>
-        <Button variant="outline" size="sm" className="mt-3" onClick={() => void logout()}>
-          {t("settings:providers.oauth.logout")}
-        </Button>
-      </div>
+      </>
     );
   }
 
   if (inProgress && authEvent) {
     return (
-      <div className="rounded-md border px-3 py-3 md:col-span-2">
+      <>
+        {workspaceOnlyWarning}
+        <div className="rounded-md border px-3 py-3 md:col-span-2">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Loader2 className="size-4 animate-spin" />
           {authEvent.phase === "select_method" && t("settings:providers.oauth.select_method")}
@@ -301,18 +331,22 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
             ) : null}
           </div>
         ) : null}
-      </div>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="rounded-md border border-dashed px-3 py-3 md:col-span-2">
-      <p className="text-sm text-muted-foreground">{t("settings:providers.oauth.not_signed_in")}</p>
-      <Button size="sm" className="mt-2" onClick={() => void start()} disabled={submitting}>
-        {submitting ? <Loader2 className="mr-1 size-4 animate-spin" /> : null}
-        {t("settings:providers.oauth.login")}
-      </Button>
-    </div>
+    <>
+      {workspaceOnlyWarning}
+      <div className="rounded-md border border-dashed px-3 py-3 md:col-span-2">
+        <p className="text-sm text-muted-foreground">{t("settings:providers.oauth.not_signed_in")}</p>
+        <Button size="sm" className="mt-2" onClick={() => void start()} disabled={submitting}>
+          {submitting ? <Loader2 className="mr-1 size-4 animate-spin" /> : null}
+          {t("settings:providers.oauth.login")}
+        </Button>
+      </div>
+    </>
   );
 }
 

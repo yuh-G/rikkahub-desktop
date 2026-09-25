@@ -258,13 +258,16 @@ export interface ProviderProfile {
   includeHistoryReasoning?: boolean;
   /** 订阅制登录:缺省 "apiKey";"oauth" 时凭证在服务端,前端只见 oauthStatus 安全视图。 */
   authMode?: "apiKey" | "oauth";
-  /** 订阅登录状态(stripAuthSecrets 剥 credential 后的安全视图,永不含 token)。 */
+  /** 订阅登录状态(stripAuthSecrets 剥 credential 后的安全视图,永不含 token)。
+   *  未登录的订阅行也带视图(signedIn:false):登录卡要首登前就能挂「仅工作区/合规」提示。 */
   oauthStatus?: {
     signedIn: boolean;
     flow: string;
     signedInAt: number;
     expiresAt?: number;
     accountId?: string;
+    /** false = 仅工作区(Claude Pro/Max):不进聊天模型选择器,登录卡挂合规提示。 */
+    chatCapable?: boolean;
   };
   [key: string]: unknown;
 }

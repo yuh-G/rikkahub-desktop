@@ -6,6 +6,8 @@ import { toast } from "sonner";
 
 import { useCurrentAssistant } from "~/hooks/use-current-assistant";
 import { ReasoningSubmenu, useCurrentReasoningLabel } from "~/components/input/reasoning-picker";
+import { usePaneContainer } from "~/components/workspace/pane-container-context";
+import { CHAT_CONTAINER } from "~/stores/container-tabs-store";
 import { getModelDisplayName } from "~/lib/display";
 import { refreshSettingsStore } from "~/lib/settings-sync";
 import { cn } from "~/lib/utils";
@@ -117,6 +119,10 @@ export function ModelListImpl({ disabled = false, className, onChanged }: ModelL
   const [updatingModelId, setUpdatingModelId] = React.useState<string | null>(null);
 
   const currentModelId = currentAssistant?.chatModelId ?? settings?.chatModelId ?? null;
+  // Claude 订阅(Pro/Max,chatCapable=false)仅工作区可选:聊天列的选择器隐藏该供应商
+  // (宿主引擎的 resolve 闸门同样拒绝),工作区列走 pi 引擎不经宿主闸门,照常展示。
+  const paneContainer = usePaneContainer();
+  const isWorkspacePane = paneContainer !== CHAT_CONTAINER;
   const favoriteModelIds = React.useMemo(
     () => settings?.favoriteModels ?? [],
     [settings?.favoriteModels],
@@ -126,22 +132,30 @@ export function ModelListImpl({ disabled = false, className, onChanged }: ModelL
   const allModels = React.useMemo(() => {
     if (!settings) return [];
     return settings.providers
-      .filter((provider) => provider.enabled)
+      .filter(
+        (provider) =>
+          provider.enabled &&
+          (isWorkspacePane || provider.oauthStatus?.chatCapable !== false),
+      )
       .flatMap((provider) => provider.models)
       .filter((model) => model.type === "CHAT");
-  }, [settings]);
+  }, [settings, isWorkspacePane]);
 
   const sections = React.useMemo<ModelSection[]>(() => {
     if (!settings) return [];
     return settings.providers
-      .filter((provider) => provider.enabled)
+      .filter(
+        (provider) =>
+          provider.enabled &&
+          (isWorkspacePane || provider.oauthStatus?.chatCapable !== false),
+      )
       .map((provider) => ({
         providerId: provider.id,
         providerName: provider.name,
         models: provider.models.filter((model) => model.type === "CHAT"),
       }))
       .filter((section) => section.models.length > 0);
-  }, [settings]);
+  }, [settings, isWorkspacePane]);
 
   const favoriteModels = React.useMemo(
     () =>
