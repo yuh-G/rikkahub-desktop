@@ -42,6 +42,24 @@
 | NixOS / Nix | `nur.repos.af-nur.rikkahub-desktop`(從原始碼建置的版本，建議使用二進位快取 `af-nur.cachix.org`)<br/>`nur.repos.af-nur.rikkahub-desktop-bin`(同步 [Releases](https://github.com/yuh-G/rikkahub-desktop/releases) 中的二進位建置) | [@AstralFlare-owo](https://github.com/AstralFlare-owo) |
 感謝兩位補上了這些發行版的空缺。
 
+## ⬆️ 升級須知
+
+<!-- [LEGACY-MIGRATION: pre-v4-ui-origin] 本節描述 v2.0.0-preview-v4 的預設連接埠變更,隨舊版遷移腳手架到期一併刪除 -->
+
+**v2.0.0-preview-v4 起，桌面與裸二進位形態的預設連接埠由 8080 改為 17455**（8080 是 Web 生態最擁擠的埠號，
+常與其他軟體衝突，詳見 issue #62）。
+
+- **桌面使用者（安裝版 / 可攜版）：無需任何操作。** 首次啟動會把舊位址下保存的介面狀態（分頁與分割版面、
+  主題、語言、字號、代理測試位址、網頁存取登入態）自動搬到新位址；對話、設定、API Key 完全不受影響。
+  可攜版使用者請把瀏覽器書籤裡的 `localhost:8080` 改成新埠號。
+- **非 Docker 自架使用者（Linux 裸二進位、區域網路、反向代理）：存取位址變了。** 請把書籤 / nginx
+  `proxy_pass` / 防火牆規則改到新埠號，或固定回 8080：
+  ```bash
+  ./rikkahub-pc --port 8080   # 或 PORT=8080 環境變數，或在 設定→網路 填寫 8080
+  ```
+- **Docker 使用者：不受影響。** 容器內埠號固定 8080（映像契約，`ENV PORT=8080` 釘死），現有
+  `-p 8080:8080` 映射照常工作。
+
 ## ✨ 功能特色
 
 - 🎨 多套主題色（Claude / RikkaHub / Mono / 自訂） + 🌙 深色模式
@@ -116,11 +134,11 @@ cargo 之前啟用 MSVC 環境，並把 `CARGO_TARGET_DIR` 指向 ASCII 路徑�
 ### 開發流程
 
 ```powershell
-# 後端執行在 http://localhost:8080
+# 後端執行在 http://localhost:17455
 cd pc-server
 bun run server.ts
 
-# 前端 Vite dev server 執行在 http://localhost:5173（會自動代理 /api 至 :8080）
+# 前端 Vite dev server 執行在 http://localhost:5173（會自動代理 /api 至 :17455）
 cd ../web-ui
 bun run dev
 ```
@@ -154,7 +172,7 @@ cd ../pc-server && bun run compile:linux
 
 ```bash
 ./dist/rikkahub-pc
-# 瀏覽器開啟 http://localhost:8080
+# 瀏覽器開啟 http://localhost:17455（桌面/裸二進位預設埠號，見「升級須知」）
 # 資料儲存在 ./pc-data/
 ```
 
@@ -189,7 +207,9 @@ docker run -d \
   rikkahub-pc
 ```
 
-接著瀏覽器開啟 `http://localhost:8080`。映像基於 `distroless/base-debian12`，已內建
+接著瀏覽器開啟 `http://localhost:8080`。容器內埠號固定為 8080（映像契約，`ENV PORT=8080`
+釘死），與桌面預設埠號（17455）無關；如需自訂可用 `-e PORT=...` 覆蓋。映像基於
+`distroless/base-debian12`，已內建
 `unzip`/`zip`；剪貼簿和 TTS 在無頭容器內無法使用。
 
 **區域網路 / 公網部署安全注記:** AI 的 `scrape_web` 工具會在容器內直接抓取模型給出的
@@ -218,6 +238,8 @@ server {
     # ssl_certificate ...; ssl_certificate_key ...;
 
     location / {
+        # 此處 8080 對應上面的 Docker -p 映射;裸二進位用其預設埠號 17455
+        # (或給二進位加 --port 8080 釘回 8080)
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;              # 保住 Origin/Host CSRF 檢查
         proxy_http_version 1.1;

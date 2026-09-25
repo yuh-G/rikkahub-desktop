@@ -10,7 +10,8 @@ assets.
 bun run server.ts
 ```
 
-Listens on `http://localhost:8080`. All persistent state lives under `../pc-data/` next to
+Listens on `http://localhost:17455` by default on the desktop (the default port changed
+from 8080 in v2.0.0-preview-v4 — containers stay pinned to 8080 via `ENV PORT=8080`). All persistent state lives under `../pc-data/` next to
 the project root (or `RIKKAHUB_PC_DATA_DIR` if set).
 
 Override the port:

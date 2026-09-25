@@ -51,6 +51,28 @@ lag behind the latest release — for packaging issues please report upstream to
 
 Many thanks to both for covering these distributions.
 
+## ⬆️ Upgrade notes
+
+<!-- [LEGACY-MIGRATION: pre-v4-ui-origin] This section covers the default-port change shipped in
+     v2.0.0-preview-v4; remove it together with the pre-v4 migration scaffolding. -->
+
+**Starting with v2.0.0-preview-v4, the default port for desktop and bare-binary deployments
+changed from 8080 to 17455** (8080 is the most crowded port in the web ecosystem and kept
+colliding with other software — see issue #62).
+
+- **Desktop (installed / portable) users: nothing to do.** On first launch the app carries the
+  UI state stored under the old address (tab layout, theme, language, font scale, proxy test
+  URL, web-access login) over to the new one automatically. Conversations, settings and API
+  keys are not affected in any way. Portable users: update browser bookmarks pointing at
+  `localhost:8080` to the new port.
+- **Non-Docker self-hosted users (bare binary, LAN, reverse proxy): the address changes.**
+  Point your bookmarks / nginx `proxy_pass` / firewall rules at the new port, or pin it back:
+  ```bash
+  ./rikkahub-pc --port 8080   # or PORT=8080 env var, or Settings → Network
+  ```
+- **Docker users: unaffected.** The in-container port stays 8080 (image contract, enforced by
+  `ENV PORT=8080`), so existing `-p 8080:8080` mappings keep working.
+
 ## ✨ Features
 
 - 🎨 Multiple theme palettes (Claude / RikkaHub / Mono / Custom) + 🌙 dark mode
@@ -130,11 +152,11 @@ containing non-ASCII characters).
 ### Dev workflow
 
 ```powershell
-# Backend on http://localhost:8080
+# Backend on http://localhost:17455
 cd pc-server
 bun run server.ts
 
-# Vite dev server on http://localhost:5173 (proxies /api to :8080)
+# Vite dev server on http://localhost:5173 (proxies /api to :17455)
 cd ../web-ui
 bun run dev
 ```
@@ -168,7 +190,7 @@ Run it:
 
 ```bash
 ./dist/rikkahub-pc
-# Open http://localhost:8080 in your browser
+# Open http://localhost:17455 in your browser (desktop/binary default; see Upgrade notes)
 # Data is stored in ./pc-data/
 ```
 
@@ -205,7 +227,9 @@ docker run -d \
   rikkahub-pc
 ```
 
-Then open `http://localhost:8080` in your browser. The image uses
+Then open `http://localhost:8080` in your browser. The in-container port is pinned to 8080
+(image contract, `ENV PORT=8080`) regardless of the desktop default (17455); override with
+`-e PORT=...` if you want something else. The image uses
 `distroless/base-debian12` and bundles `unzip`/`zip`; clipboard and TTS are
 not available inside a headless container.
 
@@ -246,6 +270,8 @@ server {
     # ssl_certificate ...; ssl_certificate_key ...;
 
     location / {
+        # 8080 here matches the Docker -p mapping above; for a bare binary use its default
+        # 17455 (or pin the binary to 8080 with --port 8080)
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;              # keep the Origin/Host CSRF check working
         proxy_http_version 1.1;
