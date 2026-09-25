@@ -13,6 +13,7 @@ import type { ProviderConfigInput } from "../../pi/packages/coding-agent/src/cor
 import type { Model, Provider } from "../foundation/types";
 import { hostOfProvider } from "../inference-engine/message-builder";
 import { applyModelRequestHeaders } from "../model-providers";
+import { createPiCredentialStore, isOAuthProvider } from "../model-providers/auth";
 import {
   ARK_SEED2_EFFORT_BY_LEVEL,
   budgetTokensFor,
@@ -38,6 +39,8 @@ export interface PiModelMapping {
   /** 上游模型 id（进请求体的 model 字段）。 */
   modelId: string;
   config: ProviderConfigInput;
+  /** 原始 Provider(订阅供应商判定用:isOAuthProvider 决定是否跳过 registerProvider)。 */
+  provider: Provider;
 }
 
 export type PiMappingResult = { ok: true; mapping: PiModelMapping } | { ok: false; reason: string };
@@ -349,20 +352,28 @@ export function mapProviderModelToPi(provider: Provider, model: Model, limits?: 
       },
     ],
   };
-  return { ok: true, mapping: { providerId: provider.id, modelId: model.modelId, config } };
+  return { ok: true, mapping: { providerId: provider.id, modelId: model.modelId, config, provider } };
 }
 
-/** 为一次工作区会话构造 pi 模型运行时：内存注册单 provider 单模型，零落盘。 */
+/** 为一次工作区会话构造 pi 模型运行时：内存注册单 provider 单模型，零落盘。
+ *  订阅供应商:oauth 凭证在宿主 state(刷新权唯一在核心),credentials 换
+ *  createPiCredentialStore()——pi 的 Models.getAuth 锁内刷新跑在我们的 per-provider
+ *  串行队列上,凭据不落 pi 的 auth.json。 */
 export async function createPiModelRuntime(
   mapping: PiModelMapping,
 ): Promise<{ runtime: ModelRuntime; model: PiModel<Api> }> {
   const runtime = await ModelRuntime.create({
     // 密钥经 ProviderConfigInput 注入,凭据存储用内存实现——pi 的文件后端会急切创建
     // auth.json(空 {}),传 authPath 都会破"零落盘";modelsPath: null 同理走内存 store。
-    credentials: AuthStorage.inMemory(),
+    // 订阅供应商例外:oauth 轨的凭证读/刷新锁走宿主 state(见头注)。
+    credentials: createPiCredentialStore() as unknown as AuthStorage,
     modelsPath: null,
   });
-  runtime.registerProvider(mapping.providerId, mapping.config);
+  // 订阅供应商:oauth 凭证在 createPiCredentialStore() 里,pi 内置 provider id 已注册;
+  // registerProvider 仅用于 apiKey 供应商(把宿主配置翻译成 pi 的 ProviderConfigInput)。
+  if (!isOAuthProvider(mapping.provider)) {
+    runtime.registerProvider(mapping.providerId, mapping.config);
+  }
   const model = runtime.getModel(mapping.providerId, mapping.modelId);
   if (!model) {
     throw new Error(`pi 运行时未返回已注册模型 ${mapping.providerId}/${mapping.modelId}`);

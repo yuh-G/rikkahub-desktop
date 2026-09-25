@@ -43,7 +43,8 @@ function enqueue<T>(providerId: string, run: () => Promise<T>): Promise<T> {
 }
 
 function findProvider(providerId: string): Provider | undefined {
-  return state.settings.providers.find((p) => p.id === providerId);
+  // state 可能未初始化(pi 引擎测试 / 纯工具调用场景)——安全回落 undefined。
+  return state?.settings?.providers?.find((p) => p.id === providerId);
 }
 
 function readCredential(providerId: string): Credential | undefined {
@@ -89,7 +90,7 @@ export function createPiCredentialStore(): CredentialStore {
     },
 
     async list() {
-      return state.settings.providers
+      return (state?.settings?.providers ?? [])
         .filter((p) => p.oauth != null)
         .map((p) => ({ providerId: p.id, type: "oauth" as const }));
     },
