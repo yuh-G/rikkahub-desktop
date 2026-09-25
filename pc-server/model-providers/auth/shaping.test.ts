@@ -28,6 +28,20 @@ describe("applyShaping 解释器", () => {
     expect(headers["originator"]).toBe("custom-app"); // 已设 → 不覆盖
   });
 
+  test("credentialHeaders:Codex 从凭证 accountId 派生 chatgpt-account-id(pi buildBaseCodexHeaders 同款);缺字段不发;??= 不覆盖", () => {
+    const headers: Record<string, string> = {};
+    applyShaping("openai-codex", headers, {}, { type: "oauth", access: "a", refresh: "r", expires: 1, accountId: "acct_42" });
+    expect(headers["chatgpt-account-id"]).toBe("acct_42");
+    // 凭证里没有 accountId(理论上不会——pi 登录时必写;防御):不发空头
+    const bare: Record<string, string> = {};
+    applyShaping("openai-codex", bare, {}, { type: "oauth", access: "a", refresh: "r", expires: 1 });
+    expect("chatgpt-account-id" in bare).toBe(false);
+    // 用户自定义头已显式设置 → 不覆盖
+    const custom: Record<string, string> = { "chatgpt-account-id": "mine" };
+    applyShaping("openai-codex", custom, {}, { accountId: "acct_42" });
+    expect(custom["chatgpt-account-id"]).toBe("mine");
+  });
+
   test("dropBodyFields 删除协议层不该发的字段", () => {
     const body: Record<string, unknown> = { max_output_tokens: 4096, model: "gpt-5" };
     applyShaping("openai-codex", {}, body);

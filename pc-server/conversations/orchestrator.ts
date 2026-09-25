@@ -258,7 +258,7 @@ export async function callProvider(
     };
     if (!body.tools.length) delete body.tools;
     // 订阅供应商整形:Codex 需 include reasoning.encrypted_content、不识别 max_output_tokens。
-    if (providerItem.authMode === "oauth" && providerItem.oauth) applyShaping(providerItem.oauth.flow, headers, body);
+    if (providerItem.authMode === "oauth" && providerItem.oauth) applyShaping(providerItem.oauth.flow, headers, body, providerItem.oauth.credential);
     return fetchText(url, headers, applyCustomBody(body, assistant, picked.model), providerItem, (raw) => raw.output_text ?? raw.output?.flatMap((item: any) => item.content ?? []).map((item: any) => item.text ?? "").join("\n"), signal);
   }
   const tools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant, picked.model) : [];
@@ -361,7 +361,7 @@ export async function callProviderStreaming(
       tools: responseTools.length ? responseTools : undefined,
     }, assistant, picked.model);
     // 订阅供应商整形:Codex 需 include reasoning.encrypted_content、不识别 max_output_tokens。
-    if (providerItem.authMode === "oauth" && providerItem.oauth) applyShaping(providerItem.oauth.flow, headers, body);
+    if (providerItem.authMode === "oauth" && providerItem.oauth) applyShaping(providerItem.oauth.flow, headers, body, providerItem.oauth.credential);
     return fetchOpenAiTextStreaming(url, headers, body, providerItem, assistant, hooks, ctx.signal);
   }
   const body = applyCustomBody({

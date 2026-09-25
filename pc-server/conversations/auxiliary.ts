@@ -162,7 +162,7 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
   // 订阅供应商整形(Codex:删 max_output_tokens、并 include、补 originator/OpenAI-Beta 头)与主生成
   // 路径同一时机:body 定稿后、applyCustomBody 前。辅助调用漏整形 = 标题/建议在 Codex 上 400。
   const shaped = (draft: Record<string, any>) => {
-    if (providerItem.authMode === "oauth" && providerItem.oauth) applyShaping(providerItem.oauth.flow, headers, draft);
+    if (providerItem.authMode === "oauth" && providerItem.oauth) applyShaping(providerItem.oauth.flow, headers, draft, providerItem.oauth.credential);
     return draft;
   };
 
@@ -341,7 +341,7 @@ async function fetchAuxiliaryOcrText(imageUrl: string) {
   let body: Record<string, any>;
   // 订阅供应商整形,同 fetchAuxiliaryText:body 定稿后、applyCustomBody 前。
   const shaped = (draft: Record<string, any>) => {
-    if (providerItem.authMode === "oauth" && providerItem.oauth) applyShaping(providerItem.oauth.flow, headers, draft);
+    if (providerItem.authMode === "oauth" && providerItem.oauth) applyShaping(providerItem.oauth.flow, headers, draft, providerItem.oauth.credential);
     return draft;
   };
 

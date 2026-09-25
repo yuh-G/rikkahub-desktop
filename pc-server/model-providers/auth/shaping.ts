@@ -5,6 +5,9 @@
 export interface ProviderShaping {
   /** 需要确保存在的请求头(??= 语义:引擎/用户已显式设置则不覆盖)。 */
   ensureHeaders?: Record<string, string>;
+  /** 值来自凭证字段的请求头:header 名 → OAuthCredential 字段名(??= 语义;字段缺失则不发)。
+   *  Codex 的 chatgpt-account-id 即此类——pi 每请求都发,后端据此定位账号。 */
+  credentialHeaders?: Record<string, string>;
   /** 需要从 body 删除的字段名(如 Codex 的 max_output_tokens)。 */
   dropBodyFields?: string[];
   /** 需要强制附加的 body 字段(如 Codex 的 include 列表)。 */
@@ -20,6 +23,9 @@ export const OAUTH_PROVIDER_SHAPING: Record<string, ProviderShaping> = {
       "OpenAI-Beta": "responses=experimental",
       originator: "rikkahub",
     },
+    // pi openai-codex-responses.ts buildBaseCodexHeaders 同款:账号 id 来自登录时写进凭证的
+    // accountId(pi 从 access JWT 的 chatgpt_account_id 声明提取)。
+    credentialHeaders: { "chatgpt-account-id": "accountId" },
     dropBodyFields: ["max_output_tokens"],
     mergeBody: { include: ["reasoning.encrypted_content"] },
     autoEnable: true,
@@ -38,16 +44,24 @@ export function shapingFor(flowId: string): ProviderShaping {
 }
 
 /** 把声明应用到请求头与 body。headers 用 ??= 语义(用户/引擎显式设置的优先),
- *  body 字段直接增删。调用时机:body 定稿后、applyCustomBody 前。 */
+ *  body 字段直接增删。调用时机:body 定稿后、applyCustomBody 前。
+ *  credential = 该供应商当前的 oauth.credential(凭证派生头用;apiKey 轨不传)。 */
 export function applyShaping(
   flowId: string,
   headers: Record<string, string>,
   body: Record<string, unknown>,
+  credential?: Record<string, unknown> | null,
 ): void {
   const shaping = shapingFor(flowId);
   if (shaping.ensureHeaders) {
     for (const [key, value] of Object.entries(shaping.ensureHeaders)) {
       headers[key] ??= value;
+    }
+  }
+  if (shaping.credentialHeaders && credential) {
+    for (const [header, field] of Object.entries(shaping.credentialHeaders)) {
+      const value = credential[field];
+      if (typeof value === "string" && value) headers[header] ??= value;
     }
   }
   if (shaping.dropBodyFields) {
