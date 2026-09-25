@@ -12,6 +12,7 @@ import { updateSettings } from "../../app-config";
 import type { OAuthFlowId, Provider } from "../../foundation/types";
 import { reportError } from "../../observability/app-errors";
 import { state } from "../../persistence/json-store";
+import { bundledModelsFor } from "./catalog";
 import { OAUTH_FLOWS, loadOAuthFlow } from "./flows";
 
 export type LoginPhase =
@@ -78,18 +79,21 @@ function finish(providerId: string, event: ProviderAuthEvent): void {
   cleanup(providerId);
 }
 
-/** 登录成功落盘:写 oauth + authMode=oauth + enabled=true。CAS 由调用方独占(此时
- *  attempt 已独占该 provider 的写通道),直接读-改-写即可。flowId 从 startLogin 显式传入
- *  (它已做过"oauth 行 → 登记表"的判定),这里不再推断、不落兜底值。 */
+/** 登录成功落盘:写 oauth + authMode=oauth + enabled=true,并在「当前无模型」时铺入捆绑目录。
+ *  CAS 由调用方独占(此时 attempt 已独占该 provider 的写通道),直接读-改-写即可。flowId 从
+ *  startLogin 显式传入(它已做过"oauth 行 → 登记表"的判定),这里不再推断、不落兜底值。 */
 function commitLogin(providerId: string, flowId: OAuthFlowId, credential: OAuthCredential): boolean {
   const provider = state.settings.providers.find((p) => p.id === providerId);
   if (!provider) return false;
+  // 仅在「当前无模型」时铺捆绑目录——用户若已手动加过模型,不覆盖其裁剪结果。
+  const bundled = provider.models.length > 0 ? provider.models : bundledModelsFor(flowId);
   const providers = state.settings.providers.map((p): Provider =>
     p.id === providerId
       ? {
           ...p,
           authMode: "oauth" as const,
           enabled: true,
+          models: bundled,
           oauth: {
             flow: flowId,
             credential: credential as unknown as Record<string, import("../../foundation/types").JsonValue>,

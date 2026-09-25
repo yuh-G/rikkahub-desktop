@@ -84,6 +84,10 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
         setAuthEvent(null);
       } else if (event.phase === "error") {
         toast.error(event.message || t("settings:providers.oauth.error"));
+        setAuthEvent(null);
+      } else if (event.phase === "cancelled") {
+        toast.info(event.message || t("settings:providers.oauth.cancelled"));
+        setAuthEvent(null);
       }
     });
     return off;
@@ -143,15 +147,18 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
           {authEvent.phase === "waiting_device_code" && t("settings:providers.oauth.waiting_device_code")}
           {authEvent.phase === "exchanging" && t("settings:providers.oauth.exchanging")}
         </div>
-        {authEvent.phase === "select_method" && authEvent.methods ? (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {authEvent.methods.map((method) => (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {authEvent.phase === "select_method" && authEvent.methods ? (
+            authEvent.methods.map((method) => (
               <Button key={method.id} variant="outline" size="sm" onClick={() => void start(method.id)} disabled={submitting}>
                 {t(method.labelKey)}
               </Button>
-            ))}
-          </div>
-        ) : null}
+            ))
+          ) : null}
+          <Button variant="ghost" size="sm" onClick={() => void cancel()}>
+            {t("settings:providers.oauth.cancel")}
+          </Button>
+        </div>
         {authEvent.phase === "waiting_browser" && authEvent.authUrl ? (
           <div className="mt-3 space-y-2">
             <div className="flex gap-2">
@@ -193,9 +200,6 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
             ) : null}
           </div>
         ) : null}
-        <Button variant="ghost" size="sm" className="mt-3" onClick={() => void cancel()}>
-          {t("settings:providers.oauth.cancel")}
-        </Button>
       </div>
     );
   }
@@ -1005,31 +1009,33 @@ export function ProvidersSection({
                 onChange={(event) => patchDraft({ name: event.target.value })}
               />
             </label>
-            <label className="space-y-2">
-              <span className="text-sm font-medium">{t("settings:providers.type")}</span>
-              <Select
-                value={kind}
-                onValueChange={(value) => {
-                  // 类型切换也是编辑,必须置脏,否则永不自动保存(复审 F3 补获)
-                  autosave.markDirty();
-                  const next = normalizeKindPatch(draft, value as ProviderKind);
-                  // 按登记表/协议默认换算过地址时告知用户去向;自定义地址不动则不打扰
-                  if (next.baseUrl !== textValue(draft.baseUrl) && textValue(draft.baseUrl)) {
-                    toast(t("settings:providers.base_url_switched", { url: next.baseUrl }));
-                  }
-                  setDraft(next);
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="openai">OpenAI-compatible</SelectItem>
-                  <SelectItem value="claude">Anthropic Claude</SelectItem>
-                  <SelectItem value="google">Google Gemini</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
+            {draft.authMode !== "oauth" ? (
+              <label className="space-y-2">
+                <span className="text-sm font-medium">{t("settings:providers.type")}</span>
+                <Select
+                  value={kind}
+                  onValueChange={(value) => {
+                    // 类型切换也是编辑,必须置脏,否则永不自动保存(复审 F3 补获)
+                    autosave.markDirty();
+                    const next = normalizeKindPatch(draft, value as ProviderKind);
+                    // 按登记表/协议默认换算过地址时告知用户去向;自定义地址不动则不打扰
+                    if (next.baseUrl !== textValue(draft.baseUrl) && textValue(draft.baseUrl)) {
+                      toast(t("settings:providers.base_url_switched", { url: next.baseUrl }));
+                    }
+                    setDraft(next);
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="openai">OpenAI-compatible</SelectItem>
+                    <SelectItem value="claude">Anthropic Claude</SelectItem>
+                    <SelectItem value="google">Google Gemini</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+            ) : null}
             {draft.authMode === "oauth" ? (
               <ProviderLoginPanel provider={draft} />
             ) : (
@@ -1054,126 +1060,128 @@ export function ProvidersSection({
                 />
               </label>
             )}
-            <label className="space-y-2 md:col-span-2">
-              <span className="text-sm font-medium">Base URL</span>
-              <Input
-                value={textValue(draft.baseUrl)}
-                onChange={(event) => patchDraft({ baseUrl: event.target.value })}
-                placeholder={DEFAULT_BASE_URLS[kind]}
-                readOnly={draft.authMode === "oauth"}
-                className={draft.authMode === "oauth" ? "opacity-60" : undefined}
-              />
-              <span className="block break-all text-xs text-muted-foreground">
-                {t("settings:providers.chat_url", { url: endpointPreview(draft) })}
-              </span>
-              <span className="block break-all text-xs text-muted-foreground">
-                {t("settings:providers.models_url", { url: modelListEndpointPreview(draft) })}
-              </span>
-            </label>
-            <div className="grid gap-x-6 gap-y-3 rounded-md border px-3 py-3 md:col-span-2 md:grid-cols-2">
-              <label className="space-y-2">
-                {/* 单输入框按开关切换绑定字段(对齐安卓 ProviderConfigure):关→chatCompletionsPath,开→responsesPath */}
-                <span className="text-sm font-medium">
-                  {draft.useResponseApi === true
-                    ? t("settings:providers.responses_path_label")
-                    : t("settings:providers.chat_completions_path_label")}
-                </span>
-                <Input
-                  disabled={kind !== "openai"}
-                  value={
-                    draft.useResponseApi === true
-                      ? textValue(draft.responsesPath) || "/responses"
-                      : textValue(draft.chatCompletionsPath) || defaultPathForKind(kind, false)
-                  }
-                  onChange={(event) =>
-                    patchDraft(
-                      draft.useResponseApi === true
-                        ? { responsesPath: event.target.value }
-                        : { chatCompletionsPath: event.target.value },
-                    )
-                  }
-                />
-              </label>
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 space-y-1">
-                  <div className="text-sm font-medium">Response API</div>
-                  <div className="text-xs leading-relaxed text-muted-foreground">
-                    {t("settings:providers.response_api_desc")}
-                  </div>
-                </div>
-                <Switch
-                  className="shrink-0"
-                  disabled={kind !== "openai"}
-                  checked={draft.useResponseApi === true}
-                  onCheckedChange={(useResponseApi) => patchDraft({ useResponseApi })}
-                />
-              </div>
-            </div>
-            {kind === "openai" ? (
-              <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-3 md:col-span-2">
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="text-sm font-medium">{t("settings:providers.history_reasoning_title")}</div>
-                  <div className="text-xs leading-relaxed text-muted-foreground">
-                    {t("settings:providers.history_reasoning_desc")}
-                  </div>
-                </div>
-                <Switch
-                  className="mt-1 shrink-0"
-                  checked={draft.includeHistoryReasoning !== false}
-                  onCheckedChange={(includeHistoryReasoning) =>
-                    patchDraft({ includeHistoryReasoning })
-                  }
-                />
-              </div>
-            ) : null}
-            {kind === "openai" ? (
-              <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-3 md:col-span-2">
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="text-sm font-medium">{t("settings:providers.prompt_cache_key_title")}</div>
-                  <div className="text-xs leading-relaxed text-muted-foreground">
-                    {t("settings:providers.prompt_cache_key_desc")}
-                  </div>
-                </div>
-                <Switch
-                  className="mt-1 shrink-0"
-                  checked={draft.promptCacheKey === true}
-                  onCheckedChange={(promptCacheKey) => patchDraft({ promptCacheKey })}
-                />
-              </div>
-            ) : null}
-            {kind === "claude" ? (
-              <div className="grid gap-3 rounded-md border px-3 py-3 md:col-span-2 md:grid-cols-[1fr_180px]">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium">{t("settings:providers.prompt_cache_title")}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {t("settings:providers.prompt_cache_desc")}
-                    </div>
-                  </div>
-                  <Switch
-                    checked={draft.promptCaching === true}
-                    onCheckedChange={(promptCaching) => patchDraft({ promptCaching })}
+            {draft.authMode !== "oauth" ? (
+              <>
+                <label className="space-y-2 md:col-span-2">
+                  <span className="text-sm font-medium">Base URL</span>
+                  <Input
+                    value={textValue(draft.baseUrl)}
+                    onChange={(event) => patchDraft({ baseUrl: event.target.value })}
+                    placeholder={DEFAULT_BASE_URLS[kind]}
                   />
-                </div>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("settings:providers.cache_ttl")}</span>
-                  <Select
-                    value={textValue(draft.promptCacheTtl) || "5m"}
-                    onValueChange={(promptCacheTtl) =>
-                      patchDraft({ promptCacheTtl: promptCacheTtl as "5m" | "1h" })
-                    }
-                    disabled={draft.promptCaching !== true}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="5m">{t("settings:providers.cache_5m")}</SelectItem>
-                      <SelectItem value="1h">{t("settings:providers.cache_1h")}</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <span className="block break-all text-xs text-muted-foreground">
+                    {t("settings:providers.chat_url", { url: endpointPreview(draft) })}
+                  </span>
+                  <span className="block break-all text-xs text-muted-foreground">
+                    {t("settings:providers.models_url", { url: modelListEndpointPreview(draft) })}
+                  </span>
                 </label>
-              </div>
+                <div className="grid gap-x-6 gap-y-3 rounded-md border px-3 py-3 md:col-span-2 md:grid-cols-2">
+                  <label className="space-y-2">
+                    {/* 单输入框按开关切换绑定字段(对齐安卓 ProviderConfigure):关→chatCompletionsPath,开→responsesPath */}
+                    <span className="text-sm font-medium">
+                      {draft.useResponseApi === true
+                        ? t("settings:providers.responses_path_label")
+                        : t("settings:providers.chat_completions_path_label")}
+                    </span>
+                    <Input
+                      disabled={kind !== "openai"}
+                      value={
+                        draft.useResponseApi === true
+                          ? textValue(draft.responsesPath) || "/responses"
+                          : textValue(draft.chatCompletionsPath) || defaultPathForKind(kind, false)
+                      }
+                      onChange={(event) =>
+                        patchDraft(
+                          draft.useResponseApi === true
+                            ? { responsesPath: event.target.value }
+                            : { chatCompletionsPath: event.target.value },
+                        )
+                      }
+                    />
+                  </label>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 space-y-1">
+                      <div className="text-sm font-medium">Response API</div>
+                      <div className="text-xs leading-relaxed text-muted-foreground">
+                        {t("settings:providers.response_api_desc")}
+                      </div>
+                    </div>
+                    <Switch
+                      className="shrink-0"
+                      disabled={kind !== "openai"}
+                      checked={draft.useResponseApi === true}
+                      onCheckedChange={(useResponseApi) => patchDraft({ useResponseApi })}
+                    />
+                  </div>
+                </div>
+                {kind === "openai" ? (
+                  <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-3 md:col-span-2">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="text-sm font-medium">{t("settings:providers.history_reasoning_title")}</div>
+                      <div className="text-xs leading-relaxed text-muted-foreground">
+                        {t("settings:providers.history_reasoning_desc")}
+                      </div>
+                    </div>
+                    <Switch
+                      className="mt-1 shrink-0"
+                      checked={draft.includeHistoryReasoning !== false}
+                      onCheckedChange={(includeHistoryReasoning) =>
+                        patchDraft({ includeHistoryReasoning })
+                      }
+                    />
+                  </div>
+                ) : null}
+                {kind === "openai" ? (
+                  <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-3 md:col-span-2">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="text-sm font-medium">{t("settings:providers.prompt_cache_key_title")}</div>
+                      <div className="text-xs leading-relaxed text-muted-foreground">
+                        {t("settings:providers.prompt_cache_key_desc")}
+                      </div>
+                    </div>
+                    <Switch
+                      className="mt-1 shrink-0"
+                      checked={draft.promptCacheKey === true}
+                      onCheckedChange={(promptCacheKey) => patchDraft({ promptCacheKey })}
+                    />
+                  </div>
+                ) : null}
+                {kind === "claude" ? (
+                  <div className="grid gap-3 rounded-md border px-3 py-3 md:col-span-2 md:grid-cols-[1fr_180px]">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium">{t("settings:providers.prompt_cache_title")}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {t("settings:providers.prompt_cache_desc")}
+                        </div>
+                      </div>
+                      <Switch
+                        checked={draft.promptCaching === true}
+                        onCheckedChange={(promptCaching) => patchDraft({ promptCaching })}
+                      />
+                    </div>
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium">{t("settings:providers.cache_ttl")}</span>
+                      <Select
+                        value={textValue(draft.promptCacheTtl) || "5m"}
+                        onValueChange={(promptCacheTtl) =>
+                          patchDraft({ promptCacheTtl: promptCacheTtl as "5m" | "1h" })
+                        }
+                        disabled={draft.promptCaching !== true}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="5m">{t("settings:providers.cache_5m")}</SelectItem>
+                          <SelectItem value="1h">{t("settings:providers.cache_1h")}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </label>
+                  </div>
+                ) : null}
+              </>
             ) : null}
           </div>
           <div className="space-y-3 rounded-md border p-3">

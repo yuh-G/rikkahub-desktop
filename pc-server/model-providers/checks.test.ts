@@ -4,7 +4,7 @@ import { describe, expect, it } from "bun:test";
 
 import { upstreamHttpError } from "../inference-engine/providers";
 import { endpointFor } from "./checks";
-import { modelsEndpointFor, provider } from "./index";
+import { modelsEndpointFor, provider, providerHeaders } from "./index";
 
 function make(input: Parameters<typeof provider>[0]) {
   return provider({ apiKey: "sk-test", ...input });
@@ -99,5 +99,22 @@ describe("upstreamHttpError 报文(B:404 形态诊断)", () => {
     expect(err.message).not.toContain("Base URL");
     const long = upstreamHttpError(p, "https://x", 500, "x".repeat(600));
     expect(long.message.length).toBeLessThanOrEqual("Anthropic 500: ".length + 500);
+  });
+});
+
+describe("订阅供应商凭据解析(headersForProvider)", () => {
+  it("apiKey 供应商走原 providerHeaders,行为不变", () => {
+    const p = make({ id: "p", name: "P", baseUrl: "https://x/v1", type: "openai" });
+    const h = providerHeaders(p);
+    expect(h.Authorization).toBe("Bearer sk-test");
+  });
+
+  it("oauth 供应商未登录时 providerHeaders 发空 Bearer(这是既有行为,401 由上游返回)", () => {
+    // 真正的 OAuth 注入在 resolveProviderAuthForProvider(见 resolve.test.ts)。
+    // 这里只确认 checks 不再裸调 providerHeaders 发空凭据——headersForProvider 已收口,
+    // oauth 轨会经 resolveProviderAuthForProvider 解析,apiKey 轨保持原样。
+    const p = make({ id: "p", name: "P", baseUrl: "https://x/v1", type: "openai", apiKey: "" });
+    const h = providerHeaders(p);
+    expect(h.Authorization).toBe("Bearer ");
   });
 });

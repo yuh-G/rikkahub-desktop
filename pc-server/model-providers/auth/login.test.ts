@@ -93,7 +93,7 @@ describe("login orchestration", () => {
     expect(logoutProvider(CODEX_PROVIDER_ID)).toBe(false);
   });
 
-  test("successful login commits oauth with the resolved flowId", async () => {
+  test("successful login commits oauth with the resolved flowId and bundles catalog models", async () => {
     overrideOAuthFlow("openai-codex", {
       name: "Test Codex",
       login: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 9999999999000 }),
@@ -107,6 +107,10 @@ describe("login orchestration", () => {
     expect(provider?.oauth?.flow).toBe("openai-codex");
     expect(provider?.authMode).toBe("oauth");
     expect(provider?.enabled).toBe(true);
+    // 捆绑目录:登录成功后 models 非空(pi data JSON 存在),且每条都有 modelId/displayName。
+    expect(provider?.models.length).toBeGreaterThan(0);
+    expect(provider?.models[0]?.modelId).toBeTruthy();
+    expect(provider?.models[0]?.displayName).toBeTruthy();
     expect(events.some((e) => e.phase === "success")).toBe(true);
   });
 

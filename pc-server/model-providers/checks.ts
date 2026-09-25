@@ -8,7 +8,8 @@ import type { Assistant, Model, Provider } from "../foundation/types";
 import { state } from "../persistence/json-store";
 import { addLog } from "../api/logs";
 import { findAssistant } from "../assistants";
-import { applyCustomBody, jsonBody, modelsEndpointFor, normalizeFetchedModels, applyRequestHeaders, providerHeaders, providerTestCorePassed, providerTestModel, textBody } from "./index";
+import { applyCustomBody, jsonBody, modelsEndpointFor, normalizeFetchedModels, applyRequestHeaders, providerTestCorePassed, providerTestModel, textBody } from "./index";
+import { resolveProviderAuthForProvider } from "./auth";
 import { hostOfProvider } from "../inference-engine/message-builder";
 import { deltaReasoningContent, deltaTextContent, modelsDevCache, parseSseChunks, responseEventToDelta, upstreamHttpError } from "../inference-engine/providers";
 import { internalOutputCap } from "./model-limits";
@@ -32,12 +33,20 @@ export function endpointFor(providerItem: Provider) {
   return `${base}/models/{model}:generateContent`;
 }
 
+/** 订阅供应商的凭据解析:oauth 轨走 resolveProviderAuthForProvider(锁内刷新),
+ *  apiKey 轨保持原 providerHeaders(行为逐字节不变)。返回扁平 headers 供注入。 */
+async function headersForProvider(providerItem: Provider): Promise<Record<string, string>> {
+  const resolved = await resolveProviderAuthForProvider(providerItem);
+  return resolved.headers;
+}
+
 export async function fetchProviderModels(providerItem: Provider) {
   const endpoint = modelsEndpointFor(providerItem);
   const started = Date.now();
+  const headers = await headersForProvider(providerItem);
   let response: Response;
   try {
-    response = await fetchWithTimeout(endpoint, { headers: providerHeaders(providerItem) });
+    response = await fetchWithTimeout(endpoint, { headers });
   } catch (err) {
     const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     addLog({
@@ -49,7 +58,7 @@ export async function fetchProviderModels(providerItem: Provider) {
       kind: "provider:models",
       durationMs: Date.now() - started,
       method: "GET",
-      requestHeaders: providerHeaders(providerItem),
+      requestHeaders: headers,
       error: detail,
     });
     throw new Error(`获取模型列表失败：请求未能发送到供应商。\n${detail}\n\n请检查 Base URL、API Key、代理、防火墙或供应商服务状态。`);
@@ -70,7 +79,7 @@ export async function fetchProviderModels(providerItem: Provider) {
     kind: "provider:models",
     durationMs: Date.now() - started,
     method: "GET",
-    requestHeaders: providerHeaders(providerItem),
+    requestHeaders: headers,
     responseHeaders: Object.fromEntries(response.headers.entries()),
     responseBody: textBody(text),
     error: response.ok ? undefined : textBody(text),
@@ -97,9 +106,10 @@ export async function fetchProviderBalance(providerItem: Provider) {
   if (!apiPath) throw new Error("余额 API Path 为空");
   const endpoint = /^https?:\/\//i.test(apiPath) ? apiPath : `${providerItem.baseUrl.replace(/\/+$/, "")}${apiPath.startsWith("/") ? apiPath : `/${apiPath}`}`;
   const started = Date.now();
+  const headers = await headersForProvider(providerItem);
   let response: Response;
   try {
-    response = await fetchWithTimeout(endpoint, { headers: providerHeaders(providerItem) });
+    response = await fetchWithTimeout(endpoint, { headers });
   } catch (err) {
     const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     addLog({
@@ -111,7 +121,7 @@ export async function fetchProviderBalance(providerItem: Provider) {
       kind: "provider:balance",
       durationMs: Date.now() - started,
       method: "GET",
-      requestHeaders: providerHeaders(providerItem),
+      requestHeaders: headers,
       error: detail,
     });
     throw new Error(`余额查询请求失败：${detail}`);
@@ -132,7 +142,7 @@ export async function fetchProviderBalance(providerItem: Provider) {
     kind: "provider:balance",
     durationMs: Date.now() - started,
     method: "GET",
-    requestHeaders: providerHeaders(providerItem),
+    requestHeaders: headers,
     responseHeaders: Object.fromEntries(response.headers.entries()),
     responseBody: textBody(text),
     error: response.ok ? undefined : textBody(text),
@@ -316,17 +326,18 @@ export async function runProviderCheck(providerItem: Provider, mode: "non_stream
   const { url, body: rawBody } = providerTestPayload(providerItem, mode, selectedModel);
   const body = applyCustomBody(rawBody, assistant, modelItem);
   const started = Date.now();
-  let response: Response;
+  const credentialHeaders = await headersForProvider(providerItem);
   const headers = applyRequestHeaders(
     {
       "Content-Type": "application/json",
       ...(mode === "stream" ? { Accept: "text/event-stream" } : {}),
-      ...providerHeaders(providerItem),
+      ...credentialHeaders,
     },
     assistant,
     providerItem,
     modelItem,
   );
+  let response: Response;
   try {
     response = await fetchWithTimeout(url, {
       method: "POST",

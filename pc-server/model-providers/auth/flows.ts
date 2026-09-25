@@ -29,8 +29,8 @@ export const OAUTH_FLOWS: Record<OAuthFlowId, OAuthFlowMeta> = {
     id: "openai-codex",
     loader: "loadOpenAICodexOAuth",
     loginMethods: [
-      { id: "browser", labelKey: "providers:oauth.method.browser" },
-      { id: "device_code", labelKey: "providers:oauth.method.device_code" },
+      { id: "browser", labelKey: "settings:providers.oauth.method.browser" },
+      { id: "device_code", labelKey: "settings:providers.oauth.method.device_code" },
     ],
     piProviderId: "openai-codex",
   },
