@@ -6,7 +6,7 @@ import { applyPlaceholders, id, isRecord, localeDisplayName, message, textFromPa
 import { state } from "../persistence/json-store";
 import { broadcastConversation, broadcastEngineStatus } from "../api/sse";
 import { DEFAULT_AUTO_MODEL_ID, applyCustomBody, applyRequestHeaders, findModel } from "../model-providers";
-import { resolveProviderAuthForProvider } from "../model-providers/auth";
+import { applyShaping, resolveProviderAuthForProvider } from "../model-providers/auth";
 import { endpointFor } from "../model-providers/checks";
 import { openAiMaxTokensField, reasoningLevelNormalized } from "../model-providers/request-dialect";
 import { internalOutputCap, requiredOutputCap } from "../model-providers/model-limits";
@@ -159,6 +159,12 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
   );
   let endpoint = endpointFor(providerItem);
   let body: Record<string, any>;
+  // 订阅供应商整形(Codex:删 max_output_tokens、并 include、补 originator/OpenAI-Beta 头)与主生成
+  // 路径同一时机:body 定稿后、applyCustomBody 前。辅助调用漏整形 = 标题/建议在 Codex 上 400。
+  const shaped = (draft: Record<string, any>) => {
+    if (providerItem.authMode === "oauth" && providerItem.oauth) applyShaping(providerItem.oauth.flow, headers, draft);
+    return draft;
+  };
 
   if (providerItem.type === "google") {
     // issue10:Gemini 鉴权统一走 x-goog-api-key 头,URL 不再带 ?key=(中转网关只认 header)。
@@ -175,12 +181,12 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
     if (stream) {
       const streamEndpoint = `${providerItem.baseUrl.replace(/\/+$/, "")}/models/${selectedModel}:streamGenerateContent`;
       try {
-        return cleanAuxiliaryText(await fetchGoogleAuxiliaryStream(streamEndpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, pushDelta, signal));
+        return cleanAuxiliaryText(await fetchGoogleAuxiliaryStream(streamEndpoint, headers, applyCustomBody(shaped(body), assistant, modelItem), providerItem, pushDelta, signal));
       } catch {
         // Fall back to non-streaming auxiliary calls; some compatible gateways do not expose Gemini streaming.
       }
     }
-    return fetchText(endpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, (raw) => raw.candidates?.[0]?.content?.parts?.[0]?.text, signal);
+    return fetchText(endpoint, headers, applyCustomBody(shaped(body), assistant, modelItem), providerItem, (raw) => raw.candidates?.[0]?.content?.parts?.[0]?.text, signal);
   }
   if (providerItem.type === "claude") {
     // 订阅供应商(Kimi/Claude):oauth 轨已在 credentialHeaders 注入 Authorization: Bearer;
@@ -207,12 +213,12 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
     };
     if (stream) {
       try {
-        return cleanAuxiliaryText(await fetchClaudeAuxiliaryStream(endpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, pushDelta, signal));
+        return cleanAuxiliaryText(await fetchClaudeAuxiliaryStream(endpoint, headers, applyCustomBody(shaped(body), assistant, modelItem), providerItem, pushDelta, signal));
       } catch {
         body.stream = false;
       }
     }
-    return fetchText(endpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, (raw) => raw.content?.map((item: { text?: string }) => item.text ?? "").join("\n"), signal);
+    return fetchText(endpoint, headers, applyCustomBody(shaped(body), assistant, modelItem), providerItem, (raw) => raw.content?.map((item: { text?: string }) => item.text ?? "").join("\n"), signal);
   }
   if (providerItem.authMode !== "oauth") headers.Authorization = `Bearer ${providerItem.apiKey}`;
   body = providerItem.useResponseApi
@@ -238,14 +244,14 @@ export async function fetchAuxiliaryText(modelId: string, prompt: string, kind: 
       };
   if (stream) {
     try {
-      const text = await fetchOpenAiAuxiliaryStream(endpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, pushDelta, signal);
+      const text = await fetchOpenAiAuxiliaryStream(endpoint, headers, applyCustomBody(shaped(body), assistant, modelItem), providerItem, pushDelta, signal);
       if (!text || text === "(empty response)") throw new Error(`${kind} model returned empty response`);
       return text;
     } catch {
       body.stream = false;
     }
   }
-  const text = await fetchText(endpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, completionMessageText, signal);
+  const text = await fetchText(endpoint, headers, applyCustomBody(shaped(body), assistant, modelItem), providerItem, completionMessageText, signal);
   if (!text || text === "(empty response)") throw new Error(`${kind} model returned empty response`);
   return text;
 }
@@ -333,6 +339,11 @@ async function fetchAuxiliaryOcrText(imageUrl: string) {
   const headers = applyRequestHeaders({ "Content-Type": "application/json", ...resolvedAuth.headers }, assistant, providerItem, modelItem);
   let endpoint = endpointFor(providerItem);
   let body: Record<string, any>;
+  // 订阅供应商整形,同 fetchAuxiliaryText:body 定稿后、applyCustomBody 前。
+  const shaped = (draft: Record<string, any>) => {
+    if (providerItem.authMode === "oauth" && providerItem.oauth) applyShaping(providerItem.oauth.flow, headers, draft);
+    return draft;
+  };
 
   if (providerItem.type === "google") {
     const parsed = parseDataUrl(dataUrl);
@@ -348,7 +359,7 @@ async function fetchAuxiliaryOcrText(imageUrl: string) {
         ],
       }],
     };
-    return cleanAuxiliaryText(await fetchText(endpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, (raw) => raw.candidates?.[0]?.content?.parts?.[0]?.text));
+    return cleanAuxiliaryText(await fetchText(endpoint, headers, applyCustomBody(shaped(body), assistant, modelItem), providerItem, (raw) => raw.candidates?.[0]?.content?.parts?.[0]?.text));
   }
 
   if (providerItem.type === "claude") {
@@ -367,7 +378,7 @@ async function fetchAuxiliaryOcrText(imageUrl: string) {
         ],
       }],
     };
-    return cleanAuxiliaryText(await fetchText(endpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, (raw) => raw.content?.map((item: { text?: string }) => item.text ?? "").join("\n")));
+    return cleanAuxiliaryText(await fetchText(endpoint, headers, applyCustomBody(shaped(body), assistant, modelItem), providerItem, (raw) => raw.content?.map((item: { text?: string }) => item.text ?? "").join("\n")));
   }
 
   if (providerItem.authMode !== "oauth") headers.Authorization = `Bearer ${providerItem.apiKey}`;
@@ -396,7 +407,7 @@ async function fetchAuxiliaryOcrText(imageUrl: string) {
         [openAiMaxTokensField(hostOfProvider(providerItem))]: ocrCap,
         temperature: isModelAllowTemperature(modelItem) ? 0 : undefined,
       };
-  return cleanAuxiliaryText(await fetchText(endpoint, headers, applyCustomBody(body, assistant, modelItem), providerItem, completionMessageText));
+  return cleanAuxiliaryText(await fetchText(endpoint, headers, applyCustomBody(shaped(body), assistant, modelItem), providerItem, completionMessageText));
 }
 
 /** 是否需要 OCR:聊天模型看不见图(inputModalities 无 IMAGE)。**不再**在判据里
