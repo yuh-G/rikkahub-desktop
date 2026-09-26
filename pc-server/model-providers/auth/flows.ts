@@ -99,15 +99,38 @@ export function clearOAuthFlowOverride(flowId: OAuthFlowId): void {
   cache.delete(flowId);
 }
 
-// 静态 import 所有 loader——动态 import 会导致 bun --compile 无法打包(变量路径无法静态分析)。
-// 注:pi oauth 实现依赖 node:http/crypto,但这是后端代码,前端构建不会触碰 pc-server/ 目录。
+// 静态 import 所有 loader 与实现文件——bun --compile 只能打包静态引用。
+// pi 的 load.ts 已预留 registerBundledOAuthFlowLoaders 接口给 standalone 二进制使用。
 import {
   loadOpenAICodexOAuth,
   loadKimiCodingOAuth,
   loadGitHubCopilotOAuth,
   loadXaiOAuth,
   loadAnthropicOAuth,
+  registerBundledOAuthFlowLoaders,
 } from "../../../pi/packages/ai/src/auth/oauth/load.ts";
+import { openaiCodexOAuth } from "../../../pi/packages/ai/src/auth/oauth/openai-codex.ts";
+import { kimiCodingOAuth } from "../../../pi/packages/ai/src/auth/oauth/kimi-coding.ts";
+import { githubCopilotOAuth } from "../../../pi/packages/ai/src/auth/oauth/github-copilot.ts";
+import { xaiOAuth } from "../../../pi/packages/ai/src/auth/oauth/xai.ts";
+import { anthropicOAuth } from "../../../pi/packages/ai/src/auth/oauth/anthropic.ts";
+
+// Bun standalone 模式(编译为 exe)下注册静态打包的 oauth 实现,绕过 load.ts 的动态 import。
+if (Bun.isStandaloneExecutable) {
+  registerBundledOAuthFlowLoaders({
+    openaiCodex: () => openaiCodexOAuth,
+    kimiCoding: () => kimiCodingOAuth,
+    githubCopilot: () => githubCopilotOAuth,
+    xai: () => xaiOAuth,
+    anthropic: () => anthropicOAuth,
+    openrouter: () => {
+      throw new Error("OpenRouter OAuth not implemented in this build");
+    },
+    radius: () => {
+      throw new Error("Radius OAuth not implemented in this build");
+    },
+  });
+}
 
 const loaderRegistry = {
   loadOpenAICodexOAuth,
