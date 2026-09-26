@@ -44,6 +44,14 @@ describe("iconForName", () => {
     expect(iconForName("MIMO")).toBe("xiaomimimo.svg");
   });
 
+  test("改名后的预置显示名仍命中图标:智谱/Copilot/Vercel", () => {
+    expect(iconForName("智谱")).toBe("zhipu-color.svg");
+    // GitHub Copilot 显示名精简为「Copilot」后不含 github 字串,规则须显式兜住。
+    expect(iconForName("Copilot")).toBe("github.svg");
+    expect(iconForName("GitHub Copilot")).toBe("github.svg");
+    expect(iconForName("Vercel")).toBe("vercel.svg");
+  });
+
   test("腾讯混元新旗舰 hy3/hy4:裸小写 id 命中混元标(词边界防误伤)", () => {
     expect(iconForName("hy3")).toBe("hunyuan-color.svg");
     expect(iconForName("hy4-preview")).toBe("hunyuan-color.svg");

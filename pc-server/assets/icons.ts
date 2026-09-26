@@ -45,7 +45,8 @@ const iconRules: Array<[RegExp, string]> = [
   [/silicon|硅基/i, "siliconflow.svg"],
   [/aihubmix/i, "aihubmix-color.svg"],
   [/ollama/i, "ollama.svg"],
-  [/github/i, "github.svg"],
+  // GitHub Copilot 订阅预置显示名已精简为「Copilot」——不含 github 字串,须显式命中。
+  [/github|copilot/i, "github.svg"],
   [/cloudflare/i, "cloudflare-color.svg"],
   [/minimax/i, "minimax-color.svg"],
   [/xai/i, "xai.svg"],

@@ -123,8 +123,8 @@ export function provider(input: Partial<Provider> & Pick<Provider, "id" | "name"
   };
 }
 
-// 一次性下架的预置供应商(合作终止)。它们已从 defaultProviders/defaultTtsProviders 移除,
-// 但老用户 state 里可能还存着 —— normalize 时做一次清理:只删用户从未真正使用(未填
+// 一次性下架的预置供应商(合作终止或清单精简)。它们已从 defaultProviders/defaultTtsProviders
+// 移除,但老用户 state 里可能还存着 —— normalize 时做一次清理:只删用户从未真正使用(未填
 // apiKey)的;已配 key 的保留,避免静默删掉用户的接入凭据。
 export const SUNSET_PROVIDER_IDS = new Set<string>([
   "1b1395ed-b702-4aeb-8bc1-b681c4456953", // AiHubMix
@@ -133,6 +133,7 @@ export const SUNSET_PROVIDER_IDS = new Set<string>([
   "53027b08-1b58-43d5-90ed-29173203e3d8", // AckAI
   "4da09554-8844-4cc8-a4a9-fe1b2515e91b", // UnifyLLM
   "a8d2d463-e8c0-41f2-b89e-f5eb8e716cce", // RikkaHub(内置模型,服务停维护下架;配过 key 的保留)
+  "56a94d29-c88b-41c5-8e09-38a7612d6cf8", // 硅基流动(2026-09-26 精简预置清单下架;配过 key 的保留)
 ]);
 
 // 1.1.1 供应商迁移用的固定 id。改名/补模型走 id 匹配,确保老用户 state 也生效。
@@ -154,38 +155,39 @@ export const OAUTH_PROVIDER_IDS: Record<string, string> = Object.fromEntries(
   Object.values(OAUTH_FLOWS).map((flow) => [flow.id, flow.presetProviderId]),
 );
 
-// 订阅供应商「贴同家 API」的锚点(用户拍板 2026-09-25):补插/归位时移到锚点之后。
-// 锚点 = 同家 API 预置的 id;锚点被用户删除/墓碑时归位跳过(保持补插的尾部默认位)。
-// Copilot 无同家 API 预置,不登记——落订阅组末尾(mergeById 追加即末尾)。
+// 订阅供应商「贴同家 API」的锚点(用户拍板 2026-09-25;2026-09-26 追加 Copilot→Vercel):
+// 补插/归位时移到锚点之后。锚点 = 同家 API 预置的 id;锚点被用户删除/墓碑时归位跳过
+// (保持补插的尾部默认位)。Copilot 无同家 API 预置,用户指定贴在 Vercel 之后。
 export const OAUTH_PROVIDER_ANCHOR_AFTER: Record<string, string> = {
   [OAUTH_PROVIDER_IDS["openai-codex"]]: "1eeea727-9ee5-4cae-93e6-6fb01a4d051e", // → OpenAI
   [OAUTH_PROVIDER_IDS["kimi-coding"]]: "d6c4d8c6-3f62-4ca9-a6f3-7ade6b15ecc3", // → 月之暗面
   [OAUTH_PROVIDER_IDS["xai"]]: "ff3cde7e-0f65-43d7-8fb2-6475c99f5990", // → xAI(P2)
   [OAUTH_PROVIDER_IDS["anthropic"]]: "b2c7e1a4-9f3d-4a6e-8c1b-5d7f9e2a3b14", // → Anthropic(P3)
+  [OAUTH_PROVIDER_IDS["github-copilot"]]: "386e0f29-8228-4512-affe-8fd8add82d88", // → Vercel(P2)
 };
 
-// 1.1.1 预置供应商期望顺序(按 id)。老用户也按此重排——内置(builtIn)供应商排到
-// 对应位置,用户新增的自定义供应商不受影响,统一保留在内置供应商之后(保持其相对顺序)。
-// 排序是幂等的:重复执行结果一致,不会反复改动已排好的 state。
+// 预置供应商期望顺序(按 id;2026-09-26 用户重排:钠API 前置于 DeepSeek、智谱/月之暗面
+// 紧随其后,MiniMax/MIMO 贴腾讯混元,硅基流动下架)。老用户也按此重排——内置(builtIn)
+// 供应商排到对应位置,用户新增的自定义供应商不受影响,统一保留在内置供应商之后(保持其
+// 相对顺序)。排序是幂等的:重复执行结果一致,不会反复改动已排好的 state。
 const BUILTIN_PROVIDER_ORDER: readonly string[] = [
   "1eeea727-9ee5-4cae-93e6-6fb01a4d051e", // OpenAI
   "b2c7e1a4-9f3d-4a6e-8c1b-5d7f9e2a3b14", // Anthropic
   "6ab18148-c138-4394-a46f-1cd8c8ceaa6d", // Gemini
   "ff3cde7e-0f65-43d7-8fb2-6475c99f5990", // xAI
+  "e7a2b5c3-8f4d-4e6a-9b1c-3d5f7e8a2c04", // 钠API
   "f099ad5b-ef03-446d-8e78-7e36787f780b", // DeepSeek
+  "3bc40dc1-b11a-46fa-863b-6306971223be", // 智谱
+  "d6c4d8c6-3f62-4ca9-a6f3-7ade6b15ecc3", // 月之暗面
   "f76cae46-069a-4334-ab8e-224e4979e58c", // 阿里云百炼
   "3dfd6f9b-f9d9-417f-80c1-ff8d77184191", // 火山引擎
   "ef5d149b-8e34-404b-818c-6ec242e5c3c5", // 腾讯混元
-  "3bc40dc1-b11a-46fa-863b-6306971223be", // 智谱AI开放平台
-  "d6c4d8c6-3f62-4ca9-a6f3-7ade6b15ecc3", // 月之暗面
-  "f4f8870e-82d3-495b-9b64-d58e508b3b2c", // 阶跃星辰
-  "e7a2b5c3-8f4d-4e6a-9b1c-3d5f7e8a2c04", // 钠API
-  "d5734028-d39b-4d41-9841-fd648d65440e", // OpenRouter
-  "386e0f29-8228-4512-affe-8fd8add82d88", // Vercel AI Gateway
-  "56a94d29-c88b-41c5-8e09-38a7612d6cf8", // 硅基流动
   // 对齐 APP 新增的 Claude 形 / OpenAI 形预置(APP 顺序追加在末尾,APP 的 MaruCode 赞助商不移植)。
   "b4deabea-20fb-4101-a74c-65679c7e4754", // MiniMax
   "a2bafe83-eaf8-47bf-a8c7-3dd82d89f637", // MIMO
+  "f4f8870e-82d3-495b-9b64-d58e508b3b2c", // 阶跃星辰
+  "d5734028-d39b-4d41-9841-fd648d65440e", // OpenRouter
+  "386e0f29-8228-4512-affe-8fd8add82d88", // Vercel
 ];
 
 export function builtinProviderRank(providerItem: Provider): number {
@@ -276,16 +278,27 @@ export function defaultProviders(): Provider[] {
       useResponseApi: true,
     }),
     provider({
+      id: "e7a2b5c3-8f4d-4e6a-9b1c-3d5f7e8a2c04",
+      name: "钠API",
+      baseUrl: "https://naapi.cc/v1",
+      shortDescription: "钠 API 提供 ChatGPT、Claude、Gemini 等 100+ 全球顶级模型接口",
+      description: "钠 API 提供 ChatGPT、Claude、Gemini 等 100+ 全球顶级模型接口,Focusing on competitive pricing and superior stability.",
+      balanceOption: { enabled: true, apiPath: "/credits", resultPath: "data.total_credits" },
+      models: [
+        model("claude-opus-4-6"),
+        model("gpt-5.5"),
+        model("deepseek-ai/DeepSeek-V4-Flash"),
+        model("deepseek-ai/DeepSeek-V4-Pro"),
+      ],
+    }),
+    provider({
       id: "f099ad5b-ef03-446d-8e78-7e36787f780b",
       name: "DeepSeek",
       baseUrl: "https://api.deepseek.com/v1",
       shortDescription: "DeepSeek 官方 API",
       balanceOption: { enabled: true, apiPath: "/user/balance", resultPath: "balance_infos[0].total_balance" },
     }),
-    provider({ id: "f76cae46-069a-4334-ab8e-224e4979e58c", name: "阿里云百炼", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" }),
-    provider({ id: "3dfd6f9b-f9d9-417f-80c1-ff8d77184191", name: "火山引擎", baseUrl: "https://ark.cn-beijing.volces.com/api/v3" }),
-    provider({ id: "ef5d149b-8e34-404b-818c-6ec242e5c3c5", name: "腾讯混元", baseUrl: "https://api.hunyuan.cloud.tencent.com/v1" }),
-    provider({ id: "3bc40dc1-b11a-46fa-863b-6306971223be", name: "智谱AI开放平台", baseUrl: "https://open.bigmodel.cn/api/paas/v4" }),
+    provider({ id: "3bc40dc1-b11a-46fa-863b-6306971223be", name: "智谱", baseUrl: "https://open.bigmodel.cn/api/paas/v4" }),
     provider({
       id: "d6c4d8c6-3f62-4ca9-a6f3-7ade6b15ecc3",
       name: "月之暗面",
@@ -301,42 +314,9 @@ export function defaultProviders(): Provider[] {
       shortDescription: "使用 Kimi 订阅登录,无需 API Key",
       authMode: "oauth",
     }),
-    provider({ id: "f4f8870e-82d3-495b-9b64-d58e508b3b2c", name: "阶跃星辰", baseUrl: "https://api.stepfun.com/v1" }),
-    provider({
-      id: "e7a2b5c3-8f4d-4e6a-9b1c-3d5f7e8a2c04",
-      name: "钠API",
-      baseUrl: "https://naapi.cc/v1",
-      shortDescription: "钠 API 提供 ChatGPT、Claude、Gemini 等 100+ 全球顶级模型接口",
-      description: "钠 API 提供 ChatGPT、Claude、Gemini 等 100+ 全球顶级模型接口,Focusing on competitive pricing and superior stability.",
-      balanceOption: { enabled: true, apiPath: "/credits", resultPath: "data.total_credits" },
-      models: [
-        model("claude-opus-4-6"),
-        model("gpt-5.5"),
-        model("deepseek-ai/DeepSeek-V4-Flash"),
-        model("deepseek-ai/DeepSeek-V4-Pro"),
-      ],
-    }),
-    provider({
-      id: "d5734028-d39b-4d41-9841-fd648d65440e",
-      name: "OpenRouter",
-      baseUrl: "https://openrouter.ai/api/v1",
-      shortDescription: "OpenRouter 中转站",
-      balanceOption: { enabled: true, apiPath: "/credits", resultPath: "data.total_credits - data.total_usage" },
-    }),
-    provider({
-      id: "386e0f29-8228-4512-affe-8fd8add82d88",
-      name: "Vercel AI Gateway",
-      baseUrl: "https://ai-gateway.vercel.sh/v1",
-      shortDescription: "Vercel AI Gateway",
-      balanceOption: { enabled: true, apiPath: "/credits", resultPath: "balance" },
-    }),
-    provider({
-      id: "56a94d29-c88b-41c5-8e09-38a7612d6cf8",
-      name: "硅基流动",
-      baseUrl: "https://api.siliconflow.cn/v1",
-      shortDescription: "SiliconFlow API",
-      balanceOption: { enabled: true, apiPath: "/user/info", resultPath: "data.totalBalance" },
-    }),
+    provider({ id: "f76cae46-069a-4334-ab8e-224e4979e58c", name: "阿里云百炼", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" }),
+    provider({ id: "3dfd6f9b-f9d9-417f-80c1-ff8d77184191", name: "火山引擎", baseUrl: "https://ark.cn-beijing.volces.com/api/v3" }),
+    provider({ id: "ef5d149b-8e34-404b-818c-6ec242e5c3c5", name: "腾讯混元", baseUrl: "https://api.hunyuan.cloud.tencent.com/v1" }),
     // 对齐 APP 新增的两家内置供应商(APP 的 MaruCode 为赞助商位,不移植)。沿用 APP 的稳定
     // UUID,使未来 merge/reorder 与 APP 对齐;均无出厂预置模型,配 key 后由 /models 拉取。
     provider({
@@ -352,11 +332,26 @@ export function defaultProviders(): Provider[] {
       baseUrl: "https://api.xiaomimimo.com/v1",
       shortDescription: "小米 MiMo 官方 OpenAI 兼容 API",
     }),
-    // GitHub Copilot 订阅:无同家 API 预置,落列表末尾(§6.1)。chat-completions 形态;
-    // 每账号 baseUrl 登录后由 access token 的 proxy-ep 推导(toAuth().baseUrl),此处是默认值。
+    provider({ id: "f4f8870e-82d3-495b-9b64-d58e508b3b2c", name: "阶跃星辰", baseUrl: "https://api.stepfun.com/v1" }),
+    provider({
+      id: "d5734028-d39b-4d41-9841-fd648d65440e",
+      name: "OpenRouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      shortDescription: "OpenRouter 中转站",
+      balanceOption: { enabled: true, apiPath: "/credits", resultPath: "data.total_credits - data.total_usage" },
+    }),
+    provider({
+      id: "386e0f29-8228-4512-affe-8fd8add82d88",
+      name: "Vercel",
+      baseUrl: "https://ai-gateway.vercel.sh/v1",
+      shortDescription: "Vercel AI Gateway",
+      balanceOption: { enabled: true, apiPath: "/credits", resultPath: "balance" },
+    }),
+    // GitHub Copilot 订阅:无同家 API 预置,用户指定贴 Vercel 之后(§6.1 锚点)。chat-completions
+    // 形态;每账号 baseUrl 登录后由 access token 的 proxy-ep 推导(toAuth().baseUrl),此处是默认值。
     provider({
       id: OAUTH_PROVIDER_IDS["github-copilot"],
-      name: "GitHub Copilot",
+      name: "Copilot",
       baseUrl: "https://api.individual.githubcopilot.com",
       shortDescription: "使用 GitHub Copilot 订阅登录,无需 API Key",
       authMode: "oauth",

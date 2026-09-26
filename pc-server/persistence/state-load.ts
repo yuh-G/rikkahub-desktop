@@ -22,7 +22,7 @@ import { getConversationsDb, migrateConversationsIntoDbBatched, openConversation
 import { setStartupPhase } from "../foundation/startup-gate";
 import { countConversations } from "../conversations/read-queries";
 import { GLOBAL_MEMORY_ID, memoryStore } from "../memory";
-import { DEFAULT_AUTO_MODEL_ID, NA_API_PRESET_MODELS, NA_API_PROVIDER_ID, SUNSET_PROVIDER_IDS, TENCENT_PROVIDER_ID, builtinProviderRank, enrichModel, inferModelAbilities, model, placeOAuthProvidersAfterAnchors } from "../model-providers";
+import { DEFAULT_AUTO_MODEL_ID, NA_API_PRESET_MODELS, NA_API_PROVIDER_ID, OAUTH_PROVIDER_IDS, SUNSET_PROVIDER_IDS, TENCENT_PROVIDER_ID, builtinProviderRank, enrichModel, inferModelAbilities, model, placeOAuthProvidersAfterAnchors } from "../model-providers";
 import { isPresetOAuthProviderId } from "../model-providers/auth/flows";
 import { normalizeTtsProviders } from "../media/tts";
 import { normalizeAsrProviders } from "../media/asr";
@@ -46,6 +46,19 @@ import {
 // 1.1.1 内置供应商重排迁移标记。模块级导出:恢复备份时由 backup/import.ts 预置
 // (备份里的 providers 顺序就是用户排好的顺序,恢复后重排只会破坏它,见 R4-1)。
 export const PROVIDER_REORDER_MIGRATION = "provider-reorder-1.1.1";
+
+// 2.0.0-preview-v4 二次重排(2026-09-26 用户拍板:钠API 前置 DeepSeek、智谱/月之暗面
+// 紧随、MiniMax/MIMO 贴腾讯混元、硅基流动下架)。同样登记进 import.ts 的恢复保证清单。
+export const PROVIDER_REORDER_MIGRATION_V2 = "provider-reorder-2.0.0-preview-v4";
+
+// 2026-09-26 预置供应商改名(显示名精简)。仅当存量行的 name 与旧默认逐字相等才替换
+// (D7/R1-11 纪律:用户改过一个字都不动)。不走迁移标记——幂等(改名后旧名不再相等),
+// 且备份恢复带回的旧名行下次启动同样自愈。
+const PRESET_PROVIDER_RENAMES: ReadonlyArray<{ id: string; from: string; to: string }> = [
+  { id: "3bc40dc1-b11a-46fa-863b-6306971223be", from: "智谱AI开放平台", to: "智谱" },
+  { id: "386e0f29-8228-4512-affe-8fd8add82d88", from: "Vercel AI Gateway", to: "Vercel" },
+  { id: OAUTH_PROVIDER_IDS["github-copilot"], from: "GitHub Copilot", to: "Copilot" },
+];
 
 export function normalizeState(input: Partial<State>): State {
   const fresh = defaultState();
@@ -243,6 +256,11 @@ export function normalizeState(input: Partial<State>): State {
     }
     return providerItem;
   });
+  // 2026-09-26 改名(见 PRESET_PROVIDER_RENAMES 头注):条件替换,幂等,恢复路径同样自愈。
+  normalized.settings.providers = normalized.settings.providers.map((providerItem) => {
+    const rename = PRESET_PROVIDER_RENAMES.find((entry) => entry.id === providerItem.id);
+    return rename && providerItem.name === rename.from ? { ...providerItem, name: rename.to } : providerItem;
+  });
   // 1.1.1:按预置顺序重排内置供应商(老用户也生效)。用户新增的自定义供应商不在
   // BUILTIN_PROVIDER_ORDER 里,rank 都是 MAX_SAFE_INTEGER,稳定排序后仍按原相对顺序
   // 排在内置供应商之后,不会被重排打乱。这是一次性迁移——记录在 appliedMigrations,
@@ -253,6 +271,17 @@ export function normalizeState(input: Partial<State>): State {
       (a, b) => builtinProviderRank(a) - builtinProviderRank(b),
     );
     normalized.appliedMigrations = [...appliedMigrations, PROVIDER_REORDER_MIGRATION];
+  }
+  // 2.0.0-preview-v4 二次重排(常量头注):老用户带着 1.1.1 标记也要重排一次。排序会把
+  // 不在 BUILTIN_PROVIDER_ORDER 册上的订阅行沉到末尾,故须重跑锚点归位把各家拉回锚点后
+  // (含 Copilot→Vercel 新锚)。同样一次性——登记标记,用户此后的手动排序不再被覆盖。
+  // appliedMigrations 此处须现读:上一块可能已追加旧标记,复用捕获值会把它冲掉。
+  const migrationsBeforeV2Reorder = Array.isArray(normalized.appliedMigrations) ? normalized.appliedMigrations : [];
+  if (!migrationsBeforeV2Reorder.includes(PROVIDER_REORDER_MIGRATION_V2)) {
+    normalized.settings.providers = placeOAuthProvidersAfterAnchors(
+      [...normalized.settings.providers].sort((a, b) => builtinProviderRank(a) - builtinProviderRank(b)),
+    );
+    normalized.appliedMigrations = [...migrationsBeforeV2Reorder, PROVIDER_REORDER_MIGRATION_V2];
   }
   // 专题3 H-1 存量自愈:历史版本的安卓 zip 导入只改写消息里的 file:///…/upload/<name>
   // 引用,settings(助手/用户头像等)漏改,安卓私有路径在 PC 上永远无法解析(头像丢失)。

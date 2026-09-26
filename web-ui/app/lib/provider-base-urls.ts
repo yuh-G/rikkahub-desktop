@@ -31,7 +31,6 @@ export const BUILTIN_BASE_URLS: Record<string, string> = {
   "e7a2b5c3-8f4d-4e6a-9b1c-3d5f7e8a2c04": "https://naapi.cc/v1",
   "d5734028-d39b-4d41-9841-fd648d65440e": "https://openrouter.ai/api/v1",
   "386e0f29-8228-4512-affe-8fd8add82d88": "https://ai-gateway.vercel.sh/v1",
-  "56a94d29-c88b-41c5-8e09-38a7612d6cf8": "https://api.siliconflow.cn/v1",
   "b4deabea-20fb-4101-a74c-65679c7e4754": "https://api.minimaxi.com/anthropic/v1",
   "a2bafe83-eaf8-47bf-a8c7-3dd82d89f637": "https://api.xiaomimimo.com/v1",
 };
@@ -63,7 +62,7 @@ export const PROVIDER_FORMAT_BASES: Record<string, Partial<Record<ProviderKind, 
   "d6c4d8c6-3f62-4ca9-a6f3-7ade6b15ecc3": {
     claude: "https://api.moonshot.cn/anthropic",
   },
-  // 智谱AI开放平台(①类)
+  // 智谱(①类)
   "3bc40dc1-b11a-46fa-863b-6306971223be": {
     claude: "https://open.bigmodel.cn/api/anthropic",
   },
@@ -87,7 +86,7 @@ export const PROVIDER_FORMAT_BASES: Record<string, Partial<Record<ProviderKind, 
   "6ab18148-c138-4394-a46f-1cd8c8ceaa6d": {
     openai: "https://generativelanguage.googleapis.com/v1beta/openai",
   },
-  // xAI / OpenRouter / Vercel Gateway / 硅基流动 / 钠API / 御三家:
+  // xAI / OpenRouter / Vercel Gateway / 钠API / 御三家:
   // ②类或不适用,无登记。x.ai 官方 FAQ 明确 Anthropic SDK 同指 /v1。
   // MiniMax / MIMO:出厂 base 分别为 claude / openai 协议默认;厂商是否官方托管另一格式的
   // 镜像未实证(APP 也未登记),按"查不到实证就不登记"纪律留空——切到非出厂格式会落协议默认,
