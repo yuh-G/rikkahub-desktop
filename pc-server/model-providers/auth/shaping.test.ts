@@ -29,6 +29,12 @@ describe("OAUTH_PROVIDER_SHAPING 声明表", () => {
   test("Copilot 静态身份头逐字锁定(pi auth/oauth/github-copilot.ts 私有常量的当刻取值;pi 升级须核对)", () => {
     // pi 的 COPILOT_HEADERS/COPILOT_API_VERSION 是模块私有,拿不到直接对比——这里锁死
     // 抄录时刻的值;pi 升级改了值,这里就是需要人工核对的核对项(P1-R2:缺一可能 401)。
+    //
+    // 【升级 pi 时核对步骤】：
+    // 1. 读 pi/packages/ai/src/auth/oauth/github-copilot.ts 取最新静态头值
+    // 2. 对比下方 expect 的字面量，不一致则更新
+    // 3. 跑 `bun test shaping.test.ts` 确认测试绿
+    // 4. 同步更新 shaping.ts 的 github-copilot.ensureHeaders 声明
     const s = OAUTH_PROVIDER_SHAPING["github-copilot"];
     expect(s.ensureHeaders).toEqual({
       "User-Agent": "GitHubCopilotChat/0.35.0",
