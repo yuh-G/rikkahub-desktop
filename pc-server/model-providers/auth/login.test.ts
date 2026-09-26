@@ -111,6 +111,32 @@ describe("login orchestration", () => {
     expect(logoutProvider(CODEX_PROVIDER_ID)).toBe(false);
   });
 
+  test("startLogin 登记即补「准备中」帧:flow 加载/首个 notify 之前刷新页面也能恢复面板", async () => {
+    // Kimi/Copilot/xAI 三条流在 loadOAuthFlow 之后、首个 notify 之前要发网络请求(拿设备码/
+    // 授权 URL)。若这窗口里用户刷新页面,GET oauth/status 曾回 inProgress:true + event:null,
+    // 前端拿不到可渲染的帧 → 只剩被「已在登录中」拒绝的按钮、连取消都点不到。登记 attempt
+    // 后必须先有一帧可恢复的兜底帧。
+    overrideOAuthFlow("openai-codex", {
+      name: "Test",
+      login: async (interaction) => {
+        // 模拟 pi 在 notify 之前发网络请求:先 await,再 notify。
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        interaction.notify({ type: "auth_url", url: "https://example.com/auth", instructions: "" });
+        return { type: "oauth", access: "a", refresh: "r", expires: 9999999999000 };
+      },
+      refresh: async () => { throw new Error("not in test"); },
+      toAuth: async (cred) => ({ apiKey: cred.access }),
+    });
+    const result = await startLogin(CODEX_PROVIDER_ID);
+    if (!result.ok) throw new Error(result.error);
+    // startLogin 一返回(异步授权流刚起步、真实帧尚未到):仍有可渲染的兜底帧,非 null。
+    expect(loginInProgress(CODEX_PROVIDER_ID)).toBe(true);
+    const frame = currentLoginEvent(CODEX_PROVIDER_ID);
+    expect(frame).not.toBeNull();
+    expect(["exchanging", "waiting_browser"]).toContain(frame!.phase);
+    await result.completion;
+  });
+
   test("startLogin returns before the flow completes; completion resolves with the outcome", async () => {
     // 授权流卡在「等用户」:startLogin 必须先返回(否则 oauth/start 请求挂到 ky 超时,
     // 前端按钮锁在 submitting——ChatGPT 选登录方式的两个按钮点不动就是这么来的)。

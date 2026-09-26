@@ -259,6 +259,11 @@ export async function startLogin(
     }, LOGIN_TIMEOUT_MS),
   };
   attempts.set(providerId, attempt);
+  // 立刻发一帧「准备中」:loadOAuthFlow 之后、首个 notify 之前要发网络请求(Kimi/Copilot/xAI
+  // 拿设备码/授权 URL),这段窗口里若用户刷新页面,GET oauth/status 会回 inProgress:true +
+  // event:null——前端拿不到可渲染的帧,只剩一个被「已在登录中」拒绝的登录按钮,连取消都
+  // 点不到,只能等 10 分钟超时。这一帧让尝试从登记那一刻起就可恢复/可取消。
+  emit({ providerId, flow: flowId, phase: "exchanging", message: "正在准备登录…" }, attempt);
 
   let oauth: Awaited<ReturnType<typeof loadOAuthFlow>>;
   try {
