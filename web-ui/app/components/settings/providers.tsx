@@ -158,7 +158,9 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
     try {
       await api.post("settings/provider/oauth/start", { providerId: provider.id });
     } catch (error) {
-      toast.error((error as Error).message);
+      // 「已在登录中」是状态而非事故,给指路的 i18n 文案;其余错误保持原文。
+      const message = (error as Error).message;
+      toast.error(/already in progress/i.test(message) ? t("settings:providers.oauth.already_in_progress") : message);
       // 失败原因可能是服务端已有进行中的尝试(如刷新前发起的),按服务端真值对齐视图。
       await syncLoginStatus();
     } finally {

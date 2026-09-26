@@ -262,6 +262,7 @@
       "error": "Sign-in failed",
       "cancelled": "Sign-in cancelled",
       "cancel": "Cancel sign-in",
+      "already_in_progress": "A sign-in is already in progress for this provider. Finish or cancel it first.",
       "manual_code_hint": "If the app shows no response after authorization, paste the full URL from your browser address bar here",
       "manual_code_placeholder": "http://localhost:1455/auth/callback?code=…",
       "manual_code_submit": "Submit",

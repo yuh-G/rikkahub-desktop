@@ -262,6 +262,7 @@
       "error": "登录失败",
       "cancelled": "已取消登录",
       "cancel": "取消登录",
+      "already_in_progress": "该供应商已有登录进行中，请先完成或取消当前登录",
       "manual_code_hint": "若授权完成后应用无反应，请把浏览器地址栏的完整链接粘贴到此处",
       "manual_code_placeholder": "http://localhost:1455/auth/callback?code=…",
       "manual_code_submit": "提交",
