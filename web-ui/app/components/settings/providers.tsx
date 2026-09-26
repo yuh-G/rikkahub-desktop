@@ -108,16 +108,17 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
   // 后台节流丢失,而 oauthStatus 随 settings 快照可靠到达——若 signedIn 已翻真而面板还
   // 挂着"进行中"帧(说明 success 帧丢了),按真值收口并补一声成功提示;翻假(别处登出/
   // 凭证被清)同理静默清掉幽灵进度卡。终态帧(success/error/cancelled)由各自 SSE 处理
-  // 器收口,不经这里。
+  // 器收口,不经这里。经 ref 读当前帧:toast 是副作用,不能进 setState updater。
+  const authEventRef = React.useRef(authEvent);
+  authEventRef.current = authEvent;
   const lastSignedInRef = React.useRef(signedIn);
   React.useEffect(() => {
     if (lastSignedInRef.current === signedIn) return;
     lastSignedInRef.current = signedIn;
-    setAuthEvent((current) => {
-      if (current == null || ["success", "error", "cancelled"].includes(current.phase)) return current;
-      if (signedIn) toast.success(t("settings:providers.oauth.success"));
-      return null;
-    });
+    const current = authEventRef.current;
+    if (current == null || ["success", "error", "cancelled"].includes(current.phase)) return;
+    if (signedIn) toast.success(t("settings:providers.oauth.success"));
+    setAuthEvent(null);
   }, [signedIn, t]);
 
   // 浏览器登录:授权 URL 首次到达时在桌面壳里直接拉起系统浏览器(pi 只给 URL 不开浏览器)。
