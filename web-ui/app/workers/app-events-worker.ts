@@ -18,8 +18,13 @@
 // 快照重放:与页内 app-events 一致,快照类事件缓存最新一帧;新页面(或 bfcache 复活的
 // 页面)接入时立即补发,消除"晚接入错过首帧"的时序耦合。
 const REPLAY_EVENTS = new Set(["settings", "memory", "app_errors_snapshot", "invalidate", "mcp_health"]);
-/** 3 次心跳未见(页面崩溃/被杀,pagehide 没来得及发 bye)即判死摘除。 */
-const PORT_STALE_MS = 45_000;
+/** 页面判死阈值。真实死页(崩溃/被杀,pagehide 没来得及发 bye)靠它摘除;必须显著
+ *  大于 Chromium 后台节流后的最坏心跳间隔:intensive throttling(页面隐藏且静默 ≥5min,
+ *  恰是登录时用户切去浏览器授权的形态)把 15s 心跳压到 1/min——45s 阈值会把活着的
+ *  页面误判死,端口摘空即停连,success/settings 帧发给已死的连接;用户回来后 ping 恢复
+ *  只触发"重接纳+补旧快照",连接永不重启,面板永久卡在进行中(2026-09-26 实测)。
+ *  120s = 两个节流心跳周期 + 裕量。 */
+const PORT_STALE_MS = 120_000;
 /** R6-1:SSE 连接活性看门狗。服务端每 15s 发 `: heartbeat` 注释帧;45s(3×心跳)无字节
  *  判连接已死(合盖睡眠/换网产生的半开 TCP 会让 reader.read() 永久挂起,不抛错不重连),
  *  abort 本次连接走既有退避重连。与页内 services/api.ts sse() 口径一致。 */
@@ -53,6 +58,11 @@ function stop(): void {
   abort?.abort();
   abort = null;
 }
+
+/** 401 停连窗口:服务端要密码但页面还没解锁(解锁后整页 reload 重新 hello)。窗口内
+ *  ping/来信不得重启连接,否则密码闸门打开前就裸连 401 死循环。仅 hello(可能携新
+ *  token)解除——stop() 不碰它,否则 401 分支"先标记后 stop"会被自己冲掉。 */
+let authHalted = false;
 
 function sweepPorts(): void {
   const now = Date.now();
@@ -90,6 +100,7 @@ async function run(): Promise<void> {
       if (response.status === 401) {
         // 停连等待:密码闸门解锁后页面整页 reload,重新 hello 携新 token 再启动
         broadcast({ type: "auth_required", message: "Unauthorized", code: 401 });
+        authHalted = true;
         stop();
         return;
       }
@@ -153,16 +164,21 @@ async function run(): Promise<void> {
 
   port.onmessage = (message: MessageEvent) => {
     const data = message.data as { type?: string; token?: string | null } | null;
-    // 未注册的 port(bfcache 复活、或曾被判死摘除)在任何来信时重新接纳并补快照
+    // 未注册的 port(bfcache 复活、或曾被判死摘除)在任何来信时重新接纳并补快照。
+    // 端口曾摘除 = 判死期间 sweepPorts 已因 ports 清空停掉 SSE 连接(stop),此刻必须
+    // 重启连接——只补旧快照不重连,页面会永远错过摘除窗口内广播的增量帧(登录 success
+    // 帧就是这么丢的);401 停连窗口除外(authHalted,见其声明)。run 幂等(running 守卫)。
     if (!ports.has(port)) {
       ports.set(port, { lastSeen: Date.now() });
       replaySnapshots(port);
+      if (!authHalted) void run();
     } else {
       ports.get(port)!.lastSeen = Date.now();
     }
 
     if (data?.type === "hello") {
       token = data.token ?? null;
+      authHalted = false;
       replaySnapshots(port);
       void run();
       return;

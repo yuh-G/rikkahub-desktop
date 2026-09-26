@@ -103,6 +103,10 @@ const OAUTH_CREDENTIAL_PATTERNS: RegExp[] = [
   /OAuth credential unavailable/i,
   // pi coding-agent 的会话级文案(未走上面的 resolve 路径时)
   /Credentials may have expired or network is unavailable/i,
+  // pi coding-agent 的「无凭据」形态(agent-session._getRequiredRequestAuth):登出后
+  // 工作区回合在 pi 侧构造完会话才在取鉴权处抛出。pi id(kimi-coding 等)只可能来自
+  // 我们的订阅登记表,不会与 apiKey 供应商的报错撞车。
+  /No API key found for (?:kimi-coding|openai-codex|github-copilot|xai|anthropic)/i,
 ];
 
 /** 命中"订阅凭证失效/无法刷新"类报错时返回人话文案(指路重新登录),否则 null。 */

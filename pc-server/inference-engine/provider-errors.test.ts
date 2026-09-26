@@ -149,15 +149,19 @@ describe("classifyOAuthCredentialError", () => {
     "OAuth credential unavailable for 98d0557b-0700-41e5-b1d6-ee875a53ae5a",
     // pi coding-agent 会话级文案
     'Authentication failed for "openai-codex". Credentials may have expired or network is unavailable. Run \'/login openai-codex\' to re-authenticate.',
+    // pi coding-agent 无凭据形态(2026-09-26 实测:登出 Kimi 后工作区回合原文报错)
+    "No API key found for kimi-coding.\n\nUse /login to log into a provider via OAuth or API key.",
   ];
   test.each(positives)("命中凭证失效文案:%s", (sample) => {
     expect(classifyOAuthCredentialError(new Error(sample))).toStartWith(OAUTH_CREDENTIAL_MESSAGE);
   });
 
-  test("不误伤:普通鉴权/网络错误与 apiKey 缺失不归此类", () => {
+  test("不误伤:普通鉴权/网络错误与 apiKey 供应商缺 key 不归此类", () => {
     for (const sample of [
       "401 Unauthorized: invalid api key",
       "fetch failed: ECONNREFUSED",
+      // pi 的 ModelRegistry 同款句式但 provider 是 apiKey 型(带引号、id 不在订阅登记表)
+      'No API key found for "some-api-key-provider"',
       "No API key found for provider openai",
       "429 Too Many Requests",
     ]) {

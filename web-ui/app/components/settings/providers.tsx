@@ -104,6 +104,22 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
     void syncLoginStatus();
   }, [syncLoginStatus]);
 
+  // 服务端真值兜底:登录态翻转瞬间清掉残留的非终态帧。SSE 增量帧可能因通道抖动/页面
+  // 后台节流丢失,而 oauthStatus 随 settings 快照可靠到达——若 signedIn 已翻真而面板还
+  // 挂着"进行中"帧(说明 success 帧丢了),按真值收口并补一声成功提示;翻假(别处登出/
+  // 凭证被清)同理静默清掉幽灵进度卡。终态帧(success/error/cancelled)由各自 SSE 处理
+  // 器收口,不经这里。
+  const lastSignedInRef = React.useRef(signedIn);
+  React.useEffect(() => {
+    if (lastSignedInRef.current === signedIn) return;
+    lastSignedInRef.current = signedIn;
+    setAuthEvent((current) => {
+      if (current == null || ["success", "error", "cancelled"].includes(current.phase)) return current;
+      if (signedIn) toast.success(t("settings:providers.oauth.success"));
+      return null;
+    });
+  }, [signedIn, t]);
+
   // 浏览器登录:授权 URL 首次到达时在桌面壳里直接拉起系统浏览器(pi 只给 URL 不开浏览器)。
   // 纯浏览器环境 window.open 不在用户手势内会被拦截,留给「打开浏览器」按钮。
   // 设备码登录:autoOpenUrl 是后端确认过的免输入完整链接(带 user_code,Kimi/Grok),同样自动跳转;

@@ -100,6 +100,20 @@ describe("resolveProviderAuthForProvider", () => {
     await expect(resolveProviderAuthForProvider(provider)).rejects.toThrow();
   });
 
+  test("登出的订阅供应商(authMode=oauth 且无 oauth 行):快速失败,不落空 apiKey 轨", async () => {
+    // 登出剥 oauth 行后,用户在对话页直接发消息:此前落回 providerHeaders() 拿空 key
+    // 裸拼 Bearer,把「重新登录」伪装成上游 401 鉴权失败。必须以 OAuth credential
+    // unavailable 形态抛出(classifyOAuthCredentialError 归类为「请重新登录」)。
+    // 用预置固定 UUID——未登录的订阅行只有靠它才反查出 flow(oauthFlowFor)。
+    const provider = makeProvider({
+      id: "f9622c8b-5037-4540-b875-3d301521367b", // Kimi Code 预置 id
+      authMode: "oauth",
+      apiKey: "",
+    });
+    setState({ ...state, settings: { ...state.settings, providers: [provider] } } as any);
+    await expect(resolveProviderAuthForProvider(provider)).rejects.toThrow("OAuth credential unavailable");
+  });
+
   test("oauth provider with unknown flow: throws", async () => {
     const provider = makeProvider({
       authMode: "oauth",

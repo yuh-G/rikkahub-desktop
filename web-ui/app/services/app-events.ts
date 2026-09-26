@@ -58,7 +58,8 @@ const REPLAY_EVENTS: ReadonlySet<AppEventName> = new Set([
   "mcp_health",
 ]);
 
-/** 与 worker 心跳判活(PORT_STALE_MS = 3 × 心跳间隔)保持一致,改动需两处同步。 */
+/** 与 worker 心跳判活(PORT_STALE_MS = 120s,已容住 Chromium 后台节流 1/min 的心跳,
+ *  见 worker 侧注释)保持同步:阈值不动,本值只影响页面自身 ping 频率。 */
 const WORKER_PING_INTERVAL_MS = 15_000;
 
 const listeners = new Map<AppEventName, Set<(data: never) => void>>();

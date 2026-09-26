@@ -10,7 +10,7 @@ import { resolveProviderAuth } from "../../../pi/packages/ai/src/auth/resolve.ts
 import type { Provider } from "../../foundation/types";
 import { providerHeaders } from "../index";
 import { createPiCredentialStore } from "./credential-store";
-import { OAUTH_FLOWS, loadOAuthFlow } from "./flows";
+import { OAUTH_FLOWS, loadOAuthFlow, oauthFlowFor } from "./flows";
 
 export interface ResolvedProviderAuth {
   /** 引擎注入用:apiKey 轨返回 providerHeaders() 原样;oauth 轨返回 toAuth 的
@@ -32,6 +32,13 @@ export async function resolveProviderAuthForProvider(
   opts?: { signal?: AbortSignal; minOAuthValidityMs?: number },
 ): Promise<ResolvedProviderAuth> {
   if (provider.authMode !== "oauth" || !provider.oauth) {
+    // 订阅供应商已登出(oauth 行被剥)却仍被宿主路径选中:不能落回 providerHeaders()
+    // 轨——那会拿空 apiKey 拼出裸 `Authorization: Bearer`(把"重新登录"的信号伪装成
+    // "上游 401 鉴权失败",上游 400/401 文案各异且不进分类链)。快速失败,错误形态
+    // 归 classifyOAuthCredentialError(「请重新登录」)。apiKey 供应商恒走原轨。
+    if (provider.authMode === "oauth" && oauthFlowFor(provider)) {
+      throw new Error(`OAuth credential unavailable for ${provider.id}`);
+    }
     return { headers: providerHeaders(provider) };
   }
 
