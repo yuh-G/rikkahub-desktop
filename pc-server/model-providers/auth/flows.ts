@@ -99,20 +99,32 @@ export function clearOAuthFlowOverride(flowId: OAuthFlowId): void {
   cache.delete(flowId);
 }
 
-/** 懒加载 flow 的 pi-ai OAuthAuth 实现(动态 import 经变量 specifier,bundler 不可静态
- *  跟进——openai-codex.ts 用 node:http/node:crypto,顶层 import 会炸浏览器构建)。 */
+// 静态 import 所有 loader——动态 import 会导致 bun --compile 无法打包(变量路径无法静态分析)。
+// 注:pi oauth 实现依赖 node:http/crypto,但这是后端代码,前端构建不会触碰 pc-server/ 目录。
+import {
+  loadOpenAICodexOAuth,
+  loadKimiCodingOAuth,
+  loadGitHubCopilotOAuth,
+  loadXaiOAuth,
+  loadAnthropicOAuth,
+} from "../../../pi/packages/ai/src/auth/oauth/load.ts";
+
+const loaderRegistry = {
+  loadOpenAICodexOAuth,
+  loadKimiCodingOAuth,
+  loadGitHubCopilotOAuth,
+  loadXaiOAuth,
+  loadAnthropicOAuth,
+} as const;
+
+/** 懒加载 flow 的 pi-ai OAuthAuth 实现(首次调用时执行 loader,结果缓存)。 */
 export function loadOAuthFlow(flowId: OAuthFlowId): Promise<PiOAuthAuth> {
   let cached = cache.get(flowId);
   if (!cached) {
-    cached = (async () => {
-      const mod = (await import("../../../pi/packages/ai/src/auth/oauth/load.ts")) as unknown as Record<
-        string,
-        () => Promise<PiOAuthAuth>
-      >;
-      const loader = mod[OAUTH_FLOWS[flowId].loader];
-      if (!loader) throw new Error(`pi-ai OAuth loader missing: ${OAUTH_FLOWS[flowId].loader}`);
-      return loader();
-    })();
+    const loaderName = OAUTH_FLOWS[flowId].loader;
+    const loader = loaderRegistry[loaderName];
+    if (!loader) throw new Error(`pi-ai OAuth loader missing: ${loaderName}`);
+    cached = loader();
     cache.set(flowId, cached);
   }
   return cached;
