@@ -105,15 +105,22 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
     void syncLoginStatus();
   }, [syncLoginStatus]);
 
-  // 周期性服务端真值对齐(治本兜底):进行中每 4s 拉一次 /status。
-  // 为什么需要:授权在系统浏览器完成、状态更新在应用页——页面一旦被切到后台(>5min
-  // Chromium intensive throttling)或 SSE 连接被拆,provider_auth 的 success 帧与 settings
-  // 的 signedIn 都可能到不了面板,于是用户授权完回来,面板仍停在挂载时恢复的「进行中」。
-  // 服务端 attempts 表是唯一真值:轮询到「不再有进行中尝试」说明登录已终结,此时清掉进度帧。
-  // 但 signedIn 在 settings 快照上——那条通道若已丢帧,signedIn 仍停在旧值,面板会错翻「未登录」。
-  // 故终结时同时拉一次服务端 settings 真值收口(对齐 settings.tsx 测试后的同款刷新路径):
-  // signedIn 翻真按已登录落,翻假按未登录落,任何一帧丢失都能在一轮轮询内自愈。
-  // 频率低到不影响连接预算,且只在登录进行中才轮询,挂载即停。
+  // 拉一次服务端 settings 真值收口进 store。settings 全应用唯一写入点是 setSettings
+  // (SSE 快照/设置页保存都经此)。两条自愈路径共用:①登录轮询发现尝试终结时;②登出 POST
+  // 成功后。settings 帧(含 signedIn)与 provider_auth success 帧同走 /api/events 通道,
+  // 通道丢帧时 signedIn 停旧值——登录错翻「未登录」、登出卡在「已登录」,都靠它收口。
+  const syncSettingsTruth = React.useCallback(async () => {
+    const fresh = await api.get<Settings>("settings");
+    setSettings(fresh);
+  }, [setSettings]);
+
+  // 周期性服务端真值对齐(治本兜底):进行中每 2s 拉一次 /status。
+  // 为什么需要:授权在系统浏览器完成、状态更新在应用页——SSE 连接被拆时,provider_auth 的
+  // success 帧与 settings 的 signedIn 都可能到不了面板,于是用户授权完回来,面板仍停在
+  // 挂载时恢复的「进行中」。服务端 attempts 表是唯一真值:轮询到「不再有进行中尝试」说明
+  // 登录已终结,此时清掉进度帧。但 signedIn 在 settings 快照上——那条通道若已丢帧,signedIn
+  // 仍停在旧值,面板会错翻「未登录」。故终结时同时拉一次 settings 真值收口:signedIn 翻真
+  // 按已登录落,翻假按未登录落,任何一帧丢失都能在一轮轮询内自愈。只在登录进行中才轮询。
   const signedInRef = React.useRef(signedIn);
   signedInRef.current = signedIn;
   const authEventRef = React.useRef(authEvent);
@@ -136,9 +143,8 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
             setAuthEvent(status.event);
           } else if (!status.inProgress) {
             // 尝试终结:补 settings 真值再收口,否则丢失的 settings 帧会把面板错翻「未登录」。
-            const fresh = await api.get<Settings>("settings");
+            await syncSettingsTruth();
             if (cancelled) return;
-            setSettings(fresh);
             const current = authEventRef.current;
             if (current != null && !["success", "error", "cancelled"].includes(current.phase)) {
               setAuthEvent(null);
@@ -148,9 +154,9 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
           // 对齐失败仅丢一次轮询,下一轮补;不打扰用户
         }
       })();
-    }, 4000);
+    }, 2000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [inProgress, provider.id, setSettings]);
+  }, [inProgress, provider.id, syncSettingsTruth]);
 
   // 服务端真值兜底:登录态翻转瞬间清掉残留的非终态帧。SSE 增量帧可能因通道抖动/页面
   // 后台节流丢失,而 oauthStatus 随 settings 快照可靠到达——若 signedIn 已翻真而面板还
@@ -242,7 +248,11 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
       toast.success(t("settings:providers.oauth.logout_success"));
     } catch (error) {
       toast.error((error as Error).message);
+      return;
     }
+    // 登出真值兜底:POST 成功即已登出,但登出的 settings 帧可能丢——主动对齐,signedIn 翻假,
+    // 卡片落「未登录」。失败仅本次不对齐,正常(未丢帧)路径不受影响。
+    try { await syncSettingsTruth(); } catch { /* 丢帧兜底,失败静默 */ }
   };
   const submitManualCode = async () => {
     if (!manualCode.trim()) return;
