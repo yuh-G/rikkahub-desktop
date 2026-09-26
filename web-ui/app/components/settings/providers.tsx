@@ -3,7 +3,6 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Check,
   CheckCircle2,
   Database,
   ExternalLink,
@@ -1177,7 +1176,7 @@ export function ProvidersSection({
               onSelect={() => setSelectedId(provider.id)}
               onMove={moveProvider}
             >
-              <span className="grid min-w-0 grid-cols-[28px_10px_minmax(0,1fr)_auto_16px] items-center gap-2 text-left">
+              <span className="grid min-w-0 grid-cols-[28px_10px_minmax(0,1fr)_auto] items-center gap-2 text-left">
                 <AIIcon name={provider.name} size={24} className="justify-self-start" />
                 <span
                   className={`size-2 rounded-full ${provider.enabled ? "bg-success" : "bg-muted-foreground/40"}`}
@@ -1188,7 +1187,6 @@ export function ProvidersSection({
                     {t("settings:providers.oauth.badge")}
                   </span>
                 ) : null}
-                {provider.builtIn ? <Check className="size-3 text-primary" /> : null}
               </span>
             </SortableRow>
           ))}
