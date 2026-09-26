@@ -251,7 +251,7 @@ describe("providerAuthChanged:OAuth 登录/注销/轮换", () => {
 
 describe("runProviderCheck:订阅供应商整形(§13.3 整形全路径覆盖)", () => {
   it("探测请求带凭证派生头与 body 整形(chatgpt-account-id / include / 无 max_output_tokens)", async () => {
-    const { setState, state } = await import("../persistence/json-store");
+    const store = await import("../persistence/json-store");
     const { defaultSettings } = await import("../app-config/defaults");
     const { overrideOAuthFlow } = await import("./auth/flows");
     overrideOAuthFlow("openai-codex", {
@@ -279,8 +279,8 @@ describe("runProviderCheck:订阅供应商整形(§13.3 整形全路径覆盖)",
       },
     });
     // runProviderCheck 会 addLog(读 state.stats/logs):测试进程未跑 bootstrap,补最小字段。
-    setState({
-      ...state,
+    store.setState({
+      ...store.state,
       stats: { totalRequests: 0, failedRequests: 0, byProvider: {}, byGroup: {} },
       logs: [],
       settings: { ...structuredClone(defaultSettings()), providers: [codex] },
@@ -306,7 +306,7 @@ describe("runProviderCheck:订阅供应商整形(§13.3 整形全路径覆盖)",
       expect("max_output_tokens" in hit!.body).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
-      setState({ ...state, settings: { ...state.settings, providers: [] } } as any);
+      store.setState({ ...store.state, settings: { ...store.state.settings, providers: [] } } as any);
     }
   });
 });

@@ -7,8 +7,6 @@ import type { OAuthFlowId, Provider } from "../../foundation/types";
 
 export type PiOAuthAuth = {
   name: string;
-  isSubscription?: boolean;
-  loginLabel?: string;
   login(interaction: any): Promise<OAuthCredential>;
   refresh(credential: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential>;
   toAuth(credential: OAuthCredential): Promise<{ apiKey?: string; headers?: Record<string, string>; baseUrl?: string }>;

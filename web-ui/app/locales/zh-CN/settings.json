@@ -255,7 +255,6 @@
       "waiting_device_code": "请打开下方链接完成登录",
       "open_auth_page": "打开授权页面",
       "device_code_fallback_hint": "若页面要求输入验证码",
-      "device_code_label": "验证码",
       "copy_code": "复制验证码",
       "device_code_expires": "验证码有效期 {{minutes}} 分钟",
       "exchanging": "正在完成登录…",

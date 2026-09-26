@@ -255,7 +255,6 @@
       "waiting_device_code": "Open the link below to complete sign-in",
       "open_auth_page": "Open authorization page",
       "device_code_fallback_hint": "If the page asks for a code",
-      "device_code_label": "Verification code",
       "copy_code": "Copy code",
       "device_code_expires": "Code valid for {{minutes}} minutes",
       "exchanging": "Finishing sign-in…",

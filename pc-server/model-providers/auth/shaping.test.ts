@@ -12,6 +12,12 @@ describe("OAUTH_PROVIDER_SHAPING 声明表", () => {
     }
   });
 
+  test("shapingFor 兜底:未登记/空 flowId 返回 {}——autoEnable 读取端靠 ?? true 保默认启用", () => {
+    // commitLogin 读 shapingFor(flowId).autoEnable ?? true。声明是唯一真源,
+    // 未登记时兜底 {} 必须让 ?? true 生效(新 flow 漏声明不至于登录后静默不启用)。
+    expect(shapingFor("does-not-exist").autoEnable ?? true).toBe(true);
+  });
+
   test("Codex 走 Responses 实验通道契约头 + include 加密 reasoning + 去 max_output_tokens", () => {
     const s = OAUTH_PROVIDER_SHAPING["openai-codex"];
     expect(s.ensureHeaders?.["OpenAI-Beta"]).toBe("responses=experimental");
