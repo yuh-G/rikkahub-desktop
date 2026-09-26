@@ -645,7 +645,11 @@ export function ProvidersSection({
     lastSignedInRef.current = signedIn;
     if (!selected) return;
     setDraft(clone(selected));
-    autosave.reset();
+    // discard 而非 reset:reset 会把防抖窗口内的脏编辑「补发」出去,而此处的补发拿到的
+    // 仍是上一次渲染的 save 闭包(setDraft 尚未重渲染),POST 的是登录前的旧 draft——
+    // 服务端护栏只保护 oauth/authMode,models/enabled 会被旧值覆盖(刚登录铺好的捆绑
+    // 模型丢失、enabled 可能被写回 false)。登录态翻转即以服务端真值为准,旧编辑必须丢弃。
+    void autosave.discard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedIn, selected?.id]);
 
