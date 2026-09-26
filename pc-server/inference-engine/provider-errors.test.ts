@@ -5,9 +5,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   CONTEXT_OVERFLOW_MESSAGE,
+  OAUTH_CREDENTIAL_MESSAGE,
   OUTPUT_CAP_MESSAGE,
   RATE_LIMIT_MESSAGE,
   classifyContextOverflowError,
+  classifyOAuthCredentialError,
   classifyOutputCapError,
   classifyRateLimitError,
 } from "./provider-errors";
@@ -135,5 +137,37 @@ describe("classifyOutputCapError", () => {
     expect(classifyOutputCapError(null)).toBeNull();
     expect(classifyOutputCapError(undefined)).toBeNull();
     expect(classifyOutputCapError("max_tokens参数非法：限制数值范围[1,131072]")).toStartWith(OUTPUT_CAP_MESSAGE);
+  });
+});
+
+describe("classifyOAuthCredentialError", () => {
+  const positives = [
+    // pi auth/resolve.ts:`OAuth refresh failed for <piId>: <cause>`
+    "OAuth refresh failed for openai-codex: Kimi Code token refresh unauthorized (status 401)",
+    "OAuth auth derivation failed for anthropic: boom",
+    // 宿主 model-providers/auth/resolve.ts
+    "OAuth credential unavailable for 98d0557b-0700-41e5-b1d6-ee875a53ae5a",
+    // pi coding-agent 会话级文案
+    'Authentication failed for "openai-codex". Credentials may have expired or network is unavailable. Run \'/login openai-codex\' to re-authenticate.',
+  ];
+  test.each(positives)("命中凭证失效文案:%s", (sample) => {
+    expect(classifyOAuthCredentialError(new Error(sample))).toStartWith(OAUTH_CREDENTIAL_MESSAGE);
+  });
+
+  test("不误伤:普通鉴权/网络错误与 apiKey 缺失不归此类", () => {
+    for (const sample of [
+      "401 Unauthorized: invalid api key",
+      "fetch failed: ECONNREFUSED",
+      "No API key found for provider openai",
+      "429 Too Many Requests",
+    ]) {
+      expect(classifyOAuthCredentialError(new Error(sample))).toBeNull();
+    }
+  });
+
+  test("非 Error 输入不炸", () => {
+    expect(classifyOAuthCredentialError(null)).toBeNull();
+    expect(classifyOAuthCredentialError(undefined)).toBeNull();
+    expect(classifyOAuthCredentialError("OAuth refresh failed for kimi-coding")).toStartWith(OAUTH_CREDENTIAL_MESSAGE);
   });
 });

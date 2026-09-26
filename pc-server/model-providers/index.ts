@@ -230,7 +230,7 @@ export function defaultProviders(): Provider[] {
       models: [model("gpt-4.1"), model("gpt-4.1-mini"), model("gpt-4o-mini")],
     }),
     // 订阅制供应商(authMode:"oauth"),紧跟同家 API 预置(用户拍板 2026-09-25:各家贴近各家)。
-    // 出厂 enabled:false、apiKey:""、模型目录随包(catalog.ts 在 P1-4 注入)。凭证只在登录后落 oauth 字段。
+    // 出厂 enabled:false、apiKey:""、模型目录随包(catalog.ts 登录时铺入)。凭证只在登录后落 oauth 字段。
     provider({
       id: OAUTH_PROVIDER_IDS["openai-codex"],
       name: "ChatGPT",

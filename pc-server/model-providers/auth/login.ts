@@ -118,7 +118,8 @@ function commitLogin(providerId: string, flowId: OAuthFlowId, credential: OAuthC
 
 /** 登出:剥 oauth + enabled 回落 false。authMode 保持 "oauth"——订阅供应商是 OAuth-only
  *  形态,登出只是「没凭证」,不是「变成 API Key 供应商」(拨成 apiKey 会让前端认不出订阅
- *  卡片、startLogin 也会拒绝再登录,只能靠 restore 端点自愈)。
+ *  卡片、startLogin 也会拒绝再登录;要恢复只能重新走登录流,登录成功后 commitLogin 会
+ *  把 authMode 写回 oauth——不存在独立的 restore 端点)。
  *  同时清掉可能被旧版 settings/provider POST 回写进 state 的派生视图 oauthStatus——它本
  *  该只由 stripAuthSecrets 现算,残留一份 signedIn:true 会让卡片在登出后仍显示已登录。 */
 export function logoutProvider(providerId: string): boolean {

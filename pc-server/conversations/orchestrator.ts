@@ -6,7 +6,7 @@ import { bumpAnalyticsErrCount } from "../app-config/analytics";
 import type { GenerationEventSink, GenerationTarget, StreamHooksWithSink, ToolExecutor } from "../inference-engine/events";
 import { id, isRecord, message, textFromParts } from "../foundation/utils";
 import { classifyProxyError } from "../foundation/net";
-import { classifyContextOverflowError, classifyOutputCapError, classifyRateLimitError } from "../inference-engine/provider-errors";
+import { classifyContextOverflowError, classifyOAuthCredentialError, classifyOutputCapError, classifyRateLimitError } from "../inference-engine/provider-errors";
 import { state } from "../persistence/json-store";
 import { addLog } from "../api/logs";
 import { broadcastConversation, broadcastEngineStatus, broadcastList, broadcastNodeUpdate, touchStream } from "../api/sse";
@@ -1247,7 +1247,10 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
       proxyHint
       ?? classifyContextOverflowError(err)
       ?? classifyOutputCapError(err)
+      // 限流排在凭证失效之前:refresh 撞上游 429 时,错误串同时含 "OAuth refresh failed"
+      // 与 "429",此刻"稍后重试"比"重新登录"准确(transient 不该引导重登)。
       ?? classifyRateLimitError(err)
+      ?? classifyOAuthCredentialError(err)
       ?? `请求失败：${rawContent}`;
     // P2-1(N-7 归宿):失败文本除了落在消息注解上(仅会话内可见),还上报全局通道——
     // 用户不在该会话页时也能收到通知(批2 接前端 toast)。

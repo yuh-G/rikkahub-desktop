@@ -24,11 +24,14 @@ export interface OAuthFlowMeta {
   piProviderId: string;
   /** 宿主预置订阅供应商的固定 UUID——一经发布不可改(老用户 state/备份引用它)。
    *  是「宿主 provider 行 ↔ flow」在未登录(尚无 oauth 行)时的唯一反查键:登录起流、
-   *  pi 引擎取内建身份、restore 端点判定都经 oauthFlowFor 走这里,不得在别处复制表。 */
+   *  pi 引擎取内建身份、状态剥离时的 flow 判定都经 oauthFlowFor 走这里,不得在别处复制表。 */
   presetProviderId: string;
   /** 是否可进对话引擎(缺省 true)。Claude Pro/Max 的凭证要求 Claude Code 全套伪装
    *  (pi api/anthropic-messages.ts 内建),宿主聊天引擎不接:resolve 处闸门拦宿主全路径,
-   *  前端据此隐藏聊天选择器入口、登录卡挂「仅工作区 + 合规」提示。 */
+   *  前端据此隐藏聊天选择器入口、登录卡挂「仅工作区 + 合规」提示。
+   *  【不变量】pi 引擎刻意不经 resolve.ts(直取 createPiCredentialStore),故该闸门只护
+   *  宿主全路径;若将来给 pi 引擎加凭证预检或给聊天引擎加绕过 resolve 的出站路径,须一并
+   *  评估此闸门是否仍成立。 */
   chatCapable?: boolean;
   /** 设备码流的 verificationUri 是否已是免输入完整链接(RFC 8628 verification_uri_complete,
    *  带 user_code 参数)。pi 协议层没有单独字段——kimi/xai 实现已把它折叠进 verificationUri,

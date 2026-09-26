@@ -87,3 +87,28 @@ export function classifyOutputCapError(err: unknown): string | null {
   if (!OUTPUT_CAP_PATTERNS.some((re) => re.test(text))) return null;
   return `${OUTPUT_CAP_MESSAGE}\n[原始错误] ${text}`;
 }
+
+export const OAUTH_CREDENTIAL_MESSAGE =
+  "订阅登录凭证已失效或无法刷新，请到「设置 → 供应商」对该供应商重新登录";
+
+// 订阅(OAuth)供应商的凭证解析失败——refresh token 被上游拒绝、或凭证缺失。
+// pi 侧只抛不删(resolve.ts 的 refresh 失败不给 terminal 语义),故每轮请求都会重试并
+// 失败;不分类的话用户只看到 "OAuth refresh failed for openai-codex: ..." 这种拿不到
+// 出路的原文(前面还有 providerId 之类的内部键)。这些串只可能来自我们的 OAuth 路径,
+// 误判面为零,故可安全命中。
+const OAUTH_CREDENTIAL_PATTERNS: RegExp[] = [
+  // pi auth/resolve.ts:`OAuth refresh failed for <id>` / `OAuth auth derivation failed for <id>`
+  /OAuth (?:refresh|auth derivation) failed/i,
+  // 宿主 model-providers/auth/resolve.ts:凭证不可用(`OAuth credential unavailable for <id>`)
+  /OAuth credential unavailable/i,
+  // pi coding-agent 的会话级文案(未走上面的 resolve 路径时)
+  /Credentials may have expired or network is unavailable/i,
+];
+
+/** 命中"订阅凭证失效/无法刷新"类报错时返回人话文案(指路重新登录),否则 null。 */
+export function classifyOAuthCredentialError(err: unknown): string | null {
+  const text = err instanceof Error ? err.message : String(err ?? "");
+  if (!text) return null;
+  if (!OAUTH_CREDENTIAL_PATTERNS.some((re) => re.test(text))) return null;
+  return `${OAUTH_CREDENTIAL_MESSAGE}\n[原始错误] ${text}`;
+}
