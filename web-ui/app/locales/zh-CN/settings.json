@@ -253,6 +253,8 @@
       "workspace_only_note": "此订阅复用 Claude Code 客户端身份登录（Claude Pro/Max），存在法律与合规风险，请自行评估其与 Anthropic 服务条款的兼容性。模型仅可在工作区任务中使用，不会出现在对话模型列表。",
       "legal_link": "法律与合规",
       "waiting_device_code": "请打开下方链接完成登录",
+      "open_auth_page": "打开授权页面",
+      "device_code_fallback_hint": "若页面要求输入验证码",
       "device_code_label": "验证码",
       "copy_code": "复制验证码",
       "device_code_expires": "验证码有效期 {{minutes}} 分钟",

@@ -106,19 +106,21 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
 
   // 浏览器登录:授权 URL 首次到达时在桌面壳里直接拉起系统浏览器(pi 只给 URL 不开浏览器)。
   // 纯浏览器环境 window.open 不在用户手势内会被拦截,留给「打开浏览器」按钮。
-  // 设备码登录:若 verification_uri_complete 存在(Kimi/Grok 带 user_code 参数的完整链接)也自动跳转。
+  // 设备码登录:autoOpenUrl 是后端确认过的免输入完整链接(带 user_code,Kimi/Grok),同样自动跳转;
+  // 裸地址流(Copilot/ChatGPT 设备码)不跳,避免把用户带到还需手抄验证码的输入页。
   const openedAuthUrlRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     const off = onAppEvent("provider_auth", (event) => {
       if (event.providerId !== provider.id) return;
       setAuthEvent(event);
-      if (event.phase === "waiting_browser" && event.authUrl && openedAuthUrlRef.current !== event.authUrl) {
-        openedAuthUrlRef.current = event.authUrl;
-        if (isDesktopShell()) void openExternal(event.authUrl);
-      }
-      if (event.phase === "waiting_device_code" && event.deviceCode?.verificationUriComplete && openedAuthUrlRef.current !== event.deviceCode.verificationUriComplete) {
-        openedAuthUrlRef.current = event.deviceCode.verificationUriComplete;
-        if (isDesktopShell()) void openExternal(event.deviceCode.verificationUriComplete);
+      const urlToOpen = event.phase === "waiting_browser"
+        ? event.authUrl
+        : event.phase === "waiting_device_code"
+          ? event.deviceCode?.autoOpenUrl
+          : undefined;
+      if (urlToOpen && openedAuthUrlRef.current !== urlToOpen) {
+        openedAuthUrlRef.current = urlToOpen;
+        if (isDesktopShell()) void openExternal(urlToOpen);
       }
       if (event.phase === "success") {
         toast.success(t("settings:providers.oauth.success"));
@@ -262,7 +264,10 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
           {authEvent.phase === "select_method" && t("settings:providers.oauth.select_method")}
           {authEvent.phase === "waiting_input" && t("settings:providers.oauth.waiting_input")}
           {authEvent.phase === "waiting_browser" && t("settings:providers.oauth.waiting_browser")}
-          {authEvent.phase === "waiting_device_code" && t("settings:providers.oauth.waiting_device_code")}
+          {authEvent.phase === "waiting_device_code" &&
+            (authEvent.deviceCode?.autoOpenUrl
+              ? t("settings:providers.oauth.waiting_browser")
+              : t("settings:providers.oauth.waiting_device_code"))}
           {authEvent.phase === "exchanging" && t("settings:providers.oauth.exchanging")}
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -318,23 +323,49 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
           </div>
         ) : null}
         {authEvent.phase === "waiting_device_code" && authEvent.deviceCode ? (
-          <div className="mt-3 space-y-2">
-            <div className="flex items-center gap-3 rounded-md bg-muted px-3 py-2">
-              <span className="font-mono text-2xl font-bold tracking-widest">{authEvent.deviceCode.userCode}</span>
-              <Button variant="ghost" size="sm" onClick={() => void copy(authEvent.deviceCode!.userCode)}>
-                {t("settings:providers.oauth.copy_code")}
-              </Button>
+          authEvent.deviceCode.autoOpenUrl ? (
+            // 免输入完整链接(Kimi/Grok):视同浏览器登录,主行动=打开授权页面,验证码降为兜底。
+            <div className="mt-3 space-y-2">
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => void openExternal(authEvent.deviceCode!.verificationUri)}>
+                  <ExternalLink className="mr-1 size-3" />
+                  {t("settings:providers.oauth.open_auth_page")}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void copy(authEvent.deviceCode!.verificationUri)}>
+                  {t("settings:providers.oauth.copy_url")}
+                </Button>
+              </div>
+              <div className="flex items-center gap-3 rounded-md bg-muted px-3 py-2">
+                <span className="text-xs text-muted-foreground">{t("settings:providers.oauth.device_code_fallback_hint")}</span>
+                <span className="font-mono text-lg font-bold tracking-widest">{authEvent.deviceCode.userCode}</span>
+                <Button variant="ghost" size="sm" onClick={() => void copy(authEvent.deviceCode!.userCode)}>
+                  {t("settings:providers.oauth.copy_code")}
+                </Button>
+              </div>
+              {authEvent.deviceCode.expiresInSeconds ? (
+                <p className="text-xs text-muted-foreground">{t("settings:providers.oauth.device_code_expires", { minutes: Math.ceil(authEvent.deviceCode.expiresInSeconds / 60) })}</p>
+              ) : null}
             </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="break-all">{authEvent.deviceCode.verificationUri}</span>
-              <Button variant="outline" size="sm" onClick={() => void openExternal(authEvent.deviceCode!.verificationUri)}>
-                <ExternalLink className="size-3" />
-              </Button>
+          ) : (
+            // 裸地址(Copilot / ChatGPT 设备码):授权页不预填,验证码保持大字便于手抄。
+            <div className="mt-3 space-y-2">
+              <div className="flex items-center gap-3 rounded-md bg-muted px-3 py-2">
+                <span className="font-mono text-2xl font-bold tracking-widest">{authEvent.deviceCode.userCode}</span>
+                <Button variant="ghost" size="sm" onClick={() => void copy(authEvent.deviceCode!.userCode)}>
+                  {t("settings:providers.oauth.copy_code")}
+                </Button>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="break-all">{authEvent.deviceCode.verificationUri}</span>
+                <Button variant="outline" size="sm" onClick={() => void openExternal(authEvent.deviceCode!.verificationUri)}>
+                  <ExternalLink className="size-3" />
+                </Button>
+              </div>
+              {authEvent.deviceCode.expiresInSeconds ? (
+                <p className="text-xs text-muted-foreground">{t("settings:providers.oauth.device_code_expires", { minutes: Math.ceil(authEvent.deviceCode.expiresInSeconds / 60) })}</p>
+              ) : null}
             </div>
-            {authEvent.deviceCode.expiresInSeconds ? (
-              <p className="text-xs text-muted-foreground">{t("settings:providers.oauth.device_code_expires", { minutes: Math.ceil(authEvent.deviceCode.expiresInSeconds / 60) })}</p>
-            ) : null}
-          </div>
+          )
         ) : null}
         </div>
       </>

@@ -33,8 +33,9 @@ export interface ProviderAuthEvent {
   methods?: ReadonlyArray<{ id: string; labelKey: string }>;
   /** waiting_browser 时的授权 URL(用户复制到浏览器)。 */
   authUrl?: string;
-  /** waiting_device_code 时的验证码/地址/倒计时。 */
-  deviceCode?: { userCode: string; verificationUri: string; expiresInSeconds?: number };
+  /** waiting_device_code 时的验证码/地址/倒计时。autoOpenUrl 仅在登记表声明
+   *  deviceCodeAutoOpen(verificationUri 已是带 user_code 的免输入链接)时出现。 */
+  deviceCode?: { userCode: string; verificationUri: string; expiresInSeconds?: number; autoOpenUrl?: string };
   message?: string;
   /** waiting_input 时的输入框占位提示(Copilot 的企业域名)。 */
   placeholder?: string;
@@ -157,6 +158,7 @@ function makeInteraction(providerId: string, flow: string, attempt: AttemptState
       if (event.type === "auth_url") {
         emit({ ...base, phase: "waiting_browser", authUrl: event.url, message: event.instructions }, attempt);
       } else if (event.type === "device_code") {
+        const meta = OAUTH_FLOWS[flow as keyof typeof OAUTH_FLOWS];
         emit(
           {
             ...base,
@@ -165,6 +167,7 @@ function makeInteraction(providerId: string, flow: string, attempt: AttemptState
               userCode: event.userCode,
               verificationUri: event.verificationUri,
               expiresInSeconds: event.expiresInSeconds,
+              autoOpenUrl: meta?.deviceCodeAutoOpen ? event.verificationUri : undefined,
             },
           },
           attempt,

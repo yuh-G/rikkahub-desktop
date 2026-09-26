@@ -251,6 +251,39 @@ describe("login orchestration", () => {
     expect(state.settings.providers.find((p) => p.id === CODEX_PROVIDER_ID)?.oauth?.credential?.access).toBe("token-for:github.com");
   });
 
+  test("device_code frame: autoOpenUrl only for flows with deviceCodeAutoOpen in the registry", async () => {
+    // Kimi/xAI 的设备码 verificationUri 已是带 user_code 的免输入完整链接(pi 实现把
+    // verification_uri_complete 折叠了进去),前端可自动拉起;Copilot/ChatGPT 设备码是裸地址,
+    // 自动打开只会把用户带到还要手抄验证码的输入页。autoOpenUrl 由登记表单点裁决。
+    const KIMI_PROVIDER_ID = "f9622c8b-5037-4540-b875-3d301521367b";
+    const kimiProvider = { ...state.settings.providers.find((p) => p.id === CODEX_PROVIDER_ID)!, id: KIMI_PROVIDER_ID, name: "Kimi Code" };
+    setState({ ...state, settings: { ...state.settings, providers: [...state.settings.providers, kimiProvider] } } as any);
+    const hangOnDeviceCode = async (interaction: any) => {
+      interaction.notify({ type: "device_code", userCode: "ABCD-EFGH", verificationUri: "https://auth.example/device?user_code=ABCD-EFGH", intervalSeconds: 5, expiresInSeconds: 900 });
+      await new Promise((_, reject) => interaction.signal.addEventListener("abort", () => reject(new Error("Login cancelled"))));
+      throw new Error("unreachable");
+    };
+    try {
+      overrideOAuthFlow("kimi-coding", { name: "Kimi", login: hangOnDeviceCode, refresh: async () => { throw new Error("not in test"); }, toAuth: async (cred) => ({ apiKey: cred.access }) });
+      overrideOAuthFlow("openai-codex", { name: "Codex", login: hangOnDeviceCode, refresh: async () => { throw new Error("not in test"); }, toAuth: async (cred) => ({ apiKey: cred.access }) });
+      const kimi = await startLogin(KIMI_PROVIDER_ID);
+      if (!kimi.ok) throw new Error(kimi.error);
+      cancelLogin(KIMI_PROVIDER_ID);
+      const codex = await startLogin(CODEX_PROVIDER_ID);
+      if (!codex.ok) throw new Error(codex.error);
+      const kimiFrame = events.find((e) => e.providerId === KIMI_PROVIDER_ID && e.phase === "waiting_device_code");
+      const codexFrame = events.find((e) => e.providerId === CODEX_PROVIDER_ID && e.phase === "waiting_device_code");
+      expect(kimiFrame?.deviceCode?.autoOpenUrl).toBe("https://auth.example/device?user_code=ABCD-EFGH");
+      // 裸地址流:链接本身照发(前端展示),只是不标记可自动打开。
+      expect(codexFrame?.deviceCode?.autoOpenUrl).toBeUndefined();
+      expect(codexFrame?.deviceCode?.verificationUri).toBe("https://auth.example/device?user_code=ABCD-EFGH");
+      cancelLogin(CODEX_PROVIDER_ID);
+    } finally {
+      clearOAuthFlowOverride("kimi-coding");
+      clearOAuthFlowOverride("openai-codex");
+    }
+  });
+
   test("loginInProgress reflects attempt state and cancel finishes it", async () => {
     expect(loginInProgress(CODEX_PROVIDER_ID)).toBe(false);
     // 注入一个挂起的 login(永不 resolve,模拟用户未操作)。

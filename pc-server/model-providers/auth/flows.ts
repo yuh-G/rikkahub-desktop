@@ -30,6 +30,11 @@ export interface OAuthFlowMeta {
    *  (pi api/anthropic-messages.ts 内建),宿主聊天引擎不接:resolve 处闸门拦宿主全路径,
    *  前端据此隐藏聊天选择器入口、登录卡挂「仅工作区 + 合规」提示。 */
   chatCapable?: boolean;
+  /** 设备码流的 verificationUri 是否已是免输入完整链接(RFC 8628 verification_uri_complete,
+   *  带 user_code 参数)。pi 协议层没有单独字段——kimi/xai 实现已把它折叠进 verificationUri,
+   *  openai-codex 设备码/github-copilot 的则是需手抄验证码的裸地址。true 时登录事件下发
+   *  autoOpenUrl,前端视同浏览器登录自动拉起;裸地址流自动打开只会把用户带到手抄输入页。 */
+  deviceCodeAutoOpen?: boolean;
 }
 
 export const OAUTH_FLOWS: Record<OAuthFlowId, OAuthFlowMeta> = {
@@ -49,6 +54,7 @@ export const OAUTH_FLOWS: Record<OAuthFlowId, OAuthFlowMeta> = {
     loginMethods: null,
     piProviderId: "kimi-coding",
     presetProviderId: "f9622c8b-5037-4540-b875-3d301521367b", // Kimi Code
+    deviceCodeAutoOpen: true,
   },
   "github-copilot": {
     id: "github-copilot",
@@ -63,6 +69,7 @@ export const OAUTH_FLOWS: Record<OAuthFlowId, OAuthFlowMeta> = {
     loginMethods: null,
     piProviderId: "xai",
     presetProviderId: "5ec4bda4-5511-4e86-9c3f-b08d37d23dc1", // xAI SuperGrok,P2
+    deviceCodeAutoOpen: true, // verificationUriComplete 缺失时 pi 退回裸地址,用户手抄验证码兜底
   },
   anthropic: {
     id: "anthropic",
@@ -147,7 +154,9 @@ export function loadOAuthFlow(flowId: OAuthFlowId): Promise<PiOAuthAuth> {
     const loaderName = OAUTH_FLOWS[flowId].loader;
     const loader = loaderRegistry[loaderName];
     if (!loader) throw new Error(`pi-ai OAuth loader missing: ${loaderName}`);
-    cached = loader();
+    // pi 的 toAuth 返回 ModelAuth 判别联合,PiOAuthAuth 是宿主消费视角的最小结构声明
+    // (apiKey/headers/baseUrl)——运行时同构,静态断言对齐(动态 import 时代同款处理)。
+    cached = loader() as Promise<PiOAuthAuth>;
     cache.set(flowId, cached);
   }
   return cached;

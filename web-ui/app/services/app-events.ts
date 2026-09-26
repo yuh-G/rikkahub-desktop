@@ -42,7 +42,7 @@ export interface ProviderAuthEventDto {
   phase: "select_method" | "waiting_input" | "waiting_browser" | "waiting_device_code" | "exchanging" | "success" | "error" | "cancelled";
   methods?: ReadonlyArray<{ id: string; labelKey: string }>;
   authUrl?: string;
-  deviceCode?: { userCode: string; verificationUri: string; expiresInSeconds?: number };
+  deviceCode?: { userCode: string; verificationUri: string; expiresInSeconds?: number; autoOpenUrl?: string };
   message?: string;
   /** waiting_input 时的输入框占位提示(如 Copilot 企业域名)。 */
   placeholder?: string;
