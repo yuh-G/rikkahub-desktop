@@ -8,6 +8,7 @@ import { saveState, state } from "../../persistence/json-store";
 import { APP_VERSION } from "../../updates/index";
 import { loadModelsDev, modelsDevCache } from "../../inference-engine/providers";
 import { findModel } from "../../model-providers";
+import { activeLoginEvents } from "../../model-providers/auth";
 import { contextWindowFor } from "../../model-providers/model-limits";
 import { error, json, readJson } from "../request";
 import { isLoopbackRequest } from "../net-context";
@@ -48,6 +49,10 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
         ["app_errors_snapshot", { type: "snapshot", errors: recentAppErrors() }],
         ["invalidate", { type: "invalidate", assistantId: state.settings.assistantId, timestamp: Date.now() }],
         mcpHealthSnapshotFrame(),
+        // 进行中的订阅登录:重连即重推最近一帧,挂载中的登录面板即刻重新对齐。
+        // provider_auth 是增量语义(不入前端 REPLAY_EVENTS 缓存)——这里读的是服务端
+        // attempts 表的实时帧,终态(success/error/cancelled)已随 attempt 清理,不会重推陈旧成功帧。
+        ...activeLoginEvents().map((event): [string, object] => ["provider_auth", event]),
       ],
       (controller) => {
         appClients.add(controller);

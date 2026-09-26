@@ -5,6 +5,7 @@
 //                   产出归一成 { headers, baseUrl } 供各引擎注入。
 // 这是「刷新权唯一在核心」的落地:引擎永不自己刷新,只拿短命 access。
 
+import { defaultProviderAuthContext } from "../../../pi/packages/ai/src/auth/context.ts";
 import { resolveProviderAuth } from "../../../pi/packages/ai/src/auth/resolve.ts";
 import type { Provider } from "../../foundation/types";
 import { providerHeaders } from "../index";
@@ -21,17 +22,10 @@ export interface ResolvedProviderAuth {
   accountId?: string;
 }
 
-const ambientEnv = {
-  env: async (name: string) => process.env[name],
-  fileExists: async (path: string) => {
-    try {
-      const { existsSync } = await import("node:fs");
-      return existsSync(path.replace(/^~(?=$|\/|\\)/, process.env.USERPROFILE ?? process.env.HOME ?? "~"));
-    } catch {
-      return false;
-    }
-  },
-};
+// 环境/文件探测上下文复用 pi 的 defaultProviderAuthContext():不重抄一份,避免空串环境变量
+// 过滤与 ~ 展开(os.homedir)等语义随上游演进时宿主副本悄悄漂移。该 context 只服务 oauth 轨的
+// apiKey 型凭据解析(env 引用),oauth 凭据自身不经它。
+const ambientEnv = defaultProviderAuthContext();
 
 export async function resolveProviderAuthForProvider(
   provider: Provider,

@@ -1229,7 +1229,9 @@ export function ProvidersSection({
             {draft.authMode === "oauth" ? (
               // 登录态读 SSE 真值(selected)而非 draft:draft 只在切换供应商/登录态翻转时重对齐,
               // 用 draft 会让卡片在登出/登录后仍停留在旧状态。
-              <ProviderLoginPanel provider={selected ?? draft} />
+              // key 绑 provider.id:切换供应商时强制重挂载,清掉上次残留的 manualCode/textInput/
+              // 已打开授权 URL 等瞬态——否则 A 供应商输入的授权码会带进 B 的登录框。
+              <ProviderLoginPanel key={(selected ?? draft).id} provider={selected ?? draft} />
             ) : (
               <label className="space-y-2 md:col-span-2">
                 <div className="flex items-center gap-2">

@@ -7,7 +7,7 @@ import type { Provider } from "../../foundation/types";
 
 export { createPiCredentialStore } from "./credential-store";
 export { OAUTH_FLOWS, oauthFlowFor } from "./flows";
-export { cancelLogin, currentLoginEvent, initProviderAuthBroadcast, loginInProgress, logoutProvider, resumePrompt, startLogin } from "./login";
+export { activeLoginEvents, cancelLogin, currentLoginEvent, initProviderAuthBroadcast, loginInProgress, logoutProvider, resumePrompt, startLogin } from "./login";
 export { resolveProviderAuthForProvider } from "./resolve";
 export { applyShaping, shapingFor } from "./shaping";
 export { bundledModelsFor } from "./catalog";

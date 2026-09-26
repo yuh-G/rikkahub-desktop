@@ -10,7 +10,7 @@
 // oauthFlowFor(flows.ts 的 presetProviderId 反查),不是按 host 嗅探。
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cancelLogin, currentLoginEvent, initProviderAuthBroadcast, loginInProgress, logoutProvider, resumePrompt, startLogin, type ProviderAuthEvent } from "./login";
+import { activeLoginEvents, cancelLogin, currentLoginEvent, initProviderAuthBroadcast, loginInProgress, logoutProvider, resumePrompt, startLogin, type ProviderAuthEvent } from "./login";
 import { clearOAuthFlowOverride, overrideOAuthFlow } from "./flows";
 import { setState, state } from "../../persistence/json-store";
 import { defaultSettings } from "../../app-config/defaults";
@@ -332,5 +332,32 @@ describe("login orchestration", () => {
     await promise;
     expect(loginInProgress(CODEX_PROVIDER_ID)).toBe(false);
     expect(events.some((e) => e.phase === "cancelled")).toBe(true);
+  });
+
+  test("activeLoginEvents:E /api/events 连接首帧快照的实时来源——只含进行中尝试,终态清空", async () => {
+    // 重连时服务端要重推「进行中登录的最近帧」,数据源就是 activeLoginEvents。它必须是
+    // attempts 表的实时投影:无尝试→空;挂起→含该 provider 的最近帧;取消/成功后→空
+    // (attempt 已清理,不会重推陈旧 success 帧把已登出的卡片又点亮)。
+    expect(activeLoginEvents()).toEqual([]);
+    overrideOAuthFlow("openai-codex", {
+      name: "Test",
+      login: async (interaction) => {
+        interaction.notify({ type: "auth_url", url: "https://auth.example/x", instructions: "" });
+        if (interaction.signal.aborted) throw new Error("Login cancelled");
+        await new Promise((_, reject) => interaction.signal.addEventListener("abort", () => reject(new Error("Login cancelled"))));
+        throw new Error("unreachable");
+      },
+      refresh: async () => { throw new Error("not in test"); },
+      toAuth: async (cred) => ({ apiKey: cred.access }),
+    });
+    const result = await startLogin(CODEX_PROVIDER_ID);
+    if (!result.ok) throw new Error(result.error);
+    const frames = activeLoginEvents();
+    expect(frames).toHaveLength(1);
+    expect(frames[0].providerId).toBe(CODEX_PROVIDER_ID);
+    expect(frames[0].phase).toBe("waiting_browser");
+    cancelLogin(CODEX_PROVIDER_ID);
+    await result.completion;
+    expect(activeLoginEvents()).toEqual([]);
   });
 });

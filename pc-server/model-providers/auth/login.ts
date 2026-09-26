@@ -328,3 +328,14 @@ export function loginInProgress(providerId: string): boolean {
 export function currentLoginEvent(providerId: string): ProviderAuthEvent | null {
   return attempts.get(providerId)?.lastEvent ?? null;
 }
+
+/** 所有进行中尝试的最近帧。并进 /api/events 的连接首帧快照:SSE 重连(网络抖动/后端重启)
+ *  时重推一次,挂载中的登录面板即刻重新对齐——否则重连窗口内面板停在旧三态,而服务端
+ *  尝试仍在推进(如设备码已换出、授权 URL 已刷新),用户操作的是过期视图。 */
+export function activeLoginEvents(): ProviderAuthEvent[] {
+  const frames: ProviderAuthEvent[] = [];
+  for (const attempt of attempts.values()) {
+    if (attempt.lastEvent) frames.push(attempt.lastEvent);
+  }
+  return frames;
+}
