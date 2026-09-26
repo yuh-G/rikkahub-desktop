@@ -133,11 +133,6 @@ async function run(): Promise<void> {
                 const parsed = JSON.parse(currentData) as unknown;
                 attempt = 0;
                 if (REPLAY_EVENTS.has(currentEvent)) lastSnapshot.set(currentEvent, parsed);
-                // 诊断(临时):跟踪登录终态帧是否从 SSE 到达并广播给页面。排查「授权完面板
-                // 仍卡进行中」时,对照页面端 [app-events] 日志可定位丢帧环节(SSE/worker/页面)。
-                if (currentEvent === "provider_auth") {
-                  console.log("[app-events-worker] provider_auth", (parsed as { phase?: string })?.phase, "ports:", ports.size);
-                }
                 broadcast({ type: "event", event: currentEvent, data: parsed });
               } catch {
                 // 坏帧忽略,与页内 sse() 一致

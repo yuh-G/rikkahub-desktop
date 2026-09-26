@@ -117,10 +117,6 @@ function startViaSharedWorker(): boolean {
       if (fellBackToDirect) return; // 已回退直连,迟到的 worker 消息丢弃,防双份分发
       const payload = message.data as WorkerToPageMessage;
       if (payload.type === "event" && payload.event) {
-        // 诊断(临时):跟踪登录终态帧是否到达页面。对照 worker 端日志定位丢帧环节。
-        if (payload.event === "provider_auth") {
-          console.log("[app-events] provider_auth", (payload.data as { phase?: string })?.phase);
-        }
         dispatch(payload.event, payload.data);
         return;
       }
