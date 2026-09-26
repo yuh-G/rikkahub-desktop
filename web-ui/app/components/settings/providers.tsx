@@ -106,6 +106,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
 
   // 浏览器登录:授权 URL 首次到达时在桌面壳里直接拉起系统浏览器(pi 只给 URL 不开浏览器)。
   // 纯浏览器环境 window.open 不在用户手势内会被拦截,留给「打开浏览器」按钮。
+  // 设备码登录:若 verification_uri_complete 存在(Kimi/Grok 带 user_code 参数的完整链接)也自动跳转。
   const openedAuthUrlRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     const off = onAppEvent("provider_auth", (event) => {
@@ -114,6 +115,10 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
       if (event.phase === "waiting_browser" && event.authUrl && openedAuthUrlRef.current !== event.authUrl) {
         openedAuthUrlRef.current = event.authUrl;
         if (isDesktopShell()) void openExternal(event.authUrl);
+      }
+      if (event.phase === "waiting_device_code" && event.deviceCode?.verificationUriComplete && openedAuthUrlRef.current !== event.deviceCode.verificationUriComplete) {
+        openedAuthUrlRef.current = event.deviceCode.verificationUriComplete;
+        if (isDesktopShell()) void openExternal(event.deviceCode.verificationUriComplete);
       }
       if (event.phase === "success") {
         toast.success(t("settings:providers.oauth.success"));
