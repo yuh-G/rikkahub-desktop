@@ -244,6 +244,15 @@ export function isUnclaimedModelDisplayName(
   return display === String(modelId ?? "").trim();
 }
 
+/** 「排版等价」判定:忽略大小写与分隔形态(-/./ /_/斜杠)后比较。官方名与 id 排版
+ *  等价 = 它没携带任何 id 之外的信息(懒名抄写/大小写加工/连字改空格),启发式对
+ *  这类行本就能产出同级规整形态——落库只会占坑,不会有增益。是「谁规范谁获胜」
+ *  裁决的度量尺:官方名要认领一行,必须带真增量(营销名/昵称/版本映射)。 */
+export function isTypographicVariant(a: string, b: string): boolean {
+  const fold = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return fold(a) === fold(b);
+}
+
 /** 模型 id → 规整显示名。纯函数,幂等;空输入返回空串。 */
 export function prettifyModelId(modelId: string): string {
   const trimmed = modelId.trim();

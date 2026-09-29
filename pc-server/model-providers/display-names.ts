@@ -1,9 +1,11 @@
 // model-providers/display-names.ts — models.dev 官方显示名的解析与落库(权威层)
 //
 // 分层契约的另一端(启发式在 model-name-heuristic.ts):启发式给「第一帧的规整名」,
-// 本模块随后把 models.dev 的官方名**静默落库**。两者由「displayName === modelId」
-// 这个「未认领」信号隔开——只有还顶着裸 id 的行才允许被官方名认领;
-// 用户手改名 / 上游接口给的 name / OAuth 目录名 / 已填过的官方名,一律不碰。
+// 本模块随后把 models.dev 的官方名**静默落库**。裁决原则「谁规范谁获胜」(用户拍板
+// 2026-09-29):官方名与 id 排版等价(只差大小写/连字/斜杠)= 目录没做策展,不认领,
+// 启发式持有显示权;官方名携带真实增量(营销名/昵称/版本映射)才落库。两者由
+// isUnclaimedModelDisplayName 的「未认领」信号隔开——只有还顶着裸 id 的行才允许被
+// 认领;用户手改名 / 上游接口给的 name / OAuth 目录名 / 已填过的官方名,一律不碰。
 // (启发式永不落库的完整理由见 model-name-heuristic.ts 头注。)
 //
 // 查表纪律继承 model-limits.ts:按**端点身份**(resolveCatalogKeys 三级阶梯)取值,
@@ -21,20 +23,28 @@ import { state } from "../persistence/json-store";
 import { hostOfProvider } from "../inference-engine/message-builder";
 import type { ModelCatalog } from "./model-limits";
 import { resolveCatalogKeys } from "./model-limits";
-import { isUnclaimedModelDisplayName } from "./model-name-heuristic";
+import { isTypographicVariant, isUnclaimedModelDisplayName } from "./model-name-heuristic";
 
 /** 官方名里的目录噪音后缀:同模型的无日期别名行标 "(latest)",与带日期行显示不同名
  *  只制造混乱(用户拍板 2026-09-29:claude-opus-4-5 → "Claude Opus 4.5",不带 latest)。
  *  其余括注((preview)/(free)/(EU)…)承载真实语义,保留。 */
 const CATALOG_NOISE_SUFFIX = /\s*\((latest)\)\s*$/i;
 
-/** 按端点身份查模型的官方显示名。查不到(目录无此模型 / 精确 id 不存在 / 目录未加载)
- *  返回 null——调用方保持现状,启发式兜底继续生效。 */
+/** 按端点身份查模型的官方显示名。查不到(目录无此模型 / 精确 id 不存在 / 目录未加载
+ *  / 官方名与 id 排版等价)返回 null——调用方保持现状,启发式兜底继续生效。
+ *  排版等价闸门(「谁规范谁获胜」,用户拍板 2026-09-29):官方名与 id 只差
+ *  大小写/连字/斜杠形态 = 目录没做策展、只是抄写 id(全目录 5400 行如此),落库
+ *  只会占坑锁死启发式(tencent/Hunyuan-A13B-Instruct → 显示带斜杠的整条 id);
+ *  启发式对这类行本就能产出同级规整形态(Gemma 3 27B IT / Qwen3 VL 235B…)。
+ *  官方名要认领,必须携带 id 之外的真实增量(营销名/昵称/日期→版本映射)。 */
 export function officialDisplayNameFor(catalog: ModelCatalog | null, host: string, modelId: string): string | null {
   if (!catalog || !modelId) return null;
   for (const key of resolveCatalogKeys(catalog, host)) {
     const name = catalog[key]?.models?.[modelId]?.name;
-    if (typeof name === "string" && name.trim()) return name.replace(CATALOG_NOISE_SUFFIX, "").trim();
+    if (typeof name !== "string" || !name.trim()) continue;
+    const official = name.replace(CATALOG_NOISE_SUFFIX, "").trim();
+    if (isTypographicVariant(official, modelId)) continue; // 排版变体:无增量,不认领
+    return official;
   }
   return null;
 }
