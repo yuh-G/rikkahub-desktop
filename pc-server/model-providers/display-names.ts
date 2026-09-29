@@ -21,6 +21,7 @@ import { state } from "../persistence/json-store";
 import { hostOfProvider } from "../inference-engine/message-builder";
 import type { ModelCatalog } from "./model-limits";
 import { resolveCatalogKeys } from "./model-limits";
+import { isUnclaimedModelDisplayName } from "./model-name-heuristic";
 
 /** 官方名里的目录噪音后缀:同模型的无日期别名行标 "(latest)",与带日期行显示不同名
  *  只制造混乱(用户拍板 2026-09-29:claude-opus-4-5 → "Claude Opus 4.5",不带 latest)。
@@ -38,12 +39,12 @@ export function officialDisplayNameFor(catalog: ModelCatalog | null, host: strin
   return null;
 }
 
-/** 一行是否「未被认领」:displayName 与 modelId 相等(含空串退化,见 isClaimed 判定)。
- *  这是官方名唯一允许写入的门;任何其他形态的 displayName 都代表已有主人。 */
+/** 一行是否「未被认领」:委托启发式模块的共享信号(空 / 与 modelId 相等)。
+ *  这是官方名唯一允许写入的门;任何其他形态的 displayName 都代表已有主人。
+ *  渲染层(display.ts)走同一把尺——两边口径必须一致,错位会出现
+ *  「落库层认为已认领、渲染层却拿启发式覆盖」。 */
 export function isUnclaimedDisplayName(model: Model): boolean {
-  const display = String(model.displayName ?? "").trim();
-  if (!display) return true; // 退化数据:视同未认领,允许补名
-  return display === model.modelId;
+  return isUnclaimedModelDisplayName(model.displayName, model.modelId);
 }
 
 /** 批量回填:扫全部供应商的模型行,给「未认领」且目录有官方名的行填名。

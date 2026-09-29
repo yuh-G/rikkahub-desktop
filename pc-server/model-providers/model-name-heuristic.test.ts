@@ -39,8 +39,8 @@ describe("prettifyModelId — 形态边界", () => {
     expect(prettifyModelId("moonshotai/kimi-k3")).toBe("Kimi K3");
   });
 
-  test("日期后缀保持为独立段(不与版本号合并)", () => {
-    expect(prettifyModelId("claude-haiku-4-5-20251001")).toBe("Claude Haiku 4.5 20251001");
+  test("日期别名行与官方基名同名(2026-09 审计:官方名从不保留 8 位日期尾巴)", () => {
+    expect(prettifyModelId("claude-haiku-4-5-20251001")).toBe("Claude Haiku 4.5");
   });
 
   test("已是混合形态的段不二次破坏大小写", () => {
@@ -48,8 +48,8 @@ describe("prettifyModelId — 形态边界", () => {
     expect(prettifyModelId("GLM-4.7")).toBe("GLM-4.7");
   });
 
-  test("点号分隔等同连字符(gemini-2.5 / gemini2.5 混写)", () => {
-    expect(prettifyModelId("gemini-2.5-flash-lite")).toBe("Gemini 2.5 Flash Lite");
+  test("点号分隔等同连字符;Gemini 家族 flash-lite 官方连字", () => {
+    expect(prettifyModelId("gemini-2.5-flash-lite")).toBe("Gemini 2.5 Flash-Lite");
   });
 
   test("未知字母开头词默认首字母大写(通用兜底)", () => {
