@@ -24,6 +24,7 @@ import {
 import { Skeleton } from "~/components/ui/skeleton";
 import { Textarea } from "~/components/ui/textarea";
 import { normalizeImageForModelUpload } from "~/lib/image-normalize";
+import { getModelDisplayName } from "~/lib/display";
 import api, { appendWebAuthQuery } from "~/services/api";
 import { cn } from "~/lib/utils";
 import { useSettingsStore } from "~/stores/app-store";
@@ -81,7 +82,7 @@ export function meta() {
 }
 
 function modelLabel(model: ProviderModel, fallback: string) {
-  return model?.displayName || model?.modelId || fallback;
+  return getModelDisplayName(model?.displayName, model?.modelId) || fallback;
 }
 
 /** 域10-2:生成中的占位卡——骨架 + 已等待秒数(每秒 tick)+ 取消按钮。

@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import { getModelDisplayName } from "~/lib/display";
 import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import api from "~/services/api";
@@ -288,12 +289,12 @@ export function DefaultModelsSection({
           <SelectItem value="__none">{emptyLabel}</SelectItem>
           {selected && !listed ? (
             <SelectItem value={draft[key]}>
-              {selected.provider.name} / {selected.model.displayName || selected.model.modelId}
+              {selected.provider.name} / {getModelDisplayName(selected.model.displayName, selected.model.modelId)}
             </SelectItem>
           ) : null}
           {options.map((model) => (
             <SelectItem key={`${key}-${model.id}`} value={model.id}>
-              {model.providerName} / {model.displayName || model.modelId}
+              {model.providerName} / {getModelDisplayName(model.displayName, model.modelId)}
             </SelectItem>
           ))}
         </SelectContent>

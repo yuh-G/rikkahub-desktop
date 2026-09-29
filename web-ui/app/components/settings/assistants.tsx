@@ -16,6 +16,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { UIAvatar } from "~/components/ui/ui-avatar";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { createId } from "~/lib/id";
+import { getModelDisplayName } from "~/lib/display";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -66,7 +67,7 @@ function renderMessageTemplatePreview(
     nickname: "User",
     char: assistant.name?.trim() || "Assistant",
     model_id: model?.modelId || "gpt-4o",
-    model_name: model?.displayName || model?.modelId || "GPT-4o",
+    model_name: getModelDisplayName(model?.displayName, model?.modelId) || "GPT-4o",
     system_version: `${(() => {
       const p = navigator.platform || "web";
       const n = /Win/i.test(p)

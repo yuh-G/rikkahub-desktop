@@ -17,7 +17,8 @@ import { handleAuthTokenRequest, handleWebAuthStatus, isWebAuthAuthorized, warnI
 import { routeStatic } from "./api/static";
 import { routeApi } from "./api/router";
 import { hasProxyForwardHeaders, isLoopbackAddress, markRequestNetworkContext } from "./api/net-context";
-import { loadModelsDev } from "./inference-engine/providers";
+import { loadModelsDev, modelsDevCache } from "./inference-engine/providers";
+import { backfillModelDisplayNames } from "./model-providers/display-names";
 import { checkpointConversationsDb, flushConvDirtyNow, getConversation, persistConversation } from "./conversations";
 
 import process from "node:process";
@@ -416,7 +417,8 @@ void (async () => {
   // 就绪后台执行,内部自捕获,绝不影响运行。
   void runDataDirHygiene();
   // 懒加载 models.dev 模型目录(用于 context window 显示)。fire-and-forget,失败不影响启动。
-  void loadModelsDev();
+  // 加载完成后回填模型官方显示名(只认领还顶着裸 id 的行,幂等;见 display-names.ts)。
+  void loadModelsDev().then(() => backfillModelDisplayNames(modelsDevCache));
   console.log("Press Ctrl+C to stop RikkaHub PC.");
 
   // Start anonymous analytics (DAU tracking).  Fire-and-forget — a failed ping

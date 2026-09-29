@@ -12,6 +12,8 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
+import { getModelDisplayName } from "~/lib/display";
+import { prettifyModelId } from "@server/model-providers/model-name-heuristic";
 import {
   Select,
   SelectContent,
@@ -166,6 +168,9 @@ export function ModelEditDialog({
   const [draft, setDraft] = React.useState<ProviderModel>(initialModel);
   const [tab, setTab] = React.useState<TabId>(TAB_BASIC);
   const [error, setError] = React.useState<string | null>(null);
+  // displayName 是否被用户手动编辑过(add 模式的预填跟随开关):一旦触碰永久停止跟随
+  // modelId 输入的预填,后续改 modelId 绝不覆盖用户输入的任何字符。
+  const [displayNameDirty, setDisplayNameDirty] = React.useState(false);
 
   // Reset draft whenever the dialog opens with a new model — critical for the "click row → edit"
   // flow where the same dialog instance is reused across many different models.
@@ -180,12 +185,21 @@ export function ModelEditDialog({
         customHeaders: toArray<CustomHeader>(initialModel.customHeaders),
         customBodies: toArray<CustomBody>(initialModel.customBodies),
       });
+      setDisplayNameDirty((initialModel.displayName ?? "").trim().length > 0);
       setTab(TAB_BASIC);
       setError(null);
     }
   }, [open, initialModel]);
 
   const update = <K extends keyof ProviderModel>(key: K, value: ProviderModel[K]) => {
+    if (key === "displayName") setDisplayNameDirty(true);
+    // add 模式的预填跟随:用户没动过名字框时,modelId 每次输入都把启发式规整名同步进
+    // 名字框(所见即所得,保存的即规整名);用户一旦动手,跟随即永久关闭。
+    if (key === "modelId" && mode === "add" && !displayNameDirty) {
+      const suggested = prettifyModelId(String(value ?? ""));
+      setDraft((current) => ({ ...current, modelId: String(value), displayName: suggested }));
+      return;
+    }
     setDraft((current) => ({ ...current, [key]: value }));
   };
 
@@ -328,7 +342,7 @@ export function ModelEditDialog({
               variant="outline"
               className="text-destructive hover:bg-destructive/10"
               onClick={async () => {
-                if (await confirmDialog({ title: t("model_edit.delete_confirm", { name: draft.displayName || draft.modelId }), danger: true })) {
+                if (await confirmDialog({ title: t("model_edit.delete_confirm", { name: getModelDisplayName(draft.displayName, draft.modelId) }), danger: true })) {
                   onDelete();
                   onOpenChange(false);
                 }

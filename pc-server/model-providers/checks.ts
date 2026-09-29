@@ -13,6 +13,7 @@ import { applyShaping, bundledModelsFor, isOAuthProvider, oauthFlowFor, resolveP
 import { hostOfProvider } from "../inference-engine/message-builder";
 import { deltaReasoningContent, deltaTextContent, modelsDevCache, parseSseChunks, responseEventToDelta, upstreamHttpError } from "../inference-engine/providers";
 import { internalOutputCap } from "./model-limits";
+import { isUnclaimedDisplayName, officialDisplayNameFor } from "./display-names";
 
 /** 连通性测试的输出预算(我们的探测,不是用户的选择;经 internalOutputCap 收进模型上限)。 */
 const PROVIDER_TEST_OUTPUT_TOKENS = 4096;
@@ -40,6 +41,20 @@ export function endpointFor(providerItem: Provider, baseUrlOverride?: string) {
 async function headersForProvider(providerItem: Provider): Promise<Record<string, string>> {
   const resolved = await resolveProviderAuthForProvider(providerItem);
   return resolved.headers;
+}
+
+/** 官方显示名填充:对未认领(displayName === modelId)的行查 models.dev 官方名。
+ *  前端收到的列表第一帧即规整(启发式兜底在渲染层),这里让保存落库的也是官方真值,
+ *  两层各司其职(见 display-names.ts 头注的分层契约)。缓存未加载时静默跳过——
+ *  启动窗口期的列表先以启发式形态展示,随后的启动回填会把官方名补上。 */
+function applyOfficialDisplayNames(providerItem: Provider, models: Model[]): Model[] {
+  if (!modelsDevCache) return models;
+  const host = hostOfProvider(providerItem);
+  return models.map((modelItem) =>
+    isUnclaimedDisplayName(modelItem)
+      ? { ...modelItem, displayName: officialDisplayNameFor(modelsDevCache, host, modelItem.modelId) ?? modelItem.displayName }
+      : modelItem,
+  );
 }
 
 export async function fetchProviderModels(providerItem: Provider) {
@@ -109,7 +124,7 @@ export async function fetchProviderModels(providerItem: Provider) {
     // B:404 形态诊断——报文带最终 URL(模型列表 404 是 Base URL 形态错误的高频信号)。
     throw upstreamHttpError(providerItem, endpoint, response.status, text || response.statusText);
   }
-  return { endpoint, models: normalizeFetchedModels(providerItem, raw), preview: textBody(text) };
+  return { endpoint, models: applyOfficialDisplayNames(providerItem, normalizeFetchedModels(providerItem, raw)), preview: textBody(text) };
 }
 
 export async function fetchProviderBalance(providerItem: Provider) {

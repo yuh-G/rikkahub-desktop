@@ -28,6 +28,7 @@ import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { cn } from "~/lib/utils";
 import { isBalanceResultPathValid } from "~/lib/json-expression";
 import { createId } from "~/lib/id";
+import { getModelDisplayName } from "~/lib/display";
 import { copyTextToClipboard } from "~/lib/clipboard";
 import { isDesktopShell, openExternal } from "~/lib/external-link";
 import api, { appendWebAuthQuery } from "~/services/api";
@@ -1577,7 +1578,7 @@ export function ProvidersSection({
                     <AIIcon name={model.modelId} size={28} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">
-                        {model.displayName || model.modelId}
+                        {getModelDisplayName(model.displayName, model.modelId)}
                       </span>
                       <span className="block truncate text-xs text-muted-foreground">
                         {model.modelId}
@@ -1677,7 +1678,7 @@ export function ProvidersSection({
               <SelectContent>
                 {mergedTestModels.map((model) => (
                   <SelectItem key={model.id ?? model.modelId} value={model.modelId}>
-                    {model.displayName || model.modelId}
+                    {getModelDisplayName(model.displayName, model.modelId)}
                   </SelectItem>
                 ))}
               </SelectContent>

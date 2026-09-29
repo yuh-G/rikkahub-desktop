@@ -31,10 +31,18 @@ import { hostOfProvider } from "../inference-engine/message-builder";
 import { reportError } from "../observability/app-errors";
 import { DEFAULT_OUTPUT_TOKENS, isOfficialOpenAiHost, registeredOutputLimit } from "./request-dialect";
 
-/** models.dev api.json 的最小结构视图(只取我们用到的两层)。 */
+/** models.dev api.json 的最小结构视图(只取我们用到的两层)。model 行的
+ *  `name` 是官方显示名(display-names.ts 消费),`limit` 是上下文/输出上限
+ *  (本模块消费)——同一份目录,两个消费者,字段都按需声明为可选。 */
 export type ModelCatalog = Record<
   string,
-  { api?: string; models?: Record<string, { limit?: { context?: number; output?: number } }> } | undefined
+  {
+    api?: string;
+    models?: Record<
+      string,
+      { name?: string; limit?: { context?: number; output?: number } } | undefined
+    >;
+  } | undefined
 >;
 
 export type LimitField = "context" | "output";
@@ -140,7 +148,7 @@ export function resolveCatalogKeys(catalog: ModelCatalog, host: string): string[
  *  `gpt-5.2-chat-latest` 等后缀行只有 16384,混在一起取 min 会把 gpt-5 砍到 1/8。
  *  `-` 与 `.` 双锚点防 `gpt-4` 误吞 `gpt-4o`。 */
 function limitRowTiers(
-  models: Record<string, { limit?: { context?: number; output?: number } }> | undefined,
+  models: NonNullable<NonNullable<ModelCatalog[string]>["models"]>,
   modelId: string,
 ): [Array<{ context?: number; output?: number }>, Array<{ context?: number; output?: number }>] {
   if (!models) return [[], []];

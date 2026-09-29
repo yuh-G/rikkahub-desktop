@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 
 import { AIIcon } from "~/components/ui/ai-icon";
 import { UIAvatar } from "~/components/ui/ui-avatar";
+import { getModelDisplayName } from "~/lib/display";
 import { useSettingsStore } from "~/stores";
 import type { AssistantProfile, MessageDto, ProviderModel } from "~/types";
 
@@ -76,7 +77,7 @@ export function ChatMessageAvatarRow({
   const useAssistantAvatar = assistant?.useAssistantAvatar === true;
   const defaultAssistantName = t("common:quick_jump.role_assistant", { defaultValue: "Assistant" });
   const assistantName = assistant?.name?.trim() || defaultAssistantName;
-  const modelName = model.displayName.trim() || model.modelId.trim() || defaultAssistantName;
+  const modelName = getModelDisplayName(model.displayName, model.modelId) || defaultAssistantName;
   const title = useAssistantAvatar ? assistantName : modelName;
 
   return (

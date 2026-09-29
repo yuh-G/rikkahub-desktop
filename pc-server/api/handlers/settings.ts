@@ -21,7 +21,8 @@ import {
 import { state } from "../../persistence/json-store";
 import { defaultAssistant } from "../../assistants/index";
 import { firstProviderModel } from "../../model-providers/index";
-import { loadModelsDev } from "../../inference-engine/providers";
+import { loadModelsDev, modelsDevCache } from "../../inference-engine/providers";
+import { backfillModelDisplayNames } from "../../model-providers/display-names";
 import { syncMcpServerTools } from "../../tools/mcp";
 import { clearMcpOAuth, completeMcpOAuth, ensureFreshMcpToken, startMcpOAuth } from "../../tools/mcp-oauth";
 import { retryMcpServerNow } from "../../tools/mcp-health";
@@ -1017,8 +1018,10 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     const providerItem = state.settings.providers.find((item) => item.id === body.providerId);
     if (!providerItem) return error("Provider not found", 404);
     // 用户主动获取模型列表——大概率是想试新模型。顺带刷新 models.dev 缓存,让新模型
-    // 的 context 上限立即可用(不用等每日 TTL)。fire-and-forget,不阻塞模型列表返回。
-    void loadModelsDev(true);
+    // 的 context 上限与官方显示名立即可用(不用等每日 TTL)。fire-and-forget 列表返回
+    // 不被阻塞;刷新完成后回填未认领行,前端经 SSE 静默收到规整名(第一帧已由渲染层
+    // 启发式兜底,此处是权威真值落地)。
+    void loadModelsDev(true).then(() => backfillModelDisplayNames(modelsDevCache));
     try {
       const result = await fetchProviderModels(providerItem);
       if (body.save) {

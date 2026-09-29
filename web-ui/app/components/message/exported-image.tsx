@@ -15,6 +15,7 @@ import {
 import Markdown from "~/components/markdown/markdown";
 import { workspaceToolExportLabel } from "~/components/message/parts/workspace-tool-part";
 import { workspaceToolKind } from "~/lib/workspace-tool-model";
+import { getModelDisplayName } from "~/lib/display";
 import { AIIcon } from "~/components/ui/ai-icon";
 import { UIAvatar } from "~/components/ui/ui-avatar";
 import { useSettingsStore } from "~/stores";
@@ -317,7 +318,7 @@ function ExportedMessage({
   const parts = message.parts.filter(isExportable);
   // 助手在"紧跟用户提问"时显示模型名(对齐 APP showModelIcon 逻辑),连续多条助手回复只在第一条带名。
   const showModelHeader = !isUser && (!prevMessage || prevMessage.role === "USER");
-  const modelName = model?.displayName?.trim() || model?.modelId?.trim() || t("chat_message.md_role_assistant");
+  const modelName = getModelDisplayName(model?.displayName, model?.modelId) || t("chat_message.md_role_assistant");
 
   const bubbleStyle: React.CSSProperties = isUser
     ? {
