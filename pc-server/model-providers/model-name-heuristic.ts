@@ -63,6 +63,15 @@ const BRAND_WORDS: Record<string, string> = {
   stable: "Stable",
 };
 
+/** 「品牌+X」缩写变体:产品线的 X 后缀官方恒大写(glm-5.3-flashx → "FlashX"。
+ *  目录全量实证无一例外(flashx×20/airx×3/tensorx×4);max/codex/flux/flex 是
+ *  完整单词,x 属于词本身,不在此列。 */
+const X_SUFFIX_WORDS: Record<string, string> = {
+  flashx: "FlashX",
+  airx: "AirX",
+  tensorx: "TensorX",
+};
+
 /** 品牌+数字官方恒空格的家族(llama4 → "Llama 4"、veo3.1 → "Veo 3.1");其余家族
  *  官方恒粘连(qwen3 → "Qwen3.5" / glm5 → "GLM-5V" / k2 → "K2.7")。空格/粘连是
  *  各家排版惯例,无统一规则可推导,逐一登记。 */
@@ -97,10 +106,12 @@ const JOINED_TOKEN_PAIRS: Record<string, string> = {
 
 /** 全 id 特表:id 本身不含任何家族线索、但形态固定且高频的。对齐 pi 目录官方名
  *  (kimi-coding.json:k3 → "Kimi K3"、k3-256k → "Kimi K3-256K"——256K 的连字符
- *  是官方写法,词对规则得不出来)。 */
+ *  是官方写法,词对规则得不出来)。chatgpt-image 是 OpenAI 图像系的别扭命名
+ *  (chatgpt 前缀 + latest 指针,官方目录自己都抄 id),按家族真实产品名收口。 */
 const EXACT_ID_OVERRIDES: Record<string, string> = {
   k3: "Kimi K3",
   "k3-256k": "Kimi K3-256K",
+  "chatgpt-image-latest": "GPT-Image",
 };
 
 /** 首段即「k + 数字(.数字)」的裸版本段 id:月之暗面端点的裸家族段(不带 kimi-
@@ -149,8 +160,13 @@ function stripVendorDotPrefixes(localPart: string): string {
  *  保留方是懒名第三方网关,懒名行走渲染层启发式,不受影响)。
  *  -@尾:Vertex 路由后缀(claude-opus-4-8@default / @20250929);
  *  -latest:指针别名(openai/mistral 惯例,官方名的 "(latest)" 括注同被剥离;
- *      google/azure 少数行保留 "Latest" 一词,由官方名层接管,不在此纠结);
+ *      google/azure 少数行保留 "Latest" 一词,由官方名层接管,不在此纠结)。
+ *      例外:剥后只剩裸品牌词时不剥——"Kimi" "GLM" 毫无信息量,连字保留
+ *      "Kimi-Latest"(用户拍板 2026-09-29)反可区分;
  *  -8 位日期:anthropic 别名行(claude-opus-4-5-20251101 → "Claude Opus 4.5");
+ *  -YYYY-MM-DD:快照日期(gpt-4o-2024-05-13 → "GPT-4o",用户拍板 2026-09-29;
+ *      目录 36 行的主流形态是 "(date)" 括注——启发式产不出括注,剥出基名是
+ *      到括注形态的最短距离,官方名层随后补全);
  *  -6 位日期:火山引擎系(doubao-seed-1-6-251015 → "Seed 1.6");
  *  -MM-YYYY:cohere 惯例(command-a-03-2025 → "Command A";google 的
  *      preview-10-2025 行官方保留日期,但那几行本就因括注差异不可能精确,取舍
@@ -165,10 +181,15 @@ function stripDeploySuffixes(localPart: string): string {
   // 冒号规格段(ollama 形态 llama3.3:70b):冒号是「家族:参数量」分隔,等同连字符
   // 处理,否则 70b 会带着冒号一起逃过分词。Bedrock 的 -v1:0 部署尾另在后面剥。
   let s = localPart.replace(/:(\d+[a-z]+)$/i, "-$1");
+  if (/-latest$/i.test(s)) {
+    const base = s.slice(0, -"-latest".length);
+    // 剥后只剩裸品牌词(无连字符/数字) → 不剥,kimi-latest 保持连字
+    if (/-|\d/.test(base)) s = base;
+  }
   return s
     .replace(/@[\w.-]+$/, "")
-    .replace(/-latest$/i, "")
     .replace(/-\d{8}$/, "")
+    .replace(/-\d{4}-\d{2}-\d{2}$/, "")
     .replace(/-\d{6}$/, "")
     .replace(/-\d{2}-\d{4}$/, "")
     .replace(/-v?\d+:\d+$/i, "");
@@ -181,6 +202,7 @@ function prettifyToken(token: string, prev: string | undefined): string {
   const lower = token.toLowerCase();
   if (BRAND_WORDS[lower]) return BRAND_WORDS[lower];
   if (ACRONYM_TOKENS[lower]) return ACRONYM_TOKENS[lower];
+  if (X_SUFFIX_WORDS[lower]) return X_SUFFIX_WORDS[lower]; // flashx/airx/tensorx → FlashX/AirX/TensorX
   const dotted = token.match(/^([a-z]+)\.(\d+(?:\.\d+)?)$/);
   if (dotted && ACRONYM_TOKENS[dotted[1]]) return `${ACRONYM_TOKENS[dotted[1]]}.${dotted[2]}`; // flux.1-dev 剥尾后剩 "flux.1" → FLUX.1
   if (/^\d+(\.\d+)*$/.test(token)) return token; // 5 / 5.4 / 20251001 / 0711
@@ -292,6 +314,14 @@ export function prettifyModelId(modelId: string): string {
   for (let i = words.length - 1; i > 0; i--) {
     const joined = JOINED_TOKEN_PAIRS[`${words[i - 1]}-${words[i]}`.toLowerCase()];
     if (joined) words.splice(i - 1, 2, joined);
+  }
+
+  // 「裸品牌-latest」连字:上一环节保留的未剥 -latest(kimi-latest / glm-latest),
+  // 分词后 Latest 与品牌词用连字符相接——空格形态 "Kimi Latest" 是句子不像产品名,
+  // 连字 "Kimi-Latest" 保留指针语义(用户拍板 2026-09-29)。仅限恰好两个词、首词
+  // 无空格分版的形态,防止误吞多词名。
+  if (words.length === 2 && words[1] === "Latest") {
+    words.splice(0, 2, `${words[0]}-Latest`);
   }
 
   return words.join(" ").replace(/\s+/g, " ").trim();

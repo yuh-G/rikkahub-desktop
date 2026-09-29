@@ -43,6 +43,35 @@ describe("prettifyModelId — 形态边界", () => {
     expect(prettifyModelId("claude-haiku-4-5-20251001")).toBe("Claude Haiku 4.5");
   });
 
+  test("快照日期尾剥离,给干净基名(用户拍板 2026-09-29;目录主流形态是括注,启发式产不出)", () => {
+    expect(prettifyModelId("gpt-4o-2024-05-13")).toBe("GPT-4o");
+    expect(prettifyModelId("gpt-4o-mini-2024-07-18")).toBe("GPT-4o mini");
+    expect(prettifyModelId("qwen3-max-2026-01-23")).toBe("Qwen3 Max");
+  });
+
+  test("裸品牌-latest 连字保留:剥后只剩品牌词时 Latest 是唯一可区分内容(用户拍板 2026-09-29)", () => {
+    expect(prettifyModelId("kimi-latest")).toBe("Kimi-Latest");
+    expect(prettifyModelId("glm-latest")).toBe("GLM-Latest");
+    expect(prettifyModelId("deepseek-latest")).toBe("DeepSeek-Latest");
+    // 剥后还有功能词的照常剥(官方惯例)
+    expect(prettifyModelId("mistral-large-latest")).toBe("Mistral Large");
+    expect(prettifyModelId("gpt-5.2-chat-latest")).toBe("GPT-5.2 Chat");
+    expect(prettifyModelId("mistral-code-latest")).toBe("Mistral Code");
+  });
+
+  test("chatgpt-image 是 OpenAI 图像系别名,按家族产品名收口(用户拍板 2026-09-29)", () => {
+    expect(prettifyModelId("chatgpt-image-latest")).toBe("GPT-Image");
+  });
+
+  test("「品牌+X」缩写变体恒大写:目录全量实证 FlashX/AirX/TensorX 无一例外", () => {
+    expect(prettifyModelId("glm-4.7-flashx")).toBe("GLM-4.7 FlashX");
+    expect(prettifyModelId("glm-5.3-flashx")).toBe("GLM-5.3 FlashX");
+    expect(prettifyModelId("glm-4.5-airx")).toBe("GLM-4.5 AirX");
+    // max/codex 是完整单词,x 属于词本身,不受影响
+    expect(prettifyModelId("qwen3-max")).toBe("Qwen3 Max");
+    expect(prettifyModelId("gpt-5.3-codex-spark")).toBe("GPT-5.3 Codex Spark");
+  });
+
   test("已是混合形态的段不二次破坏大小写", () => {
     expect(prettifyModelId("gpt-4o-mini")).toBe("GPT-4o mini");
     expect(prettifyModelId("GLM-4.7")).toBe("GLM-4.7");
