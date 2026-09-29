@@ -186,13 +186,19 @@ function stripDeploySuffixes(localPart: string): string {
     // 剥后只剩裸品牌词(无连字符/数字) → 不剥,kimi-latest 保持连字
     if (/-|\d/.test(base)) s = base;
   }
-  return s
-    .replace(/@[\w.-]+$/, "")
-    .replace(/-\d{8}$/, "")
-    .replace(/-\d{4}-\d{2}-\d{2}$/, "")
-    .replace(/-\d{6}$/, "")
-    .replace(/-\d{2}-\d{4}$/, "")
-    .replace(/-v?\d+:\d+$/i, "");
+  // 循环剥到不动:尾巴会叠层(claude-…-20250929-v1:0 先剥冒号尾才露出 8 位日期,
+  // 单遍链会让 -20250929 残留成孤儿词)。每轮最多剥一层,规则互斥不空转。
+  for (;;) {
+    const next = s
+      .replace(/@[\w.-]+$/, "")
+      .replace(/-\d{8}$/, "")
+      .replace(/-\d{4}-\d{2}-\d{2}$/, "")
+      .replace(/-\d{6}$/, "")
+      .replace(/-\d{2}-\d{4}$/, "")
+      .replace(/-v?\d+:\d+$/i, "");
+    if (next === s) return s;
+    s = next;
+  }
 }
 
 /** 单个 token 的规整。返回值即产出词;噪音词在主循环里先行丢弃。
