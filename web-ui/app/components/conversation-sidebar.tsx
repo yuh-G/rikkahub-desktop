@@ -857,7 +857,7 @@ export const ConversationSidebar = React.memo(
 
     return (
       <Sidebar collapsible="offcanvas" variant="sidebar">
-        <SidebarHeader>
+        <SidebarHeader className="p-2 pt-3">
           {/* 品牌行已上移到画布顶带(conversations.tsx),此处只余头像行。
               用户资料行(F1:按用户要求保持顶部,不学 NewMax 的用户归底);
               I5:折叠钮居其右侧垂直居中。 */}
