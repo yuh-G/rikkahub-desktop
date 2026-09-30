@@ -127,7 +127,7 @@ export function ConversationSearchButton({ onSelect }: ConversationSearchButtonP
         <Button
           variant="ghost"
           size="sm"
-          className="h-9 w-full justify-start gap-3 rounded-[10px] px-2 font-medium text-[var(--ds-text-primary)]"
+          className="h-9 w-full justify-start gap-3 rounded-[var(--ds-radius-sm)] px-2 font-medium text-[13px] text-[var(--ds-text-primary)]"
           type="button"
         >
           <Search className="size-[18px] text-[var(--ds-icon)]" strokeWidth={1.75} />

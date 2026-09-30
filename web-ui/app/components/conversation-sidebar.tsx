@@ -936,11 +936,14 @@ export const ConversationSidebar = React.memo(
         </SidebarHeader>
         <SidebarContent className="min-h-0">
           <SidebarGroup>
-            <div className="space-y-1">
+            {/* 分组面板(SidebarSection 配方):surface-400 底——
+                恰比侧栏卡面(surface-300)深一档,radius-md 圆角 + 6px 内边距,常态无阴影;
+                花色主题下 surface-400 走语义派生,与卡面极端同底时自然退平不炸。 */}
+            <div className="space-y-1 rounded-[var(--ds-radius-md)] bg-[var(--ds-surface-400)] p-1.5">
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-9 w-full justify-start gap-3 rounded-[10px] px-2 font-medium text-[var(--ds-text-primary)]"
+                className="h-9 w-full justify-start gap-3 rounded-[var(--ds-radius-sm)] px-2 font-medium text-[13px] text-[var(--ds-text-primary)]"
                 onClick={onCreateConversation}
               >
                 <Plus className="size-[18px] text-[var(--ds-icon)]" strokeWidth={1.75} />
@@ -953,7 +956,7 @@ export const ConversationSidebar = React.memo(
                   <Button
                     variant="outline"
                     size="sm"
-                    className="flex-1 justify-start"
+                    className="h-9 flex-1 justify-start rounded-[var(--ds-radius-sm)] px-2 font-medium text-[13px]"
                     onClick={() => void handleBatchDelete()}
                     disabled={batchDeleting || selectedConversationIds.length === 0}
                   >
@@ -980,7 +983,7 @@ export const ConversationSidebar = React.memo(
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-9 w-full justify-start gap-3 rounded-[10px] px-2 font-medium text-[var(--ds-text-primary)]"
+                  className="h-9 w-full justify-start gap-3 rounded-[var(--ds-radius-sm)] px-2 font-medium text-[13px] text-[var(--ds-text-primary)]"
                   onClick={() => setSelectionMode(true)}
                   disabled={!onDeleteMany || conversations.length === 0}
                 >
