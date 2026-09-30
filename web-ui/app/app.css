@@ -40,7 +40,10 @@
   --chart-3: oklch(0.55 0.22 263);
   --chart-4: oklch(0.49 0.22 264);
   --chart-5: oklch(0.42 0.18 266);
-  --sidebar: #f2eee6;
+  /* 顶带高度:画布顶部"Logo 品牌行 + 窗口控制钮"那条窄带的唯一锚,
+     也是侧栏卡顶边与主卡顶边对齐同一水平线的依据。 */
+  --app-band-h: 2.5rem;
+  --sidebar: #f6f4ef;
   --sidebar-foreground: #181b19;
   --sidebar-primary: #2d4739;
   --sidebar-primary-foreground: rgba(255, 255, 255, 0.9);
@@ -186,7 +189,9 @@
   --chart-3: oklch(0.55 0.22 263);
   --chart-4: oklch(0.49 0.22 264);
   --chart-5: oklch(0.42 0.18 266);
-  --sidebar: #191a1a;
+  /* 见 :root 同名变量注释。 */
+  --app-band-h: 2.5rem;
+  --sidebar: #252726;
   --sidebar-foreground: rgba(255, 255, 255, 0.9);
   --sidebar-primary: #36d385;
   --sidebar-primary-foreground: rgba(0, 0, 0, 0.9);
