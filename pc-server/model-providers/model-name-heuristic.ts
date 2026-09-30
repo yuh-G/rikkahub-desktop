@@ -4,9 +4,10 @@
 //   第一帧的规整名由本模块给出——纯本地同步函数,微秒级,任何模型名在界面首次
 //   出现前就已规整。models.dev 官方名随后在后台静默落库替换(display-names.ts),
 //   两者由 isUnclaimedModelDisplayName 的「未认领」信号隔开:display.ts(渲染)与
-//   display-names.ts(落库)共用同一把尺。**启发式永不落库**——落库的只有三种真值
-//   (上游接口名 / models.dev 官方名 / 用户手改名),启发式一旦落库就与用户手改名
-//   不可区分,官方目录日后收录也无法升级。
+//   display-names.ts(落库)共用同一把尺——空 / 等于 id / 与 id 排版等价(上游把
+//   id 抄成懒名落库,如 k3→"K3")都算未认领。**启发式永不落库**——落库的只有
+//   三种真值(上游接口名 / models.dev 官方名 / 用户手改名),启发式一旦落库就与
+//   用户手改名不可区分,官方目录日后收录也无法升级。
 //
 // 规则流水线(2026-09-29 对照 models.dev 全量 8279 行审计逐条校准,取舍依据见
 // 各常量注释;验收用例在 model-name-heuristic.test.ts):
@@ -231,19 +232,6 @@ function prettifyToken(token: string, prev: string | undefined): string {
   return token;
 }
 
-/** 「未认领」信号:displayName 为空或与 modelId 相等。这是官方名唯一允许写入的
- *  门,也是渲染层决定是否走启发式的同一把尺(display.ts 与 display-names.ts 共
- *  用,两处口径必须一致——否则会出现「落库层认为已认领、渲染层却拿启发式覆盖」
- *  的错位)。放在本模块(零依赖纯函数)以便前后端共享。 */
-export function isUnclaimedModelDisplayName(
-  displayName: string | null | undefined,
-  modelId: string | null | undefined,
-): boolean {
-  const display = String(displayName ?? "").trim();
-  if (!display) return true; // 退化数据:视同未认领,允许补名
-  return display === String(modelId ?? "").trim();
-}
-
 /** 「排版等价」判定:忽略大小写与分隔形态(-/./ /_/斜杠)后比较。官方名与 id 排版
  *  等价 = 它没携带任何 id 之外的信息(懒名抄写/大小写加工/连字改空格),启发式对
  *  这类行本就能产出同级规整形态——落库只会占坑,不会有增益。是「谁规范谁获胜」
@@ -252,6 +240,24 @@ export function isTypographicVariant(a: string, b: string): boolean {
   const fold = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   return fold(a) === fold(b);
 }
+
+/** 「未认领」信号:displayName 为空、与 modelId 相等、或与 modelId 排版等价。
+ *  这是官方名唯一允许写入的门,也是渲染层决定是否走启发式的同一把尺(display.ts
+ *  与 display-names.ts 共用,两处口径必须一致——否则会出现「落库层认为已认领、
+ *  渲染层却拿启发式覆盖」的错位)。放在本模块(零依赖纯函数)以便前后端共享。
+ *  排版等价形态纳入(2026-09-30,api.moonshot.cn/anthropic 实案):上游把 k3 抄成
+ *  "K3"、kimi-for-coding 抄成 "K2.7 Coding" 落库——字符集与 id 零增量,本质是懒名
+ *  而非策展,占住坑会让启发式与官方名都被契约挡在外面(界面显示裸 "K3")。与
+ *  isTypographicVariant 同一把「谁规范谁获胜」尺:无增量 = 没有主人。 */
+export function isUnclaimedModelDisplayName(
+  displayName: string | null | undefined,
+  modelId: string | null | undefined,
+): boolean {
+  const display = String(displayName ?? "").trim();
+  if (!display) return true; // 退化数据:视同未认领,允许补名
+  return isTypographicVariant(display, String(modelId ?? "").trim());
+}
+
 
 /** 模型 id → 规整显示名。纯函数,幂等;空输入返回空串。 */
 export function prettifyModelId(modelId: string): string {

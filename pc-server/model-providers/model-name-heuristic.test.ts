@@ -3,7 +3,24 @@
 // 目录(官方名)路径的覆盖在 display-names.test.ts,本文件只锁「无目录时的下限」。
 
 import { describe, expect, test } from "bun:test";
-import { prettifyModelId } from "./model-name-heuristic";
+import { isUnclaimedModelDisplayName, prettifyModelId } from "./model-name-heuristic";
+
+describe("isUnclaimedModelDisplayName — 未认领信号(渲染与落库共用的尺)", () => {
+  test("空 / 等于 id / 与 id 排版等价 = 未认领;有增量 = 已认领", () => {
+    expect(isUnclaimedModelDisplayName("", "gpt-5.4")).toBe(true);
+    expect(isUnclaimedModelDisplayName(undefined, "gpt-5.4")).toBe(true);
+    expect(isUnclaimedModelDisplayName("gpt-5.4", "gpt-5.4")).toBe(true);
+    // 排版等价:只差大小写/连字/空格/点号(上游懒名抄写形态)
+    expect(isUnclaimedModelDisplayName("K3", "k3")).toBe(true);
+    expect(isUnclaimedModelDisplayName("Claude Opus 4.6", "claude-opus-4-6")).toBe(true);
+    expect(isUnclaimedModelDisplayName("GPT 5.4 mini", "gpt-5.4-mini")).toBe(true);
+    // 有真增量:保持已认领
+    expect(isUnclaimedModelDisplayName("Kimi K3", "k3")).toBe(false);
+    expect(isUnclaimedModelDisplayName("我的快枪手", "gpt-5.4")).toBe(false);
+    // 删词改写(非排版等价)刻意不纳入:与「上游轻量策展」不可靠区分
+    expect(isUnclaimedModelDisplayName("K2.7 Coding", "kimi-for-coding")).toBe(false);
+  });
+});
 
 describe("prettifyModelId — 用户拍板用例集", () => {
   const cases: Array<[string, string]> = [

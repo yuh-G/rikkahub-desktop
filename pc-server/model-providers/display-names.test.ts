@@ -102,7 +102,20 @@ describe("isUnclaimedDisplayName", () => {
 
   test("用户手改名 / 官方名 / 上游名都已认领,不碰", () => {
     expect(isUnclaimedDisplayName({ ...model("gpt-5.4"), displayName: "我的快枪手" })).toBe(false);
-    expect(isUnclaimedDisplayName({ ...model("gpt-5.4"), displayName: "GPT-5.4" })).toBe(false);
+    expect(isUnclaimedDisplayName({ ...model("gpt-5.4"), displayName: "GPT-5.6 Sol" })).toBe(false);
+  });
+
+  test("与 id 排版等价的上游懒名 = 未认领(2026-09-30 api.moonshot.cn/anthropic 实案)", () => {
+    // 上游把 id 抄成懒名落库(k3→"K3"):字符集零增量,是抄写不是策展——按
+    // 「谁规范谁获胜」,这类行让位启发式/官方名。
+    expect(isUnclaimedDisplayName({ ...model("k3"), displayName: "K3" })).toBe(true);
+    expect(isUnclaimedDisplayName({ ...model("k3-256k"), displayName: "K3-256k" })).toBe(true);
+    // 大小写/分隔加工形态同理(有真增量的名不受影响)
+    expect(isUnclaimedDisplayName({ ...model("gpt-5.4"), displayName: "GPT-5.4" })).toBe(true);
+    expect(isUnclaimedDisplayName({ ...model("claude-opus-4-6"), displayName: "Claude Opus 4.6" })).toBe(true);
+    // 语义边界(刻意):删词改写(kimi-for-coding→"K2.7 Coding")不是排版等价——删词
+    // = 有信息损失的改写,与「上游真做了轻量策展」不可靠区分,判定不越界。
+    expect(isUnclaimedDisplayName({ ...model("kimi-for-coding"), displayName: "K2.7 Coding" })).toBe(false);
   });
 });
 
