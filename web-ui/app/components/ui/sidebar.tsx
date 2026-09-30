@@ -164,6 +164,9 @@ function Sidebar({
   collapsible?: "offcanvas" | "icon" | "none"
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+  // 卡片态 = 默认 variant("sidebar"):桌面下做成浮在画布上的圆角卡片(首页形态);
+  // floating/inset 两个泛用变体维持上游原样。
+  const isPlainSidebar = variant === "sidebar"
 
   if (collapsible === "none") {
     return (
@@ -218,25 +221,38 @@ function Sidebar({
       <div
         data-slot="sidebar-gap"
         className={cn(
-          "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
+          "relative bg-transparent transition-[width] duration-200 ease-linear",
           "group-data-[collapsible=offcanvas]:w-0",
           "group-data-[side=right]:rotate-180",
           variant === "floating" || variant === "inset"
-            ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"
-            : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)"
+            ? "w-(--sidebar-width) group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"
+            : "w-[calc(var(--sidebar-width)+0.5rem)] group-data-[collapsible=icon]:w-(--sidebar-width-icon)"
         )}
       />
       <div
         data-slot="sidebar-container"
         className={cn(
-          "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex",
+          "fixed z-10 hidden w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex",
+          // variant=sidebar(默认,首页唯一使用者):卡片态——自顶带下沿起、底留 8px、左留 8px,
+          // 收起时连同 8px 外边距一起滑出(不留缝);floating/inset 保持通顶贴边原样。
+          isPlainSidebar ? "top-[var(--app-band-h)] bottom-2" : "inset-y-0 h-svh",
           side === "left"
-            ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
-            : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
+            ? cn(
+                isPlainSidebar ? "left-2" : "left-0",
+                isPlainSidebar
+                  ? "group-data-[collapsible=offcanvas]:left-[calc((var(--sidebar-width)+0.5rem)*-1)]"
+                  : "group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
+              )
+            : cn(
+                isPlainSidebar ? "right-2" : "right-0",
+                isPlainSidebar
+                  ? "group-data-[collapsible=offcanvas]:right-[calc((var(--sidebar-width)+0.5rem)*-1)]"
+                  : "group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]"
+              ),
           // Adjust the padding for floating and inset variants.
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
-            // I2:去掉侧栏分界线——底色与画布一致,与顶部窗控带无缝融合(NewMax 框架)
+            // I2:去掉侧栏分界线——卡片态由圆角+浮起投影立界(NewMax 框架)
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
           className
         )}
@@ -245,7 +261,11 @@ function Sidebar({
         <div
           data-sidebar="sidebar"
           data-slot="sidebar-inner"
-          className="bg-sidebar group-data-[variant=floating]:border-sidebar-border flex h-full w-full flex-col group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:shadow-sm"
+          className={cn(
+            "bg-sidebar flex h-full w-full flex-col",
+            isPlainSidebar && "overflow-hidden rounded-[18px] shadow-[var(--ds-elevation-100)]",
+            "group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:shadow-sm"
+          )}
         >
           {children}
         </div>
