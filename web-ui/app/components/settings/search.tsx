@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { CheckCircle2, Database, Loader2, Plus, Search, Trash2, X, XCircle } from "lucide-react";
+import { CheckCircle2, Database, Link2, Loader2, Plus, Search, Trash2, X, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { AIIcon } from "~/components/ui/ai-icon";
 import { Button } from "~/components/ui/button";
@@ -16,6 +16,14 @@ import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { SearchServiceOption, Settings } from "~/types";
+// 端点注册表(前后端单源):请求地址框的显隐/placeholder/落点字段/解析预览全部来自同一份拓扑。
+import {
+  customUrlFieldOf,
+  hasCustomServiceEndpoint,
+  hasServiceEndpoint,
+  resolveServiceEndpoint,
+  serviceEndpointBase,
+} from "@server/search/service-endpoints";
 import {
   clone,
   moveItem,
@@ -496,6 +504,13 @@ export function SearchSection({
                       {textValue(service.name) ||
                         searchServiceLabelForType(textValue(service.type))}
                     </span>
+                    {hasCustomServiceEndpoint(service as Record<string, unknown>) ? (
+                      // 中转标识:该行配置了自定义请求地址(换根 ≠ 官方地址)。一屏扫过即可
+                      // 辨认哪些服务在走中转——多服务配置了中转的用户排障时是刚需可读性。
+                      <span title={t("settings:search.relay_badge")}>
+                        <Link2 aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+                      </span>
+                    ) : null}
                   </span>
                   <span className="block truncate text-xs text-muted-foreground">
                     {textValue(service.type) || JSON.stringify(service)}
@@ -587,6 +602,45 @@ export function SearchSection({
                 <span className="text-xs text-muted-foreground">{t("settings:search.api_key_hint")}</span>
               </div>
             ) : null}
+            {(() => {
+              // 统一「请求地址」:凡登记了端点的服务皆可换址(searxng 必填、其余可选),落点
+              // 字段/placeholder/预览全部由端点注册表裁决——与请求时 resolveServiceEndpoint
+              // 同一单源,所见即所发。bing_local/custom_js 不登记,不显示。
+              const type = textValue(draft.type);
+              if (!hasServiceEndpoint(type)) return null;
+              const field = customUrlFieldOf(type);
+              const raw = textValue(draft[field]).trim();
+              const official = serviceEndpointBase(type);
+              const preview = raw ? resolveServiceEndpoint(draft as Record<string, unknown>) : "";
+              const badScheme = raw.length > 0 && !/^https?:\/\//i.test(raw);
+              return (
+                <label className="space-y-2 md:col-span-2">
+                  <span className="text-sm font-medium">
+                    {t("settings:search.request_url")}
+                    {type === "searxng" ? ` — ${t("settings:search.request_url_required")}` : ""}
+                  </span>
+                  <Input
+                    value={raw}
+                    onChange={(event) => patchDraft({ [field]: event.target.value })}
+                    placeholder={official || "https://search.example.com"}
+                  />
+                  <span
+                    className={cn(
+                      "block break-all text-xs",
+                      badScheme ? "text-destructive" : "text-muted-foreground",
+                    )}
+                  >
+                    {badScheme
+                      ? t("settings:search.request_url_bad_scheme")
+                      : preview
+                        ? t("settings:search.request_url_preview", { endpoint: preview })
+                        : official
+                          ? t("settings:search.request_url_hint", { official })
+                          : t("settings:search.request_url_hint_selfhost")}
+                  </span>
+                </label>
+              );
+            })()}
             {textValue(draft.type) === "doubao" ? (
               // 豆包(火山 Search-Infinity)两模:global=综合搜索(带图),custom=网页搜索。
               // 对齐 APP DoubaoOptions 的 Mode 分段选择器。
@@ -608,14 +662,6 @@ export function SearchSection({
             ) : null}
             {textValue(draft.type) === "searxng" ? (
               <>
-                <label className="space-y-2 md:col-span-2">
-                  <span className="text-sm font-medium">SearXNG URL</span>
-                  <Input
-                    value={textValue(draft.url)}
-                    onChange={(event) => patchDraft({ url: event.target.value })}
-                    placeholder="https://search.example.com"
-                  />
-                </label>
                 <label className="space-y-2">
                   <span className="text-sm font-medium">Engines</span>
                   <Input

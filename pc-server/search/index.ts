@@ -8,6 +8,7 @@ import { domainOfUrl, faviconForUrl, isRecord, stripHtml } from "../foundation/u
 import { state } from "../persistence/json-store";
 import { jsonBody, textBody } from "../model-providers";
 import { addLog } from "../api/logs";
+import { requireServiceEndpoint } from "./service-endpoints";
 
 export function buildSearchContext() {
   if (!state.settings.enableWebSearch) return "";
@@ -425,10 +426,11 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
 
   if (type === "tavily") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = requireServiceEndpoint(service);
       const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
       // include_images 对齐安卓(TavilySearchService.kt:96):Tavily 顶层返回 images: string[],
       // 与 Exa/豆包并列三大图源;不请求即恒空,模型拿到也无处引用(§3.1 缺口①)。
-      const response = await fetchWithTimeout("https://api.tavily.com/search", {
+      const response = await fetchWithTimeout(endpoint, {
         method: "POST",
         headers: requestHeaders,
         body: JSON.stringify({ query, max_results: maxResults, search_depth: service.depth ?? "basic", include_images: true }),
@@ -437,7 +439,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
       addLog({
         providerId: String(service.id ?? "search"),
         providerName: nameOfSearchService(service),
-        url: "https://api.tavily.com/search",
+        url: endpoint,
         ok: response.ok,
         status: response.status,
         kind: "tool:search_web",
@@ -467,7 +469,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
 
   if (type === "rikkahub") {
     const exec = async (apiKey: string) => {
-      const endpoint = "https://api.rikka-ai.com/v1/search";
+      const endpoint = requireServiceEndpoint(service);
       const requestBody = { q: query, depth: service.depth ?? "standard", outputType: "sourcedAnswer", includeImages: false };
       const requestHeaders = { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) };
       const response = await fetchWithTimeout(endpoint, {
@@ -510,7 +512,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
   // 可选时效/域过滤;Authorization Bearer(非旧 x-api-key)。scrape 走 api.exa.ai/contents。
   if (type === "exa") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = "https://api.exa.ai/search";
+      const endpoint = requireServiceEndpoint(service);
       const evidenceParams = buildExaEvidenceParams(params);
       const requestBody = buildExaSearchBody(params, maxResults, evidenceParams);
       const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
@@ -560,7 +562,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
   // Serper(google.serper.dev):Google 结果 API。answerBox/knowledgeGraph 合成答案,organic 出列表。
   if (type === "serper") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = "https://google.serper.dev/search";
+      const endpoint = requireServiceEndpoint(service);
       const requestBody = { q: query, num: maxResults };
       const requestHeaders = { "Content-Type": "application/json", "X-API-KEY": apiKey };
       const response = await fetchWithTimeout(endpoint, {
@@ -605,7 +607,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
   if (type === "doubao") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
       const mode = String(service.mode ?? "custom").toLowerCase() === "global" ? "global" : "custom";
-      const endpoint = `https://open.feedcoopapi.com/search_api/${mode === "global" ? "global_search" : "web_search"}`;
+      const endpoint = requireServiceEndpoint(service);
       const requestBody = mode === "global"
         ? { Query: query, DocCount: Math.min(20, Math.max(1, maxResults)), MaxSnippetLength: 300, MaxImageCountPerDoc: 1 }
         : { Query: query, SearchType: "web", Count: Math.min(50, Math.max(1, maxResults)), QueryControl: { QueryRewrite: false } };
@@ -638,7 +640,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
 
   if (type === "zhipu") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = "https://open.bigmodel.cn/api/paas/v4/web_search";
+      const endpoint = requireServiceEndpoint(service);
       const requestBody = { search_query: query, search_engine: "search_std", count: maxResults };
       const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
       const response = await fetchWithTimeout(endpoint, {
@@ -676,7 +678,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
 
   if (type === "brave") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`;
+      const endpoint = `${requireServiceEndpoint(service)}?q=${encodeURIComponent(query)}&count=${maxResults}`;
       const requestHeaders = { Accept: "application/json", "X-Subscription-Token": apiKey };
       const response = await fetchWithTimeout(endpoint, { headers: requestHeaders });
       const { text, raw } = await parseJsonResponse(response);
@@ -708,21 +710,23 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
   }
 
   if (type === "searxng") {
-    const baseUrl = String(service.url ?? "").trim().replace(/\/+$/, "");
-    if (!baseUrl) throw new Error("SearXNG URL cannot be empty");
-    const endpoint = new URL(`${baseUrl}/search`);
+    // 端点经 requireServiceEndpoint 解析(空地址给 SearXNG 专项错误);runSearchWeb 内已有
+    // 同型分支,此处是唯一剩余实现。
+    const endpoint = new URL(requireServiceEndpoint(service));
     endpoint.searchParams.set("q", query);
     endpoint.searchParams.set("format", "json");
     const engines = String(service.engines ?? "").trim();
     const language = String(service.language ?? "").trim();
     if (engines) endpoint.searchParams.set("engines", engines);
     if (language) endpoint.searchParams.set("language", language);
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { Accept: "application/json" };
     const username = String(service.username ?? "");
     const password = String(service.password ?? "");
-    if (username && password) headers.Authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+    if (username && password) {
+      headers.Authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+    }
     const response = await fetchWithTimeout(endpoint, { headers });
-    const { text, raw } = await parseJsonResponse(response);
+    const text = await response.text();
     addLog({
       providerId: String(service.id ?? "search"),
       providerName: nameOfSearchService(service),
@@ -739,19 +743,27 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
       responseBody: textBody(text),
       error: response.ok ? undefined : textBody(text),
     });
-    if (!response.ok) throw new Error(`SearXNG request failed with status ${response.status}: ${text.slice(0, 500)}`);
+    if (!response.ok) throw new Error(`SearXNG ${response.status}: ${text.slice(0, 500)}`);
+    let searxngRaw: { results?: any[] };
+    try {
+      searxngRaw = JSON.parse(text);
+    } catch {
+      throw new Error("SearXNG returned a non-JSON response — confirm the URL points to a SearXNG instance with format=json support");
+    }
     return {
       query,
       service: "SearXNG",
-      items: (raw.results ?? []).slice(0, maxResults).map((item: any, index: number) =>
-        searchResult(index, { title: item.title, url: item.url, text: item.content }),
-      ),
+      items: (Array.isArray(searxngRaw.results) ? searxngRaw.results : [])
+        .slice(0, maxResults)
+        .map((item: any, index: number) =>
+          searchResult(index, { title: item.title, url: item.url, text: item.content ?? item.snippet ?? item.description }),
+        ),
     };
   }
 
   if (type === "tinyfish") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = `https://api.search.tinyfish.ai?query=${encodeURIComponent(query)}`;
+      const endpoint = `${requireServiceEndpoint(service)}?query=${encodeURIComponent(query)}`;
       const requestHeaders = { "X-API-Key": apiKey };
       const response = await fetchWithTimeout(endpoint, {
         headers: requestHeaders,
@@ -786,7 +798,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
 
   if (type === "perplexity") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = "https://api.perplexity.ai/search";
+      const endpoint = requireServiceEndpoint(service);
       const body: Record<string, JsonValue> = { query, max_results: maxResults };
       const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
       const response = await fetchWithTimeout(endpoint, {
@@ -817,7 +829,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
 
   if (type === "bocha") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = "https://api.bochaai.com/v1/web-search";
+      const endpoint = requireServiceEndpoint(service);
       const summary = service.summary !== false;
       const body: Record<string, JsonValue> = { query, summary, count: maxResults };
       const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
@@ -849,7 +861,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
 
   if (type === "linkup") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = "https://api.linkup.so/v1/search";
+      const endpoint = requireServiceEndpoint(service);
       const depth = String(service.depth ?? "standard");
       const body: Record<string, JsonValue> = { q: query, depth, outputType: "sourcedAnswer", includeImages: "false" };
       const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
@@ -881,7 +893,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
 
   if (type === "metaso") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = "https://metaso.cn/api/v1/search";
+      const endpoint = requireServiceEndpoint(service);
       const body: Record<string, JsonValue> = { q: query, scope: "webpage", size: maxResults, includeSummary: false };
       const requestHeaders = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" };
       const response = await fetchWithTimeout(endpoint, {
@@ -912,7 +924,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
 
   if (type === "ollama") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = "https://ollama.com/api/web_search";
+      const endpoint = requireServiceEndpoint(service);
       // OllamaSearchService.kt:max_results 钳到 [5,10](上游接受区间)。
       const clamped = Math.max(5, Math.min(10, maxResults));
       const body: Record<string, JsonValue> = { query, max_results: clamped };
@@ -945,7 +957,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
 
   if (type === "jina") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const searchUrl = String(service.searchUrl ?? "").trim() || "https://s.jina.ai/";
+      const searchUrl = requireServiceEndpoint(service);
       const body: Record<string, JsonValue> = { q: query };
       const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" };
       const response = await fetchWithTimeout(searchUrl, {
@@ -976,7 +988,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
 
   if (type === "firecrawl") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = "https://api.firecrawl.dev/v2/search";
+      const endpoint = requireServiceEndpoint(service);
       const body: Record<string, JsonValue> = { query, limit: maxResults };
       const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
       const response = await fetchWithTimeout(endpoint, {
@@ -1020,7 +1032,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
 
   if (type === "grok") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = String(service.customUrl ?? "").trim() || "https://api.x.ai/v1/responses";
+      const endpoint = requireServiceEndpoint(service);
       const model = String(service.model ?? "").trim() || "grok-4-fast";
       const systemPrompt = String(service.systemPrompt ?? "").trim()
         || "You are a helpful assistant that searches the web for the user. Respond with a concise answer and cite sources via web_search/x_search tools.";
@@ -1091,61 +1103,6 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
     return result;
   }
 
-  if (type === "searxng") {
-    const baseUrl = String(service.url ?? "").trim().replace(/\/+$/, "");
-    if (!baseUrl) throw new Error("SearXNG URL is empty");
-    const searchParams = new URLSearchParams({ q: query, format: "json" });
-    const engines = String(service.engines ?? "").trim();
-    if (engines) searchParams.set("engines", engines);
-    const language = String(service.language ?? "").trim();
-    if (language) searchParams.set("language", language);
-    const endpoint = `${baseUrl}/search?${searchParams.toString()}`;
-    const headers: Record<string, string> = { Accept: "application/json" };
-    const username = String(service.username ?? "");
-    const password = String(service.password ?? "");
-    if (username && password) {
-      headers.Authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
-    }
-    const response = await fetchWithTimeout(endpoint, { headers });
-    const text = await response.text();
-    addLog({
-      providerId: String(service.id ?? "search"),
-      providerName: nameOfSearchService(service),
-      url: endpoint,
-      ok: response.ok,
-      status: response.status,
-      kind: "tool:search_web",
-      toolName: "search_web",
-      durationMs: Date.now() - started,
-      method: "GET",
-      requestHeaders: headers,
-      responseHeaders: Object.fromEntries(response.headers.entries()),
-      requestBody: jsonBody({ query, maxResults }),
-      responseBody: textBody(text),
-      error: response.ok ? undefined : textBody(text),
-    });
-    if (!response.ok) throw new Error(`SearXNG ${response.status}: ${text.slice(0, 500)}`);
-    let searxngRaw: { results?: any[] };
-    try {
-      searxngRaw = JSON.parse(text);
-    } catch {
-      throw new Error("SearXNG returned a non-JSON response — confirm the URL points to a SearXNG instance with format=json support");
-    }
-    return {
-      query,
-      service: "SearXNG",
-      items: (Array.isArray(searxngRaw.results) ? searxngRaw.results : [])
-        .slice(0, maxResults)
-        .map((item: any, index: number) =>
-          searchResult(index, {
-            title: item.title,
-            url: item.url,
-            text: item.content ?? item.snippet ?? item.description,
-          }),
-        ),
-    };
-  }
-
   const requestHeaders = { "User-Agent": "Mozilla/5.0 RikkaHubPC/1.0" };
   const response = await fetchWithTimeout(`https://www.bing.com/search?q=${encodeURIComponent(query)}&count=${maxResults}`, {
     headers: requestHeaders,
@@ -1208,7 +1165,7 @@ export async function runScrapeWeb(params: Record<string, JsonValue>) {
   if (type === "exa") {
     // Exa scrape:api.exa.ai/contents,返回首条 result 的正文 + title(对齐 mapScrapedResult)。
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = "https://api.exa.ai/contents";
+      const endpoint = requireServiceEndpoint(service, "fetch");
       const evidence = buildExaEvidenceParams(params);
       const requestBody: Record<string, JsonValue> = { urls: [target], text: { maxCharacters: EXA_MAX_EVIDENCE_TEXT } };
       if (evidence.maxAgeHours != null) requestBody.maxAgeHours = evidence.maxAgeHours;
@@ -1249,7 +1206,7 @@ export async function runScrapeWeb(params: Record<string, JsonValue>) {
   if (type === "ollama") {
     // Ollama scrape:ollama.com/api/web_fetch,返回 { title, content }(OllamaSearchService.kt scrape)。
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = "https://ollama.com/api/web_fetch";
+      const endpoint = requireServiceEndpoint(service, "fetch");
       const requestBody = { url: target };
       const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
       const response = await fetchWithTimeout(endpoint, {
@@ -1286,7 +1243,7 @@ export async function runScrapeWeb(params: Record<string, JsonValue>) {
   }
   if (type === "tinyfish") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
-      const endpoint = "https://api.fetch.tinyfish.ai";
+      const endpoint = requireServiceEndpoint(service, "fetch");
       const requestBody = { urls: [target], format: "markdown" };
       const requestHeaders = { "Content-Type": "application/json", "X-API-Key": apiKey };
       const response = await fetchWithTimeout(endpoint, {
@@ -1365,7 +1322,7 @@ export async function testSearchService(service: SearchService) {
     throw new Error(`${name} API Key is empty`);
   }
   if (type === "rikkahub") {
-    const endpoint = "https://api.rikka-ai.com/v1/search";
+    const endpoint = requireServiceEndpoint(service);
     const exec = async (k: string): Promise<string> => {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
@@ -1381,7 +1338,7 @@ export async function testSearchService(service: SearchService) {
     return { status: "ok", name, endpoint, preview: textBody(text) };
   }
   if (type === "tavily") {
-    const endpoint = "https://api.tavily.com/search";
+    const endpoint = requireServiceEndpoint(service);
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
@@ -1394,7 +1351,7 @@ export async function testSearchService(service: SearchService) {
     });
   }
   if (type === "exa") {
-    const endpoint = "https://api.exa.ai/search";
+    const endpoint = requireServiceEndpoint(service);
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
@@ -1408,7 +1365,7 @@ export async function testSearchService(service: SearchService) {
     });
   }
   if (type === "serper") {
-    const endpoint = "https://google.serper.dev/search";
+    const endpoint = requireServiceEndpoint(service);
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
@@ -1422,7 +1379,7 @@ export async function testSearchService(service: SearchService) {
   }
   if (type === "doubao") {
     const mode = String(service.mode ?? "custom").toLowerCase() === "global" ? "global" : "custom";
-    const endpoint = `https://open.feedcoopapi.com/search_api/${mode === "global" ? "global_search" : "web_search"}`;
+    const endpoint = requireServiceEndpoint(service);
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const body = mode === "global"
         ? { Query: "RikkaHub", DocCount: 1, MaxSnippetLength: 300, MaxImageCountPerDoc: 1 }
@@ -1447,7 +1404,7 @@ export async function testSearchService(service: SearchService) {
     });
   }
   if (type === "tinyfish") {
-    const endpoint = "https://api.search.tinyfish.ai?query=RikkaHub";
+    const endpoint = `${requireServiceEndpoint(service)}?query=RikkaHub`;
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
         headers: { "X-API-Key": k },
@@ -1458,7 +1415,7 @@ export async function testSearchService(service: SearchService) {
     });
   }
   if (type === "zhipu") {
-    const endpoint = "https://open.bigmodel.cn/api/paas/v4/web_search";
+    const endpoint = requireServiceEndpoint(service);
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
@@ -1471,7 +1428,7 @@ export async function testSearchService(service: SearchService) {
     });
   }
   if (type === "brave") {
-    const endpoint = "https://api.search.brave.com/res/v1/web/search?q=RikkaHub&count=1";
+    const endpoint = `${requireServiceEndpoint(service)}?q=RikkaHub&count=1`;
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, { headers: { Accept: "application/json", "X-Subscription-Token": k } });
       const text = await response.text();
@@ -1480,15 +1437,16 @@ export async function testSearchService(service: SearchService) {
     });
   }
   if (type === "searxng") {
-    const baseUrl = String(service.url ?? "").trim().replace(/\/+$/, "");
-    if (!baseUrl) throw new Error("SearXNG URL is empty");
     // 与 runSearchWeb 的 searxng 分支保持一致:带上 engines/language,让测试贴近真实搜索行为。
-    const searchParams = new URLSearchParams({ q: "RikkaHub", format: "json" });
+    const url = new URL(requireServiceEndpoint(service));
+    const searchParams = url.searchParams;
+    searchParams.set("q", "RikkaHub");
+    searchParams.set("format", "json");
     const engines = String(service.engines ?? "").trim();
     if (engines) searchParams.set("engines", engines);
     const language = String(service.language ?? "").trim();
     if (language) searchParams.set("language", language);
-    const endpoint = `${baseUrl}/search?${searchParams.toString()}`;
+    const endpoint = url.toString();
     const headers: Record<string, string> = { Accept: "application/json" };
     const username = String(service.username ?? "");
     const password = String(service.password ?? "");
@@ -1505,7 +1463,7 @@ export async function testSearchService(service: SearchService) {
     return { status: "ok", name, endpoint: "custom_js", preview: jsonBody(result) };
   }
   if (type === "firecrawl") {
-    const endpoint = "https://api.firecrawl.dev/v2/search";
+    const endpoint = requireServiceEndpoint(service);
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
@@ -1518,7 +1476,7 @@ export async function testSearchService(service: SearchService) {
     });
   }
   if (type === "grok") {
-    const endpoint = String(service.customUrl ?? "").trim() || "https://api.x.ai/v1/responses";
+    const endpoint = requireServiceEndpoint(service);
     const model = String(service.model ?? "").trim() || "grok-4-fast";
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
@@ -1542,7 +1500,7 @@ export async function testSearchService(service: SearchService) {
   // perplexity/bocha/linkup/metaso/ollama/jina:最小测试请求(query=RikkaHub、count/size=1)验证 key 可用。
   // 多 key 时 runSearchKeyTestResult 逐 key 测试并汇总状态。
   if (type === "perplexity") {
-    const endpoint = "https://api.perplexity.ai/search";
+    const endpoint = requireServiceEndpoint(service);
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
@@ -1555,7 +1513,7 @@ export async function testSearchService(service: SearchService) {
     });
   }
   if (type === "bocha") {
-    const endpoint = "https://api.bochaai.com/v1/web-search";
+    const endpoint = requireServiceEndpoint(service);
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
@@ -1568,7 +1526,7 @@ export async function testSearchService(service: SearchService) {
     });
   }
   if (type === "linkup") {
-    const endpoint = "https://api.linkup.so/v1/search";
+    const endpoint = requireServiceEndpoint(service);
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
@@ -1581,7 +1539,7 @@ export async function testSearchService(service: SearchService) {
     });
   }
   if (type === "metaso") {
-    const endpoint = "https://metaso.cn/api/v1/search";
+    const endpoint = requireServiceEndpoint(service);
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
@@ -1594,7 +1552,7 @@ export async function testSearchService(service: SearchService) {
     });
   }
   if (type === "ollama") {
-    const endpoint = "https://ollama.com/api/web_search";
+    const endpoint = requireServiceEndpoint(service);
     // runSearchService 把 max_results clamp 到 [5,10],这里取下界 5 避免被上游拒绝。
     return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
       const response = await fetchWithTimeout(endpoint, {
@@ -1608,7 +1566,7 @@ export async function testSearchService(service: SearchService) {
     });
   }
   if (type === "jina") {
-    const searchUrl = String(service.searchUrl ?? "").trim() || "https://s.jina.ai/";
+    const searchUrl = requireServiceEndpoint(service);
     return runSearchKeyTestResult(name, searchUrl, apiKey, async (k) => {
       const response = await fetchWithTimeout(searchUrl, {
         method: "POST",
