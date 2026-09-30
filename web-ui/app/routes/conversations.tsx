@@ -73,7 +73,8 @@ import {
 import { WorkbenchHost } from "~/components/workbench/workbench-host";
 import { ContainerPlusMenu } from "~/components/workspace/container-plus-menu";
 import { ContainerTabBar } from "~/components/workspace/container-tab-bar";
-import { WindowControlsBar } from "~/components/window-controls";
+import { SidebarBrandRow } from "~/components/sidebar-brand";
+import { WindowControlsBar, windowDragRegionProps } from "~/components/window-controls";
 import { ConversationTabStrip } from "~/components/workspace/conversation-tab-strip";
 import { EngineStatusBar } from "~/components/workspace/engine-status-bar";
 import { PaneContainerProvider } from "~/components/workspace/pane-container-context";
@@ -2721,221 +2722,232 @@ function ConversationsPageInner() {
   };
 
   return (
-    <SidebarProvider defaultOpen className="h-svh overflow-hidden">
-      <GlobalDropZone
-        draftKey={focusedDraftKey}
-        disabled={focusedDetailLoading || Boolean(focusedDetailError)}
-      />
-      <RenameConversationDialog
-        open={renameOpen}
-        onOpenChange={setRenameOpen}
-        currentTitle={conversations.find((c) => c.id === activeId)?.title ?? ""}
-        onConfirm={(nextTitle) => {
-          if (!activeId) return;
-          void handleUpdateConversationTitle(activeId, nextTitle);
-        }}
-      />
-      <ConversationSidebar
-        conversations={containerConversations}
-        activeId={activeId}
-        loading={loading}
-        error={error}
-        hasMore={hasMore}
-        loadMore={loadMore}
-        userName={
-          settings?.displaySetting.userNickname?.trim() || t("conversations.user.default_name")
-        }
-        userAvatar={settings?.displaySetting.userAvatar}
-        assistants={assistants}
-        assistantTags={settings?.assistantTags ?? []}
-        currentAssistantId={currentAssistantId}
-        onSelect={handleSelect}
-        onAssistantChange={handleAssistantChange}
-        onPin={handleTogglePinConversation}
-        onRegenerateTitle={handleRegenerateConversationTitle}
-        onMoveToAssistant={handleMoveConversation}
-        onUpdateTitle={handleUpdateConversationTitle}
-        onDelete={handleDeleteConversation}
-        onDeleteMany={handleDeleteConversations}
-        onCreateConversation={handleCreateConversation}
-        webAuthEnabled={settings?.webServerJwtEnabled === true}
-      />
-      <SidebarInset className="flex min-h-svh flex-col overflow-hidden bg-transparent pt-1.5 pr-2 pb-2 pl-2">
-        {/* I1 窗控带:与画布同色(透明露底),右缘窗控钮;I4 减高 1/3(pt-1.5+22=28px),
-            与侧栏品牌行(h-7 上提 4px)垂直中心平齐。浏览器预览下组件返回 null。 */}
-        <WindowControlsBar />
-        {/* NewMax 内容列 = on-surface 着色 wrapper(撞色带):一级标签行浮在带顶,
-            下方白面板盖住其余部分,于是"带"只在标签行处露出;四周 SidebarInset 的
-            pt/pr/pb/pl 留出画布边距(左侧即侧栏与面板之间的 gap)。
-            L 轮分区模型:分栏时每组是一块同款"撞色带 + 白面板"的独立单元(自己的一级
-            标签栏只列本组成员 + 自己的内容列),与二级分栏"每列一条会话标签栏"同构;
-            组间由画布色缝隙分隔 —— "两个组"是比"同组两列"更重的边界。 */}
-        {groups.length === 1 || isMobile ? (
-          <div className="relative isolate flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--ds-on-surface)] pt-[2px]">
-            {/* 一级容器标签行:窗控/拖拽由上方 WindowControlsBar 负责,本行纯交互。
-                z-[3] 压过白面板的 elevation-100 外环阴影(NewMax 同款层级):否则那道
-                0.5px 暗环会横穿焦点标签与面板的连接处,连体处凭空多出一条缝。 */}
-            <div className="relative z-[3] flex h-[31px] shrink-0 items-end gap-1 px-1">
-              <CollapsedSidebarTrigger />
-              <div className="relative flex h-full min-w-0 flex-1 items-end">
-                <ContainerTabBar
-                  group={groups[0] ?? [CHAT_CONTAINER]}
-                  groupIndex={0}
-                  ghostTabs={ghostTabs}
-                  headerTrailing={<ContainerPlusMenu />}
-                />
-              </div>
-            </div>
-            {/* 白色圆角内容面板:surface-200 底 + elevation-100,盖住撞色带主体,
-                焦点页签经连接条与面板连体;底部圆角与 wrapper 的 18px 对齐。
-                分栏:面板内是 1..MAX_PANES 个会话列(同容器的二级窗格)+ 工作台面板的横向可调组。 */}
-            <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[16px] rounded-b-[18px] bg-[var(--ds-surface-200)] shadow-[var(--ds-elevation-100)]">
-              {!isMobile ? (
-                <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
-                  {columns.map((column, index) => (
-                    <React.Fragment key={`${column.container}:${column.paneIndex}`}>
-                      {index > 0 ? <ResizableHandle /> : null}
-                      <ResizablePanel
-                        id={`conversation-column-${column.container}-${column.paneIndex}`}
-                        minSize="18%"
-                        className="flex min-h-0 flex-col"
-                      >
-                        {renderColumn(column)}
-                      </ResizablePanel>
-                    </React.Fragment>
-                  ))}
-                  <ResizableHandle
-                    withHandle
-                    className={cn(!hasWorkbenchPanel && "pointer-events-none opacity-0")}
+    <div className="flex h-svh flex-col overflow-hidden bg-background">
+      {/* 顶带(用户产品决策):Logo 品牌行 + 窗口控制钮直接坐在画布上,不属于任何卡片;
+          侧栏卡片自其下方(头像行)起。整带即窗口拖拽区,双击最大化行为不变。 */}
+      <div
+        {...windowDragRegionProps()}
+        className="flex h-[var(--app-band-h)] shrink-0 select-none items-center px-2"
+      >
+        <SidebarBrandRow className="pl-1" />
+        <div className="ml-auto flex items-center">
+          <WindowControlsBar className="h-auto" />
+        </div>
+      </div>
+      <SidebarProvider defaultOpen className="relative min-h-0 flex-1 overflow-hidden">
+        <GlobalDropZone
+          draftKey={focusedDraftKey}
+          disabled={focusedDetailLoading || Boolean(focusedDetailError)}
+        />
+        <RenameConversationDialog
+          open={renameOpen}
+          onOpenChange={setRenameOpen}
+          currentTitle={conversations.find((c) => c.id === activeId)?.title ?? ""}
+          onConfirm={(nextTitle) => {
+            if (!activeId) return;
+            void handleUpdateConversationTitle(activeId, nextTitle);
+          }}
+        />
+        <ConversationSidebar
+          conversations={containerConversations}
+          activeId={activeId}
+          loading={loading}
+          error={error}
+          hasMore={hasMore}
+          loadMore={loadMore}
+          userName={
+            settings?.displaySetting.userNickname?.trim() || t("conversations.user.default_name")
+          }
+          userAvatar={settings?.displaySetting.userAvatar}
+          assistants={assistants}
+          assistantTags={settings?.assistantTags ?? []}
+          currentAssistantId={currentAssistantId}
+          onSelect={handleSelect}
+          onAssistantChange={handleAssistantChange}
+          onPin={handleTogglePinConversation}
+          onRegenerateTitle={handleRegenerateConversationTitle}
+          onMoveToAssistant={handleMoveConversation}
+          onUpdateTitle={handleUpdateConversationTitle}
+          onDelete={handleDeleteConversation}
+          onDeleteMany={handleDeleteConversations}
+          onCreateConversation={handleCreateConversation}
+          webAuthEnabled={settings?.webServerJwtEnabled === true}
+        />
+        <SidebarInset className="flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent pr-2 pb-2 pl-2">
+          {/* 窗控与品牌行已上移到画布顶带;此处只余主卡。 */}
+          {/* NewMax 内容列 = on-surface 着色 wrapper(撞色带):一级标签行浮在带顶,
+              下方白面板盖住其余部分,于是"带"只在标签行处露出;四周 SidebarInset 的
+              pt/pr/pb/pl 留出画布边距(左侧即侧栏与面板之间的 gap)。
+              L 轮分区模型:分栏时每组是一块同款"撞色带 + 白面板"的独立单元(自己的一级
+              标签栏只列本组成员 + 自己的内容列),与二级分栏"每列一条会话标签栏"同构;
+              组间由画布色缝隙分隔 —— "两个组"是比"同组两列"更重的边界。 */}
+          {groups.length === 1 || isMobile ? (
+            <div className="relative isolate flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--ds-on-surface)] pt-[2px]">
+              {/* 一级容器标签行:窗控/拖拽由上方 WindowControlsBar 负责,本行纯交互。
+                  z-[3] 压过白面板的 elevation-100 外环阴影(NewMax 同款层级):否则那道
+                  0.5px 暗环会横穿焦点标签与面板的连接处,连体处凭空多出一条缝。 */}
+              <div className="relative z-[3] flex h-[31px] shrink-0 items-end gap-1 px-1">
+                <CollapsedSidebarTrigger />
+                <div className="relative flex h-full min-w-0 flex-1 items-end">
+                  <ContainerTabBar
+                    group={groups[0] ?? [CHAT_CONTAINER]}
+                    groupIndex={0}
+                    ghostTabs={ghostTabs}
+                    headerTrailing={<ContainerPlusMenu />}
                   />
-                  <ResizablePanel
-                    id="workbench-panel"
-                    defaultSize="0%"
-                    minSize={`${WORKBENCH_MIN_WIDTH_PCT}%`}
-                    maxSize="60%"
-                    collapsible
-                    collapsedSize="0%"
-                    panelRef={workbenchPanelRef}
-                    onResize={(size) => {
-                      // 只记有效宽度:关闭态/收起吸附产生的 0 不覆盖用户偏好。
-                      if (size.asPercentage >= WORKBENCH_MIN_WIDTH_PCT) {
-                        workbenchWidthRef.current = size.asPercentage;
+                </div>
+              </div>
+              {/* 白色圆角内容面板:surface-200 底 + elevation-100,盖住撞色带主体,
+                  焦点页签经连接条与面板连体;底部圆角与 wrapper 的 18px 对齐。
+                  分栏:面板内是 1..MAX_PANES 个会话列(同容器的二级窗格)+ 工作台面板的横向可调组。 */}
+              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[16px] rounded-b-[18px] bg-[var(--ds-surface-200)] shadow-[var(--ds-elevation-100)]">
+                {!isMobile ? (
+                  <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
+                    {columns.map((column, index) => (
+                      <React.Fragment key={`${column.container}:${column.paneIndex}`}>
+                        {index > 0 ? <ResizableHandle /> : null}
+                        <ResizablePanel
+                          id={`conversation-column-${column.container}-${column.paneIndex}`}
+                          minSize="18%"
+                          className="flex min-h-0 flex-col"
+                        >
+                          {renderColumn(column)}
+                        </ResizablePanel>
+                      </React.Fragment>
+                    ))}
+                    <ResizableHandle
+                      withHandle
+                      className={cn(!hasWorkbenchPanel && "pointer-events-none opacity-0")}
+                    />
+                    <ResizablePanel
+                      id="workbench-panel"
+                      defaultSize="0%"
+                      minSize={`${WORKBENCH_MIN_WIDTH_PCT}%`}
+                      maxSize="60%"
+                      collapsible
+                      collapsedSize="0%"
+                      panelRef={workbenchPanelRef}
+                      onResize={(size) => {
+                        // 只记有效宽度:关闭态/收起吸附产生的 0 不覆盖用户偏好。
+                        if (size.asPercentage >= WORKBENCH_MIN_WIDTH_PCT) {
+                          workbenchWidthRef.current = size.asPercentage;
+                        }
+                      }}
+                      className="flex min-h-0 flex-col"
+                    >
+                      {panel ? (
+                        <WorkbenchHost panel={panel} onClose={closePanel} className="border-l-0" />
+                      ) : null}
+                    </ResizablePanel>
+                  </ResizablePanelGroup>
+                ) : (
+                  // 窄屏不分栏:只渲染焦点列(其它列的状态保留,回宽屏即恢复)。
+                  renderColumn(
+                    columns.find(
+                      (column) =>
+                        column.container === activeContainer && column.paneIndex === focusedPaneIndex,
+                    ) ?? columns[0]!,
+                  )
+                )}
+
+                {isMobile && panel ? (
+                  <Drawer
+                    open={hasWorkbenchPanel}
+                    onOpenChange={(open) => {
+                      if (!open) {
+                        closePanel();
                       }
                     }}
-                    className="flex min-h-0 flex-col"
+                    direction="bottom"
                   >
-                    {panel ? (
+                    <DrawerContent className="h-[85vh] max-h-[85vh]">
                       <WorkbenchHost panel={panel} onClose={closePanel} className="border-l-0" />
-                    ) : null}
-                  </ResizablePanel>
-                </ResizablePanelGroup>
-              ) : (
-                // 窄屏不分栏:只渲染焦点列(其它列的状态保留,回宽屏即恢复)。
-                renderColumn(
-                  columns.find(
-                    (column) =>
-                      column.container === activeContainer && column.paneIndex === focusedPaneIndex,
-                  ) ?? columns[0]!,
-                )
-              )}
-
-              {isMobile && panel ? (
-                <Drawer
-                  open={hasWorkbenchPanel}
-                  onOpenChange={(open) => {
-                    if (!open) {
-                      closePanel();
-                    }
-                  }}
-                  direction="bottom"
-                >
-                  <DrawerContent className="h-[85vh] max-h-[85vh]">
-                    <WorkbenchHost panel={panel} onClose={closePanel} className="border-l-0" />
-                  </DrawerContent>
-                </Drawer>
-              ) : null}
+                    </DrawerContent>
+                  </Drawer>
+                ) : null}
+              </div>
             </div>
-          </div>
-        ) : (
-          // L 轮分区模型分栏:每组 = 撞色带 wrapper(自己的一级标签栏,渲染本组全部
-          // 标签)+ 白面板(该组焦点容器的二级列);工作台面板与组并列可调。"新建容器"
-          // 入口只在全局焦点组的标签栏上。
-          <ResizablePanelGroup orientation="horizontal" className="relative isolate flex min-h-0 flex-1" groupRef={outerGroupRef}>
-            {groups.map((group, groupIndex) => {
-              const focus = group.includes(activeContainer) ? activeContainer : group[0]!;
-              const groupColumns = columns.filter((column) => column.container === focus);
-              return (
-                // 面板 id 按下标而非焦点容器命名:焦点容器随用户点击切换,若 id 跟着换,
-                // v4 视作新面板注册,宽度记忆全丢。
-                <React.Fragment key={groupIndex}>
-                  {groupIndex > 0 ? (
-                    <ResizableHandle className="w-1.5 bg-transparent after:w-1.5" />
-                  ) : null}
-                  <ResizablePanel
-                    id={`group-panel-${groupIndex}`}
-                    minSize="18%"
-                    className="flex min-h-0 flex-col"
-                  >
-                    <div className="relative isolate flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--ds-on-surface)] pt-[2px]">
-                      {/* z-[3] 同单组分支:压过面板阴影外环,连体处不出缝(见上方注释) */}
-                      <div className="relative z-[3] flex h-[31px] shrink-0 items-end gap-1 px-1">
-                        <div className="relative flex h-full min-w-0 flex-1 items-end">
-                          <ContainerTabBar
-                            group={group}
-                            groupIndex={groupIndex}
-                            ghostTabs={group.includes(activeContainer) ? ghostTabs : []}
-                            headerTrailing={group.includes(activeContainer) ? <ContainerPlusMenu /> : null}
-                          />
+          ) : (
+            // L 轮分区模型分栏:每组 = 撞色带 wrapper(自己的一级标签栏,渲染本组全部
+            // 标签)+ 白面板(该组焦点容器的二级列);工作台面板与组并列可调。"新建容器"
+            // 入口只在全局焦点组的标签栏上。
+            <ResizablePanelGroup orientation="horizontal" className="relative isolate flex min-h-0 flex-1" groupRef={outerGroupRef}>
+              {groups.map((group, groupIndex) => {
+                const focus = group.includes(activeContainer) ? activeContainer : group[0]!;
+                const groupColumns = columns.filter((column) => column.container === focus);
+                return (
+                  // 面板 id 按下标而非焦点容器命名:焦点容器随用户点击切换,若 id 跟着换,
+                  // v4 视作新面板注册,宽度记忆全丢。
+                  <React.Fragment key={groupIndex}>
+                    {groupIndex > 0 ? (
+                      <ResizableHandle className="w-1.5 bg-transparent after:w-1.5" />
+                    ) : null}
+                    <ResizablePanel
+                      id={`group-panel-${groupIndex}`}
+                      minSize="18%"
+                      className="flex min-h-0 flex-col"
+                    >
+                      <div className="relative isolate flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--ds-on-surface)] pt-[2px]">
+                        {/* z-[3] 同单组分支:压过面板阴影外环,连体处不出缝(见上方注释) */}
+                        <div className="relative z-[3] flex h-[31px] shrink-0 items-end gap-1 px-1">
+                          <div className="relative flex h-full min-w-0 flex-1 items-end">
+                            <ContainerTabBar
+                              group={group}
+                              groupIndex={groupIndex}
+                              ghostTabs={group.includes(activeContainer) ? ghostTabs : []}
+                              headerTrailing={group.includes(activeContainer) ? <ContainerPlusMenu /> : null}
+                            />
+                          </div>
+                        </div>
+                        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[16px] rounded-b-[18px] bg-[var(--ds-surface-200)] shadow-[var(--ds-elevation-100)]">
+                          <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
+                            {groupColumns.map((column, index) => (
+                              <React.Fragment key={`${column.container}:${column.paneIndex}`}>
+                                {index > 0 ? <ResizableHandle /> : null}
+                                <ResizablePanel
+                                  id={`conversation-column-${column.container}-${column.paneIndex}`}
+                                  minSize="18%"
+                                  className="flex min-h-0 flex-col"
+                                >
+                                  {renderColumn(column)}
+                                </ResizablePanel>
+                              </React.Fragment>
+                            ))}
+                          </ResizablePanelGroup>
                         </div>
                       </div>
-                      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[16px] rounded-b-[18px] bg-[var(--ds-surface-200)] shadow-[var(--ds-elevation-100)]">
-                        <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
-                          {groupColumns.map((column, index) => (
-                            <React.Fragment key={`${column.container}:${column.paneIndex}`}>
-                              {index > 0 ? <ResizableHandle /> : null}
-                              <ResizablePanel
-                                id={`conversation-column-${column.container}-${column.paneIndex}`}
-                                minSize="18%"
-                                className="flex min-h-0 flex-col"
-                              >
-                                {renderColumn(column)}
-                              </ResizablePanel>
-                            </React.Fragment>
-                          ))}
-                        </ResizablePanelGroup>
-                      </div>
-                    </div>
-                  </ResizablePanel>
-                </React.Fragment>
-              );
-            })}
-            <ResizableHandle
-              withHandle
-              className={cn("w-1.5 bg-transparent after:w-1.5", !hasWorkbenchPanel && "pointer-events-none opacity-0")}
-            />
-            <ResizablePanel
-              id="workbench-panel"
-              defaultSize="0%"
-              minSize={`${WORKBENCH_MIN_WIDTH_PCT}%`}
-              maxSize="60%"
-              collapsible
-              collapsedSize="0%"
-              panelRef={workbenchPanelRef}
-              onResize={(size) => {
-                // 只记有效宽度:关闭态/收起吸附产生的 0 不覆盖用户偏好。
-                if (size.asPercentage >= WORKBENCH_MIN_WIDTH_PCT) {
-                  workbenchWidthRef.current = size.asPercentage;
-                }
-              }}
-              className="flex min-h-0 flex-col"
-            >
-              {panel ? (
-                <WorkbenchHost panel={panel} onClose={closePanel} className="border-l-0" />
-              ) : null}
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        )}
-      </SidebarInset>
-    </SidebarProvider>
+                    </ResizablePanel>
+                  </React.Fragment>
+                );
+              })}
+              <ResizableHandle
+                withHandle
+                className={cn("w-1.5 bg-transparent after:w-1.5", !hasWorkbenchPanel && "pointer-events-none opacity-0")}
+              />
+              <ResizablePanel
+                id="workbench-panel"
+                defaultSize="0%"
+                minSize={`${WORKBENCH_MIN_WIDTH_PCT}%`}
+                maxSize="60%"
+                collapsible
+                collapsedSize="0%"
+                panelRef={workbenchPanelRef}
+                onResize={(size) => {
+                  // 只记有效宽度:关闭态/收起吸附产生的 0 不覆盖用户偏好。
+                  if (size.asPercentage >= WORKBENCH_MIN_WIDTH_PCT) {
+                    workbenchWidthRef.current = size.asPercentage;
+                  }
+                }}
+                className="flex min-h-0 flex-col"
+              >
+                {panel ? (
+                  <WorkbenchHost panel={panel} onClose={closePanel} className="border-l-0" />
+                ) : null}
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          )}
+        </SidebarInset>
+        </SidebarProvider>
+    </div>
   );
 }

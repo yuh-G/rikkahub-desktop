@@ -33,7 +33,6 @@ import { AvatarCropper } from "~/components/avatar-cropper";
 import { RenameConversationDialog } from "~/components/rename-conversation-dialog";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
-import { SidebarBrandRow } from "~/components/sidebar-brand";
 import {
   Dialog,
   DialogContent,
@@ -859,11 +858,8 @@ export const ConversationSidebar = React.memo(
     return (
       <Sidebar collapsible="offcanvas" variant="sidebar">
         <SidebarHeader>
-          {/* 品牌行(G8/I5):只留 Logo+应用名(折叠钮已挪到用户资料行右侧);
-              I1:与右侧窗控带同属顶部窗控行,整行可拖拽窗口。
-              问题7回访:抽成 SidebarBrandRow,设置页/图像页同源延续。 */}
-          <SidebarBrandRow className="-mt-1 pl-2 pr-0.5" />
-          {/* 用户资料行(F1:按用户要求保持顶部,不学 NewMax 的用户归底);
+          {/* 品牌行已上移到画布顶带(conversations.tsx),此处只余头像行。
+              用户资料行(F1:按用户要求保持顶部,不学 NewMax 的用户归底);
               I5:折叠钮居其右侧垂直居中。 */}
           <div className="flex items-center gap-1">
           <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
