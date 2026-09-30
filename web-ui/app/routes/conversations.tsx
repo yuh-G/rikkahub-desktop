@@ -2727,12 +2727,13 @@ function ConversationsPageInner() {
           侧栏卡片自其下方(头像行)起。整带即窗口拖拽区,双击最大化行为不变。 */}
       <div
         {...windowDragRegionProps()}
-        className="flex h-[var(--app-band-h)] shrink-0 select-none items-center px-2"
+        className="flex h-[var(--app-band-h)] shrink-0 select-none items-start"
       >
-        <SidebarBrandRow className="pl-1" />
-        <div className="ml-auto flex items-center">
-          <WindowControlsBar className="h-auto" />
-        </div>
+        {/* 三页同源坐标:品牌行左 16px/距顶 4px(= 设置/图像页的 px-4 pt-1),窗控
+            mt-1.5/mr-2 与两页逐字相同(距顶 6px/右 8px)——顶带只是换了宿主,Logo 与
+            [– □ ✕] 的位置高度不变。 */}
+        <SidebarBrandRow className="ml-4 mt-1" />
+        <WindowControlsBar className="ml-auto mt-1.5 mr-2" />
       </div>
       <SidebarProvider defaultOpen className="relative min-h-0 flex-1 overflow-hidden">
         <GlobalDropZone
