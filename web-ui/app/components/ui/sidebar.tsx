@@ -252,7 +252,7 @@ function Sidebar({
           // Adjust the padding for floating and inset variants.
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
-            // I2:去掉侧栏分界线——卡片态由圆角+浮起投影立界(NewMax 框架)
+            // I2:去掉侧栏分界线——卡片态由圆角+浮起投影立界
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
           className
         )}
@@ -495,7 +495,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  // NewMax 侧栏导航项:hover 走 on-surface,激活态=白卡(surface-200)+elevation-100,无左指示条
+  // 侧栏导航项:hover 走 on-surface,激活态=白卡(surface-200)+elevation-100,无左指示条
   "peer/menu-button relative flex w-full items-center gap-2 overflow-hidden rounded-[10px] p-2 text-left text-sm outline-hidden ring-sidebar-ring transition-all duration-200 hover:bg-[var(--ds-on-surface)] focus-visible:ring-2 active:bg-[var(--ds-on-surface-active)] disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-[var(--ds-surface-200)] data-[active=true]:font-medium data-[active=true]:shadow-[var(--ds-elevation-100)] data-[state=open]:hover:bg-[var(--ds-on-surface)] group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
   {
     variants: {

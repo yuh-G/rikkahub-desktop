@@ -2776,7 +2776,7 @@ function ConversationsPageInner() {
         />
         <SidebarInset className="flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent pr-2 pb-2 pl-2">
           {/* 窗控与品牌行已上移到画布顶带;此处只余主卡。 */}
-          {/* NewMax 内容列 = on-surface 着色 wrapper(撞色带):一级标签行浮在带顶,
+          {/* 内容列 = on-surface 着色 wrapper(撞色带):一级标签行浮在带顶,
               下方白面板盖住其余部分,于是"带"只在标签行处露出;四周 SidebarInset 的
               pt/pr/pb/pl 留出画布边距(左侧即侧栏与面板之间的 gap)。
               L 轮分区模型:分栏时每组是一块同款"撞色带 + 白面板"的独立单元(自己的一级
@@ -2785,7 +2785,7 @@ function ConversationsPageInner() {
           {groups.length === 1 || isMobile ? (
             <div className="relative isolate flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--ds-on-surface)] pt-[2px]">
               {/* 一级容器标签行:窗控/拖拽由上方 WindowControlsBar 负责,本行纯交互。
-                  z-[3] 压过白面板的 elevation-100 外环阴影(NewMax 同款层级):否则那道
+                  z-[3] 压过白面板的 elevation-100 外环阴影:否则那道
                   0.5px 暗环会横穿焦点标签与面板的连接处,连体处凭空多出一条缝。 */}
               <div className="relative z-[3] flex h-[31px] shrink-0 items-end gap-1 px-1">
                 <CollapsedSidebarTrigger />
