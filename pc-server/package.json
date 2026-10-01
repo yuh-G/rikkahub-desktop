@@ -13,7 +13,7 @@
     "typecheck": "bun run scripts/typecheck.ts",
     "version:bump": "bun run scripts/bump-version.ts",
     "build:bash-bundle": "bun run scripts/build-bash-bundle.ts",
-    "compile": "bun install && bun run scripts/build-bash-bundle.ts && bun build --compile --target=bun-windows-x64 server.ts --outfile ../dist/rikkahub-pc.exe && bun -e \"await Bun.write('../web-ui/src-tauri/binaries/rikkahub-server-x86_64-pc-windows-msvc.exe', Bun.file('../dist/rikkahub-pc.exe'))\"",
+    "compile": "bun install && bun run scripts/build-bash-bundle.ts && bun build --compile --target=bun-windows-x64 server.ts --outfile ../dist/rikkahub-pc.exe && bun run scripts/sync-dist-assets.ts && bun -e \"await Bun.write('../web-ui/src-tauri/binaries/rikkahub-server-x86_64-pc-windows-msvc.exe', Bun.file('../dist/rikkahub-pc.exe'))\"",
     "compile:linux": "bun install && bun build --compile --target=bun-linux-x64 server.ts --outfile ../dist/rikkahub-pc"
   },
   "devDependencies": {
