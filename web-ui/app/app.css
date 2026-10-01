@@ -58,15 +58,18 @@
     "Microsoft YaHei UI", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
   --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-  --font-mono:
-    "Spline Sans Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
-  /* 默认代码字体:优先尝试本机安装的现代等宽字体,未安装则回退系统等宽栈。
-     栈内字体(Maple/JetBrains Mono/Fira Code 等)默认开连字——代码渲染统一由下方
-     code 选择器声明 font-feature-settings 关闭(=>、!= 合成单字形读代码碍眼)。 */
+  /* 全应用唯一的等宽令牌:font-mono 工具类与 --rikkahub-code-font 同源,一处改全屏改。
+     设计(与界面/对话字体的关系见 --rikkahub-chat-font 注):
+     - 拉丁字形:Cascadia Code(随包分发的 @font-face,所有机器渲染一致);
+     - 中文字形:Cascadia 无 CJK 覆盖 → 穿透到 --rikkahub-chat-font(对话字体链,
+       含用户设置的中文覆盖族),代码注释的中文与对话观感一致;
+     - 栈尾保留系统等宽兜底(不依赖 @font-face 加载完成的极端场景)。
+     连字刻意关闭:栈内字体默认开连字,代码渲染统一由下方 code 选择器声明
+     font-feature-settings 关闭(=>、!= 合成单字形读代码碍眼)。 */
   --rikkahub-code-font:
-    "Maple Mono", "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", ui-monospace,
-    SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    "Cascadia Code", var(--rikkahub-chat-font, var(--font-sans)), ui-monospace, SFMono-Regular,
+    Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-mono: var(--rikkahub-code-font);
   --radius: 0.75rem;
   --shadow-x: 0;
   --shadow-y: 1px;
@@ -144,8 +147,6 @@
   --ds-motion-swift: var(--ds-duration-fast) var(--ds-ease-swift);
   --ds-motion-soft: var(--ds-duration-base) var(--ds-ease-soft);
   --ds-motion-spring: var(--ds-duration-base) var(--ds-ease-spring);
-  --ds-font-display-number: "Spline Sans Mono", ui-monospace, monospace;
-  --ds-font-kbd: "Inter Variable", "Inter", sans-serif;
   /* 文字层级/品牌/图标(语义派生:花色主题自动跟随) */
   --ds-text-primary: var(--foreground);
   --ds-text-secondary: color-mix(in srgb, var(--foreground) 64%, transparent);

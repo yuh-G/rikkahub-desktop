@@ -97,7 +97,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <script
           dangerouslySetInnerHTML={{
             __html:
-              'try{var p=JSON.parse(localStorage.getItem("rikkahub.prepaint.v1"));if(p){var d=document.documentElement;if(typeof p.scale==="number"&&isFinite(p.scale)&&p.scale>0)d.style.setProperty("--rikkahub-ui-scale",String(p.scale));if(p.uiFont)d.style.setProperty("--rikkahub-ui-font",p.uiFont);if(p.chatFont)d.style.setProperty("--rikkahub-chat-font",p.chatFont)}}catch(e){}',
+              'try{var p=JSON.parse(localStorage.getItem("rikkahub.prepaint.v1"));if(p){var d=document.documentElement;if(typeof p.scale==="number"&&isFinite(p.scale)&&p.scale>0)d.style.setProperty("--rikkahub-ui-scale",String(p.scale));if(p.uiFont&&p.uiFont!=="inherit")d.style.setProperty("--rikkahub-ui-font",p.uiFont);if(p.chatFont&&p.chatFont!=="inherit")d.style.setProperty("--rikkahub-chat-font",p.chatFont)}}catch(e){}',
           }}
         />
         {/* 【预绘制·读侧】明暗模式:重放 ThemeProvider applyMode(写侧,搜同键名)上次
@@ -271,10 +271,12 @@ function AppContent() {
       UI_CJK_OVERRIDE_FAMILY,
       Boolean(uiCjk),
     );
-    // 对话字体:英文未设时基链取界面链(继承观感);都未设且无中文 → inherit(纯继承,零成本)。
+    // 对话字体:英文未设时基链取界面链(继承观感);都未设时取界面链实值而非
+    // "inherit"——该变量现被嵌入 --rikkahub-code-font 字体栈中间(代码中文字形
+    // 穿透到对话字体),"inherit" 混进栈里会毒化整条 font-family 声明。
     const chatFont = chatCjk
       ? composeFontChain(chatEn || uiFont, CHAT_CJK_OVERRIDE_FAMILY, true)
-      : chatEn || "inherit";
+      : chatEn || uiFont;
     document.body.style.setProperty("--rikkahub-ui-font", uiFont);
     document.body.style.setProperty("--rikkahub-chat-font", chatFont);
     // 界面字号缩放:写到 <html>(documentElement)上,app.css 的 :root 规则会用它计算根字号。
