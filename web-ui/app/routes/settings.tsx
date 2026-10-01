@@ -2,70 +2,26 @@ import * as React from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "~/i18n";
 
-import { ArrowLeft, Bot, CheckCircle2, CopyPlus, Database, FileClock, Globe, Heart, KeyRound, Loader2, Mic, Search, Settings2, UserRound, Brain } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { Link } from "react-router";
 
 import { WindowControlsBar, windowDragRegionProps } from "~/components/window-controls";
 import { SidebarBrandRow } from "~/components/sidebar-brand";
-import { MemorySection } from "~/components/memory/memory-section";
+import { ProxyNavDot } from "~/components/settings/proxy";
+import {
+  SETTINGS_NAV,
+  isSettingsTabId,
+  type SettingsTabId,
+} from "~/components/settings/settings-nav";
+import { SETTINGS_SECTION_COMPONENTS } from "~/components/settings/settings-registry";
 import { toast } from "sonner";
 
 import { Button } from "~/components/ui/button";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { AboutSection, DonateSection } from "~/components/settings/about";
-import { AssistantsSection } from "~/components/settings/assistants";
-import { McpExtensionsSection } from "~/components/settings/extensions";
-import { ProvidersSection } from "~/components/settings/providers";
-import { DataSection } from "~/components/settings/data";
-import { GeneralSection } from "~/components/settings/general";
-import { LogsSection, type RequestLog } from "~/components/settings/logs";
-import { ProxyNavDot, ProxySection } from "~/components/settings/proxy";
-import { DefaultModelsSection } from "~/components/settings/default-models";
-import { SearchSection } from "~/components/settings/search";
-import { SpeechSection } from "~/components/settings/speech";
-import { StatsSection, type StatsPayload } from "~/components/settings/stats";
 import { cn } from "~/lib/utils";
 import api from "~/services/api";
 import { useSettingsStore } from "~/stores/app-store";
-import { confirmDialog } from "~/stores/confirm-store";
 import type { Settings } from "~/types";
-
-type Section =
-  | "general"
-  | "providers"
-  | "models"
-  | "assistants"
-  | "search"
-  | "mcp"
-  | "speech"
-  | "memory"
-  | "data"
-  | "stats"
-  | "logs"
-  | "proxy"
-  | "donate"
-  | "about";
-
-const navItems: Array<{
-  id: Section;
-  labelKey: string;
-  icon: React.ComponentType<{ className?: string }>;
-}> = [
-  { id: "general", labelKey: "settings:nav.general", icon: UserRound },
-  { id: "assistants", labelKey: "settings:nav.assistants", icon: Bot },
-  { id: "providers", labelKey: "settings:nav.providers", icon: KeyRound },
-  { id: "models", labelKey: "settings:nav.models", icon: Settings2 },
-  { id: "search", labelKey: "settings:nav.search", icon: Search },
-  { id: "mcp", labelKey: "settings:nav.mcp", icon: CopyPlus },
-  { id: "speech", labelKey: "settings:nav.speech", icon: Mic },
-  { id: "memory", labelKey: "settings:nav.memory", icon: Brain },
-  { id: "data", labelKey: "settings:nav.data", icon: Database },
-  { id: "stats", labelKey: "settings:nav.stats", icon: Database },
-  { id: "logs", labelKey: "settings:nav.logs", icon: FileClock },
-  { id: "proxy", labelKey: "settings:nav.proxy", icon: Globe },
-  { id: "donate", labelKey: "settings:nav.donate", icon: Heart },
-  { id: "about", labelKey: "settings:nav.about", icon: CheckCircle2 },
-];
 
 export function meta() {
   return [{ title: i18n.t("settings:nav.meta_title") }];
@@ -76,20 +32,18 @@ export default function SettingsPage() {
   const streamedSettings = useSettingsStore((state) => state.settings);
   const setStreamedSettings = useSettingsStore((state) => state.setSettings);
   const [settings, setSettings] = React.useState<Settings | null>(streamedSettings);
-  const [section, setSection] = React.useState<Section>("general");
+  const [section, setSection] = React.useState<SettingsTabId>("general");
   // issue(1.4.1 反馈):手机浏览器访问时设置页只剩左栏可见——固定 w-64+flex-1 双栏
   // 在窄屏下内容区被挤出且 overflow-hidden 不可滑。窄屏改钻取式:先导航列表,
   // 点击进全屏内容并带返回;md 及以上被 md: 类覆盖,双栏行为不变。
   const [mobileContentOpen, setMobileContentOpen] = React.useState(false);
-  const [logs, setLogs] = React.useState<RequestLog[]>([]);
-  const [stats, setStats] = React.useState<StatsPayload | null>(null);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const querySection = params.get("section");
-    if (querySection && navItems.some((item) => item.id === querySection)) {
-      setSection(querySection as Section);
+    if (querySection && isSettingsTabId(querySection)) {
+      setSection(querySection);
       setMobileContentOpen(true);
     }
   }, []);
@@ -105,34 +59,6 @@ export default function SettingsPage() {
       .then(setSettings)
       .catch((error: Error) => toast.error(error.message));
   }, [settings]);
-
-  React.useEffect(() => {
-    if (section !== "logs") return;
-    api
-      .get<RequestLog[]>("logs")
-      .then(setLogs)
-      .catch((error: Error) => toast.error(error.message));
-  }, [section]);
-
-  // 日志问题 3:二次确认收口到 LogsSection.clearVisible(一次确认管请求+错误两类);
-  // 本回调退化为纯删除动作,绝不能再各自弹确认(双弹窗)或先删后问。
-  const clearLogs = React.useCallback(async () => {
-    try {
-      await api.delete("logs");
-      setLogs([]);
-      toast.success(t("settings:logs.cleared"));
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
-    }
-  }, [t]);
-
-  React.useEffect(() => {
-    if (section !== "stats") return;
-    api
-      .get<StatsPayload>("stats")
-      .then(setStats)
-      .catch((error: Error) => toast.error(error.message));
-  }, [section]);
 
   if (!settings) {
     return (
@@ -150,6 +76,8 @@ export default function SettingsPage() {
     setSettings(next);
     setStreamedSettings(next);
   };
+
+  const Section = SETTINGS_SECTION_COMPONENTS[section];
 
   return (
     <div className="flex h-svh overflow-hidden bg-background">
@@ -179,7 +107,7 @@ export default function SettingsPage() {
           </div>
         </div>
         <nav className="space-y-1 p-2">
-          {navItems.map((item) => {
+          {SETTINGS_NAV.map((item) => {
             const Icon = item.icon;
             const active = item.id === section;
             return (
@@ -234,37 +162,10 @@ export default function SettingsPage() {
                 <ArrowLeft className="size-4" />
               </Button>
               <span className="text-sm font-semibold">
-                {t(navItems.find((item) => item.id === section)?.labelKey ?? "")}
+                {t(SETTINGS_NAV.find((item) => item.id === section)?.labelKey ?? "")}
               </span>
             </div>
-            {section === "general" && (
-              <GeneralSection settings={settings} onSettings={updateLocal} />
-            )}
-            {section === "providers" && (
-              <ProvidersSection settings={settings} onSettings={updateLocal} />
-            )}
-            {section === "models" && (
-              <DefaultModelsSection settings={settings} onSettings={updateLocal} />
-            )}
-            {section === "assistants" && (
-              <AssistantsSection settings={settings} onSettings={updateLocal} />
-            )}
-            {section === "search" && <SearchSection settings={settings} onSettings={updateLocal} />}
-            {section === "mcp" && (
-              <McpExtensionsSection settings={settings} onSettings={updateLocal} />
-            )}
-            {section === "speech" && <SpeechSection settings={settings} onSettings={updateLocal} />}
-            {section === "memory" && <MemorySection settings={settings} onSettings={updateLocal} />}
-            {section === "data" && <DataSection settings={settings} onSettings={updateLocal} />}
-            {section === "stats" && <StatsSection stats={stats} />}
-            {section === "logs" && (
-              <>
-                <LogsSection logs={logs} onClear={clearLogs} />
-              </>
-            )}
-            {section === "proxy" && <ProxySection settings={settings} onSettings={updateLocal} />}
-            {section === "donate" && <DonateSection />}
-            {section === "about" && <AboutSection />}
+            <Section settings={settings} onSettings={updateLocal} />
           </div>
         </ScrollArea>
         </main>
@@ -272,4 +173,3 @@ export default function SettingsPage() {
     </div>
   );
 }
-
