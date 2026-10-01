@@ -908,7 +908,7 @@
 }
 
 :root[data-theme="tiesen"] {
-  --background: oklch(0.9851 0 0);
+  --background: oklch(0.9747 0 0);
   --foreground: oklch(0 0 0);
   --card: oklch(1 0 267.51);
   --card-foreground: oklch(0.2103 0 267.51);
