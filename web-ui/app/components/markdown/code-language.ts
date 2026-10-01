@@ -1,0 +1,77 @@
+// 文件路径 → shiki 语言标识。工作区工具卡(write/edit)按写入路径推断代码语言,
+// 复用 CodeBlock 的语法高亮。登记原则:只收 shiki bundledLanguages 里真实存在的
+// 标识名(resolveShikiLanguage 按名字精确命中,写错=静默退化为无高亮原文);
+// 高频工程文件优先,没把握的扩展名不登记——退化为素色等宽,好过错语言上色。
+const EXTENSION_LANGUAGE_MAP: Record<string, string> = {
+  bash: "shell",
+  bat: "batch",
+  c: "c",
+  cc: "cpp",
+  clj: "clojure",
+  cmake: "cmake",
+  cmd: "batch",
+  conf: "ini",
+  cpp: "cpp",
+  cs: "csharp",
+  css: "css",
+  csv: "csv",
+  dart: "dart",
+  diff: "diff",
+  env: "ini",
+  ex: "elixir",
+  go: "go",
+  gradle: "groovy",
+  groovy: "groovy",
+  h: "c",
+  hpp: "cpp",
+  hs: "haskell",
+  htm: "html",
+  html: "html",
+  ini: "ini",
+  ipynb: "json",
+  java: "java",
+  js: "javascript",
+  json: "json",
+  jsonc: "jsonc",
+  jsx: "jsx",
+  kt: "kotlin",
+  less: "less",
+  lua: "lua",
+  m: "objc",
+  md: "markdown",
+  mjs: "javascript",
+  mm: "objc",
+  php: "php",
+  pl: "perl",
+  ps1: "powershell",
+  py: "python",
+  rb: "ruby",
+  rs: "rust",
+  sass: "sass",
+  sc: "scala",
+  scala: "scala",
+  scss: "scss",
+  sh: "shell",
+  sql: "sql",
+  svg: "xml",
+  svelte: "svelte",
+  swift: "swift",
+  toml: "toml",
+  ts: "typescript",
+  tsx: "tsx",
+  txt: "text",
+  vue: "vue",
+  xml: "xml",
+  yaml: "yaml",
+  yml: "yaml",
+  zsh: "shell",
+};
+
+/** 按文件路径推断 shiki 语言;未识别返回 "text"(CodeBlock 的素色等宽呈现)。 */
+export function languageForPath(path: string): string {
+  const name = path.trim().split(/[\\/]/).pop() ?? "";
+  const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1).toLowerCase() : "";
+  if (!ext) return "text";
+  // 点文件(.gitignore/.eslintrc)没有扩展名,按整名匹配一轮
+  return EXTENSION_LANGUAGE_MAP[ext] ?? EXTENSION_LANGUAGE_MAP[name.toLowerCase()] ?? "text";
+}

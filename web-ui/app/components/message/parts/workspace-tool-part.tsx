@@ -20,6 +20,8 @@ import { DetailDrawer } from "~/components/detail-drawer";
 import { DenyReasonDialog } from "~/components/message/deny-reason-dialog";
 import { Button } from "~/components/ui/button";
 import { CopyButton } from "~/components/ui/copy-button";
+import { CodeBlock } from "~/components/markdown/code-block";
+import { languageForPath } from "~/components/markdown/code-language";
 import { DiffView, parseDiffStats } from "~/components/workspace/diff-view";
 import { TerminalOutput } from "~/components/workspace/terminal-output";
 import { useToolElapsedSeconds } from "~/hooks/use-elapsed-since";
@@ -191,7 +193,7 @@ function useWorkspaceActionView(
 
 /** 展开区正文(卡/步骤共用):denied/error 分支仅失败卡可达(失败即抽出,不进链)。 */
 function WorkspaceActionBody({ view }: { view: WorkspaceActionView }) {
-  const { t, model, running, diff } = view;
+  const { t, model, running, diff, path } = view;
   if (model.denied) {
     return (
       <div className="px-3 py-2 text-xs text-destructive">
@@ -216,7 +218,7 @@ function WorkspaceActionBody({ view }: { view: WorkspaceActionView }) {
       <div className="px-3 py-2 text-xs text-muted-foreground">{t("workspace_tool.no_output")}</div>
     );
   }
-  return <WriteBodyPreview content={str(model.args, "content") ?? ""} t={t} />;
+  return <WriteBodyPreview content={str(model.args, "content") ?? ""} path={path} t={t} />;
 }
 
 /** 全量详情抽屉(卡/步骤共用):参数/DiffView/写入正文/结果/错误/patch。 */
@@ -236,17 +238,7 @@ function WorkspaceActionDrawer({ view, toolName }: { view: WorkspaceActionView; 
         ) : null}
         {model.kind === "edit" && diff ? <DiffView diff={diff} className="rounded-md border" /> : null}
         {writeContent !== null ? (
-          <div className="group/drawer-pre relative">
-            <pre className="overflow-auto whitespace-pre-wrap break-all rounded-md border bg-muted/20 p-3 font-mono text-xs">
-              {writeContent}
-            </pre>
-            <CopyButton
-              text={writeContent}
-              label={t("tool_part.copy")}
-              copiedLabel={t("tool_part.copied")}
-              className="absolute right-1.5 top-1.5 bg-background/80 opacity-0 shadow-sm backdrop-blur transition-opacity group-hover/drawer-pre:opacity-100"
-            />
-          </div>
+          <CodeBlock code={writeContent} language={languageForPath(path)} wrapLines className="my-0" />
         ) : null}
         {model.text ? (
           <div>
@@ -500,7 +492,7 @@ export function WorkspaceActionStep({
   );
 }
 
-function WriteBodyPreview({ content, t }: { content: string; t: TFunction }) {
+function WriteBodyPreview({ content, path, t }: { content: string; path: string; t: TFunction }) {
   const { preview, hidden } = React.useMemo(() => {
     const lines = content.split("\n");
     if (lines.length <= WRITE_PREVIEW_LINES) return { preview: content, hidden: 0 };
@@ -508,12 +500,17 @@ function WriteBodyPreview({ content, t }: { content: string; t: TFunction }) {
   }, [content]);
   if (!content) return <div className="px-3 py-2 text-xs text-muted-foreground">{t("workspace_tool.no_output")}</div>;
   return (
-    <div>
-      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all px-3 py-2 font-mono text-xs leading-5 text-foreground/90">
-        {preview}
-      </pre>
+    <div className="p-2">
+      {/* 写入正文按路径推断语言,复用 CodeBlock 语法高亮(与消息内代码块同源);
+          预览截断到 WRITE_PREVIEW_LINES 行,完整内容在抽屉/复制里。 */}
+      <CodeBlock
+        code={preview}
+        language={languageForPath(path)}
+        wrapLines
+        className="my-0"
+      />
       {hidden > 0 ? (
-        <div className="border-t border-border/40 bg-muted/30 px-3 py-1 text-mini text-muted-foreground">
+        <div className="mt-1 rounded-md border border-border/40 bg-muted/30 px-3 py-1 text-mini text-muted-foreground">
           {t("workspace_tool.write_preview_more", { count: hidden })}
         </div>
       ) : null}
