@@ -809,8 +809,11 @@
   --popover-foreground: rgb(5, 20, 13);
   --primary: rgb(0, 143, 71);
   --primary-foreground: rgb(255, 255, 255);
-  --secondary: rgb(245, 0, 0);
-  --secondary-foreground: rgb(255, 255, 255);
+  /* 满饱和纯红在本主题里是「信号/图表点缀色」(chart-2 同款),不是表面填充色:
+     被 shadcn 语义槽当大面背景消费时(工作区胶囊 bg-secondary、模型图标托底)
+     整块红砸在画布上。表面槽改用灰绿瓷片,点缀色留给 chart/destructive。 */
+  --secondary: rgb(228, 236, 230);
+  --secondary-foreground: rgb(5, 20, 13);
   --muted: rgb(245, 237, 214);
   --muted-foreground: rgb(66, 59, 36);
   --accent: rgb(255, 153, 10);
@@ -861,8 +864,10 @@
   --popover-foreground: rgb(255, 249, 229);
   --primary: rgb(0, 245, 122);
   --primary-foreground: rgb(0, 10, 5);
-  --secondary: rgb(255, 51, 51);
-  --secondary-foreground: rgb(255, 255, 255);
+  /* 与亮色同一修法:secondary 语义槽被当大面表面填充(工作区胶囊/图标托底),
+     满饱和信号红只做点缀(chart-2/destructive),表面槽换沉暗绿片。 */
+  --secondary: rgb(13, 38, 26);
+  --secondary-foreground: rgb(255, 249, 229);
   --muted: rgb(15, 46, 31);
   --muted-foreground: rgb(204, 198, 179);
   --accent: rgb(255, 166, 41);
