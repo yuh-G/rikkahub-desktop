@@ -1216,6 +1216,50 @@
   --ds-menu-shadow-inset: none;
 }
 
+/* ===== 侧栏表面令牌作用域(花色主题侧栏适配) =====
+   花色主题的 --sidebar 可与内容面(--card/--background)完全不同族(如深绿侧栏+
+   近白内容面),而上面两个派生块把 --ds-* 全部从内容面颜色派生——侧栏内部的
+   模块卡、选中行药丸、日期标题、悬停晕染因此在换色侧栏上整体错位(亮卡浮在
+   深侧栏、黑字压深底、晕染方向与侧栏文字相反)。治本:侧栏表面容器统一挂
+   data-sidebar-surface(ui/sidebar.tsx 三形态 + 设置页/图像页 aside),作用域内
+   消费的令牌全部改为从侧栏自己的 --sidebar* 系派生——亮暗一套公式通吃(沉暗
+   还是提亮由 sidebar-foreground 的深浅自动决定,无需分块)。默认主题不进本
+   作用域,手调值零改动;弹层/对话框经 Portal 渲染在 body 下,不在作用域内,
+   继续用内容面派生。注意 --sidebar-module-card-bg 必须在此重指:它在 :root
+   声明时已把 var(--ds-surface-400) 替换成内容面色,后代重定义 --ds-surface-400
+   追不上它(custom property 在声明元素处完成代入再继承)。 */
+:root[data-theme]:not([data-theme="default"]) [data-sidebar-surface] {
+  --background: var(--sidebar);
+  --foreground: var(--sidebar-foreground);
+  --secondary-foreground: var(--sidebar-foreground);
+  --muted-foreground: color-mix(in srgb, var(--sidebar-foreground) 64%, transparent);
+  --primary: var(--sidebar-primary);
+  --primary-foreground: var(--sidebar-primary-foreground);
+  --border: var(--sidebar-border);
+  --divider: color-mix(in srgb, var(--sidebar-foreground) 8%, transparent);
+  --input: var(--sidebar-accent);
+  --accent: var(--sidebar-accent);
+  --accent-foreground: var(--sidebar-accent-foreground);
+  --ring: var(--sidebar-ring);
+  /* 选中行/导航药丸:向侧栏文字色沉一档(亮底变深、暗底变浅,永远与文字拉开对比) */
+  --ds-surface-100: color-mix(in srgb, var(--sidebar) 84%, var(--sidebar-foreground));
+  --ds-surface-200: color-mix(in srgb, var(--sidebar) 84%, var(--sidebar-foreground));
+  /* 模块卡(新建/搜索/多选):半档,比药丸更贴侧栏底 */
+  --ds-surface-400: color-mix(in srgb, var(--sidebar) 92%, var(--sidebar-foreground));
+  --sidebar-module-card-bg: var(--ds-surface-400);
+  --ds-on-surface: color-mix(in srgb, var(--sidebar-foreground) 7%, transparent);
+  --ds-on-surface-active: color-mix(in srgb, var(--sidebar-foreground) 11%, transparent);
+  --ds-text-primary: var(--sidebar-foreground);
+  --ds-text-secondary: color-mix(in srgb, var(--sidebar-foreground) 64%, transparent);
+  --ds-text-tertiary: color-mix(in srgb, var(--sidebar-foreground) 48%, transparent);
+  --ds-icon: color-mix(in srgb, var(--sidebar-foreground) 55%, transparent);
+  --avatar-fallback-bg: color-mix(in srgb, var(--sidebar-foreground) 8%, transparent);
+  /* 药丸与侧栏卡共用的浮起描边:侧栏前景发丝环,替代内容面前景(深侧栏上不可见) */
+  --ds-elevation-100:
+    0 0 0 0.5px color-mix(in srgb, var(--sidebar-foreground) 14%, transparent),
+    0.5px 0.5px 1px rgba(0, 0, 0, 0.08);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -1584,27 +1628,6 @@
 /* 主题切换走 CSS 变量瞬间切换。曾用 `html.theme-transition *` 给所有元素加 0.3s 过渡
    来"平滑"切换,但长会话下 DOM 有数万节点,每个都做 transition 会让 style recalc
    风暴,切主题时整个应用卡死。专业应用(IDE / 设计工具)切主题本就是瞬间的,干脆。 */
-
-/* MX Brutalist 主题下 sidebar footer 背景是深绿色,但底部入口按钮和文字仍引用
-   主内容区的 muted-foreground/foreground(深棕/近黑),导致完全看不清。
-   在 footer 作用域内把相关变量映射到 sidebar 自己的浅色前景系统,既保留主内容区
-   的原始配色,又让底部控件可读、与 sidebar 协调。 */
-[data-theme="mx-brutalist"] [data-slot="sidebar-footer"] {
-  --muted-foreground: var(--sidebar-foreground);
-  --foreground: var(--sidebar-foreground);
-  --background: var(--sidebar);
-  --input: var(--sidebar-accent);
-  --accent: var(--sidebar-accent);
-  --accent-foreground: var(--sidebar-accent-foreground);
-  --border: var(--sidebar-border);
-}
-
-/* 同一主题下 outline 按钮的投影也是用 --sidebar-border 画的,上面已经映射。
-   额外把 ghost 图标按钮 hover 背景压深一点,避免在深绿上太扎眼。 */
-[data-theme="mx-brutalist"] [data-slot="sidebar-footer"] button[variant="ghost"]:hover {
-  background: var(--sidebar-accent);
-  color: var(--sidebar-accent-foreground);
-}
 
 
 @layer components {

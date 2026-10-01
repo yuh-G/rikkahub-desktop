@@ -355,7 +355,10 @@ export default function ImagesPage() {
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       {/* 问题7(2.0.0 内测):镶边结构与主界面对齐——侧栏通顶(顶行兼窗口拖拽区),
           窗控条只嵌在右侧内容列顶部,不再横贯全宽把侧栏压下一条。 */}
-      <aside className="hidden w-[340px] shrink-0 border-r bg-sidebar/80 px-4 pb-4 pt-1 md:block">
+      <aside
+        data-sidebar-surface=""
+        className="hidden w-[340px] shrink-0 border-r bg-sidebar/80 px-4 pb-4 pt-1 md:block"
+      >
         {/* 问题7回访:品牌行(Logo+RikkaHub,SidebarBrandRow 三页同源)延续主界面设计,
             pt-1 使品牌行距顶 4px——与主界面(SidebarHeader p-2 + -mt-1)同一几何;
             下方动作行放返回键+模型设置。两行都是拖拽区(drag props 放行交互元素,

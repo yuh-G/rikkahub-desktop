@@ -156,6 +156,7 @@ export default function SettingsPage() {
       {/* 问题7(2.0.0 内测):镶边结构与主界面对齐——侧栏通顶(品牌行兼窗口拖拽区),
           窗控条只嵌在右侧内容列顶部,不再横贯全宽把侧栏压下一条。 */}
       <aside
+        data-sidebar-surface=""
         className={cn(
           "w-full flex-col border-r border-divider bg-sidebar text-sidebar-foreground md:w-64",
           mobileContentOpen ? "hidden md:flex" : "flex",

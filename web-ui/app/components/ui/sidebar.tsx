@@ -172,6 +172,8 @@ function Sidebar({
     return (
       <div
         data-slot="sidebar"
+        data-sidebar="sidebar"
+        data-sidebar-surface=""
         className={cn(
           "bg-sidebar text-sidebar-foreground flex h-full w-(--sidebar-width) flex-col",
           className
@@ -189,6 +191,7 @@ function Sidebar({
         <SheetContent
           data-sidebar="sidebar"
           data-slot="sidebar"
+          data-sidebar-surface=""
           data-mobile="true"
           className="bg-sidebar text-sidebar-foreground w-(--sidebar-width) p-0 [&>button]:hidden"
           style={
@@ -261,6 +264,7 @@ function Sidebar({
         <div
           data-sidebar="sidebar"
           data-slot="sidebar-inner"
+          data-sidebar-surface=""
           className={cn(
             "bg-sidebar flex h-full w-full flex-col",
             isPlainSidebar && "overflow-hidden rounded-[18px] shadow-[var(--ds-elevation-100)]",
