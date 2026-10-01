@@ -2,7 +2,7 @@
  * 本地字体声明(自 NewMax 参考项目原样搬运,均为 OFL 开源字体):
  * - Inter Variable:西文 UI 主字体(可变字重,按 unicode-range 分 7 子集)
  * - Noto Sans SC Variable:中文主字体(98 个 unicode-range 子集,按需加载)
- * - Spline Sans Mono:数字/kbd 展示字体(可变字重)
+ * - Cascadia Code:代码字体(可变字重,常规+斜体)
  * 字体文件在 public/fonts/(随安装包分发,不依赖网络)。本文件由脚本从参考项目
  * 编译产物抽取生成,除 URL 重写外未改动;新增字体请追加而非改写既有声明。
  */
@@ -847,10 +847,21 @@
   src: url(/fonts/inter-latin-wght-normal-Dx4kXJAl.woff2) format('woff2-variations');
   unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
 }
+/* Cascadia Code(可变字重):全应用唯一代码字体(见 app.css --rikkahub-code-font)。
+   常规+斜体两条规则:shiki 高亮的斜体 token 依赖斜体面,缺它会合成假斜体。
+   OFL 1.1,许可文本同目录 LICENSE-CascadiaCode.txt。 */
 @font-face {
-  font-family: 'Spline Sans Mono';
+  font-family: 'Cascadia Code';
   font-style: normal;
-  font-weight: 300 700;
+  font-weight: 200 700;
   font-display: swap;
-  src: url(/fonts/SplineSansMono-Variable-B8SgIHVf.woff2) format('woff2-variations');
+  src: url(/fonts/CascadiaCode.woff2) format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'Cascadia Code';
+  font-style: italic;
+  font-weight: 200 700;
+  font-display: swap;
+  src: url(/fonts/CascadiaCodeItalic.woff2) format('woff2-variations');
 }
