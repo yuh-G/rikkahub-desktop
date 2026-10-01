@@ -1451,7 +1451,8 @@
   /* 默认代码字体栈,可被 --rikkahub-code-font 覆盖;禁用连字(见变量处注释) */
   font-family: var(--rikkahub-code-font) !important;
   font-feature-settings: "calt" 0, "liga" 0, "clig" 0 !important;
-  font-size: 0.95em !important;
+  /* 行内代码字号单源:与 markdown.css .inline-code 的 0.92em 对齐(旧值 0.95em 两处打架) */
+  font-size: 0.92em !important;
 }
 
 /* 代码块内容使用默认代码字体;块 UI 文字(标题/按钮/标签)继承对话字体,不在这里强制等宽。 */

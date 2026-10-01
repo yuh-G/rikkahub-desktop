@@ -108,15 +108,17 @@
   @apply relative rounded border border-border/60 bg-muted/70 px-[0.32rem] py-[0.12rem] font-mono text-[0.92em];
 }
 
-/* Code Block with Header(产品稿:圆角卡片 + 柔和抬升阴影 + 淡边框) */
-.markdown .code-block {
+/* Code Block with Header(产品稿:圆角卡片 + 柔和抬升阴影 + 淡边框)。
+   选择器不带 .markdown 前缀:CodeBlock 已被消息正文之外复用(工具卡/抽屉),
+   外观随组件走而非渲染上下文;.markdown 作用域只保留行内代码与 legacy pre。 */
+.code-block {
   @apply my-3 rounded-xl border border-border/60 overflow-hidden bg-card;
   box-shadow:
     0 1px 2px rgb(0 0 0 / 0.04),
     0 4px 16px rgb(0 0 0 / 0.06);
 }
 
-.dark .markdown .code-block {
+.dark .code-block {
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
 }
 
@@ -133,15 +135,15 @@
 }
 
 /* Code Block body */
-.markdown .code-block-content {
+.code-block-content {
   @apply overflow-x-auto;
 }
 
-.markdown .code-block-content pre {
+.code-block-content pre {
   @apply !m-0 !rounded-none !border-0 p-3 text-sm;
 }
 
-.markdown .code-block-content pre code {
+.code-block-content pre code {
   @apply bg-transparent p-0 font-mono leading-relaxed;
 }
 
