@@ -801,11 +801,11 @@
 }
 
 :root[data-theme="mx-brutalist"] {
-  --background: rgb(255, 252, 245);
+  --background: rgb(244, 247, 242);
   --foreground: rgb(5, 20, 13);
-  --card: rgb(255, 255, 255);
+  --card: rgb(252, 253, 251);
   --card-foreground: rgb(5, 20, 13);
-  --popover: rgb(255, 255, 255);
+  --popover: rgb(252, 253, 251);
   --popover-foreground: rgb(5, 20, 13);
   --primary: rgb(0, 143, 71);
   --primary-foreground: rgb(255, 255, 255);
