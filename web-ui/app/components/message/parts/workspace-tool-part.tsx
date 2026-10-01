@@ -307,13 +307,15 @@ function OpenDetailsButton({ view }: { view: WorkspaceActionView }) {
   );
 }
 
-/** 耗时徽章(域3-1):与思维链"思考了 xx 秒"同一枚小字徽章,tabular-nums 防数字抖动。 */
+/** 耗时徽章(域3-1):与思维链"思考了 xx 秒"同一枚小字徽章,tabular-nums 防数字抖动。
+ *  字体跟随上下文(消息内=对话字体);数值徽章刻意不用等宽——"xx 秒"是界面文字不是代码,
+ *  tabular-nums 已保证数字列对齐,等宽反而与对话正文形成第二种观感(与工具卡标题同理)。 */
 export function ElapsedBadge({ seconds, running }: { seconds: number; running: boolean }) {
   const { t } = useTranslation("message");
   return (
     <span
       className={cn(
-        "shrink-0 rounded px-1.5 py-0.5 font-mono text-mini tabular-nums",
+        "shrink-0 rounded px-1.5 py-0.5 text-mini tabular-nums",
         running ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
       )}
     >
@@ -327,13 +329,13 @@ function ActionStatBadges({ view }: { view: WorkspaceActionView }) {
   return (
     <>
       {stats ? (
-        <span className="shrink-0 font-mono text-xs">
+        <span className="shrink-0 text-xs tabular-nums">
           <span className="text-[oklch(0.5_0.12_150)] dark:text-[oklch(0.75_0.12_150)]">+{stats.added}</span>{" "}
           <span className="text-[oklch(0.5_0.14_25)] dark:text-[oklch(0.75_0.14_25)]">-{stats.removed}</span>
         </span>
       ) : null}
       {writtenBytes !== null ? (
-        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-mini text-muted-foreground">
+        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-mini tabular-nums text-muted-foreground">
           {t("workspace_tool.bytes", { bytes: writtenBytes })}
         </span>
       ) : null}
@@ -380,11 +382,11 @@ export function WorkspaceActionCard({
         >
           <span className="shrink-0">{statusIcon}</span>
           <TitleIcon className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">
             {model.kind === "bash" ? (
               <>
                 {t("workspace_tool.bash_prefix")}
-                <span className="font-mono text-compact font-normal">{title}</span>
+                <span className="text-compact font-normal">{title}</span>
               </>
             ) : (
               title
@@ -394,7 +396,7 @@ export function WorkspaceActionCard({
           {model.exitCode !== null ? (
             <span
               className={cn(
-                "shrink-0 rounded px-1.5 py-0.5 font-mono text-mini",
+                "shrink-0 rounded px-1.5 py-0.5 text-mini tabular-nums",
                 model.exitCode === 0
                   ? "bg-muted text-muted-foreground"
                   : "bg-[oklch(0.95_0.05_25)] text-[oklch(0.5_0.14_25)] dark:bg-[oklch(0.3_0.05_25)] dark:text-[oklch(0.75_0.14_25)]",
@@ -471,12 +473,12 @@ export function WorkspaceActionStep({
         }
         label={
           model.kind === "bash" ? (
-            <span className="text-foreground line-clamp-2 text-sm font-medium">
+            <span className="text-foreground line-clamp-2 text-xs font-medium">
               {t("workspace_tool.bash_prefix")}
-              <span className="font-mono text-compact font-normal">{title}</span>
+              <span className="text-compact font-normal">{title}</span>
             </span>
           ) : (
-            <span className="text-foreground line-clamp-2 text-sm font-medium">{title}</span>
+            <span className="text-foreground line-clamp-2 text-xs font-medium">{title}</span>
           )
         }
         extra={

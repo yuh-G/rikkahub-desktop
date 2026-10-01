@@ -725,7 +725,7 @@ function AskUserToolStep({
           <MessageCircleQuestion className="h-4 w-4 text-primary" />
         )
       }
-      label={<span className="text-foreground line-clamp-2 text-sm font-medium">{title}</span>}
+      label={<span className="text-foreground line-clamp-2 text-xs font-medium">{title}</span>}
       extra={elapsedSeconds !== null ? <ElapsedBadge seconds={elapsedSeconds} running={Boolean(loading)} /> : undefined}
     >
       <div className="space-y-3 w-full">
@@ -861,7 +861,7 @@ export function ToolPart({
             <Icon className="h-4 w-4 text-primary" />
           )
         }
-        label={<span className="text-foreground line-clamp-2 text-sm font-medium">{title}</span>}
+        label={<span className="text-foreground line-clamp-2 text-xs font-medium">{title}</span>}
         extra={
           <span className="flex shrink-0 items-center gap-1.5">
             {isPending && onToolApproval ? (
@@ -1156,7 +1156,7 @@ export function PendingToolAttentionCard({
       </div>
 
       {argsPreview && argsPreview !== "{}" ? (
-        <pre className="mt-3 max-h-40 overflow-auto rounded-md border border-border/50 bg-background/60 px-3 py-2 text-xs text-foreground">
+        <pre className="mt-3 max-h-40 overflow-auto rounded-md border border-border/50 bg-background/60 px-3 py-2 font-mono text-xs text-foreground">
           <code>{argsPreview}</code>
         </pre>
       ) : null}

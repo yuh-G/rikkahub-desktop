@@ -78,7 +78,7 @@ function ChainOfThought<T>({
         <button
           type="button"
           className={cn(
-            "text-primary hover:bg-muted/60 focus-visible:ring-ring/50 mb-1 flex w-full items-center gap-2 rounded-md px-1 py-1 text-left text-sm outline-none focus-visible:ring-[3px]",
+            "text-primary hover:bg-muted/60 focus-visible:ring-ring/50 mb-1 flex w-full items-center gap-2 rounded-md px-1 py-1 text-left text-xs outline-none focus-visible:ring-[3px]",
           )}
           onClick={toggleExpanded}
         >
