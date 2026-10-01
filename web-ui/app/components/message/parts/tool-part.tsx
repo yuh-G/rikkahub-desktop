@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import Markdown from "~/components/markdown/markdown";
+import { CodeBlock } from "~/components/markdown/code-block";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { DetailDrawer } from "~/components/detail-drawer";
@@ -341,11 +342,15 @@ function getToolTitle(toolName: string, args: unknown, t: TFunction): string {
 // 换行被转义成 \n 字面量,整段挤成一条超长单行只能横向滚动。字符串直接按原文
 // 渲染,对象保持缩进 JSON;pre-wrap + break-words 让长行折行,用足垂直空间。
 // maxHeightClass:卡片内联预览限高,抽屉里不限(外层容器自身可滚)。
+// 对象走 CodeBlock(json 高亮,与消息代码块同源);字符串是自然语言/命令输出,
+// 素色等宽即可,不上 shiki。
 function JsonBlock({ value, maxHeightClass = "max-h-64" }: { value: unknown; maxHeightClass?: string }) {
-  const text = typeof value === "string" ? value : toJsonString(value);
+  if (typeof value !== "string") {
+    return <CodeBlock code={toJsonString(value)} language="json" wrapLines className={cn("my-0", maxHeightClass)} />;
+  }
   return (
-    <pre className={cn("overflow-y-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 text-xs", maxHeightClass)}>
-      {text}
+    <pre className={cn("overflow-y-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 font-mono text-xs", maxHeightClass)}>
+      {value}
     </pre>
   );
 }
