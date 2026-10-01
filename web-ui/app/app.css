@@ -107,11 +107,11 @@
   --sidebar-module-card-bg: var(--ds-surface-400);
   --ds-on-surface: rgba(55, 61, 58, 0.06);
   --ds-on-surface-active: rgba(55, 61, 58, 0.08);
-  /* 默认头像底色:前景色 10% 相对晕染(非固定灰)。固定灰在某个表面必撞色
+  /* 默认头像底色:前景色 8% 相对晕染(非固定灰)。固定灰在某个表面必撞色
      ——本次撞侧栏(surface-300 同值)致圆形轮廓隐形;相对晕染随所在表面自适应,
-     任何底上都能与背景拉开一档。刻意比悬停晕染(on-surface 6%)深,不然头像
-     边界又不显;暗色在 .dark 块取 12%。 */
-  --avatar-fallback-bg: rgba(55, 61, 58, 0.1);
+     任何底上都能与背景拉开一档。刻意比悬停晕染(on-surface 6%)略深一档,
+     轮廓可辨即可;暗色在 .dark 块取 10%。 */
+  --avatar-fallback-bg: rgba(55, 61, 58, 0.08);
   --ds-pill-bg: color-mix(in srgb, var(--primary) 12%, transparent);
   --ds-success: #287d46;
   --ds-warning: #916300;
@@ -246,7 +246,7 @@
   --sidebar-module-card-bg: var(--ds-surface-400);
   --ds-on-surface: rgba(168, 184, 176, 0.08);
   --ds-on-surface-active: rgba(168, 184, 176, 0.16);
-  --avatar-fallback-bg: rgba(168, 184, 176, 0.12);
+  --avatar-fallback-bg: rgba(168, 184, 176, 0.1);
   --ds-pill-bg: color-mix(in srgb, var(--primary) 8%, transparent);
   --ds-success: #4ade80;
   --ds-warning: #e0a830;
@@ -1139,7 +1139,7 @@
   --ds-surface-input: var(--card);
   --ds-on-surface: color-mix(in srgb, var(--foreground) 6%, transparent);
   --ds-on-surface-active: color-mix(in srgb, var(--foreground) 9%, transparent);
-  --avatar-fallback-bg: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --avatar-fallback-bg: color-mix(in srgb, var(--foreground) 8%, transparent);
   --ds-pill-bg: color-mix(in srgb, var(--primary) 12%, transparent);
   --ds-icon: color-mix(in srgb, var(--foreground) 58%, var(--background));
   --ds-popover: var(--popover);
@@ -1187,7 +1187,7 @@
   --ds-surface-input: var(--card);
   --ds-on-surface: color-mix(in srgb, var(--foreground) 8%, transparent);
   --ds-on-surface-active: color-mix(in srgb, var(--foreground) 14%, transparent);
-  --avatar-fallback-bg: color-mix(in srgb, var(--foreground) 12%, transparent);
+  --avatar-fallback-bg: color-mix(in srgb, var(--foreground) 10%, transparent);
   --ds-pill-bg: color-mix(in srgb, var(--primary) 10%, transparent);
   --ds-icon: color-mix(in srgb, var(--foreground) 55%, var(--background));
   --ds-menu-bg: var(--popover);
