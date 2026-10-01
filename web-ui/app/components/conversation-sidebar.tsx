@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { Link } from "react-router";
+import { SettingsLink } from "~/components/settings/settings-link";
 import { useTranslation } from "react-i18next";
 
 import { InfiniteScrollArea } from "~/components/extended/infinite-scroll-area";
@@ -1218,9 +1219,9 @@ export const ConversationSidebar = React.memo(
               aria-label={t("conversation_sidebar.settings", "Settings")}
               title={t("conversation_sidebar.settings", "Settings")}
             >
-              <Link to="/settings">
+              <SettingsLink>
                 <Settings className="size-4" />
-              </Link>
+              </SettingsLink>
             </Button>
 
             <Button

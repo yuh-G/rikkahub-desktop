@@ -2,7 +2,8 @@
  * 全局快捷键 hook。挂在 root,生命周期内常驻。
  *
  * 职责:keydown 匹配 binding → 触发对应 action;Ctrl+滚轮 → 字号缩放。
- * - 纯路由 action(openSettings / openImageGeneration):直接 navigate。
+ * - 打开设置(openSettings):桌面端开合设置模态,窄屏进 /settings 整页。
+ * - 打开图像生成(openImageGeneration):直接 navigate。
  * - 字号缩放(zoomInOut):直接 POST settings/display。
  * - 需要组件上下文的 action(新建/切换/重命名/搜索):走事件总线,由组件挂监听响应。
  *
@@ -12,10 +13,16 @@
 import * as React from "react";
 import { useNavigate } from "react-router";
 
+import { isDesktopViewport } from "~/hooks/use-mobile";
 import { areHotkeysPaused, emitHotkeyAction, type HotkeyBusAction } from "~/lib/hotkey-events";
 import { DEFAULT_KEYBINDINGS, eventToTokens, hasModifier, isTextInputFocused, tokensEqual } from "~/lib/hotkeys";
 import api from "~/services/api";
 import { useSettingsStore } from "~/stores";
+import {
+  closeSettingsDialog,
+  toggleSettingsDialog,
+  useSettingsDialogStore,
+} from "~/stores/settings-dialog-store";
 import type { KeybindingAction, KeybindingEntry } from "~/types/settings";
 
 const FONT_MIN = 0.85;
@@ -86,13 +93,18 @@ export function useHotkeys(): void {
 
       // 输入框聚焦时,只响应带修饰键的;F2 等单键在输入框内不触发,避免吞打字。
       if (isTextInputFocused() && !hasModifier(tokens)) return;
+      // 会话类动作作用于主界面;设置模态开着时用户的焦点在设置里,不应在背后悄悄切会话。
+      if (BUS_ACTIONS.has(matched) && useSettingsDialogStore.getState().open) return;
 
       event.preventDefault();
       if (BUS_ACTIONS.has(matched)) {
         emitHotkeyAction(matched as HotkeyBusAction);
       } else if (matched === "openSettings") {
-        navigateRef.current("/settings");
+        // 桌面端开合设置模态(再按一次关闭);窄屏进整页。
+        if (isDesktopViewport()) toggleSettingsDialog();
+        else navigateRef.current("/settings");
       } else if (matched === "openImageGeneration") {
+        closeSettingsDialog();
         navigateRef.current("/images");
       }
       // zoomInOut 无 keys,keydown 永远匹配不到;缩放在 onWheel 里处理。

@@ -2,6 +2,7 @@ import * as React from "react";
 
 import { ArrowLeft, CheckSquare, Download, ImagePlus, Loader2, Plus, Trash2, WandSparkles, X } from "lucide-react";
 import { Link } from "react-router";
+import { SettingsLink } from "~/components/settings/settings-link";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -375,7 +376,7 @@ export default function ImagesPage() {
             </Link>
           </Button>
           <Button asChild variant="outline" size="sm">
-            <Link to="/settings?section=models">{t("image_page.model_settings")}</Link>
+            <SettingsLink search="?section=models">{t("image_page.model_settings")}</SettingsLink>
           </Button>
         </div>
         <div className="mt-6 space-y-1">
@@ -462,9 +463,9 @@ export default function ImagesPage() {
             <Link className="text-sm text-muted-foreground" to="/">
               {t("image_page.back_to_chat")}
             </Link>
-            <Link className="text-sm text-muted-foreground" to="/settings?section=models">
+            <SettingsLink className="text-sm text-muted-foreground" search="?section=models">
               {t("image_page.model_settings")}
-            </Link>
+            </SettingsLink>
           </div>
         </div>
         <ScrollArea className="flex-1">

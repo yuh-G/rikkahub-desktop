@@ -13,8 +13,8 @@
 import * as React from "react";
 import { TriangleAlert, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router";
 
+import { SettingsLink } from "~/components/settings/settings-link";
 import { fetchWebAuthStatus } from "~/services/api";
 import { Button } from "~/components/ui/button";
 
@@ -59,7 +59,7 @@ export function ExposedBanner() {
       <TriangleAlert className="size-4 shrink-0" />
       <span className="min-w-0 flex-1">{t("exposed_banner.message")}</span>
       <Button asChild size="sm" variant="outline" className="shrink-0">
-        <Link to="/settings">{t("exposed_banner.action")}</Link>
+        <SettingsLink search="?section=data">{t("exposed_banner.action")}</SettingsLink>
       </Button>
       <button
         type="button"

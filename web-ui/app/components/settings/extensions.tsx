@@ -30,6 +30,7 @@ import { cn } from "~/lib/utils";
 import { createId } from "~/lib/id";
 import api, { appendWebAuthQuery } from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
+import { getSettingsParam } from "~/stores/settings-dialog-store";
 import { useMcpHealthStore } from "~/stores";
 import type { AssistantProfile, McpHealthEntryDto, Settings } from "~/types";
 import {
@@ -69,8 +70,7 @@ export function McpExtensionsSection({
   const { t } = useTranslation();
   type Tab = "mcp" | "mode" | "lorebook" | "quick" | "skills";
   const tabFromQuery = React.useMemo<Tab>(() => {
-    if (typeof window === "undefined") return "mcp";
-    const value = new URLSearchParams(window.location.search).get("tab");
+    const value = getSettingsParam("tab");
     return value === "mcp" ||
       value === "mode" ||
       value === "lorebook" ||

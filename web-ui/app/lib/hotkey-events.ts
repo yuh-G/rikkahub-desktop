@@ -4,8 +4,8 @@
  * 需要组件上下文的 action(新建/切换/重命名/搜索——它们的 state 在 conversations/sidebar 组件内部)
  * 通过 window CustomEvent 派发,由对应组件挂监听响应。useHotkeys 只负责"匹配到 binding → 派发事件"。
  *
- * 纯路由类 action(openSettings / openImageGeneration)和字号缩放(zoomInOut)不走事件总线——
- * useHotkeys 直接 navigate / 调 API。
+ * 打开设置 / 打开图像生成(openSettings / openImageGeneration)和字号缩放(zoomInOut)不走事件总线——
+ * useHotkeys 直接开合设置模态 / navigate / 调 API。
  */
 import type { KeybindingAction } from "~/types/settings";
 

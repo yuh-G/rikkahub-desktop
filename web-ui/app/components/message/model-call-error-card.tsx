@@ -2,6 +2,7 @@ import * as React from "react";
 import { ChevronDown, Copy, Settings2, TriangleAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { SettingsLink } from "~/components/settings/settings-link";
 import { copyTextToClipboard } from "~/lib/clipboard";
 import { cn } from "~/lib/utils";
 import type { UIMessageAnnotation } from "~/types";
@@ -15,10 +16,11 @@ const ERROR_PREVIEW_LENGTH = 200;
 
 export function ModelCallErrorCard({
   annotations,
-  settingsHref,
+  settingsSearch,
 }: {
   annotations: UIMessageAnnotation[] | undefined;
-  settingsHref: string;
+  /** 设置深链查询串(定位到出错模型所属的供应商)。 */
+  settingsSearch: string;
 }) {
   const { t } = useTranslation("message");
   const errorMessage =
@@ -80,13 +82,13 @@ export function ModelCallErrorCard({
           <Copy className="size-3" />
           {copied ? t("chat_message.copied") : t("chat_message.copy_error")}
         </button>
-        <a
+        <SettingsLink
           className="inline-flex items-center gap-1 rounded-md border border-destructive/30 bg-card/60 px-2 py-1 text-xs transition hover:bg-accent"
-          href={settingsHref}
+          search={settingsSearch}
         >
           <Settings2 className="size-3" />
           {t("chat_message.open_model_settings")}
-        </a>
+        </SettingsLink>
       </div>
     </div>
   );

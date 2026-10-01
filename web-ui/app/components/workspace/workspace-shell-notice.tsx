@@ -1,9 +1,9 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router";
 import { RefreshCw, SquareTerminal } from "lucide-react";
 import { toast } from "sonner";
 
+import { SettingsLink } from "~/components/settings/settings-link";
 import { Button } from "~/components/ui/button";
 import { extractErrorMessage } from "~/lib/error";
 import { openExternal } from "~/lib/external-link";
@@ -86,7 +86,7 @@ export function WorkspaceShellNotice() {
           className="h-7 rounded-full px-3 text-xs"
           asChild
         >
-          <Link to="/settings?section=general">{t("workspace.shell.set_path")}</Link>
+          <SettingsLink search="?section=general">{t("workspace.shell.set_path")}</SettingsLink>
         </Button>
         <Button
           type="button"

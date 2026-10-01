@@ -33,6 +33,7 @@ import {
 } from "./lib/font-chain";
 import { toast } from "sonner";
 import { GlobalConfirmDialog } from "./components/global-confirm-dialog";
+import { SettingsDialog } from "./components/settings/settings-dialog";
 import { useAppErrorsStore } from "./stores/app-errors-store";
 import { startUsageActivityBeacon } from "./services/usage-activity";
 import { useApprovalNotifications } from "./lib/approval-notification";
@@ -378,6 +379,9 @@ function AppContent() {
           成熟桌面应用的主区域切换均为即时切换 —— React 单次提交内旧页换新页,
           不存在中间帧,是唯一确定性零闪的形态。 */}
       <Outlet />
+      {/* 设置模态挂在 Outlet 之后、全局确认框之前:同为 z-50 的 portal 按挂载先后叠放,
+          分区里触发的确认框必须盖在设置模态之上。 */}
+      <SettingsDialog />
       <ExposedBanner />
       <WebAuthGate />
       <StartupGate />

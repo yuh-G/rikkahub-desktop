@@ -27,6 +27,7 @@ import {
   PopoverTrigger,
 } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { SettingsLink } from "~/components/settings/settings-link";
 
 import { McpPanel, useMcpBadge } from "./mcp-picker";
 import { PickerErrorAlert } from "./picker-error-alert";
@@ -526,10 +527,13 @@ export function ExtensionPickerButtonImpl({ disabled = false, className }: Exten
               </button>
             </div>
             <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
-              <a href={`/settings?section=mcp&tab=${SETTINGS_TAB_BY_ACTIVE_TAB[activeTab]}`}>
+              <SettingsLink
+                search={`?section=mcp&tab=${SETTINGS_TAB_BY_ACTIVE_TAB[activeTab]}`}
+                onClick={() => popoverProps.onOpenChange(false)}
+              >
                 <ExternalLink className="size-3.5" />
                 {t("injection.manage", "管理")}
-              </a>
+              </SettingsLink>
             </Button>
           </div>
 

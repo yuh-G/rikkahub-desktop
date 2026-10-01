@@ -35,6 +35,7 @@ import api, { appendWebAuthQuery } from "~/services/api";
 import { onAppEvent, type ProviderAuthEventDto } from "~/services/app-events";
 import { useSettingsStore } from "~/stores/app-store";
 import { confirmDialog } from "~/stores/confirm-store";
+import { getSettingsParam } from "~/stores/settings-dialog-store";
 import type { ProviderModel, ProviderProfile, Settings } from "~/types";
 import {
   clone,
@@ -616,11 +617,10 @@ export function ProvidersSection({
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
-  // URL ?providerId= deep-link is only honored on first mount, so subsequent settings updates
+  // ?providerId= deep-link is only honored on first mount, so subsequent settings updates
   // (autosave, SSE) don't snap the selection back to the URL value or the default first provider.
   const initialProviderId = React.useMemo(() => {
-    if (typeof window === "undefined") return settings.providers[0]?.id ?? "";
-    const providerId = new URLSearchParams(window.location.search).get("providerId");
+    const providerId = getSettingsParam("providerId");
     if (providerId && settings.providers.some((provider) => provider.id === providerId))
       return providerId;
     return settings.providers[0]?.id ?? "";
@@ -628,14 +628,8 @@ export function ProvidersSection({
     // every settings update because that pulls selectedId back to the default.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const urlProviderId = React.useMemo(() => {
-    if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get("providerId");
-  }, []);
-  const focusedModelId = React.useMemo(() => {
-    if (typeof window === "undefined") return "";
-    return new URLSearchParams(window.location.search).get("modelId") ?? "";
-  }, []);
+  const urlProviderId = React.useMemo(() => getSettingsParam("providerId"), []);
+  const focusedModelId = React.useMemo(() => getSettingsParam("modelId") ?? "", []);
   const [selectedId, setSelectedId] = React.useState(initialProviderId);
   const selected =
     settings.providers.find((provider) => provider.id === selectedId) ?? settings.providers[0];

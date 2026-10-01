@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Eye, EyeOff, GripVertical } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { useSettingsSurface } from "~/components/settings/settings-surface";
 
 export function textValue(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -74,6 +75,15 @@ export function SectionHeader({
   title: string;
   subtitle: string;
 }) {
+  // 模态面板尺幅小于整页且右上角有关闭钮:去掉图标块、标题降一档,右侧让出关闭钮的位置。
+  if (useSettingsSurface() === "dialog") {
+    return (
+      <div className="mb-6 pr-10">
+        <h1 className="text-lg font-semibold tracking-normal text-[var(--ds-text-primary)]">{title}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+      </div>
+    );
+  }
   return (
     <div className="mb-6 flex items-start gap-3">
       <div className="rounded-md border bg-card p-2">

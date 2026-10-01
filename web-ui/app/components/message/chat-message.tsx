@@ -1008,9 +1008,9 @@ export const ChatMessage = React.memo(
     const hasModelCallError = messageHasModelCallError(message);
     const modelProviderId = providerIdForMessageModel(message.modelId, providers);
     const providerModelId = providerModelIdForMessageModel(message.modelId, providers);
-    const modelSettingsHref = modelProviderId
-      ? `/settings?section=providers&providerId=${encodeURIComponent(modelProviderId)}${providerModelId ? `&modelId=${encodeURIComponent(providerModelId)}` : ""}`
-      : "/settings?section=providers";
+    const modelSettingsSearch = modelProviderId
+      ? `?section=providers&providerId=${encodeURIComponent(modelProviderId)}${providerModelId ? `&modelId=${encodeURIComponent(providerModelId)}` : ""}`
+      : "?section=providers";
     const showActions = selecting ? false : isLastMessage ? !loading : hasMessageContent;
     const showAssistantBubble = !isUser && displaySetting?.showAssistantBubble === true;
     // 值稳定化(代码块流式重挂载根修):流式期间 message.parts 每个 delta 都是新数组,
@@ -1130,7 +1130,7 @@ export const ChatMessage = React.memo(
         )}
 
         {hasModelCallError ? (
-          <ModelCallErrorCard annotations={message.annotations} settingsHref={modelSettingsHref} />
+          <ModelCallErrorCard annotations={message.annotations} settingsSearch={modelSettingsSearch} />
         ) : null}
 
         <ChatMessageAnnotationsRow annotations={message.annotations} alignRight={isUser} />

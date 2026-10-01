@@ -16,6 +16,8 @@
     "about": "About",
     "donate": "Donate",
     "back": "Back",
+    "close": "Close settings",
+    "dialog_title": "Settings",
     "meta_title": "RikkaHub PC Settings"
   },
   "memory": {
