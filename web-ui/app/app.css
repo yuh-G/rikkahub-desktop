@@ -41,8 +41,10 @@
   --chart-4: oklch(0.49 0.22 264);
   --chart-5: oklch(0.42 0.18 266);
   /* 顶带高度:画布顶部"Logo 品牌行 + 窗口控制钮"那条窄带的唯一锚,
-     也是侧栏卡顶边与主卡顶边对齐同一水平线的依据。 */
-  --app-band-h: 2.5rem;
+     也是侧栏卡顶边与主卡顶边对齐同一水平线的依据。
+     32px = v4 顶部几何(窗控 pt-1.5+22px=28px,品牌行距顶 4px 高 28px 底 32px):
+     收窄后卡顶上移 8px,窗控(距顶 6px 高 22px 底 28px)仍在带内、坐标不变。 */
+  --app-band-h: 2rem;
   --sidebar: #f6f4ef;
   --sidebar-foreground: #181b19;
   --sidebar-primary: #2d4739;
@@ -190,7 +192,7 @@
   --chart-4: oklch(0.49 0.22 264);
   --chart-5: oklch(0.42 0.18 266);
   /* 见 :root 同名变量注释。 */
-  --app-band-h: 2.5rem;
+  --app-band-h: 2rem;
   --sidebar: #252726;
   --sidebar-foreground: rgba(255, 255, 255, 0.9);
   --sidebar-primary: #36d385;
