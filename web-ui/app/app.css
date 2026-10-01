@@ -1025,9 +1025,9 @@
 }
 
 :root[data-theme="vescrow"] {
-  --background: rgb(253, 252, 254);
+  --background: rgb(240, 244, 252);
   --foreground: rgb(10, 5, 13);
-  --card: rgb(255, 255, 255);
+  --card: rgb(250, 251, 255);
   --card-foreground: rgb(10, 5, 13);
   --popover: rgb(255, 255, 255);
   --popover-foreground: rgb(10, 5, 13);
