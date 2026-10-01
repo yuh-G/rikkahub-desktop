@@ -1092,11 +1092,10 @@ export const ConversationSidebar = React.memo(
             }}
           >
             <DialogTrigger asChild>
-              <Button
-                variant="outline"
-                className="w-full justify-start gap-2 text-foreground"
-                type="button"
-              >
+              {/* 助手选择行复用会话行配方(同一 SidebarMenuButton):常态无边框无
+                  填充融入侧栏,悬停 on-surface 晕染与会话行同形;页脚 8px+行内 8px
+                  使头像左缘与会话标题字轨对齐。 */}
+              <SidebarMenuButton>
                 {currentAssistant ? (
                   <>
                     <UIAvatar
@@ -1105,14 +1104,16 @@ export const ConversationSidebar = React.memo(
                       name={getAssistantDisplayName(currentAssistant.name)}
                       avatar={currentAssistant.avatar}
                     />
-                    <span className="truncate">
+                    <span className="flex-1 truncate">
                       {getAssistantDisplayName(currentAssistant.name)}
                     </span>
                   </>
                 ) : (
-                  <span className="truncate">{t("conversation_sidebar.select_assistant")}</span>
+                  <span className="flex-1 truncate">
+                    {t("conversation_sidebar.select_assistant")}
+                  </span>
                 )}
-              </Button>
+              </SidebarMenuButton>
             </DialogTrigger>
             <DialogContent className="max-h-[80svh] max-w-xl overflow-hidden p-0">
               <DialogHeader className="border-b px-6 py-4">
