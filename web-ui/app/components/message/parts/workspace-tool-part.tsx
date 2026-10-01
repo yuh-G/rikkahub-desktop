@@ -20,7 +20,7 @@ import { DetailDrawer } from "~/components/detail-drawer";
 import { DenyReasonDialog } from "~/components/message/deny-reason-dialog";
 import { Button } from "~/components/ui/button";
 import { CopyButton } from "~/components/ui/copy-button";
-import { CodeBlock } from "~/components/markdown/code-block";
+import { HighlightedCode } from "~/components/markdown/code-block";
 import { languageForPath } from "~/components/markdown/code-language";
 import { DiffView, parseDiffStats } from "~/components/workspace/diff-view";
 import { TerminalOutput } from "~/components/workspace/terminal-output";
@@ -238,7 +238,15 @@ function WorkspaceActionDrawer({ view, toolName }: { view: WorkspaceActionView; 
         ) : null}
         {model.kind === "edit" && diff ? <DiffView diff={diff} className="rounded-md border" /> : null}
         {writeContent !== null ? (
-          <CodeBlock code={writeContent} language={languageForPath(path)} wrapLines className="my-0" />
+          <div className="overflow-hidden rounded-md border bg-muted/20">
+            {/* 高亮体无外壳,抽屉自备边框容器;复制仍走抽屉原 CopyButton(贴容器右上) */}
+            <HighlightedCode
+              code={writeContent}
+              language={languageForPath(path)}
+              wrapLines
+              className="max-h-[60vh] !p-0 text-xs"
+            />
+          </div>
         ) : null}
         {model.text ? (
           <div>
@@ -500,17 +508,17 @@ function WriteBodyPreview({ content, path, t }: { content: string; path: string;
   }, [content]);
   if (!content) return <div className="px-3 py-2 text-xs text-muted-foreground">{t("workspace_tool.no_output")}</div>;
   return (
-    <div className="p-2">
-      {/* 写入正文按路径推断语言,复用 CodeBlock 语法高亮(与消息内代码块同源);
-          预览截断到 WRITE_PREVIEW_LINES 行,完整内容在抽屉/复制里。 */}
-      <CodeBlock
+    <div>
+      {/* 写入正文按路径推断语言走 shiki 高亮(字体/配色与正文代码块同源),但工具卡
+          不套正文代码块的卡片外壳/头部/按钮——布局保持工具卡自己的紧凑形态。 */}
+      <HighlightedCode
         code={preview}
         language={languageForPath(path)}
         wrapLines
-        className="my-0"
+        className="max-h-64 !p-0 text-xs leading-5"
       />
       {hidden > 0 ? (
-        <div className="mt-1 rounded-md border border-border/40 bg-muted/30 px-3 py-1 text-mini text-muted-foreground">
+        <div className="border-t border-border/40 bg-muted/30 px-3 py-1 text-mini text-muted-foreground">
           {t("workspace_tool.write_preview_more", { count: hidden })}
         </div>
       ) : null}
