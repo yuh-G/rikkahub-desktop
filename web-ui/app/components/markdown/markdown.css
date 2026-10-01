@@ -108,6 +108,18 @@
   @apply relative rounded border border-border/60 bg-muted/70 px-[0.32rem] py-[0.12rem] font-mono text-[0.92em];
 }
 
+/* Legacy Code - Block (fallback):非 CodeBlock 组件渲染的裸 pre。
+   必须排在 .code-block-content pre 之前:正文代码块里两条规则等特异度(0,1,1)
+   且同为非分层,同分靠源序——legacy 放后面会把组件代码块的 p-3 抬成 p-4
+   (padding/圆角同源序沦陷,仅 margin/边框因组件侧 !important 幸免)。 */
+.markdown pre {
+  @apply my-4 rounded-lg border border-border p-4 overflow-x-auto;
+}
+
+.markdown pre code {
+  @apply bg-transparent p-0 text-sm font-mono leading-relaxed;
+}
+
 /* Code Block with Header(产品稿:圆角卡片 + 柔和抬升阴影 + 淡边框)。
    选择器不带 .markdown 前缀:CodeBlock 已被消息正文之外复用(工具卡/抽屉),
    外观随组件走而非渲染上下文;.markdown 作用域只保留行内代码与 legacy pre。 */
@@ -139,21 +151,10 @@
   @apply overflow-x-auto;
 }
 
+/* p-3 text-sm 是全场景基线;紧凑场景(工具卡/抽屉的 HighlightedCode)经
+   preClassName 覆盖,覆盖项须带 ! 前缀——本规则是非分层 CSS,普通工具类压不过。 */
 .code-block-content pre {
   @apply !m-0 !rounded-none !border-0 p-3 text-sm;
-}
-
-.code-block-content pre code {
-  @apply bg-transparent p-0 font-mono leading-relaxed;
-}
-
-/* Legacy Code - Block (fallback) */
-.markdown pre {
-  @apply my-4 rounded-lg border border-border p-4 overflow-x-auto;
-}
-
-.markdown pre code {
-  @apply bg-transparent p-0 text-sm font-mono leading-relaxed;
 }
 
 /* Tables (GFM) */

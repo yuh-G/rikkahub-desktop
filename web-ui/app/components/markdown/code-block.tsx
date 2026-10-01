@@ -449,20 +449,23 @@ function CodeBlockContainer({
 
 // 无外壳高亮代码体:只渲染 shiki 高亮(字体/配色与正文代码块同源),不带头部
 // 语言条/动作钮/卡片外观——整卡 CodeBlock 是正文组件,工具卡/抽屉等紧凑场景
-// 复用此体,内边距/限高/滚动/底色由消费方容器决定。注意 markdown.css 的
-// .code-block-content pre 规则是非分层 CSS,className 覆盖字号/内边距需 ! 前缀。
+// 复用此体。布局契约双轨:className 给包裹容器(限高/滚动/外距),preClassName
+// 给 <pre> 本体(字号/内边距)——markdown.css 的 .code-block-content pre 是
+// 非分层 CSS,preClassName 覆盖字号/内边距必须带 ! 前缀才压得过。
 function CodeBlockContent({
   code,
   language,
   showLineNumbers = false,
   wrapLines = false,
   className,
+  preClassName,
 }: {
   code: string;
   language: BundledLanguage | null;
   showLineNumbers?: boolean;
   wrapLines?: boolean;
   className?: string;
+  preClassName?: string;
 }) {
   // bug3 根修之二:原文渲染路径(超长代码保险丝、高亮器装载期、渐进高亮的未上色尾部)
   // 的行数组按内容复用上一帧引用。旧实现每帧对全文重建所有行 → CodeLine 的引用 memo
@@ -641,7 +644,7 @@ function CodeBlockContent({
       )}
     >
       <CodeBlockBody
-        className="dark:!bg-[var(--shiki-dark-bg)] dark:!text-[var(--shiki-dark)]"
+        className={cn("dark:!bg-[var(--shiki-dark-bg)] dark:!text-[var(--shiki-dark)]", preClassName)}
         showLineNumbers={showLineNumbers}
         tokenized={tokenized}
         wrapLines={wrapLines}
@@ -871,17 +874,20 @@ const CODE_BLOCK_BODY_MAX_HEIGHT_CLASS = "max-h-[420px]";
 const CODE_BLOCK_PREVIEW_IFRAME_HEIGHT_CLASS = "h-[420px]";
 
 /** 高亮代码体(无头部/按钮/卡片外壳),供正文之外的紧凑场景(工具卡/抽屉)复用:
- *  字体与配色与正文代码块同源,布局(内边距/限高/底色)由消费方容器决定。 */
+ *  字体与配色与正文代码块同源。布局双轨:className→包裹容器(限高/滚动),
+ *  preClassName→<pre> 本体(字号/内边距,须 ! 前缀,见 CodeBlockContent 注)。 */
 export function HighlightedCode({
   code,
   language,
   wrapLines = false,
   className,
+  preClassName,
 }: {
   code: string;
   language: string;
   wrapLines?: boolean;
   className?: string;
+  preClassName?: string;
 }) {
   const shikiLanguage = React.useMemo(() => resolveShikiLanguage(language), [language]);
   return (
@@ -890,6 +896,7 @@ export function HighlightedCode({
       language={shikiLanguage}
       wrapLines={wrapLines}
       className={className}
+      preClassName={preClassName}
     />
   );
 }

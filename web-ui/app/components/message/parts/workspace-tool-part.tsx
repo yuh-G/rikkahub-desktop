@@ -239,12 +239,14 @@ function WorkspaceActionDrawer({ view, toolName }: { view: WorkspaceActionView; 
         {model.kind === "edit" && diff ? <DiffView diff={diff} className="rounded-md border" /> : null}
         {writeContent !== null ? (
           <div className="overflow-hidden rounded-md border bg-muted/20">
-            {/* 高亮体无外壳,抽屉自备边框容器;复制仍走抽屉原 CopyButton(贴容器右上) */}
+            {/* 高亮体无外壳,抽屉自备边框容器(pre 沿用默认 p-3 内边距,仅收字号);
+                复制仍走抽屉原 CopyButton(贴容器右上) */}
             <HighlightedCode
               code={writeContent}
               language={languageForPath(path)}
               wrapLines
-              className="max-h-[60vh] !p-0 text-xs"
+              className="max-h-[60vh]"
+              preClassName="!text-xs"
             />
           </div>
         ) : null}
@@ -510,12 +512,14 @@ function WriteBodyPreview({ content, path, t }: { content: string; path: string;
   return (
     <div>
       {/* 写入正文按路径推断语言走 shiki 高亮(字体/配色与正文代码块同源),但工具卡
-          不套正文代码块的卡片外壳/头部/按钮——布局保持工具卡自己的紧凑形态。 */}
+          不套正文代码块的卡片外壳/头部/按钮——布局保持工具卡自己的紧凑形态
+          (px-3 py-2 / 12px,字号内边距经 preClassName 落在 pre 本体)。 */}
       <HighlightedCode
         code={preview}
         language={languageForPath(path)}
         wrapLines
-        className="max-h-64 !p-0 text-xs leading-5"
+        className="max-h-64"
+        preClassName="!px-3 !py-2 !text-xs !leading-5"
       />
       {hidden > 0 ? (
         <div className="border-t border-border/40 bg-muted/30 px-3 py-1 text-mini text-muted-foreground">

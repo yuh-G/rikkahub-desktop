@@ -344,11 +344,12 @@ function getToolTitle(toolName: string, args: unknown, t: TFunction): string {
 // maxHeightClass:卡片内联预览限高,抽屉里不限(外层容器自身可滚)。
 // 对象走 shiki json 高亮(字体/配色与正文代码块同源)但无外壳——工具卡不套
 // 正文代码块的卡片/头部/按钮;字符串是自然语言/命令输出,素色等宽即可。
+// 紧凑字号经 preClassName 落在 pre 本体(12px,同改造前 text-xs)。
 function JsonBlock({ value, maxHeightClass = "max-h-64" }: { value: unknown; maxHeightClass?: string }) {
   if (typeof value !== "string") {
     return (
       <div className={cn("overflow-y-auto rounded-md border bg-muted/30", maxHeightClass)}>
-        <HighlightedCode code={toJsonString(value)} language="json" wrapLines className="!p-3 text-xs" />
+        <HighlightedCode code={toJsonString(value)} language="json" wrapLines preClassName="!text-xs" />
       </div>
     );
   }

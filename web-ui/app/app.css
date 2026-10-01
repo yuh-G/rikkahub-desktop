@@ -1448,7 +1448,7 @@
   background: var(--muted) !important;
   color: var(--primary) !important;
   padding: 0.1rem 0.32rem !important;
-  /* 默认代码字体栈,可被 --rikkahub-code-font 覆盖;禁用连字(见变量处注释) */
+  /* 唯一等宽令牌(全应用单源,见 :root --rikkahub-code-font);禁用连字(见变量处注释) */
   font-family: var(--rikkahub-code-font) !important;
   font-feature-settings: "calt" 0, "liga" 0, "clig" 0 !important;
   /* 行内代码字号单源:与 markdown.css .inline-code 的 0.92em 对齐(旧值 0.95em 两处打架) */
