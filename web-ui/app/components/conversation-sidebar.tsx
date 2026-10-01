@@ -936,10 +936,11 @@ export const ConversationSidebar = React.memo(
         </SidebarHeader>
         <SidebarContent className="min-h-0">
           <SidebarGroup>
-            {/* 分组面板(SidebarSection 配方):surface-400 底——
-                恰比侧栏卡面(surface-300)深一档,radius-md 圆角 + 6px 内边距,常态无阴影;
-                花色主题下 surface-400 走语义派生,与卡面极端同底时自然退平不炸。 */}
-            <div className="space-y-1 rounded-[var(--ds-radius-md)] bg-[var(--ds-surface-400)] p-1.5">
+            {/* 分组面板(SidebarSection 配方):radius-md 圆角 +
+                6px 内边距,常态无阴影;卡面色是 --sidebar-module-card-bg 单一切换点
+                (app.css):显色=surface-400(恰比侧栏卡面 surface-300 深一档),未来
+                褪色只改那个变量为 transparent——形态保留,视觉退平。 */}
+            <div className="space-y-1 rounded-[var(--ds-radius-md)] bg-[var(--sidebar-module-card-bg)] p-1.5">
               <Button
                 variant="ghost"
                 size="sm"

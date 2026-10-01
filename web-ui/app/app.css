@@ -101,6 +101,10 @@
   --ds-surface-200: #faf9f5;
   --ds-surface-300: #f6f4ef;
   --ds-surface-400: #f2eee6;
+  /* 侧栏动作模块卡(「新建/搜索/多选」)卡面。单一切换点:若用户反馈不要这块
+     显色,只把此值改为 transparent,卡片形态(圆角/内边距/行 hover)原样保留,
+     视觉上"看不出是张卡";显色期间与 surface-400 同值。 */
+  --sidebar-module-card-bg: var(--ds-surface-400);
   --ds-on-surface: rgba(55, 61, 58, 0.06);
   --ds-on-surface-active: rgba(55, 61, 58, 0.08);
   --ds-pill-bg: color-mix(in srgb, var(--primary) 12%, transparent);
@@ -233,6 +237,8 @@
   --ds-surface-200: #1e1f1f;
   --ds-surface-300: #252726;
   --ds-surface-400: #2a2d2b;
+  /* 见 :root 同名变量注释(显色值随暗色 surface-400;褪色开关即改 transparent)。 */
+  --sidebar-module-card-bg: var(--ds-surface-400);
   --ds-on-surface: rgba(168, 184, 176, 0.08);
   --ds-on-surface-active: rgba(168, 184, 176, 0.16);
   --ds-pill-bg: color-mix(in srgb, var(--primary) 8%, transparent);
