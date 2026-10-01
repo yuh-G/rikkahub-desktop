@@ -186,12 +186,10 @@ export default function SettingsPage() {
                 key={item.id}
                 type="button"
                 className={cn(
-                  "relative flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-all duration-200",
+                  "flex w-full items-center gap-2 rounded-[var(--ds-radius-md)] px-3 py-2 text-left text-sm transition-all duration-200",
                   active
-                    ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent/70",
-                  active &&
-                    "before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-r-full before:bg-sidebar-primary",
+                    ? "bg-[var(--ds-surface-100)] font-medium text-[var(--ds-text-primary)] shadow-[var(--ds-elevation-100)]"
+                    : "text-sidebar-foreground hover:bg-[var(--ds-on-surface)]",
                 )}
                 onClick={() => {
                   setSection(item.id);
@@ -201,7 +199,7 @@ export default function SettingsPage() {
                 <Icon
                   className={cn(
                     "size-4 transition-colors",
-                    active ? "text-sidebar-primary" : "text-muted-foreground",
+                    active ? "text-foreground" : "text-muted-foreground",
                   )}
                 />
                 {t(item.labelKey)}
@@ -212,7 +210,12 @@ export default function SettingsPage() {
           })}
         </nav>
       </aside>
-      <div className={cn("min-w-0 flex-1 flex-col", mobileContentOpen ? "flex" : "hidden md:flex")}>
+      <div
+        className={cn(
+          "min-w-0 flex-1 flex-col bg-[var(--ds-surface-200)] text-foreground",
+          mobileContentOpen ? "flex" : "hidden md:flex",
+        )}
+      >
         {/* I1:无边框窗口拖拽区 + 窗控钮(仅内容列;侧栏顶部由品牌行承担)。
             mt-1.5/mr-2 对齐主界面 SidebarInset 的 pt-1.5/pr-2:窗控钮三页同一坐标。 */}
         <WindowControlsBar className="mt-1.5 mr-2" />
