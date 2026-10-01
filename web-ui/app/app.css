@@ -1484,9 +1484,11 @@
   font-family: var(--rikkahub-chat-font, inherit);
 }
 
+/* 思考区行内代码:仅字号/行高/字重跟随思考小字排版,字体归唯一等宽令牌——
+   与正文行内代码同源(此前强制继承对话字体,思考文本里的代码样式突兀且
+   与正文行为不一致;等宽是行内代码的行业惯例,思考区不是例外)。 */
 .reasoning-markdown .inline-code,
 .reasoning-markdown code:not(pre code) {
-  font-family: inherit !important;
   font-size: inherit !important;
   line-height: 1.03125rem !important;
   font-weight: 500;
