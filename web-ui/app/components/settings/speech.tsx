@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Mic, Quote, Square, Trash2, Volume2 } from "lucide-react";
+import { Check, Square, Trash2, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -23,7 +23,19 @@ import type {
   TtsProviderProfile,
   TtsProviderType,
 } from "~/types";
-import { clone, moveItem, PasswordInput, SectionHeader, SortableRow } from "~/components/settings/shared";
+import {
+  clone,
+  moveItem,
+  PasswordInput,
+  SectionHeader,
+  SettingsGroup,
+  SettingsRows,
+  SettingsSplit,
+  SettingsStack,
+  SettingsSwitchRow,
+  SortableRow,
+} from "~/components/settings/shared";
+
 
 function createAsrProvider(type: AsrProviderType = "openai_realtime"): AsrProviderProfile {
   const base = {
@@ -515,50 +527,35 @@ function TtsSettingsPanel({
   };
 
   return (
-    <div className="space-y-4">
+    <SettingsStack>
       {/* 朗读过滤(台账 §4.1):朗读前对文本做正则预处理,角色扮演只念台词/跳过注释。 */}
-      <div className="rounded-lg border bg-card p-5">
-        <div className="flex items-center gap-2">
-          <Quote className="size-4 text-muted-foreground" />
-          <h3 className="text-sm font-medium">{t("settings:speech.read_filter_title")}</h3>
-        </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {t("settings:speech.read_filter_desc")}
-        </p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <label className="flex items-start justify-between gap-4 rounded-md border px-3 py-3">
-            <div className="min-w-0">
-              <div className="text-sm">{t("settings:speech.only_read_quoted")}</div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {t("settings:speech.only_read_quoted_desc")}
-              </div>
-            </div>
-            <Switch
-              checked={display.ttsOnlyReadQuoted === true}
-              onCheckedChange={(checked) => void patchDisplay({ ttsOnlyReadQuoted: checked })}
-            />
-          </label>
-          <label className="flex items-start justify-between gap-4 rounded-md border px-3 py-3">
-            <div className="min-w-0">
-              <div className="text-sm">{t("settings:speech.skip_brackets")}</div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {t("settings:speech.skip_brackets_desc")}
-              </div>
-            </div>
-            <Switch
-              checked={display.ttsOnlyReadOutsideBrackets === true}
-              onCheckedChange={(checked) =>
-                void patchDisplay({ ttsOnlyReadOutsideBrackets: checked })
-              }
-            />
-          </label>
-        </div>
-      </div>
+      <SettingsGroup
+        title={t("settings:speech.read_filter_title")}
+        description={t("settings:speech.read_filter_desc")}
+      >
+        <SettingsRows>
+          <SettingsSwitchRow
+            label={t("settings:speech.only_read_quoted")}
+            description={t("settings:speech.only_read_quoted_desc")}
+            checked={display.ttsOnlyReadQuoted === true}
+            onCheckedChange={(checked) => void patchDisplay({ ttsOnlyReadQuoted: checked })}
+          />
+          <SettingsSwitchRow
+            label={t("settings:speech.skip_brackets")}
+            description={t("settings:speech.skip_brackets_desc")}
+            checked={display.ttsOnlyReadOutsideBrackets === true}
+            onCheckedChange={(checked) =>
+              void patchDisplay({ ttsOnlyReadOutsideBrackets: checked })
+            }
+          />
+        </SettingsRows>
+      </SettingsGroup>
 
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-      <div className="rounded-lg border bg-card">
-        <div className="flex items-center justify-between gap-3 border-b p-3">
-          <div className="text-sm font-medium">{t("settings:speech.tts_services")}</div>
+      <SettingsSplit
+        list={
+      <div>
+        <div className="mb-1 flex items-center justify-between gap-3 py-1">
+          <div className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:speech.tts_services")}</div>
           <Select onValueChange={(value) => void addProvider(value as TtsProviderType)}>
             <SelectTrigger className="h-8 w-28">
               <SelectValue placeholder={t("settings:speech.add")} />
@@ -579,7 +576,7 @@ function TtsSettingsPanel({
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-1 p-2">
+        <div className="space-y-1">
           {providers.map((provider, index) => (
             <SortableRow
               key={provider.id}
@@ -609,9 +606,10 @@ function TtsSettingsPanel({
           ) : null}
         </div>
       </div>
-
+        }
+      >
       {draft ? (
-        <div className="space-y-4 rounded-lg border bg-card p-4">
+        <div className="space-y-4">
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="text-lg font-semibold">{draft.name}</div>
@@ -1164,8 +1162,8 @@ function TtsSettingsPanel({
           {t("settings:speech.select_tts")}
         </div>
       )}
-      </div>
-    </div>
+      </SettingsSplit>
+    </SettingsStack>
   );
 }
 
@@ -1329,15 +1327,16 @@ export function SpeechSection({
         subtitle={t("settings:speech.tts_subtitle")}
       />
       <TtsSettingsPanel settings={settings} onSettings={onSettings} />
-      <Separator className="my-8" />
+      <Separator className="my-10" />
       <SectionHeader
         title={t("settings:speech.asr_title")}
         subtitle={t("settings:speech.asr_subtitle")}
       />
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-        <div className="rounded-lg border bg-card">
-          <div className="flex items-center justify-between gap-3 border-b p-3">
-            <div className="text-sm font-medium">{t("settings:speech.asr_services")}</div>
+      <SettingsSplit
+        list={
+        <div>
+          <div className="mb-1 flex items-center justify-between gap-3 py-1">
+            <div className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:speech.asr_services")}</div>
             <Select onValueChange={(value) => void addProvider(value as AsrProviderType)}>
               <SelectTrigger className="h-8 w-28">
                 <SelectValue placeholder={t("settings:speech.add")} />
@@ -1349,7 +1348,7 @@ export function SpeechSection({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1 p-2">
+          <div className="space-y-1">
             {providers.map((provider, index) => (
               <SortableRow
                 key={provider.id}
@@ -1379,9 +1378,10 @@ export function SpeechSection({
             ) : null}
           </div>
         </div>
-
+        }
+      >
         {draft ? (
-          <div className="space-y-4 rounded-lg border bg-card p-4">
+          <div className="space-y-4">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="text-lg font-semibold">{draft.name}</div>
@@ -1519,7 +1519,7 @@ export function SpeechSection({
             {t("settings:speech.select_asr")}
           </div>
         )}
-      </div>
+      </SettingsSplit>
     </>
   );
 }
