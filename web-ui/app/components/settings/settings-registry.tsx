@@ -14,7 +14,7 @@ import { DefaultModelsSection } from "~/components/settings/default-models";
 import { McpExtensionsSection } from "~/components/settings/extensions";
 import { AppSection, AppearanceSection, ProfileSection, ShortcutsSection } from "~/components/settings/general";
 import { LogsSection, type RequestLog } from "~/components/settings/logs";
-import { ProxySection } from "~/components/settings/proxy";
+import { PortRequestSection, ProxySection } from "~/components/settings/proxy";
 import { ProvidersSection } from "~/components/settings/providers";
 import { SearchSection } from "~/components/settings/search";
 import { SpeechSection } from "~/components/settings/speech";
@@ -83,7 +83,7 @@ export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<Setting
   "models/scenes": DefaultModelsSection,
   "network/search": SearchSection,
   "network/proxy": ProxySection,
-  "network/port": ProxySection,
+  "network/port": PortRequestSection,
   "extensions/mcp": McpExtensionsSection,
   "extensions/skills": McpExtensionsSection,
   "extensions/injection": McpExtensionsSection,

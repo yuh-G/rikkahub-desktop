@@ -1087,7 +1087,7 @@ export function DataSection({
             </label>
             <label className="space-y-1">
               <span className="text-xs font-medium text-muted-foreground">
-                {t("settings:proxy.username")}
+                {t("settings:data.username")}
               </span>
               <Input
                 value={webDavDraft.username}
@@ -1096,7 +1096,7 @@ export function DataSection({
             </label>
             <label className="space-y-1">
               <span className="text-xs font-medium text-muted-foreground">
-                {t("settings:proxy.password")}
+                {t("settings:data.password")}
               </span>
               <div className="flex gap-2">
                 <Input

@@ -1055,7 +1055,12 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
         { status: 400 },
       );
     }
-    const proxyConfig = normalizeProxyConfig(body);
+    // 字段级合并:代理页与「端口与请求」页各只提交自己的字段(代理五项 / UA),两页先后保存
+    // 不会拿旧值互相覆盖。要清空某字段须显式发 ""(不发 = 保留原值)。
+    const proxyConfig = normalizeProxyConfig({
+      ...state.settings.proxyConfig,
+      ...(body && typeof body === "object" ? body : {}),
+    });
     updateSettings({ ...state.settings, proxyConfig });
     applyEffectiveProxy(state.settings.proxyConfig);
     return json({ status: "ok", config: proxyConfig, ...proxyStatusPayload(state.settings.proxyConfig) });

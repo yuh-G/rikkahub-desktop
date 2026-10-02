@@ -412,13 +412,10 @@
     "keep_memories_label": "Keep memories"
   },
   "proxy": {
-    "title": "Network",
-    "subtitle": "Set an HTTP proxy and User-Agent for all outbound traffic (AI APIs, search, MCP), plus the local service port. Leave the proxy blank to follow the system proxy; leave the port blank to auto-select.",
     "http_title": "HTTP proxy",
-    "http_desc": "All AI API requests are routed through this proxy",
     "ua_title": "User-Agent",
     "ua_desc": "Customize the User-Agent header sent with outbound requests. Leave blank to use the default. Only change this if your provider (e.g. a corporate gateway or API relay) requires a specific User-Agent.",
-    "ua_label": "User-Agent",
+    "ua_label": "UA string",
     "ua_reset": "Reset to default",
     "detect": "Fill from system proxy",
     "address": "Proxy address",
@@ -428,7 +425,6 @@
     "optional": "(optional)",
     "current": "Current proxy",
     "save_failed": "Failed to save proxy settings",
-    "detected": "System proxy detected: {{url}}",
     "none_detected": "No system proxy detected",
     "none_detected_desc": "The system proxy is off, or the proxy tool hasn't started yet.",
     "pac_detected": "PAC auto-configuration detected (not supported)",
@@ -469,7 +465,11 @@
     "test_fail": "Unreachable",
     "port_running": "Current running port: {{port}}",
     "nav_status_proxy": "Via proxy: {{url}}",
-    "nav_status_direct": "Direct (no proxy)"
+    "nav_status_direct": "Direct (no proxy)",
+    "username_ph": "Proxy username",
+    "password_ph": "Proxy password",
+    "show_password": "Show password",
+    "hide_password": "Hide password"
   },
   "stats": {
     "loading": "Loading stats",
@@ -976,7 +976,9 @@
     "web_password_saved": "Access password saved; reload to apply",
     "web_password_cleared": "Access password cleared",
     "web_password_failed": "Operation failed",
-    "web_password_locked": "The access password is managed by deployment config (--password / RIKKAHUB_PASSWORD); change it there."
+    "web_password_locked": "The access password is managed by deployment config (--password / RIKKAHUB_PASSWORD); change it there.",
+    "username": "Username",
+    "password": "Password"
   },
   "hotkeys": {
     "reset_all": "Reset all to defaults",

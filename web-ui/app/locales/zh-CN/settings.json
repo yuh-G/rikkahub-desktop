@@ -412,13 +412,10 @@
     "keep_memories_label": "保留记忆"
   },
   "proxy": {
-    "title": "网络",
-    "subtitle": "为 AI API、搜索、MCP 等所有出站请求统一指定 HTTP 代理与 User-Agent，以及本地服务的监听端口。代理留空将自动跟随系统代理，端口留空将自动选择。",
     "http_title": "HTTP 代理设置",
-    "http_desc": "所有 AI API 请求均通过此代理转发",
     "ua_title": "用户代理（User-Agent）",
     "ua_desc": "自定义出站请求的 User-Agent 请求头。留空使用默认值。仅当你的服务提供商（如企业网关、API 中转）要求特定 User-Agent 时才需要修改。",
-    "ua_label": "User-Agent",
+    "ua_label": "UA 字符串",
     "ua_reset": "重置为默认",
     "detect": "从系统代理填入",
     "address": "代理地址",
@@ -428,7 +425,6 @@
     "optional": "（可选）",
     "current": "当前代理",
     "save_failed": "保存代理设置失败",
-    "detected": "检测到系统代理：{{url}}",
     "none_detected": "未检测到系统代理",
     "none_detected_desc": "系统代理当前未开启，或代理工具尚未启动。",
     "pac_detected": "检测到 PAC 自动配置（不支持）",
@@ -469,7 +465,11 @@
     "test_fail": "不可用",
     "port_running": "当前运行端口：{{port}}",
     "nav_status_proxy": "走代理：{{url}}",
-    "nav_status_direct": "直连（未启用代理）"
+    "nav_status_direct": "直连（未启用代理）",
+    "username_ph": "代理用户名",
+    "password_ph": "代理密码",
+    "show_password": "显示密码",
+    "hide_password": "隐藏密码"
   },
   "stats": {
     "loading": "加载统计",
@@ -976,7 +976,9 @@
     "web_password_saved": "访问密码已保存,刷新生效",
     "web_password_cleared": "访问密码已清除",
     "web_password_failed": "操作失败",
-    "web_password_locked": "访问密码由部署配置(--password / RIKKAHUB_PASSWORD)管理,请在部署层修改。"
+    "web_password_locked": "访问密码由部署配置(--password / RIKKAHUB_PASSWORD)管理,请在部署层修改。",
+    "username": "用户名",
+    "password": "密码"
   },
   "hotkeys": {
     "reset_all": "全部恢复默认",
