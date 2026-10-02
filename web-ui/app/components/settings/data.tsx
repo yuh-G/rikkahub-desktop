@@ -26,8 +26,13 @@ import api, { appendWebAuthQuery, clearWebAuthToken, fetchWebAuthStatus, request
 import { isTauriEnvironment } from "~/lib/system-info";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { S3Config, Settings, WebDavConfig } from "~/types";
-import { SectionHeader } from "~/components/settings/shared";
-import { PasswordInput } from "~/components/settings/shared";
+import {
+  PasswordInput,
+  SectionHeader,
+  SettingsGroup,
+  SettingsStack,
+} from "~/components/settings/shared";
+
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 
 interface S3BackupItem {
@@ -95,6 +100,7 @@ export function DataSection({
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
+  const s3PathStyleId = React.useId();
   const importInputRef = React.useRef<HTMLInputElement>(null);
   const schemaInputRef = React.useRef<HTMLInputElement>(null);
   const [exporting, setExporting] = React.useState(false);
@@ -873,11 +879,12 @@ export function DataSection({
         )}
       </div>
       )}
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-lg border bg-card p-4">
-          <div className="text-sm font-medium">{t("settings:data.backup_title")}</div>
-          <div className="mt-1 text-xs text-muted-foreground">{t("settings:data.backup_desc")}</div>
-          <div className="mt-4 flex flex-wrap gap-2">
+      <SettingsStack>
+        <SettingsGroup
+          title={t("settings:data.backup_title")}
+          description={t("settings:data.backup_desc")}
+        >
+          <div className="mt-3 flex flex-wrap gap-2">
             <Button
               variant="outline"
               onClick={() => void handleExportClick()}
@@ -967,12 +974,11 @@ export function DataSection({
               ) : null}
             </div>
           ) : null}
-        </div>
-        <div className="rounded-lg border bg-card p-4">
-          <div className="text-sm font-medium">{t("settings:data.chat_files_title")}</div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {t("settings:data.chat_files_desc")}
-          </div>
+        </SettingsGroup>
+        <SettingsGroup
+          title={t("settings:data.chat_files_title")}
+          description={t("settings:data.chat_files_desc")}
+        >
           {/* B2:云端(WebDAV/S3)流式恢复无导入结果卡,把后端结构化降级报告
               (settings.lastRestoreReport,经设置 SSE 推送)在此展示——「成功但跳过/降级了 N 项」可见。 */}
           {settings.lastRestoreReport ? (
@@ -1003,16 +1009,13 @@ export function DataSection({
               </ul>
             </div>
           ) : null}
-        </div>
-        <div className="rounded-lg border bg-card p-4">
-          <div className="text-sm font-medium">{t("settings:data.web_service_title")}</div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {t("settings:data.web_service_desc", {
-              status: webAuthConfigured
-                ? t("settings:data.enabled")
-                : t("settings:data.disabled"),
-            })}
-          </div>
+        </SettingsGroup>
+        <SettingsGroup
+          title={t("settings:data.web_service_title")}
+          description={t("settings:data.web_service_desc", {
+            status: webAuthConfigured ? t("settings:data.enabled") : t("settings:data.disabled"),
+          })}
+        >
           {/* 访问密码(P1):对外暴露(Docker/反代)时必备。部署者锁定(argv/env)时只读提示;
               否则就地设/改/清。密码存派生哈希,这里只见布尔状态。 */}
           {webAuthStatus?.lockedByDeployment ? (
@@ -1020,7 +1023,7 @@ export function DataSection({
               {t("settings:data.web_password_locked")}
             </div>
           ) : (
-            <div className="mt-3 space-y-2">
+            <div className="mt-3 max-w-md space-y-2">
               {webAuthConfigured ? (
                 <PasswordInput
                   value={webPwCurrent}
@@ -1060,29 +1063,28 @@ export function DataSection({
               </div>
             </div>
           )}
-        </div>
-        <div className="rounded-lg border bg-card p-4 md:col-span-2">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-medium">
-                {t("settings:data.webdav_title")}
-                {ANDROID_COMPAT_CARD_ENABLED && schemaStatus && !schemaStatus.hasAndroidSchema && (
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-micro text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                    {t("settings:data.chat_unsyncable")}
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {t("settings:data.webdav_desc")}
-              </div>
-            </div>
+        </SettingsGroup>
+        <SettingsGroup
+          title={
+            <span className="flex items-center gap-2">
+              {t("settings:data.webdav_title")}
+              {ANDROID_COMPAT_CARD_ENABLED && schemaStatus && !schemaStatus.hasAndroidSchema && (
+                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-micro leading-normal text-amber-700 dark:bg-amber-900 dark:text-amber-300">
+                  {t("settings:data.chat_unsyncable")}
+                </span>
+              )}
+            </span>
+          }
+          description={t("settings:data.webdav_desc")}
+          action={
             <AutosaveStatusRow
               status={webDavAutosave.status}
               onRetry={() => void webDavAutosave.saveNow()}
               className="px-0"
             />
-          </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
+          }
+        >
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
             <label className="space-y-1">
               <span className="text-xs font-medium text-muted-foreground">
                 {t("settings:data.server_url")}
@@ -1265,33 +1267,37 @@ export function DataSection({
               </React.Fragment>
             ))}
           </div>
-        </div>
-        <div className="rounded-lg border bg-card p-4 md:col-span-2">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-medium">
-                {t("settings:data.s3_title")}
-                {ANDROID_COMPAT_CARD_ENABLED && schemaStatus && !schemaStatus.hasAndroidSchema && (
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-micro text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                    {t("settings:data.chat_unsyncable")}
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">{t("settings:data.s3_desc")}</div>
-            </div>
-            <div className="flex items-center gap-2">
+        </SettingsGroup>
+        <SettingsGroup
+          title={
+            <span className="flex items-center gap-2">
+              {t("settings:data.s3_title")}
+              {ANDROID_COMPAT_CARD_ENABLED && schemaStatus && !schemaStatus.hasAndroidSchema && (
+                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-micro leading-normal text-amber-700 dark:bg-amber-900 dark:text-amber-300">
+                  {t("settings:data.chat_unsyncable")}
+                </span>
+              )}
+            </span>
+          }
+          description={t("settings:data.s3_desc")}
+          action={
+            <>
               <AutosaveStatusRow
                 status={s3Autosave.status}
                 onRetry={() => void s3Autosave.saveNow()}
                 className="px-0"
               />
-              <span className="text-xs text-muted-foreground">Path-style</span>
+              <label htmlFor={s3PathStyleId} className="ml-2 text-xs text-[var(--ds-text-secondary)]">
+                Path-style
+              </label>
               <Switch
+                id={s3PathStyleId}
                 checked={s3Draft.pathStyle}
                 onCheckedChange={(pathStyle) => patchS3({ pathStyle })}
               />
-            </div>
-          </div>
+            </>
+          }
+        >
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             <label className="space-y-1">
               <span className="text-xs font-medium text-muted-foreground">
@@ -1453,8 +1459,8 @@ export function DataSection({
               </React.Fragment>
             ))}
           </div>
-        </div>
-      </div>
+        </SettingsGroup>
+      </SettingsStack>
     </>
   );
 }
