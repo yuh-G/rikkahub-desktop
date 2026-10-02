@@ -108,7 +108,7 @@ export function DataSection({
   const [exportTotalBytes, setExportTotalBytes] = React.useState(0);
   const [importing, setImporting] = React.useState(false);
   const [importPhase, setImportPhase] = React.useState<"idle" | "uploading" | "processing">("idle");
-  const [showExportDialog, setShowExportDialog] = React.useState(false);
+
   // 缓存播种 + 写穿透(下方 effect):所有 setSchemaStatus 调用点(挂载 GET/导出前刷新/
   // 注册成功)的结果统一落缓存,回访零闪动。
   const [schemaStatus, setSchemaStatus] = React.useState<AndroidSchemaStatus | null>(
@@ -485,14 +485,30 @@ export function DataSection({
     }
   };
 
+  // 导出前确认走全局 confirmDialog:它挂在 root、z 序在设置模态之上。此前手写的
+  // fixed 遮罩渲染在模态 DialogContent 内部,而 DialogContent 带 transform(成为 fixed 的
+  // 包含块)+ overflow-hidden——遮罩被困在面板里,且按 Esc 关掉的是整个设置模态。
   const handleExportClick = async () => {
+    // 描述里的对话数用这里取回的局部值:setSchemaStatus 是异步的,读 state 会拿到旧值。
+    let status = schemaStatus;
     try {
       const res = await fetch(appendWebAuthQuery("/api/data/export/status"));
-      if (res.ok) setSchemaStatus(await res.json());
+      if (res.ok) {
+        status = (await res.json()) as AndroidSchemaStatus;
+        setSchemaStatus(status);
+      }
     } catch {
-      /* */
+      // 状态查询失败不阻断导出:按上次已知状态(或 0 条)出确认文案。
     }
-    setShowExportDialog(true);
+    const withSchema = !ANDROID_COMPAT_CARD_ENABLED || status?.hasAndroidSchema === true;
+    const confirmed = await confirmDialog({
+      title: t("settings:data.export_confirm_title"),
+      description: withSchema
+        ? t("settings:data.export_with_schema", { count: status?.conversationCount ?? 0 })
+        : t("settings:data.export_without_schema"),
+      confirmLabel: withSchema ? t("settings:data.confirm_export") : t("settings:data.export_no_chat"),
+    });
+    if (confirmed) await doExport();
   };
 
   const handleRegisterSchema = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -573,7 +589,6 @@ export function DataSection({
   };
 
   const doExport = async () => {
-    setShowExportDialog(false);
     if (isTauriEnvironment()) {
       await doExportToPickedPath();
       return;
@@ -757,35 +772,6 @@ export function DataSection({
 
   return (
     <>
-      {showExportDialog && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setShowExportDialog(false)}
-        >
-          <div
-            className="mx-4 max-w-md rounded-lg bg-card p-6 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-semibold">{t("settings:data.export_confirm_title")}</h3>
-            <div className="mt-3 text-sm text-muted-foreground">
-              {!ANDROID_COMPAT_CARD_ENABLED || schemaStatus?.hasAndroidSchema
-                ? t("settings:data.export_with_schema", { count: schemaStatus?.conversationCount ?? 0 })
-                : t("settings:data.export_without_schema")}
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setShowExportDialog(false)}>
-                {t("settings:data.cancel")}
-              </Button>
-              <Button onClick={() => void doExport()}>
-                <Download className="mr-1 size-4" />
-                {!ANDROID_COMPAT_CARD_ENABLED || schemaStatus?.hasAndroidSchema
-                  ? t("settings:data.confirm_export")
-                  : t("settings:data.export_no_chat")}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
       <SectionHeader
         title={t("settings:data.title")}
         subtitle={t("settings:data.subtitle")}

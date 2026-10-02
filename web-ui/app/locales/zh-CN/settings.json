@@ -874,7 +874,6 @@
     "export_confirm_title": "确认导出",
     "export_with_schema": "本次导出包含 {{count}} 条对话记录及全部配置，可直接在手机端导入。",
     "export_without_schema": "当前未注册手机端格式，导出的备份不含对话记录。请先在上方「手机端适配」区域完成注册。",
-    "cancel": "取消",
     "confirm_export": "确认导出",
     "export_no_chat": "导出（不含对话）",
     "title": "数据",

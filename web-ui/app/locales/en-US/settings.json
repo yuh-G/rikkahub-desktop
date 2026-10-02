@@ -874,7 +874,6 @@
     "export_confirm_title": "Confirm export",
     "export_with_schema": "This export includes {{count}} conversations and all settings, ready to import on the phone.",
     "export_without_schema": "The phone-side schema isn't registered, so the backup won't include conversations. Register it under “Android compatibility” above first.",
-    "cancel": "Cancel",
     "confirm_export": "Confirm export",
     "export_no_chat": "Export (no conversations)",
     "title": "Data",
