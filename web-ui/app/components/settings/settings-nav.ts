@@ -23,17 +23,17 @@ import type { LucideIcon } from "lucide-react";
 
 export interface SettingsSubItem {
   /** 二级 id:英文短横线小写。进 URL 参数 / 未来搜索索引,不宜再改。 */
-  id: string;
-  labelKey: string;
+  readonly id: string;
+  readonly labelKey: string;
 }
 
 export interface SettingsNavItem {
-  /** 一级 id:英文短横线小写。进 URL 参数(?section=)、localStorage、搜索索引。 */
-  id: string;
-  labelKey: string;
-  icon: LucideIcon;
+  /** 一级 id:英文短横线小写。进 URL 参数(?section=)、搜索索引;停留位置只记内存,不持久化。 */
+  readonly id: string;
+  readonly labelKey: string;
+  readonly icon: LucideIcon;
   /** 无二级则**省略**(不要给空数组):children?.length 一处判空,语义单一。 */
-  children?: SettingsSubItem[];
+  readonly children?: readonly SettingsSubItem[];
 }
 
 export const SETTINGS_NAV = [
@@ -51,11 +51,12 @@ export const SETTINGS_NAV = [
   { id: "proxy", labelKey: "settings:nav.proxy", icon: Globe },
   { id: "donate", labelKey: "settings:nav.donate", icon: Heart },
   { id: "about", labelKey: "settings:nav.about", icon: CheckCircle2 },
-] satisfies SettingsNavItem[];
+] as const satisfies readonly SettingsNavItem[];
 
 /**
  * 一级 id 联合类型,从表推导——用户改表则类型自动跟随,不会出现"加了项没加类型"的漏网。
- * 注意 `satisfies` 而非 `: SettingsNavItem[]`:后者会把 id 拓宽成 string,推导失效。
+ * `as const` 不可省:单靠 `satisfies` 时数组元素的 id 仍被拓宽成 string,本类型会退化为
+ * string,注册表的 Record<SettingsTabId,…> 缺键检查随之静默失效。
  */
 export type SettingsTabId = (typeof SETTINGS_NAV)[number]["id"];
 
