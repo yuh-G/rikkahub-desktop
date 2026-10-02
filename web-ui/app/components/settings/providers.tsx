@@ -42,9 +42,16 @@ import {
   moveItem,
   PasswordInput,
   SectionHeader,
+  SettingsSplit,
   SortableRow,
   textValue,
 } from "~/components/settings/shared";
+
+// 详情栏的层次:高级开关行之间、以及模型/测试/余额几大块之间用 --ds-divider 细线分隔,
+// 取代原先一块一框的描边盒子(两列网格里的行占满整行)。
+const PROVIDER_ROW = "border-t border-[var(--ds-divider)] pt-4 md:col-span-2";
+const PROVIDER_SECTION = "border-t border-[var(--ds-divider)] pt-5";
+
 // API 格式切换的 base 换算(协议默认/出厂/登记三张表 + 机器地址判定 + 换算规则)独立在
 // lib/provider-base-urls.ts——纯函数零依赖,行为锁在 pc-server/api/provider-base-urls.test.ts
 // 的往返矩阵(核心不变量:往返不漂移、自定义不覆写)。御三家 URL 与登记端点只在那一个文件维护。
@@ -1212,9 +1219,10 @@ export function ProvidersSection({
         title={t("settings:providers.title")}
         subtitle={t("settings:providers.subtitle")}
       />
-      <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <div className="rounded-lg border bg-card p-2">
-          <Button className="mb-2 w-full justify-start" variant="outline" onClick={addProvider}>
+      <SettingsSplit
+        list={
+          <div className="space-y-1">
+          <Button className="mb-1 w-full justify-start" variant="outline" onClick={addProvider}>
             <Plus className="size-4" />
             {t("settings:providers.add")}
           </Button>
@@ -1241,8 +1249,10 @@ export function ProvidersSection({
               </span>
             </SortableRow>
           ))}
-        </div>
-        <div className="space-y-5 rounded-lg border bg-card p-5">
+          </div>
+        }
+      >
+        <div className="space-y-5">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-lg font-medium">{draft.name}</div>
@@ -1338,7 +1348,7 @@ export function ProvidersSection({
                     {t("settings:providers.models_url", { url: modelListEndpointPreview(draft) })}
                   </span>
                 </label>
-                <div className="grid gap-x-6 gap-y-3 rounded-md border px-3 py-3 md:col-span-2 md:grid-cols-2">
+                <div className={cn(PROVIDER_ROW, "grid gap-x-6 gap-y-3 md:grid-cols-2")}>
                   <label className="space-y-2">
                     {/* 单输入框按开关切换绑定字段(对齐安卓 ProviderConfigure):关→chatCompletionsPath,开→responsesPath */}
                     <span className="text-sm font-medium">
@@ -1378,7 +1388,7 @@ export function ProvidersSection({
                   </div>
                 </div>
                 {kind === "openai" ? (
-                  <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-3 md:col-span-2">
+                  <div className={cn(PROVIDER_ROW, "flex items-start justify-between gap-3")}>
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="text-sm font-medium">{t("settings:providers.history_reasoning_title")}</div>
                       <div className="text-xs leading-relaxed text-muted-foreground">
@@ -1395,7 +1405,7 @@ export function ProvidersSection({
                   </div>
                 ) : null}
                 {kind === "openai" ? (
-                  <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-3 md:col-span-2">
+                  <div className={cn(PROVIDER_ROW, "flex items-start justify-between gap-3")}>
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="text-sm font-medium">{t("settings:providers.prompt_cache_key_title")}</div>
                       <div className="text-xs leading-relaxed text-muted-foreground">
@@ -1410,7 +1420,7 @@ export function ProvidersSection({
                   </div>
                 ) : null}
                 {kind === "claude" ? (
-                  <div className="grid gap-3 rounded-md border px-3 py-3 md:col-span-2 md:grid-cols-[1fr_180px]">
+                  <div className={cn(PROVIDER_ROW, "grid gap-3 md:grid-cols-[1fr_180px]")}>
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <div className="text-sm font-medium">{t("settings:providers.prompt_cache_title")}</div>
@@ -1446,7 +1456,7 @@ export function ProvidersSection({
               </>
             ) : null}
           </div>
-          <div className="space-y-3 rounded-md border p-3">
+          <div className={cn(PROVIDER_SECTION, "space-y-3")}>
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-medium">{t("settings:providers.models_title")}</div>
@@ -1629,9 +1639,9 @@ export function ProvidersSection({
               ) : null}
             </div>
           </div>
-          <div className="space-y-2 rounded-md border px-3 py-2">
+          <div className={cn(PROVIDER_SECTION, "space-y-2")}>
             <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-medium text-muted-foreground">{t("settings:providers.test_model")}</span>
+              <span className="text-sm font-medium">{t("settings:providers.test_model")}</span>
               <div className="flex items-center gap-2">
                 <Button variant="outline" onClick={test} disabled={testing}>
                   {testing ? (
@@ -1677,7 +1687,7 @@ export function ProvidersSection({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-3 rounded-md border p-3">
+          <div className={cn(PROVIDER_SECTION, "space-y-3")}>
             <div className="flex items-end justify-between gap-3">
               <div>
                 <div className="text-sm font-medium">{t("settings:providers.balance_title")}</div>
@@ -1838,7 +1848,7 @@ export function ProvidersSection({
             </pre>
           ) : null}
         </div>
-      </div>
+      </SettingsSplit>
       {modelDialog ? (
         <ModelEditDialog
           open={Boolean(modelDialog)}
