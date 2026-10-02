@@ -59,7 +59,7 @@ export function ExposedBanner() {
       <TriangleAlert className="size-4 shrink-0" />
       <span className="min-w-0 flex-1">{t("exposed_banner.message")}</span>
       <Button asChild size="sm" variant="outline" className="shrink-0">
-        <SettingsLink search="?section=data">{t("exposed_banner.action")}</SettingsLink>
+        <SettingsLink search="?section=data&sub=server">{t("exposed_banner.action")}</SettingsLink>
       </Button>
       <button
         type="button"

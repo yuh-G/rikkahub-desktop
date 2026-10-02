@@ -3,22 +3,57 @@
     "subtitle": "Local settings",
     "general": "General",
     "assistants": "Assistants",
-    "providers": "Providers",
-    "models": "Default models & prompts",
-    "search": "Search services",
-    "mcp": "MCP & extensions",
+    "models": "Models",
+    "network": "Network",
+    "extensions": "Extensions",
+    "personalization": "Personalization",
     "speech": "Speech",
     "memory": "Memory",
     "data": "Data",
-    "stats": "Statistics",
-    "logs": "App logs",
-    "proxy": "Network",
-    "about": "About",
+    "stats": "Stats & logs",
     "donate": "Donate",
+    "about": "About",
     "back": "Back",
     "close": "Close settings",
     "dialog_title": "Settings",
     "meta_title": "RikkaHub PC Settings"
+  },
+  "subnav": {
+    "general": {
+      "profile": "Profile",
+      "app": "App"
+    },
+    "models": {
+      "providers": "Providers",
+      "scenes": "Scene models"
+    },
+    "network": {
+      "search": "Search engines",
+      "proxy": "Proxy",
+      "port": "Port & requests"
+    },
+    "extensions": {
+      "mcp": "MCP",
+      "skills": "Skills",
+      "injection": "Prompt injection",
+      "quick": "Quick message templates"
+    },
+    "personalization": {
+      "appearance": "Appearance",
+      "shortcuts": "Shortcuts"
+    },
+    "speech": {
+      "tts": "Text to speech",
+      "asr": "Speech recognition"
+    },
+    "data": {
+      "backup": "Backup & restore",
+      "server": "Web service"
+    },
+    "stats": {
+      "usage": "Statistics",
+      "logs": "Logs"
+    }
   },
   "memory": {
     "title": "Memory",

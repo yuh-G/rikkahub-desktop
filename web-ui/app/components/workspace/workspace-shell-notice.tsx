@@ -86,7 +86,7 @@ export function WorkspaceShellNotice() {
           className="h-7 rounded-full px-3 text-xs"
           asChild
         >
-          <SettingsLink search="?section=general">{t("workspace.shell.set_path")}</SettingsLink>
+          <SettingsLink search="?section=general&sub=app">{t("workspace.shell.set_path")}</SettingsLink>
         </Button>
         <Button
           type="button"

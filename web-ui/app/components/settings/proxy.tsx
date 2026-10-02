@@ -11,7 +11,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import api from "~/services/api";
 import {
-  SectionHeader,
   SettingsField,
   SettingsGroup,
   SettingsStack,
@@ -313,10 +312,6 @@ export function ProxySection({
 
   return (
     <>
-      <SectionHeader
-        title={t("settings:proxy.title")}
-        subtitle={t("settings:proxy.subtitle")}
-      />
       <SettingsStack>
         <SettingsGroup
           title={t("settings:proxy.http_title")}

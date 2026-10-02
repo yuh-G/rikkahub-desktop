@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "~/components/u
 import { JsonTree, tryParseJson } from "~/components/ui/json-tree";
 import { cn } from "~/lib/utils";
 import { copyTextToClipboard } from "~/lib/clipboard";
-import { SectionHeader, SettingsRows } from "~/components/settings/shared";
+import { SettingsRows } from "~/components/settings/shared";
 import { appErrorText, useAppErrorsStore } from "~/stores";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { AppErrorDto } from "~/types";
@@ -51,7 +51,6 @@ export function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: ()
   ];
   return (
     <>
-      <SectionHeader title={t("settings:logs.title")} subtitle={t("settings:logs.subtitle")} />
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           {filterOptions.map(({ id, label }) => (

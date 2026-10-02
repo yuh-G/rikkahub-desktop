@@ -15,7 +15,6 @@ import { Slider } from "~/components/ui/slider";
 import api from "~/services/api";
 import type { AssistantAvatar, Settings } from "~/types";
 import {
-  SectionHeader,
   SettingsField,
   SettingsGroup,
   SettingsRow,
@@ -145,10 +144,6 @@ export function GeneralSection({
 
   return (
     <>
-      <SectionHeader
-        title={t("settings:general.title")}
-        subtitle={t("settings:general.subtitle")}
-      />
       <SettingsStack>
         <div className="space-y-5">
           <AvatarCropper

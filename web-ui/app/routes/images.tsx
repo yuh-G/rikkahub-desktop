@@ -376,7 +376,7 @@ export default function ImagesPage() {
             </Link>
           </Button>
           <Button asChild variant="outline" size="sm">
-            <SettingsLink search="?section=models">{t("image_page.model_settings")}</SettingsLink>
+            <SettingsLink search="?section=models&sub=scenes">{t("image_page.model_settings")}</SettingsLink>
           </Button>
         </div>
         <div className="mt-6 space-y-1">
@@ -463,7 +463,7 @@ export default function ImagesPage() {
             <Link className="text-sm text-muted-foreground" to="/">
               {t("image_page.back_to_chat")}
             </Link>
-            <SettingsLink className="text-sm text-muted-foreground" search="?section=models">
+            <SettingsLink className="text-sm text-muted-foreground" search="?section=models&sub=scenes">
               {t("image_page.model_settings")}
             </SettingsLink>
           </div>

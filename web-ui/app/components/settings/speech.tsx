@@ -27,7 +27,6 @@ import {
   clone,
   moveItem,
   PasswordInput,
-  SectionHeader,
   SettingsGroup,
   SettingsRows,
   SettingsSplit,
@@ -1322,16 +1321,8 @@ export function SpeechSection({
 
   return (
     <>
-      <SectionHeader
-        title={t("settings:speech.tts_title")}
-        subtitle={t("settings:speech.tts_subtitle")}
-      />
       <TtsSettingsPanel settings={settings} onSettings={onSettings} />
       <Separator className="my-10" />
-      <SectionHeader
-        title={t("settings:speech.asr_title")}
-        subtitle={t("settings:speech.asr_subtitle")}
-      />
       <SettingsSplit
         list={
         <div>

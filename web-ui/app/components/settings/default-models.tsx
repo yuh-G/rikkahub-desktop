@@ -30,7 +30,6 @@ import { Textarea } from "~/components/ui/textarea";
 import api from "~/services/api";
 import type { Settings } from "~/types";
 import {
-  SectionHeader,
   SettingsGroup,
   SettingsRow,
   SettingsRows,
@@ -400,10 +399,6 @@ export function DefaultModelsSection({
 
   return (
     <>
-      <SectionHeader
-        title={t("settings:models.title")}
-        subtitle={t("settings:models.subtitle")}
-      />
       <SettingsGroup
         description={t("settings:models.note")}
         action={

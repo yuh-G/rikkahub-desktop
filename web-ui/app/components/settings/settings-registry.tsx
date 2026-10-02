@@ -1,7 +1,7 @@
-// 一级 id → 分区组件的映射。与 settings-nav.ts 同属"设置页结构层",分两个文件是
+// 页键 → 页面组件的映射。与 settings-nav.ts 同属"设置页结构层",分两个文件是
 // 有意的:nav 表保持零组件依赖(可被非 UI 模块安全引用),本文件才把 React 树拖进来。
 //
-// 键类型用 `Record<SettingsTabId, …>`(而非宽 Record<string, …>)——加了一级却忘了挂
+// 键类型用 `Record<SettingsPageKey, …>`(页键由 nav 表推导)——表里加了一页却忘了挂
 // 组件时,typecheck 当场报缺键,不会留到运行时白屏。
 import * as React from "react";
 import { toast } from "sonner";
@@ -23,9 +23,9 @@ import { MemorySection } from "~/components/memory/memory-section";
 import api from "~/services/api";
 import type { Settings } from "~/types";
 
-import type { SettingsTabId } from "./settings-nav";
+import type { SettingsPageKey } from "./settings-nav";
 
-/** 分区组件的统一入参。派发点因此只有一句 `<Component {...props} />`。 */
+/** 页面组件的统一入参。派发点因此只有一句 `<Component {...props} />`。 */
 export interface SettingsSectionProps {
   settings: Settings;
   onSettings: (settings: Settings) => void;
@@ -75,22 +75,28 @@ function AboutSectionHost() {
   return <AboutSection />;
 }
 
-export const SETTINGS_SECTION_COMPONENTS: Record<
-  SettingsTabId,
-  React.ComponentType<SettingsSectionProps>
-> = {
-  general: GeneralSection,
+export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<SettingsSectionProps>> = {
+  "general/profile": GeneralSection,
+  "general/app": GeneralSection,
   assistants: AssistantsSection,
-  providers: ProvidersSection,
-  models: DefaultModelsSection,
-  search: SearchSection,
-  mcp: McpExtensionsSection,
-  speech: SpeechSection,
+  "models/providers": ProvidersSection,
+  "models/scenes": DefaultModelsSection,
+  "network/search": SearchSection,
+  "network/proxy": ProxySection,
+  "network/port": ProxySection,
+  "extensions/mcp": McpExtensionsSection,
+  "extensions/skills": McpExtensionsSection,
+  "extensions/injection": McpExtensionsSection,
+  "extensions/quick": McpExtensionsSection,
+  "personalization/appearance": GeneralSection,
+  "personalization/shortcuts": GeneralSection,
+  "speech/tts": SpeechSection,
+  "speech/asr": SpeechSection,
   memory: MemorySection,
-  data: DataSection,
-  stats: StatsSectionHost,
-  logs: LogsSectionHost,
-  proxy: ProxySection,
+  "data/backup": DataSection,
+  "data/server": DataSection,
+  "stats/usage": StatsSectionHost,
+  "stats/logs": LogsSectionHost,
   donate: DonateSectionHost,
   about: AboutSectionHost,
 };

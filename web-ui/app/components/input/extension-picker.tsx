@@ -78,12 +78,13 @@ function getQuickMessages(source: unknown): QuickMessage[] {
 
 type ActiveTab = "mcp" | "quickmessages" | "mode" | "lorebook" | "skills";
 
-const SETTINGS_TAB_BY_ACTIVE_TAB: Record<ActiveTab, string> = {
-  mcp: "mcp",
-  quickmessages: "quick",
-  mode: "mode",
-  lorebook: "lorebook",
-  skills: "skills",
+// 「管理」深链:选择器的 tab → 设置里的二级页(模式注入与世界书同在提示词注入页,tab 选板块)。
+const SETTINGS_LINK_BY_ACTIVE_TAB: Record<ActiveTab, string> = {
+  mcp: "?section=extensions&sub=mcp&tab=mcp",
+  quickmessages: "?section=extensions&sub=quick&tab=quick",
+  mode: "?section=extensions&sub=injection&tab=mode",
+  lorebook: "?section=extensions&sub=injection&tab=lorebook",
+  skills: "?section=extensions&sub=skills&tab=skills",
 };
 
 interface SkillProfile {
@@ -528,7 +529,7 @@ export function ExtensionPickerButtonImpl({ disabled = false, className }: Exten
             </div>
             <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
               <SettingsLink
-                search={`?section=mcp&tab=${SETTINGS_TAB_BY_ACTIVE_TAB[activeTab]}`}
+                search={SETTINGS_LINK_BY_ACTIVE_TAB[activeTab]}
                 onClick={() => popoverProps.onOpenChange(false)}
               >
                 <ExternalLink className="size-3.5" />

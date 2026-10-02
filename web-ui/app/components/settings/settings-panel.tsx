@@ -1,11 +1,19 @@
-// 设置的"内容"部分:导航列表 + 设置快照。整页(routes/settings.tsx)与模态
-// (settings-dialog.tsx)是同一份内容的两套外壳,外壳只管布局与开合,这里的东西两边共用。
+// 设置的"内容"部分:一级导航列表、页头(一级标题 + 二级标签栏)、设置快照。整页
+// (routes/settings.tsx)与模态(settings-dialog.tsx)是同一份内容的两套外壳,外壳只管
+// 布局与开合,这里的东西两边共用。
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { ProxyNavDot } from "~/components/settings/proxy";
-import { SETTINGS_NAV, type SettingsTabId } from "~/components/settings/settings-nav";
+import {
+  SETTINGS_NAV,
+  settingsNavItem,
+  settingsSubItems,
+  type SettingsTabId,
+} from "~/components/settings/settings-nav";
+import { SegmentedTabs } from "~/components/ui/segmented-tabs";
+import { windowDragRegionProps } from "~/components/window-controls";
 import { refreshSettingsStore } from "~/lib/settings-sync";
 import { cn } from "~/lib/utils";
 import { useSettingsStore } from "~/stores/app-store";
@@ -45,8 +53,8 @@ export function SettingsNavList({
               )}
             />
             <span className="min-w-0 truncate">{t(item.labelKey)}</span>
-            {/* 专题10-⑥:代理运行态小绿点——打开设置任意分区即可看到,不必点进代理页 */}
-            {item.id === "proxy" && <ProxyNavDot />}
+            {/* 专题10-⑥:代理运行态小绿点——打开设置任意页即可看到,不必点进代理页 */}
+            {item.id === "network" && <ProxyNavDot />}
           </button>
         );
       })}
@@ -54,8 +62,57 @@ export function SettingsNavList({
   );
 }
 
+/** 内容区 tabpanel 的 id,二级标签的 aria-controls 指向它。 */
+export const SETTINGS_PAGE_PANEL_ID = "settings-page-panel";
+
 /**
- * 分区所需的 settings。SSE 推送的全局快照即权威值;分区保存后的乐观更新也写回同一处
+ * 内容区固定头部:一级标题 + 二级标签栏(仅有二级时)。不随内容滚动。整个头部是窗口拖拽区
+ * (含顶部留白,保证面板顶边可拖);标签项都是 <button>,拖拽放行选择器认得它们。
+ * `leading` 放整页形态的返回键;模态的关闭钮是外壳的绝对定位兄弟节点,`reserveEnd` 给它让位。
+ * 外壳须以 key={section} 挂载本组件:切一级时重挂,滑块不会从上一个一级的位置滑过来。
+ */
+export function SettingsPageHeader({
+  section,
+  sub,
+  onSub,
+  leading,
+  reserveEnd = false,
+  className,
+}: {
+  section: SettingsTabId;
+  sub: string | null;
+  onSub: (sub: string) => void;
+  leading?: React.ReactNode;
+  reserveEnd?: boolean;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  const title = t(settingsNavItem(section).labelKey);
+  const subs = settingsSubItems(section);
+  return (
+    <div className={cn("shrink-0 select-none px-6 pt-4", className)} {...windowDragRegionProps()}>
+      <div className={cn("flex min-h-8 items-center gap-2 pb-3", reserveEnd && "pr-10")}>
+        {leading}
+        <h2 className="min-w-0 truncate text-lg font-semibold text-[var(--ds-text-primary)]">{title}</h2>
+      </div>
+      {subs.length > 0 && (
+        // 窄屏下标签总宽可能超出:横向滚动而不换行(负边距让滚动区贴边、焦点环不被裁)。
+        <div className="-mx-1 overflow-x-auto px-1 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <SegmentedTabs
+            aria-label={title}
+            items={subs.map((item) => ({ value: item.id, label: t(item.labelKey) }))}
+            value={sub}
+            onChange={onSub}
+            controls={SETTINGS_PAGE_PANEL_ID}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 页面所需的 settings。SSE 推送的全局快照即权威值;分区保存后的乐观更新也写回同一处
  * (setSettings 是全应用唯一写入点)。快照尚未到达(冷启动直达设置)时主动拉一次。
  */
 export function useSettingsSnapshot() {

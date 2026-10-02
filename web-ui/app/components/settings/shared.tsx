@@ -73,19 +73,6 @@ export function PasswordInput({
   );
 }
 
-/**
- * 分区页头。承载形态(模态/整页)的外壳都已给出导航与返回,这里只做标题 + 一句说明;
- * 右侧 pr-10 给模态右上角的绝对定位关闭钮让位(整页无关闭钮,多出的留白无害)。
- */
-export function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <div className="mb-8 pr-10">
-      <h1 className="text-lg font-semibold tracking-normal text-[var(--ds-text-primary)]">{title}</h1>
-      <p className="mt-1 text-sm text-[var(--ds-text-secondary)]">{subtitle}</p>
-    </div>
-  );
-}
-
 /** 分区内容的纵向骨架:各 SettingsGroup 之间统一 2rem 节奏。 */
 export function SettingsStack({ children, className }: { children: React.ReactNode; className?: string }) {
   return <div className={cn("space-y-8", className)}>{children}</div>;

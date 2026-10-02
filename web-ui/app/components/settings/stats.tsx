@@ -2,7 +2,7 @@
 
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
-import { SectionHeader, SettingsGroup, SettingsRows, SettingsStack } from "~/components/settings/shared";
+import { SettingsGroup, SettingsRows, SettingsStack } from "~/components/settings/shared";
 
 export interface StatsPayload {
   totals: {
@@ -107,10 +107,6 @@ export function StatsSection({ stats }: { stats: StatsPayload | null }) {
   };
   return (
     <>
-      <SectionHeader
-        title={t("settings:stats.title")}
-        subtitle={t("settings:stats.subtitle")}
-      />
       <SettingsStack>
       {/* 指标条:一行五格、格间竖线分隔,不再是五张小卡。 */}
       <div className="grid grid-cols-2 gap-y-4 md:grid-cols-5 md:divide-x md:divide-[var(--ds-divider)]">

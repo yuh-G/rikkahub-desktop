@@ -1009,8 +1009,8 @@ export const ChatMessage = React.memo(
     const modelProviderId = providerIdForMessageModel(message.modelId, providers);
     const providerModelId = providerModelIdForMessageModel(message.modelId, providers);
     const modelSettingsSearch = modelProviderId
-      ? `?section=providers&providerId=${encodeURIComponent(modelProviderId)}${providerModelId ? `&modelId=${encodeURIComponent(providerModelId)}` : ""}`
-      : "?section=providers";
+      ? `?section=models&sub=providers&providerId=${encodeURIComponent(modelProviderId)}${providerModelId ? `&modelId=${encodeURIComponent(providerModelId)}` : ""}`
+      : "?section=models&sub=providers";
     const showActions = selecting ? false : isLastMessage ? !loading : hasMessageContent;
     const showAssistantBubble = !isUser && displaySetting?.showAssistantBubble === true;
     // 值稳定化(代码块流式重挂载根修):流式期间 message.parts 每个 delta 都是新数组,

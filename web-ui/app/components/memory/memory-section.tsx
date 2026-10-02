@@ -6,7 +6,6 @@ import api from "~/services/api";
 import { useMemoryStore } from "~/stores";
 import type { Settings, MemoryEntry, WriteStrategy } from "~/types";
 import {
-  SectionHeader,
   SettingsGroup,
   SettingsRows,
   SettingsStack,
@@ -156,7 +155,6 @@ export function MemorySection({
 
   return (
     <>
-      <SectionHeader title={t("settings:memory.title")} subtitle={t("settings:memory.subtitle")} />
       <SettingsStack>
       <SettingsGroup
         title={t("settings:memory.write_strategy_title")}

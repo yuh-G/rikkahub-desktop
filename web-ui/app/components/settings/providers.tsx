@@ -40,7 +40,6 @@ import {
   clone,
   moveItem,
   PasswordInput,
-  SectionHeader,
   SettingsSplit,
   SortableRow,
   textValue,
@@ -1214,10 +1213,6 @@ export function ProvidersSection({
 
   return (
     <>
-      <SectionHeader
-        title={t("settings:providers.title")}
-        subtitle={t("settings:providers.subtitle")}
-      />
       <SettingsSplit
         list={
           <div className="space-y-1">

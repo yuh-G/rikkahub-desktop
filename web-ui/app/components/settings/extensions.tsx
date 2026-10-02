@@ -37,7 +37,6 @@ import {
   clone,
   moveItem,
   numberText,
-  SectionHeader,
   SettingsSplit,
   SettingsSwitchRow,
   SortableRow,
@@ -100,10 +99,6 @@ export function McpExtensionsSection({
   if (!selectedAssistant) {
     return (
       <>
-        <SectionHeader
-          title={t("settings:mcp.title")}
-          subtitle={t("settings:mcp.subtitle")}
-        />
         <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           {t("settings:mcp.no_assistants")}
         </div>
@@ -113,10 +108,6 @@ export function McpExtensionsSection({
 
   return (
     <>
-      <SectionHeader
-        title={t("settings:mcp.title")}
-        subtitle={t("settings:mcp.subtitle")}
-      />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {(
           [

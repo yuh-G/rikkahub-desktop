@@ -29,7 +29,6 @@ import {
   moveItem,
   numberText,
   PasswordInput,
-  SectionHeader,
   SettingsSplit,
   SortableRow,
   textValue,
@@ -451,10 +450,6 @@ export function SearchSection({
 
   return (
     <>
-      <SectionHeader
-        title={t("settings:search.title")}
-        subtitle={t("settings:search.subtitle")}
-      />
       <SettingsSplit
         list={
           <div className="space-y-1">

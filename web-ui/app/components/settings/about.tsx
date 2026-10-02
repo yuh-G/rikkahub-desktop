@@ -19,7 +19,7 @@ import api from "~/services/api";
 import { getSystemInfo } from "~/lib/system-info";
 import { openExternal } from "~/lib/external-link";
 import { cn } from "~/lib/utils";
-import { SectionHeader, SettingsRows, SettingsStack } from "~/components/settings/shared";
+import { SettingsRows, SettingsStack } from "~/components/settings/shared";
 
 // 爱发电品牌图标。path 数据取自 Rikkahub-Android 的 VectorDrawable,保持品牌识别度。
 function AfdianIcon({ className }: { className?: string }) {
@@ -46,7 +46,6 @@ export function DonateSection() {
   const { t } = useTranslation();
   return (
     <>
-      <SectionHeader title={t("settings:donate.title")} subtitle={t("settings:donate.subtitle")} />
       <SettingsRows>
           <button
             type="button"
@@ -148,10 +147,6 @@ export function AboutSection() {
   ];
   return (
     <>
-      <SectionHeader
-        title={t("settings:about.title")}
-        subtitle={t("settings:about.subtitle")}
-      />
       <SettingsStack>
         <div className="flex flex-col items-center gap-3 py-4 text-center">
           <img src="/app-icon.png" alt="RikkaHub" className="size-24 rounded-full shadow-sm" />

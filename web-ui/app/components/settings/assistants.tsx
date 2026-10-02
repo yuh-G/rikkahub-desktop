@@ -25,7 +25,6 @@ import {
   clone,
   moveItem,
   numberText,
-  SectionHeader,
   SettingsRows,
   SettingsSplit,
   SettingsSwitchRow,
@@ -306,10 +305,6 @@ export function AssistantsSection({
   };
   return (
     <>
-      <SectionHeader
-        title={t("settings:assistants.title")}
-        subtitle={t("settings:assistants.subtitle")}
-      />
       <SettingsSplit
         list={
           <div className="space-y-1">

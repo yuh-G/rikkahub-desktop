@@ -27,7 +27,6 @@ import { confirmDialog } from "~/stores/confirm-store";
 import type { S3Config, Settings, WebDavConfig } from "~/types";
 import {
   PasswordInput,
-  SectionHeader,
   SettingsGroup,
   SettingsStack,
 } from "~/components/settings/shared";
@@ -772,10 +771,6 @@ export function DataSection({
 
   return (
     <>
-      <SectionHeader
-        title={t("settings:data.title")}
-        subtitle={t("settings:data.subtitle")}
-      />
       {ANDROID_COMPAT_CARD_ENABLED && (
       <div className="mb-4 rounded-lg border p-4">
         <div

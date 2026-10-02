@@ -6,8 +6,14 @@ import { Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 
-import { SETTINGS_SECTION_COMPONENTS } from "~/components/settings/settings-registry";
-import { SettingsNavList, useSettingsSnapshot } from "~/components/settings/settings-panel";
+import { settingsPageKey } from "~/components/settings/settings-nav";
+import { SETTINGS_PAGES } from "~/components/settings/settings-registry";
+import {
+  SETTINGS_PAGE_PANEL_ID,
+  SettingsNavList,
+  SettingsPageHeader,
+  useSettingsSnapshot,
+} from "~/components/settings/settings-panel";
 import { Button } from "~/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "~/components/ui/dialog";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -19,9 +25,11 @@ import { onStartupPending, onWebAuthRequired } from "~/services/api";
 import { useSettingsStore } from "~/stores/app-store";
 import {
   closeSettingsDialog,
+  currentSettingsSub,
   setSettingsDialogSection,
+  setSettingsDialogSub,
   useSettingsDialogStore,
-  withSettingsSection,
+  withSettingsLocation,
 } from "~/stores/settings-dialog-store";
 
 export function SettingsDialog() {
@@ -31,9 +39,9 @@ export function SettingsDialog() {
 
   React.useEffect(() => {
     if (!open || isDesktop) return;
-    const { section, search } = useSettingsDialogStore.getState();
+    const state = useSettingsDialogStore.getState();
     closeSettingsDialog();
-    navigate(`/settings${withSettingsSection(search, section)}`);
+    navigate(`/settings${withSettingsLocation(state.search, state.section, currentSettingsSub(state))}`);
   }, [open, isDesktop, navigate]);
 
   // 登录墙与启动迁移屏是 root 里的普通 fixed 层,排在模态 portal 之下;它们出现时必须让位,
@@ -82,8 +90,10 @@ export function SettingsDialog() {
 function SettingsDialogBody() {
   const { t } = useTranslation();
   const section = useSettingsDialogStore((state) => state.section);
+  const sub = useSettingsDialogStore(currentSettingsSub);
   const { settings, setSettings } = useSettingsSnapshot();
-  const Section = SETTINGS_SECTION_COMPONENTS[section];
+  const pageKey = settingsPageKey(section, sub);
+  const Page = SETTINGS_PAGES[pageKey];
 
   return (
     <>
@@ -103,12 +113,12 @@ function SettingsDialogBody() {
         </ScrollArea>
       </aside>
       <div className="relative flex min-w-0 flex-1 flex-col">
-        {/* 顶部窄条兼作窗口拖拽区:无边框窗口被遮罩盖住后,这里与左栏标题行是仅有的拖拽把手。 */}
-        <div className="absolute inset-x-0 top-0 h-4" {...windowDragRegionProps()} />
+        {/* 页头兼作窗口拖拽区:无边框窗口被遮罩盖住后,它与左栏标题行是仅有的拖拽把手。 */}
+        <SettingsPageHeader key={section} section={section} sub={sub} onSub={setSettingsDialogSub} reserveEnd />
         <Button
           variant="ghost"
           size="icon-sm"
-          className="absolute top-3 right-3 z-10 text-muted-foreground hover:text-foreground"
+          className="absolute top-4 right-4 z-10 text-muted-foreground hover:text-foreground"
           aria-label={t("settings:nav.close")}
           title={t("settings:nav.close")}
           onClick={closeSettingsDialog}
@@ -116,10 +126,14 @@ function SettingsDialogBody() {
           <X className="size-4" />
         </Button>
         {settings ? (
-          // key=section:切分区时滚动位置归零并重放淡入,与整页切换的"新页从顶部开始"一致。
-          <ScrollArea key={section} className="min-h-0 flex-1">
-            <div className="animate-in fade-in-0 px-6 pt-4 pb-8 duration-(--ds-duration-fast) ease-(--ds-ease-swift) motion-reduce:animate-none">
-              <Section settings={settings} onSettings={setSettings} />
+          // key=页键:切一级或二级时滚动位置归零并重放淡入,"新页从顶部开始"。
+          <ScrollArea key={pageKey} className="min-h-0 flex-1">
+            <div
+              id={SETTINGS_PAGE_PANEL_ID}
+              role={sub ? "tabpanel" : undefined}
+              className="animate-in fade-in-0 px-6 pt-1 pb-8 duration-(--ds-duration-fast) ease-(--ds-ease-swift) motion-reduce:animate-none"
+            >
+              <Page settings={settings} onSettings={setSettings} />
             </div>
           </ScrollArea>
         ) : (

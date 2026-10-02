@@ -1,24 +1,59 @@
 {
   "nav": {
     "subtitle": "本地设置中心",
-    "general": "通用设置",
+    "general": "通用",
     "assistants": "助手",
-    "providers": "供应商",
-    "models": "默认模型与提示词",
-    "search": "搜索服务",
-    "mcp": "MCP 与拓展",
+    "models": "模型",
+    "network": "网络",
+    "extensions": "拓展",
+    "personalization": "个性化",
     "speech": "语音",
     "memory": "记忆",
-    "data": "数据",
-    "stats": "统计",
-    "logs": "应用日志",
-    "proxy": "网络",
-    "about": "关于",
+    "data": "数据管理",
+    "stats": "统计日志",
     "donate": "赞助",
+    "about": "关于",
     "back": "返回",
     "close": "关闭设置",
     "dialog_title": "设置",
     "meta_title": "RikkaHub PC 设置"
+  },
+  "subnav": {
+    "general": {
+      "profile": "个人资料",
+      "app": "应用"
+    },
+    "models": {
+      "providers": "供应商",
+      "scenes": "场景模型"
+    },
+    "network": {
+      "search": "搜索引擎",
+      "proxy": "代理",
+      "port": "端口与请求"
+    },
+    "extensions": {
+      "mcp": "MCP",
+      "skills": "技能",
+      "injection": "提示词注入",
+      "quick": "快捷消息模板"
+    },
+    "personalization": {
+      "appearance": "外观",
+      "shortcuts": "快捷键"
+    },
+    "speech": {
+      "tts": "文字转语音",
+      "asr": "语音识别"
+    },
+    "data": {
+      "backup": "备份与恢复",
+      "server": "Web 服务"
+    },
+    "stats": {
+      "usage": "统计",
+      "logs": "日志"
+    }
   },
   "memory": {
     "title": "记忆",
