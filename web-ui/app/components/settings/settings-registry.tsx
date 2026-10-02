@@ -22,7 +22,7 @@ import { LogsSection, type RequestLog } from "~/components/settings/logs";
 import { PortRequestSection, ProxySection } from "~/components/settings/proxy";
 import { ProvidersSection } from "~/components/settings/providers";
 import { SearchSection } from "~/components/settings/search";
-import { SpeechSection } from "~/components/settings/speech";
+import { AsrSection, TtsSection } from "~/components/settings/speech";
 import { StatsSection, type StatsPayload } from "~/components/settings/stats";
 import { MemorySection } from "~/components/memory/memory-section";
 import api from "~/services/api";
@@ -95,8 +95,8 @@ export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<Setting
   "extensions/quick": QuickMessagesSection,
   "personalization/appearance": AppearanceSection,
   "personalization/shortcuts": ShortcutsSection,
-  "speech/tts": SpeechSection,
-  "speech/asr": SpeechSection,
+  "speech/tts": TtsSection,
+  "speech/asr": AsrSection,
   memory: MemorySection,
   "data/backup": DataSection,
   "data/server": DataSection,

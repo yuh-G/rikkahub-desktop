@@ -265,7 +265,7 @@ export function MemorySection({
                         placeholder={t("settings:memory.add_placeholder")}
                         className="resize-none"
                       />
-                      <Button size="icon" onClick={() => void addAssistant(a.id)}><Plus className="size-4" /></Button>
+                      <Button size="icon" aria-label={t("settings:memory.add")} title={t("settings:memory.add")} onClick={() => void addAssistant(a.id)}><Plus className="size-4" /></Button>
                     </div>
                   </div>
                 )}
@@ -273,6 +273,11 @@ export function MemorySection({
             );
           })}
           </SettingsRows>
+          {assistantQuery.trim() !== "" && filteredAssistants.length === 0 ? (
+            <div className="py-6 text-center text-sm text-[var(--ds-text-secondary)]">
+              {t("settings:memory.search_no_match")}
+            </div>
+          ) : null}
           {/* 孤儿记忆:assistant_memory.json 里有但 settings.assistants 已删除的(M4 保留,可编辑/删除) */}
           {snapshot.assistantMemories
             .filter((g) => !settings.assistants.some((a) => a.id === g.assistantId))

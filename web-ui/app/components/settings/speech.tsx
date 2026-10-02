@@ -7,12 +7,11 @@ import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
-import { Separator } from "~/components/ui/separator";
 import { Slider } from "~/components/ui/slider";
 import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
-import { playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
+import { getAudioPlaybackKey, playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
 import { createId } from "~/lib/id";
 import { patchDisplay } from "~/lib/settings-patch";
 import api from "~/services/api";
@@ -36,6 +35,9 @@ import {
   SortableRow,
 } from "~/components/settings/shared";
 
+
+// 设置页试听的播放键前缀;卸载时据此判断当前播放的是不是本页的试听。
+const TTS_TEST_KEY_PREFIX = "__tts-test__";
 
 function createAsrProvider(type: AsrProviderType = "openai_realtime"): AsrProviderProfile {
   const base = {
@@ -320,7 +322,8 @@ const TTS_LANGUAGES_XAI: { value: string; label: string }[] = [
   { value: "bn", label: "Bengali" },
 ];
 
-function TtsSettingsPanel({
+/** 语音 › 文字转语音:朗读过滤 + 语音合成服务列表/详情。 */
+export function TtsSection({
   settings,
   onSettings,
 }: {
@@ -441,9 +444,26 @@ function TtsSettingsPanel({
   // can toggle (play vs stop) and so that starting the test stops any in-progress chat
   // message playback. The key embeds the draft id so multiple settings panels (if ever
   // mounted) don't collide.
-  const testPlaybackKey = draft ? `__tts-test__:${draft.id}` : "__tts-test__";
+  const testPlaybackKey = draft ? `${TTS_TEST_KEY_PREFIX}:${draft.id}` : TTS_TEST_KEY_PREFIX;
   const playingKey = useAudioPlaybackKey();
   const isTestPlaying = playingKey === testPlaybackKey;
+  // 试听只属于本页:切到语音识别、关掉设置时一并停止。在飞的合成请求回来时页面已卸载,
+  // 结果直接丢弃(否则离开页面后才开始出声,而浮动播放条不管试听,用户找不到停止入口)。
+  // 系统语音由服务端在本机播放,前端停不了,要通知服务端取消。
+  const mountedRef = React.useRef(true);
+  const systemTestRef = React.useRef(false);
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (getAudioPlaybackKey()?.startsWith(TTS_TEST_KEY_PREFIX)) stopAudio();
+      if (systemTestRef.current) {
+        systemTestRef.current = false;
+        // 尽力而为:服务端已播完或已退出时请求失败无妨。
+        void api.post("tts/cancel").catch(() => undefined);
+      }
+    };
+  }, []);
 
   const handleTest = React.useCallback(async () => {
     if (!draft) return;
@@ -465,10 +485,17 @@ function TtsSettingsPanel({
       const contentType = response.headers.get("Content-Type") ?? "";
       if (contentType.includes("application/json")) {
         // System TTS path — Windows is speaking on-device; nothing for us to play.
+        if (!mountedRef.current) {
+          void api.post("tts/cancel").catch(() => undefined);
+          return;
+        }
+        systemTestRef.current = true;
         toast.success(t("settings:speech.test_system_done"));
         return;
       }
+      if (!mountedRef.current) return;
       const blob = await response.blob();
+      if (!mountedRef.current) return;
       const url = URL.createObjectURL(blob);
       await playAudio(testPlaybackKey, url, url);
     } catch (error) {
@@ -544,8 +571,11 @@ function TtsSettingsPanel({
       <SettingsSplit
         list={
       <div>
-        <div className="mb-1 flex items-center justify-between gap-3 py-1">
-          <div className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:speech.tts_services")}</div>
+        <div className="mb-1 flex items-start justify-between gap-3 py-1">
+          <div className="min-w-0">
+            <div className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:speech.tts_services")}</div>
+            <div className="text-xs text-[var(--ds-text-tertiary)]">{t("settings:speech.tts_list_desc")}</div>
+          </div>
           <Select onValueChange={(value) => void addProvider(value as TtsProviderType)}>
             <SelectTrigger className="h-8 w-28">
               <SelectValue placeholder={t("settings:speech.add")} />
@@ -672,7 +702,7 @@ function TtsSettingsPanel({
                 ) : null}
                 {draft.type === "gemini" ? (
                   <div className="space-y-2">
-                    <div className="text-sm font-medium">Voice Name</div>
+                    <div className="text-sm font-medium">{t("settings:speech.field.voice_name")}</div>
                     <Input
                       value={draft.voiceName ?? ""}
                       onChange={(event) => patchDraft({ voiceName: event.target.value })}
@@ -690,7 +720,7 @@ function TtsSettingsPanel({
                       const dropdownValue = isPreset ? voiceId : "__custom__";
                       return (
                         <div className="space-y-2">
-                          <div className="text-sm font-medium">Voice ID</div>
+                          <div className="text-sm font-medium">{t("settings:speech.field.voice_id")}</div>
                           {/* Preset-first combobox: dropdown is the primary control on the left;
                           a free-text Input appears on the right ONLY when the user picks
                           "自定义". MiniMax's voice cloning produces opaque voice IDs that
@@ -742,7 +772,7 @@ function TtsSettingsPanel({
                   : null}
                 {draft.type === "xai" ? (
                   <div className="space-y-2">
-                    <div className="text-sm font-medium">Voice ID</div>
+                    <div className="text-sm font-medium">{t("settings:speech.field.voice_id")}</div>
                     <Select
                       value={draft.voiceId ?? ""}
                       onValueChange={(value) => patchDraft({ voiceId: value })}
@@ -762,7 +792,7 @@ function TtsSettingsPanel({
                 ) : null}
                 {draft.type === "openai" || draft.type === "groq" ? (
                   <div className="space-y-2">
-                    <div className="text-sm font-medium">Voice</div>
+                    <div className="text-sm font-medium">{t("settings:speech.field.voice")}</div>
                     <Select
                       value={draft.voice ?? ""}
                       onValueChange={(value) => patchDraft({ voice: value })}
@@ -784,7 +814,7 @@ function TtsSettingsPanel({
                   // qwen-audio-3.0(§4.5):音色按 model 分两组,旧 language_type 字段已废(改 format/sample_rate)。
                   <>
                     <div className="space-y-2">
-                      <div className="text-sm font-medium">Voice</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.voice")}</div>
                       <Select
                         value={draft.voice ?? ""}
                         onValueChange={(value) => patchDraft({ voice: value })}
@@ -802,13 +832,13 @@ function TtsSettingsPanel({
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <div className="text-sm font-medium">Audio Format</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.audio_format")}</div>
                       <Select
                         value={draft.format ?? "wav"}
                         onValueChange={(value) => patchDraft({ format: value })}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Format" />
+                          <SelectValue placeholder={t("settings:speech.field.format")} />
                         </SelectTrigger>
                         <SelectContent>
                           {TTS_FORMATS_QWEN.map((format) => (
@@ -820,7 +850,7 @@ function TtsSettingsPanel({
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <div className="text-sm font-medium">Sample Rate</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.sample_rate")}</div>
                       <Select
                         value={String(draft.sampleRate ?? 24000)}
                         onValueChange={(value) => patchDraft({ sampleRate: Number(value) })}
@@ -841,7 +871,7 @@ function TtsSettingsPanel({
                 ) : null}
                 {draft.type === "mimo" ? (
                   <div className="space-y-2">
-                    <div className="text-sm font-medium">Voice</div>
+                    <div className="text-sm font-medium">{t("settings:speech.field.voice")}</div>
                     <Select
                       value={draft.voice ?? ""}
                       onValueChange={(value) => patchDraft({ voice: value })}
@@ -861,7 +891,7 @@ function TtsSettingsPanel({
                 ) : null}
                 {draft.type === "xai" ? (
                   <div className="space-y-2">
-                    <div className="text-sm font-medium">Language</div>
+                    <div className="text-sm font-medium">{t("settings:speech.field.language")}</div>
                     <Select
                       value={draft.language ?? "auto"}
                       onValueChange={(value) => patchDraft({ language: value })}
@@ -882,7 +912,7 @@ function TtsSettingsPanel({
                 {draft.type === "minimax" ? (
                   <>
                     <div className="space-y-2">
-                      <div className="text-sm font-medium">Emotion</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.emotion")}</div>
                       {/* "自动" maps to empty string in the persisted state, which the server
                           uses as a signal to drop the `emotion` field entirely from the
                           MiniMax request (letting MiniMax pick based on text). We can't
@@ -914,7 +944,7 @@ function TtsSettingsPanel({
                     <div className="md:col-span-2">
                       {numericInput(
                         "speed",
-                        "Speed",
+                        t("settings:speech.field.speed"),
                         t("settings:speech.minimax_speed_desc"),
                         0.5,
                         2,
@@ -926,7 +956,7 @@ function TtsSettingsPanel({
                 {draft.type === "elevenlabs" ? (
                   <>
                     <div className="space-y-2 md:col-span-2">
-                      <div className="text-sm font-medium">Voice ID</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.voice_id")}</div>
                       <Input
                         value={draft.voiceId ?? ""}
                         onChange={(event) => patchDraft({ voiceId: event.target.value })}
@@ -934,17 +964,17 @@ function TtsSettingsPanel({
                       />
                     </div>
                     <div className="md:col-span-2">
-                      {numericInput("stability", "Stability", t("settings:speech.elevenlabs_stability_desc"), 0, 1)}
+                      {numericInput("stability", t("settings:speech.field.stability"), t("settings:speech.elevenlabs_stability_desc"), 0, 1)}
                     </div>
                     <div className="md:col-span-2">
-                      {numericInput("similarityBoost", "Similarity Boost", t("settings:speech.elevenlabs_similarity_desc"), 0, 1)}
+                      {numericInput("similarityBoost", t("settings:speech.field.similarity_boost"), t("settings:speech.elevenlabs_similarity_desc"), 0, 1)}
                     </div>
                   </>
                 ) : null}
                 {draft.type === "step" ? (
                   <>
                     <div className="space-y-2 md:col-span-2">
-                      <div className="text-sm font-medium">Voice</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.voice")}</div>
                       <Select
                         value={draft.voice ?? ""}
                         onValueChange={(value) => patchDraft({ voice: value })}
@@ -962,13 +992,13 @@ function TtsSettingsPanel({
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <div className="text-sm font-medium">Format</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.format")}</div>
                       <Select
                         value={draft.responseFormat ?? "mp3"}
                         onValueChange={(value) => patchDraft({ responseFormat: value })}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Format" />
+                          <SelectValue placeholder={t("settings:speech.field.format")} />
                         </SelectTrigger>
                         <SelectContent>
                           {TTS_FORMATS_STEP.map((format) => (
@@ -980,7 +1010,7 @@ function TtsSettingsPanel({
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <div className="text-sm font-medium">Sample Rate</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.sample_rate")}</div>
                       <Select
                         value={String(draft.sampleRate ?? 24000)}
                         onValueChange={(value) => patchDraft({ sampleRate: Number(value) })}
@@ -998,13 +1028,13 @@ function TtsSettingsPanel({
                       </Select>
                     </div>
                     <div className="md:col-span-2">
-                      {numericInput("speed", "Speed", t("settings:speech.step_speed_desc"), 0.5, 2)}
+                      {numericInput("speed", t("settings:speech.field.speed"), t("settings:speech.step_speed_desc"), 0.5, 2)}
                     </div>
                     <div className="md:col-span-2">
-                      {numericInput("volume", "Volume", t("settings:speech.step_volume_desc"), 0.1, 2)}
+                      {numericInput("volume", t("settings:speech.field.volume"), t("settings:speech.step_volume_desc"), 0.1, 2)}
                     </div>
                     <div className="space-y-2 md:col-span-2">
-                      <div className="text-sm font-medium">Instruction</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.instruction")}</div>
                       <Textarea
                         value={draft.instruction ?? ""}
                         onChange={(event) => patchDraft({ instruction: event.target.value })}
@@ -1019,7 +1049,7 @@ function TtsSettingsPanel({
                 {draft.type === "fish-audio" ? (
                   <>
                     <div className="space-y-2 md:col-span-2">
-                      <div className="text-sm font-medium">Reference ID</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.reference_id")}</div>
                       <Input
                         value={draft.referenceId ?? ""}
                         onChange={(event) => patchDraft({ referenceId: event.target.value })}
@@ -1030,13 +1060,13 @@ function TtsSettingsPanel({
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <div className="text-sm font-medium">Format</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.format")}</div>
                       <Select
                         value={draft.format ?? "mp3"}
                         onValueChange={(value) => patchDraft({ format: value })}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Format" />
+                          <SelectValue placeholder={t("settings:speech.field.format")} />
                         </SelectTrigger>
                         <SelectContent>
                           {TTS_FORMATS_FISH_AUDIO.map((format) => (
@@ -1048,13 +1078,13 @@ function TtsSettingsPanel({
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <div className="text-sm font-medium">Latency</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.latency")}</div>
                       <Select
                         value={draft.latency ?? "normal"}
                         onValueChange={(value) => patchDraft({ latency: value })}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Latency" />
+                          <SelectValue placeholder={t("settings:speech.field.latency")} />
                         </SelectTrigger>
                         <SelectContent>
                           {TTS_LATENCY_FISH_AUDIO.map((latency) => (
@@ -1066,17 +1096,17 @@ function TtsSettingsPanel({
                       </Select>
                     </div>
                     <div className="md:col-span-2">
-                      {numericInput("temperature", "Temperature", t("settings:speech.fish_temperature_desc"), 0, 1)}
+                      {numericInput("temperature", t("settings:speech.field.temperature"), t("settings:speech.fish_temperature_desc"), 0, 1)}
                     </div>
                     <div className="md:col-span-2">
-                      {numericInput("topP", "Top P", t("settings:speech.fish_topp_desc"), 0, 1)}
+                      {numericInput("topP", t("settings:speech.field.top_p"), t("settings:speech.fish_topp_desc"), 0, 1)}
                     </div>
                     <div className="md:col-span-2">
-                      {numericInput("speed", "Speed", t("settings:speech.fish_speed_desc"), 0.5, 2)}
+                      {numericInput("speed", t("settings:speech.field.speed"), t("settings:speech.fish_speed_desc"), 0.5, 2)}
                     </div>
                     <div className="flex items-center justify-between gap-4 md:col-span-2">
                       <div>
-                        <div className="text-sm font-medium">Normalize</div>
+                        <div className="text-sm font-medium">{t("settings:speech.field.normalize")}</div>
                         <div className="text-xs text-muted-foreground">
                           {t("settings:speech.fish_normalize_desc")}
                         </div>
@@ -1091,7 +1121,7 @@ function TtsSettingsPanel({
                 {draft.type === "volcengine" ? (
                   <>
                     <div className="space-y-2 md:col-span-2">
-                      <div className="text-sm font-medium">Resource ID</div>
+                      <div className="text-sm font-medium">{t("settings:speech.field.resource_id")}</div>
                       <Input
                         value={draft.resourceId ?? ""}
                         onChange={(event) => patchDraft({ resourceId: event.target.value })}
@@ -1129,7 +1159,7 @@ function TtsSettingsPanel({
               <div className="space-y-5 md:col-span-2">
                 {numericInput(
                   "speechRate",
-                  "Speech Rate",
+                  t("settings:speech.field.speech_rate"),
                   t("settings:speech.system_rate_desc"),
                   0.2,
                   3,
@@ -1137,7 +1167,7 @@ function TtsSettingsPanel({
                 )}
                 {numericInput(
                   "pitch",
-                  "Pitch",
+                  t("settings:speech.field.pitch"),
                   t("settings:speech.system_pitch_desc"),
                   0.2,
                   3,
@@ -1157,7 +1187,8 @@ function TtsSettingsPanel({
   );
 }
 
-export function SpeechSection({
+/** 语音 › 语音识别:语音识别服务列表/详情。 */
+export function AsrSection({
   settings,
   onSettings,
 }: {
@@ -1311,14 +1342,15 @@ export function SpeechSection({
   };
 
   return (
-    <>
-      <TtsSettingsPanel settings={settings} onSettings={onSettings} />
-      <Separator className="my-10" />
+    <SettingsStack>
       <SettingsSplit
         list={
         <div>
-          <div className="mb-1 flex items-center justify-between gap-3 py-1">
-            <div className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:speech.asr_services")}</div>
+          <div className="mb-1 flex items-start justify-between gap-3 py-1">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:speech.asr_services")}</div>
+              <div className="text-xs text-[var(--ds-text-tertiary)]">{t("settings:speech.asr_list_desc")}</div>
+            </div>
             <Select onValueChange={(value) => void addProvider(value as AsrProviderType)}>
               <SelectTrigger className="h-8 w-28">
                 <SelectValue placeholder={t("settings:speech.add")} />
@@ -1426,7 +1458,7 @@ export function SpeechSection({
               ) : null}
               {draft.type === "volcengine" ? (
                 <div className="space-y-2">
-                  <div className="text-sm font-medium">Resource ID</div>
+                  <div className="text-sm font-medium">{t("settings:speech.field.resource_id")}</div>
                   <Input
                     value={draft.resourceId ?? ""}
                     onChange={(event) => patchDraft({ resourceId: event.target.value })}
@@ -1448,7 +1480,7 @@ export function SpeechSection({
                   <Textarea
                     value={draft.prompt ?? ""}
                     onChange={(event) => patchDraft({ prompt: event.target.value })}
-                    placeholder="Optional"
+                    placeholder={t("settings:speech.field.optional")}
                   />
                 </div>
               ) : null}
@@ -1502,6 +1534,6 @@ export function SpeechSection({
           </div>
         )}
       </SettingsSplit>
-    </>
+    </SettingsStack>
   );
 }
