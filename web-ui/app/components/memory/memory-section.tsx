@@ -1,18 +1,16 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Brain, Plus, Trash2, Pencil, Check, X, FileJson } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, FileJson } from "lucide-react";
 
 import api from "~/services/api";
 import { useMemoryStore } from "~/stores";
 import type { Settings, MemoryEntry, WriteStrategy } from "~/types";
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "~/components/ui/card";
+  SectionHeader,
+  SettingsGroup,
+  SettingsRows,
+  SettingsStack,
+} from "~/components/settings/shared";
 import { Switch } from "~/components/ui/switch";
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
@@ -49,7 +47,7 @@ function MemoryItem({ entry, scope, assistantId }: {
   };
 
   return (
-    <div className="rounded-md border p-2 text-sm">
+    <div className="py-2 text-sm">
       {editing ? (
         <div className="space-y-2">
           <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} />
@@ -147,7 +145,9 @@ export function MemorySection({
   };
 
   if (!snapshot) {
-    return <div className="p-4 text-muted-foreground">{t("common:loading")}</div>;
+    return (
+      <div className="p-4 text-muted-foreground">{t("common:conversation_sidebar.loading")}</div>
+    );
   }
   // U4:助手名搜索过滤(助手多时快速定位)
   const filteredAssistants = settings.assistants.filter((a) =>
@@ -155,25 +155,14 @@ export function MemorySection({
   );
 
   return (
-    <div className="space-y-4">
-      {/* 板块头部:与其它设置板块同构(图标框 + 大标题 + 副标题),统一设计语言。 */}
-      <div className="mb-6 flex items-start gap-3">
-        <div className="rounded-md border bg-card p-2">
-          <Brain className="size-5" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal">{t("settings:memory.title")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{t("settings:memory.subtitle")}</p>
-        </div>
-      </div>
-
-      {/* 卡片 0:AI 写入策略 */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("settings:memory.write_strategy_title")}</CardTitle>
-          <CardDescription>{t("settings:memory.write_strategy_subtitle")}</CardDescription>
-        </CardHeader>
-        <CardContent>
+    <>
+      <SectionHeader title={t("settings:memory.title")} subtitle={t("settings:memory.subtitle")} />
+      <SettingsStack>
+      <SettingsGroup
+        title={t("settings:memory.write_strategy_title")}
+        description={t("settings:memory.write_strategy_subtitle")}
+        fields
+      >
           <Select value={ms.writeStrategy} onValueChange={(v) => void updateMemorySettings({ writeStrategy: v as WriteStrategy })}>
             <SelectTrigger className="w-full sm:w-72"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -183,16 +172,13 @@ export function MemorySection({
               <SelectItem value="readonly">{t("settings:memory.strategy_readonly")}</SelectItem>
             </SelectContent>
           </Select>
-        </CardContent>
-      </Card>
+      </SettingsGroup>
 
-      {/* 卡片 1:全局记忆 */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("settings:memory.global_title")}</CardTitle>
-          <CardDescription>{t("settings:memory.global_subtitle")}</CardDescription>
-          <CardAction>
-            <div className="flex items-center gap-1">
+      <SettingsGroup
+        title={t("settings:memory.global_title")}
+        description={t("settings:memory.global_subtitle")}
+        action={
+            <>
               <Button
                 size="icon"
                 variant="ghost"
@@ -202,32 +188,36 @@ export function MemorySection({
               >
                 <FileJson className="size-4" />
               </Button>
-              <Switch checked={ms.globalEnabled} onCheckedChange={(v) => void updateMemorySettings({ globalEnabled: v })} />
-            </div>
-          </CardAction>
-        </CardHeader>
-        <CardContent className={ms.globalEnabled ? "space-y-2" : "space-y-2 opacity-50"}>
+              <Switch
+                checked={ms.globalEnabled}
+                onCheckedChange={(v) => void updateMemorySettings({ globalEnabled: v })}
+                aria-label={t("settings:memory.global_title")}
+              />
+            </>
+        }
+      >
+        <div className={ms.globalEnabled ? "pt-1" : "pt-1 opacity-50"}>
           {snapshot.globalMemories.length === 0 && (
-            <div className="py-1 text-sm text-muted-foreground">{t("settings:memory.empty_global")}</div>
+            <div className="py-2 text-sm text-muted-foreground">{t("settings:memory.empty_global")}</div>
           )}
-          {snapshot.globalMemories.map((m) => (
-            <MemoryItem key={m.id} entry={m} scope="global" />
-          ))}
+          <SettingsRows>
+            {snapshot.globalMemories.map((m) => (
+              <MemoryItem key={m.id} entry={m} scope="global" />
+            ))}
+          </SettingsRows>
           {ms.globalEnabled && (
-            <div className="flex gap-2 pt-1">
+            <div className="flex gap-2 pt-2">
               <Textarea value={newGlobal} onChange={(e) => setNewGlobal(e.target.value)} rows={1} placeholder={t("settings:memory.add_placeholder")} className="resize-none" />
               <Button size="icon" onClick={() => void addGlobal()}><Plus className="size-4" /></Button>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </SettingsGroup>
 
-      {/* 卡片 2:助手记忆 */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("settings:memory.assistant_title")}</CardTitle>
-          <CardDescription>{t("settings:memory.assistant_subtitle")}</CardDescription>
-          <CardAction>
+      <SettingsGroup
+        title={t("settings:memory.assistant_title")}
+        description={t("settings:memory.assistant_subtitle")}
+        action={
             <Button
               size="icon"
               variant="ghost"
@@ -237,22 +227,23 @@ export function MemorySection({
             >
               <FileJson className="size-4" />
             </Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent className="space-y-4">
+        }
+      >
+        <div className="space-y-2 pt-2">
           <Input
             value={assistantQuery}
             onChange={(e) => setAssistantQuery(e.target.value)}
             placeholder={t("settings:memory.search_assistant")}
             className="text-sm"
           />
+          <SettingsRows>
           {filteredAssistants.map((a) => {
             const group = snapshot.assistantMemories.find((g) => g.assistantId === a.id);
             const mems = group?.memories ?? [];
             return (
-              <div key={a.id} className="space-y-2 border-t pt-3 first:border-t-0 first:pt-0">
+              <div key={a.id} className="space-y-2 py-3">
                 <div className="flex items-center justify-between">
-                  <div className="font-medium">{a.name || t("settings:memory.unnamed_assistant")}</div>
+                  <div className="text-sm font-medium">{a.name || t("settings:memory.unnamed_assistant")}</div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">{t("settings:memory.enable_memory")}</span>
                     <Switch checked={a.enableMemory === true} onCheckedChange={(v) => void setAssistantMemory(a.id, v)} />
@@ -263,9 +254,11 @@ export function MemorySection({
                     {mems.length === 0 && (
                       <div className="text-sm text-muted-foreground">{t("settings:memory.empty_assistant")}</div>
                     )}
-                    {mems.map((m) => (
-                      <MemoryItem key={m.id} entry={m} scope="assistant" assistantId={a.id} />
-                    ))}
+                    <SettingsRows>
+                      {mems.map((m) => (
+                        <MemoryItem key={m.id} entry={m} scope="assistant" assistantId={a.id} />
+                      ))}
+                    </SettingsRows>
                     <div className="flex gap-2">
                       <Textarea
                         value={newByAssistant[a.id] ?? ""}
@@ -281,6 +274,7 @@ export function MemorySection({
               </div>
             );
           })}
+          </SettingsRows>
           {/* 孤儿记忆:assistant_memory.json 里有但 settings.assistants 已删除的(M4 保留,可编辑/删除) */}
           {snapshot.assistantMemories
             .filter((g) => !settings.assistants.some((a) => a.id === g.assistantId))
@@ -289,13 +283,16 @@ export function MemorySection({
                 <div className="text-xs text-muted-foreground">
                   {t("settings:memory.orphan_group", { name: g.assistantName, n: g.memories.length })}
                 </div>
-                {g.memories.map((m) => (
-                  <MemoryItem key={m.id} entry={m} scope="assistant" assistantId={g.assistantId} />
-                ))}
+                <SettingsRows>
+                  {g.memories.map((m) => (
+                    <MemoryItem key={m.id} entry={m} scope="assistant" assistantId={g.assistantId} />
+                  ))}
+                </SettingsRows>
               </div>
             ))}
-        </CardContent>
-      </Card>
+        </div>
+      </SettingsGroup>
+      </SettingsStack>
 
       {/* 批量编辑对话框(高级用户直接编辑原始 JSON,实时校验 + 二次确认)*/}
       <Dialog open={batchTarget !== null} onOpenChange={(o) => !o && setBatchTarget(null)}>
@@ -315,6 +312,7 @@ export function MemorySection({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }
+
