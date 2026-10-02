@@ -122,9 +122,15 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
     updateSettings({ ...state.settings, keybindings: current });
     return json({ status: "ok" });
   }
-  // 重置全部快捷键到默认(设置页"恢复默认"按钮)。
+  // 重置全部快捷键到默认(设置页「全部恢复默认」)。Enter 发送与快捷键同页,一并恢复;
+  // 一次 updateSettings 原子写入,只广播一次,前端不必发两笔请求。
   if (path === "settings/keybindings/reset" && request.method === "POST") {
-    updateSettings({ ...state.settings, keybindings: defaultSettings().keybindings });
+    const defaults = defaultSettings();
+    updateSettings({
+      ...state.settings,
+      keybindings: defaults.keybindings,
+      displaySetting: { ...state.settings.displaySetting, sendOnEnter: defaults.displaySetting.sendOnEnter },
+    });
     return json({ status: "ok" });
   }
   if (path === "settings/assistant" && request.method === "POST") {

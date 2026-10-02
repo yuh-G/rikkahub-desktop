@@ -14,6 +14,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
 import { createId } from "~/lib/id";
+import { patchDisplay } from "~/lib/settings-patch";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import type {
@@ -405,16 +406,8 @@ function TtsSettingsPanel({
   );
 
   // 朗读过滤开关(台账 §4.1)直写 displaySetting —— 与 provider 无关的全局朗读行为,
-  // 不走 provider autosave。范式同 general.tsx 的 patchDisplay。
+  // 不走 provider autosave。
   const display = settings.displaySetting;
-  const patchDisplay = React.useCallback(
-    async (patch: Record<string, unknown>) => {
-      const nextDisplay = { ...settings.displaySetting, ...patch };
-      await api.post("settings/display", nextDisplay);
-      onSettings({ ...settings, displaySetting: nextDisplay });
-    },
-    [onSettings, settings],
-  );
 
   const selectProvider = React.useCallback(
     async (providerId: string) => {
@@ -537,15 +530,13 @@ function TtsSettingsPanel({
             label={t("settings:speech.only_read_quoted")}
             description={t("settings:speech.only_read_quoted_desc")}
             checked={display.ttsOnlyReadQuoted === true}
-            onCheckedChange={(checked) => void patchDisplay({ ttsOnlyReadQuoted: checked })}
+            onCheckedChange={(checked) => patchDisplay({ ttsOnlyReadQuoted: checked })}
           />
           <SettingsSwitchRow
             label={t("settings:speech.skip_brackets")}
             description={t("settings:speech.skip_brackets_desc")}
             checked={display.ttsOnlyReadOutsideBrackets === true}
-            onCheckedChange={(checked) =>
-              void patchDisplay({ ttsOnlyReadOutsideBrackets: checked })
-            }
+            onCheckedChange={(checked) => patchDisplay({ ttsOnlyReadOutsideBrackets: checked })}
           />
         </SettingsRows>
       </SettingsGroup>

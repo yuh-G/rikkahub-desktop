@@ -261,5 +261,21 @@
     "message": "This server is reachable beyond your machine with no access password — anyone on the network can read your conversations and API keys.",
     "action": "Set a password",
     "dismiss": "Dismiss for now"
+  },
+  "avatar_cropper": {
+    "upload": "Upload & crop",
+    "use_default": "Use default avatar",
+    "title": "Crop avatar",
+    "description": "Drag the image to reposition it, then zoom or rotate and save it as your avatar.",
+    "zoom": "Zoom",
+    "offset_x": "Horizontal offset",
+    "offset_y": "Vertical offset",
+    "rotate_left": "Rotate left",
+    "rotate_right": "Rotate right",
+    "cancel": "Cancel",
+    "save": "Save avatar",
+    "saved": "Avatar saved",
+    "upload_failed": "Failed to upload avatar",
+    "process_failed": "Failed to process avatar"
   }
 }

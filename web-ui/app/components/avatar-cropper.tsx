@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 
 import { Loader2, RotateCcw, RotateCw, Save, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -28,6 +29,7 @@ export function AvatarCropper({
   onChange: (avatar: AssistantAvatar) => void | Promise<void>;
   size?: "default" | "lg";
 }) {
+  const { t } = useTranslation("common");
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const [open, setOpen] = React.useState(false);
   const [source, setSource] = React.useState<string | null>(null);
@@ -101,7 +103,7 @@ export function AvatarCropper({
       const blob = await new Promise<Blob | null>((resolve) =>
         canvas.toBlob(resolve, "image/png", 0.95),
       );
-      if (!blob) throw new Error("头像处理失败");
+      if (!blob) throw new Error(t("avatar_cropper.process_failed"));
       const form = new FormData();
       form.append("files", new File([blob], "avatar.png", { type: "image/png" }));
       const result = await api.postMultipart<{ files: Array<{ url: string }> }>(
@@ -109,12 +111,12 @@ export function AvatarCropper({
         form,
       );
       const url = result.files[0]?.url;
-      if (!url) throw new Error("头像上传失败");
+      if (!url) throw new Error(t("avatar_cropper.upload_failed"));
       await onChange({ type: "url", url });
       setOpen(false);
-      toast.success("头像已保存");
+      toast.success(t("avatar_cropper.saved"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "头像上传失败");
+      toast.error(error instanceof Error ? error.message : t("avatar_cropper.upload_failed"));
     } finally {
       setSaving(false);
     }
@@ -133,20 +135,20 @@ export function AvatarCropper({
             <input className="sr-only" type="file" accept="image/*" onChange={chooseFile} />
             <span className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm shadow-xs transition hover:bg-accent">
               <Upload className="size-4" />
-              上传并裁剪
+              {t("avatar_cropper.upload")}
             </span>
           </label>
           <Button variant="ghost" size="sm" onClick={() => void reset()}>
-            使用默认头像
+            {t("avatar_cropper.use_default")}
           </Button>
         </div>
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>裁剪头像</DialogTitle>
+            <DialogTitle>{t("avatar_cropper.title")}</DialogTitle>
             <DialogDescription>
-              拖动图片调整位置，使用缩放和旋转后保存为本地头像。
+              {t("avatar_cropper.description")}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-5 md:grid-cols-[320px_1fr]">
@@ -168,7 +170,7 @@ export function AvatarCropper({
             </div>
             <div className="space-y-5">
               <label className="block space-y-2">
-                <span className="text-sm font-medium">缩放</span>
+                <span className="text-sm font-medium">{t("avatar_cropper.zoom")}</span>
                 <Slider
                   min={0.6}
                   max={3}
@@ -178,7 +180,7 @@ export function AvatarCropper({
                 />
               </label>
               <label className="block space-y-2">
-                <span className="text-sm font-medium">水平移动</span>
+                <span className="text-sm font-medium">{t("avatar_cropper.offset_x")}</span>
                 <Slider
                   min={-160}
                   max={160}
@@ -188,7 +190,7 @@ export function AvatarCropper({
                 />
               </label>
               <label className="block space-y-2">
-                <span className="text-sm font-medium">垂直移动</span>
+                <span className="text-sm font-medium">{t("avatar_cropper.offset_y")}</span>
                 <Slider
                   min={-160}
                   max={160}
@@ -200,22 +202,22 @@ export function AvatarCropper({
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setRotation((old) => old - 90)}>
                   <RotateCcw className="size-4" />
-                  左转
+                  {t("avatar_cropper.rotate_left")}
                 </Button>
                 <Button variant="outline" onClick={() => setRotation((old) => old + 90)}>
                   <RotateCw className="size-4" />
-                  右转
+                  {t("avatar_cropper.rotate_right")}
                 </Button>
               </div>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>
-              取消
+              {t("avatar_cropper.cancel")}
             </Button>
             <Button onClick={confirm} disabled={saving || !image}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-              保存头像
+              {t("avatar_cropper.save")}
             </Button>
           </DialogFooter>
         </DialogContent>

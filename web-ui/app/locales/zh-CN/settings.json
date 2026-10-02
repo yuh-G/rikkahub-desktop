@@ -121,42 +121,35 @@
     "show_key": "显示 API Key"
   },
   "general": {
-    "title": "通用设置",
-    "subtitle": "管理颜色与显示、用户资料、助手与拓展入口。",
     "nickname": "昵称",
     "ui_font": "界面字体",
     "chat_font": "对话字体",
     "ui_font_size": "界面字号",
     "ui_font_size_hint": "调整整个应用的字号与间距比例，所有元素等比缩放，不会破坏布局。",
     "reset": "恢复默认",
-    "tray_title": "窗口与托盘",
-    "tray_desc": "关闭窗口时的行为，以及显式退出入口。",
+    "tray_title": "应用窗口",
+    "tray_desc": "关闭主窗口时的行为。",
     "minimize_to_tray": "关闭时最小化到托盘",
-    "minimize_to_tray_hint": "关闭窗口时隐藏到系统托盘，后台任务继续运行；点击托盘图标恢复窗口。",
-    "quit_app": "退出 Rikkahub",
-    "quit_app_hint": "关闭窗口并结束后台进程。",
-    "quit_app_button": "退出",
-    "quit_failed": "退出失败",
-    "shell_title": "终端(bash)",
+    "minimize_to_tray_hint": "关闭窗口时隐藏到系统托盘，后台任务继续运行；点击托盘图标恢复窗口。可从托盘菜单完全退出。",
+    "shell_title": "终端（Bash）",
     "shell_path": "自定义 bash 路径",
     "shell_path_placeholder": "留空则自动探测(系统 Git Bash 或内置终端)",
     "shell_path_hint": "AI 执行命令所用的 bash。留空自动探测;自动探测失败时,可在此指定 bash.exe 的完整路径(如 Cygwin/MSYS2)。",
     "shell_path_invalid": "路径无效:请指向存在的 bash.exe",
     "shell_recheck": "重新检测",
     "shell_recheck_ok": "检测成功,bash 已可用",
-    "shell_recheck_fail": "仍未找到可用的 bash",
     "opt": {
       "show_user_avatar": "显示用户头像",
       "show_assistant_bubble": "显示助手气泡",
       "show_model_icon": "显示模型图标",
       "show_model_name": "显示模型名称",
       "show_token_usage": "显示 Token 用量",
-      "show_thinking": "显示思考内容",
       "send_on_enter": "Enter 发送",
       "auto_scroll": "自动滚动"
     },
-    "font_title": "字体与字号",
-    "display_title": "对话显示"
+    "font_title": "字体字号",
+    "display_title": "对话显示",
+    "avatar": "头像"
   },
   "providers": {
     "title": "供应商",
@@ -971,7 +964,6 @@
     "web_password_locked": "访问密码由部署配置(--password / RIKKAHUB_PASSWORD)管理,请在部署层修改。"
   },
   "hotkeys": {
-    "title": "快捷键",
     "reset_all": "全部恢复默认",
     "reset": "恢复默认",
     "press_keys": "按下快捷键组合…",
@@ -987,7 +979,10 @@
       "openSettings": "打开设置",
       "openImageGeneration": "图像生成",
       "zoomInOut": "放大 / 缩小界面"
-    }
+    },
+    "send_on_enter_desc": "开启：Enter 发送、Shift+Enter 换行；关闭则相反。",
+    "reset_all_confirm_title": "恢复全部快捷键默认设置？",
+    "reset_all_confirm_desc": "所有快捷键与 Enter 发送将恢复为默认值。"
   },
   "app_errors": {
     "severity_error": "错误",

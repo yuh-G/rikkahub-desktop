@@ -50,11 +50,10 @@ export function ReasoningStepPart({
 
   React.useEffect(() => {
     if (loading) {
-      if (displaySetting?.showThinkingContent) {
-        setExpandState((state) =>
-          state === ReasoningCardState.Collapsed ? ReasoningCardState.Preview : state,
-        );
-      }
+      // 流式中恒展开到预览(showThinkingContent 不再提供开关:字段随备份透传保留,这里不读)。
+      setExpandState((state) =>
+        state === ReasoningCardState.Collapsed ? ReasoningCardState.Preview : state,
+      );
       return;
     }
 
@@ -64,12 +63,7 @@ export function ReasoningStepPart({
         ? ReasoningCardState.Collapsed
         : ReasoningCardState.Expanded;
     });
-  }, [
-    loading,
-    reasoning.reasoning,
-    displaySetting?.showThinkingContent,
-    displaySetting?.autoCloseThinking,
-  ]);
+  }, [loading, reasoning.reasoning, displaySetting?.autoCloseThinking]);
 
   const onExpandedChange = (nextExpanded: boolean) => {
     if (loading) {

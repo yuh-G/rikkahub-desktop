@@ -121,42 +121,35 @@
     "show_key": "Show API Key"
   },
   "general": {
-    "title": "General",
-    "subtitle": "Color & display, user profile, assistant and extension entries.",
     "nickname": "Nickname",
     "ui_font": "UI font",
     "chat_font": "Chat font",
     "ui_font_size": "UI font size",
     "ui_font_size_hint": "Scale the font size and spacing of the entire app. Everything scales proportionally without breaking the layout.",
     "reset": "Reset",
-    "tray_title": "Window & tray",
-    "tray_desc": "Window close behavior and an explicit quit entry.",
+    "tray_title": "App window",
+    "tray_desc": "What happens when you close the main window.",
     "minimize_to_tray": "Minimize to tray on close",
-    "minimize_to_tray_hint": "Hides the window to the system tray on close; background tasks keep running. Click the tray icon to restore.",
-    "quit_app": "Quit Rikkahub",
-    "quit_app_hint": "Closes the window and ends the background process.",
-    "quit_app_button": "Quit",
-    "quit_failed": "Failed to quit",
-    "shell_title": "Terminal (bash)",
+    "minimize_to_tray_hint": "Hides the window to the system tray on close; background tasks keep running. Click the tray icon to restore. Quit completely from the tray menu.",
+    "shell_title": "Terminal (Bash)",
     "shell_path": "Custom bash path",
     "shell_path_placeholder": "Leave empty to auto-detect (system Git Bash or built-in terminal)",
     "shell_path_hint": "The bash the AI uses to run commands. Leave empty to auto-detect; if detection fails, point to a full bash.exe path here (e.g. Cygwin/MSYS2).",
     "shell_path_invalid": "Invalid path: point to an existing bash.exe",
     "shell_recheck": "Re-check",
     "shell_recheck_ok": "bash detected and ready",
-    "shell_recheck_fail": "Still no usable bash found",
     "opt": {
       "show_user_avatar": "Show user avatar",
       "show_assistant_bubble": "Show assistant bubble",
       "show_model_icon": "Show model icon",
       "show_model_name": "Show model name",
       "show_token_usage": "Show token usage",
-      "show_thinking": "Show thinking content",
       "send_on_enter": "Send on Enter",
       "auto_scroll": "Auto-scroll"
     },
     "font_title": "Fonts",
-    "display_title": "Chat display"
+    "display_title": "Chat display",
+    "avatar": "Avatar"
   },
   "providers": {
     "title": "Providers",
@@ -971,7 +964,6 @@
     "web_password_locked": "The access password is managed by deployment config (--password / RIKKAHUB_PASSWORD); change it there."
   },
   "hotkeys": {
-    "title": "Shortcuts",
     "reset_all": "Reset all to defaults",
     "reset": "Reset to default",
     "press_keys": "Press a key combination…",
@@ -987,7 +979,10 @@
       "openSettings": "Open settings",
       "openImageGeneration": "Image generation",
       "zoomInOut": "Zoom in / out"
-    }
+    },
+    "send_on_enter_desc": "On: Enter sends, Shift+Enter adds a line. Off: the reverse.",
+    "reset_all_confirm_title": "Reset all shortcuts to defaults?",
+    "reset_all_confirm_desc": "All shortcuts and Send on Enter will be restored to their defaults."
   },
   "app_errors": {
     "severity_error": "Error",

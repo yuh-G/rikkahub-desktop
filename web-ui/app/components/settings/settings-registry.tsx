@@ -12,7 +12,7 @@ import { AssistantsSection } from "~/components/settings/assistants";
 import { DataSection } from "~/components/settings/data";
 import { DefaultModelsSection } from "~/components/settings/default-models";
 import { McpExtensionsSection } from "~/components/settings/extensions";
-import { GeneralSection } from "~/components/settings/general";
+import { AppSection, AppearanceSection, ProfileSection, ShortcutsSection } from "~/components/settings/general";
 import { LogsSection, type RequestLog } from "~/components/settings/logs";
 import { ProxySection } from "~/components/settings/proxy";
 import { ProvidersSection } from "~/components/settings/providers";
@@ -76,8 +76,8 @@ function AboutSectionHost() {
 }
 
 export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<SettingsSectionProps>> = {
-  "general/profile": GeneralSection,
-  "general/app": GeneralSection,
+  "general/profile": ProfileSection,
+  "general/app": AppSection,
   assistants: AssistantsSection,
   "models/providers": ProvidersSection,
   "models/scenes": DefaultModelsSection,
@@ -88,8 +88,8 @@ export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<Setting
   "extensions/skills": McpExtensionsSection,
   "extensions/injection": McpExtensionsSection,
   "extensions/quick": McpExtensionsSection,
-  "personalization/appearance": GeneralSection,
-  "personalization/shortcuts": GeneralSection,
+  "personalization/appearance": AppearanceSection,
+  "personalization/shortcuts": ShortcutsSection,
   "speech/tts": SpeechSection,
   "speech/asr": SpeechSection,
   memory: MemorySection,

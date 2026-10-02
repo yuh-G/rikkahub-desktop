@@ -1,5 +1,5 @@
 /**
- * 设置页 - 通用 - 快捷键区块。
+ * 设置页 - 个性化 - 快捷键 的快捷键表。
  *
  * 每行:功能名 | 绑定显示/录制按钮 | 重置(仅修改过时) | 启用开关。
  * 录制:点按钮进入编辑态 → 暂停全局快捷键(setHotkeysPaused)→ 按键实时采集 → 合法且无冲突即
@@ -9,8 +9,10 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { RotateCcw } from "lucide-react";
+import { toast } from "sonner";
 
 import { SettingsGroup, SettingsRows } from "~/components/settings/shared";
+import { confirmDialog } from "~/stores/confirm-store";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
 import { setHotkeysPaused } from "~/lib/hotkey-events";
@@ -37,7 +39,8 @@ function Kbd({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function KeybindingSettings() {
+/** leading:排在快捷键表之前、同属一张行列表的行(快捷键页的 Enter 发送)。 */
+export function KeybindingSettings({ leading }: { leading?: React.ReactNode }) {
   const { t } = useTranslation();
   const keybindings = useSettingsStore((s) => s.settings?.keybindings);
   const [editingAction, setEditingAction] = React.useState<KeybindingAction | null>(null);
@@ -73,18 +76,35 @@ export function KeybindingSettings() {
     setConflictAction(null);
   };
 
-  const saveKeys = (action: KeybindingAction, keys: string[]) => {
-    void api.post("settings/keybindings", { action, keys, enabled: true });
+  // 后端写入后经 SSE 回推,UI 不做乐观更新;失败只需提示。
+  const postBinding = (body: { action: KeybindingAction; keys?: string[]; enabled?: boolean }) => {
+    api.post("settings/keybindings", body).catch((error: unknown) => {
+      toast.error(t("settings:common.save_failed"), {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    });
   };
-  const setEnabled = (action: KeybindingAction, enabled: boolean) => {
-    void api.post("settings/keybindings", { action, enabled });
-  };
+  const saveKeys = (action: KeybindingAction, keys: string[]) => postBinding({ action, keys, enabled: true });
+  const setEnabled = (action: KeybindingAction, enabled: boolean) => postBinding({ action, enabled });
   const resetOne = (action: KeybindingAction) => {
     const def = DEFAULT_KEYBINDINGS[action];
-    void api.post("settings/keybindings", { action, keys: def.keys ?? [], enabled: def.enabled });
+    postBinding({ action, keys: def.keys ?? [], enabled: def.enabled });
   };
-  const resetAll = () => {
-    void api.post("settings/keybindings/reset");
+  // 后端一次原子写入同时恢复全部快捷键与 Enter 发送(同页的两类设置)。
+  const resetAll = async () => {
+    const confirmed = await confirmDialog({
+      title: t("settings:hotkeys.reset_all_confirm_title"),
+      description: t("settings:hotkeys.reset_all_confirm_desc"),
+      confirmLabel: t("settings:hotkeys.reset_all"),
+    });
+    if (!confirmed) return;
+    try {
+      await api.post("settings/keybindings/reset");
+    } catch (error) {
+      toast.error(t("settings:common.save_failed"), {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, action: KeybindingAction) => {
@@ -116,15 +136,15 @@ export function KeybindingSettings() {
 
   return (
     <SettingsGroup
-      title={t("settings:hotkeys.title")}
       action={
-        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetAll}>
+        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void resetAll()}>
           <RotateCcw className="size-3" />
           {t("settings:hotkeys.reset_all")}
         </Button>
       }
     >
       <SettingsRows>
+        {leading}
         {KEYBINDING_ORDER.map((action) => {
           const entry = resolved[action];
           const isEditing = editingAction === action;
