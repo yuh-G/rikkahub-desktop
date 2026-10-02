@@ -38,9 +38,12 @@ import {
   moveItem,
   numberText,
   SectionHeader,
+  SettingsSplit,
+  SettingsSwitchRow,
   SortableRow,
   textValue,
 } from "~/components/settings/shared";
+
 
 interface SkillFileInfo {
   path: string;
@@ -1662,13 +1665,11 @@ function PromptItemEditor({
             </label>
           ) : null}
         </div>
-        <div className="flex items-center justify-between rounded-md border px-3 py-2">
-          <span className="text-sm">{t("settings:mcp.enabled")}</span>
-          <Switch
-            checked={draft.enabled !== false}
-            onCheckedChange={(checked) => patchDraft({ enabled: checked })}
-          />
-        </div>
+        <SettingsSwitchRow
+          label={t("settings:mcp.enabled")}
+          checked={draft.enabled !== false}
+          onCheckedChange={(checked) => patchDraft({ enabled: checked })}
+        />
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-muted-foreground">{t("settings:mcp.template_vars")}</span>
@@ -1901,8 +1902,8 @@ function SkillsEditor({
         autosave.markDirty();
       }}
     >
-      <div className="space-y-4">
-        <div className="rounded-md border p-3">
+      <div className="space-y-5">
+        <div>
           <div className="mb-2 text-sm font-medium">{t("settings:mcp.import_github")}</div>
           <div className="flex gap-2">
             <Input
@@ -1928,7 +1929,7 @@ function SkillsEditor({
             </Button>
           </div>
         </div>
-        <div className="rounded-md border p-3">
+        <div className="border-t border-[var(--ds-divider)] pt-5">
           <div className="mb-2 text-sm font-medium">{t("settings:mcp.import_file")}</div>
           <div
             className="mb-2 text-xs text-muted-foreground"
@@ -1955,11 +1956,11 @@ function SkillsEditor({
             {t("settings:mcp.select_file")}
           </Button>
         </div>
-        <div className="space-y-2 rounded-md border p-3">
+        <div className="space-y-0.5 border-t border-[var(--ds-divider)] pt-4">
           {skills.map((skill) => (
             <label
               key={skill.name}
-              className="flex items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted/40"
+              className="flex items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-[var(--ds-on-surface)]"
             >
               <Checkbox
                 className="mt-0.5"
@@ -2067,9 +2068,10 @@ function EditorShell({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
-      <div className="rounded-lg border bg-card p-3">
-        <Button className="mb-3 w-full" variant="outline" onClick={onCreate}>
+    <SettingsSplit
+      list={
+      <div>
+        <Button className="mb-2 w-full justify-start" variant="outline" onClick={onCreate}>
           <Plus className="size-4" />
           {t("settings:mcp.add_new")}
         </Button>
@@ -2097,7 +2099,9 @@ function EditorShell({
           ))}
         </div>
       </div>
-      <div className="rounded-lg border bg-card p-5">{children}</div>
-    </div>
+      }
+    >
+      {children}
+    </SettingsSplit>
   );
 }
