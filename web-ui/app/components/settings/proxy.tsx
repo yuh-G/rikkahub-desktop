@@ -1,8 +1,8 @@
-// components/settings/proxy.tsx — 网络代理分区（纯搬迁自 routes/settings.tsx）
+// components/settings/proxy.tsx — 网络代理分区
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Eye, EyeOff, Globe, Loader2, RefreshCw, RotateCcw, Zap } from "lucide-react";
+import { Eye, EyeOff, Loader2, RefreshCw, RotateCcw, Zap } from "lucide-react";
 import type { ProxyConfig, ProxyMode, Settings } from "~/types";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
@@ -10,7 +10,12 @@ import { Input } from "~/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import api from "~/services/api";
-import { SectionHeader } from "~/components/settings/shared";
+import {
+  SectionHeader,
+  SettingsField,
+  SettingsGroup,
+  SettingsStack,
+} from "~/components/settings/shared";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 
 interface ProxyStatus {
@@ -82,7 +87,12 @@ export function ProxySection({
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
+  const addressId = React.useId();
+  const bypassId = React.useId();
+  const uaId = React.useId();
+  const portId = React.useId();
   // settings.proxyConfig 由服务端 normalizeState 保证在场,类型单源后无需兜底。
+
   const initial = settings.proxyConfig;
   const [draft, setDraft] = React.useState<ProxyConfig>(initial);
   const [showPassword, setShowPassword] = React.useState(false);
@@ -307,11 +317,16 @@ export function ProxySection({
         title={t("settings:proxy.title")}
         subtitle={t("settings:proxy.subtitle")}
       />
-      <div className="space-y-4">
-        <div className="space-y-4 rounded-lg border bg-card p-6">
+      <SettingsStack>
+        <SettingsGroup
+          title={t("settings:proxy.http_title")}
+          description={t("settings:proxy.mode_desc")}
+          action={
+            <AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />
+          }
+          fields
+        >
           <div className="space-y-2">
-            <div className="text-base font-medium">{t("settings:proxy.http_title")}</div>
-            <div className="text-xs text-muted-foreground">{t("settings:proxy.mode_desc")}</div>
             <Select
               value={draft.mode}
               onValueChange={(v) => patch({ mode: v as ProxyMode })}
@@ -327,7 +342,7 @@ export function ProxySection({
                 <SelectItem value="env">{t("settings:proxy.mode_env")}</SelectItem>
               </SelectContent>
             </Select>
-            <div className="text-xs text-muted-foreground">
+            <div className="text-xs text-[var(--ds-text-secondary)]">
               {draft.mode === "auto" && t("settings:proxy.mode_auto_desc")}
               {draft.mode === "manual" && t("settings:proxy.mode_manual_desc")}
               {draft.mode === "direct" && t("settings:proxy.mode_direct_desc")}
@@ -348,10 +363,10 @@ export function ProxySection({
 
           {draft.mode === "manual" && (
             <div className="space-y-3">
-              <label className="block space-y-1.5">
-                <span className="text-sm font-medium">{t("settings:proxy.address")}</span>
+              <SettingsField label={t("settings:proxy.address")} htmlFor={addressId}>
                 <div className="flex gap-2">
                   <Input
+                    id={addressId}
                     className="flex-1"
                     value={draft.url}
                     onChange={(event) => patch({ url: event.target.value })}
@@ -373,7 +388,7 @@ export function ProxySection({
                     {t("settings:proxy.detect")}
                   </Button>
                 </div>
-              </label>
+              </SettingsField>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block space-y-1.5">
@@ -421,15 +436,18 @@ export function ProxySection({
           )}
 
           {(draft.mode === "auto" || draft.mode === "manual") && (
-            <div className="space-y-1.5">
-              <div className="text-sm font-medium">{t("settings:proxy.bypass_rules")}</div>
+            <SettingsField
+              label={t("settings:proxy.bypass_rules")}
+              htmlFor={bypassId}
+              hint={t("settings:proxy.bypass_rules_desc")}
+            >
               <Input
+                id={bypassId}
                 value={draft.bypassRules}
                 onChange={(e) => patch({ bypassRules: e.target.value })}
                 placeholder={t("settings:proxy.bypass_rules_placeholder")}
               />
-              <p className="text-xs text-muted-foreground">{t("settings:proxy.bypass_rules_desc")}</p>
-            </div>
+            </SettingsField>
           )}
 
           <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
@@ -437,16 +455,10 @@ export function ProxySection({
             <span className="font-mono text-foreground">{activeDisplay}</span>
           </div>
 
-          <div className="flex justify-end">
-            <AutosaveStatusRow
-              status={autosave.status}
-              onRetry={() => void autosave.saveNow()}
-            />
-          </div>
-
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Input
+                aria-label={t("settings:proxy.test")}
                 value={testUrl}
                 onChange={(e) => updateTestUrl(e.target.value)}
                 placeholder={DEFAULT_PROXY_TEST_URL}
@@ -482,19 +494,20 @@ export function ProxySection({
               </div>
             )}
           </div>
-        </div>
+        </SettingsGroup>
 
-        <div className="space-y-4 rounded-lg border bg-card p-6">
-          <div>
-            <div className="text-base font-medium">{t("settings:proxy.ua_title")}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {t("settings:proxy.ua_desc")}
-            </div>
-          </div>
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">{t("settings:proxy.ua_label")}</span>
+        <SettingsGroup
+          title={t("settings:proxy.ua_title")}
+          description={t("settings:proxy.ua_desc")}
+          action={
+            <AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />
+          }
+          fields
+        >
+          <SettingsField label={t("settings:proxy.ua_label")} htmlFor={uaId}>
             <div className="flex gap-2">
               <Input
+                id={uaId}
                 className="flex-1 font-mono text-sm"
                 value={draft.userAgent ?? ""}
                 onChange={(event) => patch({ userAgent: event.target.value })}
@@ -514,30 +527,27 @@ export function ProxySection({
                 {t("settings:proxy.ua_reset")}
               </Button>
             </div>
-          </label>
-          <div className="flex justify-end">
-            <AutosaveStatusRow
-              status={autosave.status}
-              onRetry={() => void autosave.saveNow()}
-            />
-          </div>
-        </div>
+          </SettingsField>
+        </SettingsGroup>
 
-        <div className="space-y-4 rounded-lg border bg-card p-6">
-          <div>
-            <div className="text-base font-medium">{t("settings:proxy.port_title")}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {t("settings:proxy.port_desc", { port: status?.defaultPort ?? "…" })}
-            </div>
-          </div>
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">
-              {t("settings:proxy.port_number")}{" "}
-              <span className="text-xs font-normal text-muted-foreground">
-                {t("settings:proxy.port_number_hint", { port: status?.defaultPort ?? "…" })}
-              </span>
-            </span>
+        <SettingsGroup
+          title={t("settings:proxy.port_title")}
+          description={t("settings:proxy.port_desc", { port: status?.defaultPort ?? "…" })}
+          action={
+            <AutosaveStatusRow
+              status={portAutosave.status}
+              onRetry={() => void portAutosave.saveNow()}
+            />
+          }
+          fields
+        >
+          <SettingsField
+            label={t("settings:proxy.port_number")}
+            htmlFor={portId}
+            hint={t("settings:proxy.port_number_hint", { port: status?.defaultPort ?? "…" })}
+          >
             <Input
+              id={portId}
               type="number"
               inputMode="numeric"
               disabled={status?.containerMode === true}
@@ -551,13 +561,7 @@ export function ProxySection({
               max={65535}
               step={1}
             />
-            <div className="flex justify-end">
-              <AutosaveStatusRow
-                status={portAutosave.status}
-                onRetry={() => void portAutosave.saveNow()}
-              />
-            </div>
-          </label>
+          </SettingsField>
           {status?.containerMode ? (
             <div className="text-xs text-muted-foreground">
               {t("settings:proxy.port_container_locked")}
@@ -589,8 +593,8 @@ export function ProxySection({
               {t("settings:proxy.port_running", { port: status.runningPort })}
             </div>
           )}
-        </div>
-      </div>
+        </SettingsGroup>
+      </SettingsStack>
     </>
   );
 }
