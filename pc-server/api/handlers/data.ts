@@ -28,6 +28,7 @@ import {
   webDavRestore,
 } from "../../backup/storage";
 import { error, json, readJson, sseHeaders } from "../request";
+import { stripAuthSecrets } from "../auth";
 import { isLoopbackRequest } from "../net-context";
 import { sseFrame } from "../sse";
 import { updateSettings } from "../../app-config";
@@ -69,7 +70,9 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
     if (!fileName || fileName.includes("/") || fileName.includes("\\")) return error("Invalid WebDAV backup file name", 400);
     try {
       await webDavRestore(state.settings.webDavConfig, fileName);
-      return json({ status: "restored", settings: state.settings });
+      // 恢复后 state.settings 含刚落盘的 webPasswordHash/OAuth 凭证,响应走与
+      // settings GET/SSE 同一净化纪律(auth.ts stripAuthSecrets),绝不原样出站。
+      return json({ status: "restored", settings: stripAuthSecrets(state.settings) });
     } catch (err) {
       return error(err instanceof Error ? err.message : String(err), 502);
     }
@@ -115,7 +118,7 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
           await webDavRestore(state.settings.webDavConfig, fileName, (message, percent) => {
             send("progress", { message, percent: percent ?? 0 });
           });
-          send("done", { status: "restored", settings: state.settings });
+          send("done", { status: "restored", settings: stripAuthSecrets(state.settings) });
         } catch (err) {
           send("error", { error: friendlyRequestError(err, state.settings.proxyConfig) });
         } finally {
@@ -163,7 +166,8 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
     if (!fileName || fileName.includes("\\")) return error("Invalid S3 backup file name", 400);
     try {
       await s3Restore(state.settings.s3Config, fileName);
-      return json({ status: "restored", settings: state.settings });
+      // 同 WebDAV restore:恢复后的 settings 必须经 stripAuthSecrets 才能回传前端。
+      return json({ status: "restored", settings: stripAuthSecrets(state.settings) });
     } catch (err) {
       return error(err instanceof Error ? err.message : String(err), 502);
     }
@@ -209,7 +213,7 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
           await s3Restore(state.settings.s3Config, fileName, (message, percent) => {
             send("progress", { message, percent: percent ?? 0 });
           });
-          send("done", { status: "restored", settings: state.settings });
+          send("done", { status: "restored", settings: stripAuthSecrets(state.settings) });
         } catch (err) {
           send("error", { error: friendlyRequestError(err, state.settings.proxyConfig) });
         } finally {
@@ -452,7 +456,7 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
           ...(zipCustomJsWarning ? [zipCustomJsWarning] : []),
           ...buildImportWarnings(summary.report),
         ];
-        return json({ status: "imported", source: "android-zip", summary: messages, warnings: zipWarnings, settings: state.settings });
+        return json({ status: "imported", source: "android-zip", summary: messages, warnings: zipWarnings, settings: stripAuthSecrets(state.settings) });
       }
       // PC JSON path — safe to read fully into memory; JSON backups are KB-MB, not GB.
       const text = readFileSync(onDiskPath, "utf-8");
@@ -465,7 +469,7 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
         ...(jsonCustomJsWarning ? [jsonCustomJsWarning] : []),
         ...buildImportWarnings(jsonReport),
       ];
-      return json({ status: "imported", source: "pc-json", warnings: jsonWarnings, settings: state.settings });
+      return json({ status: "imported", source: "pc-json", warnings: jsonWarnings, settings: stripAuthSecrets(state.settings) });
     } catch (err) {
       const elapsed = ((Date.now() - importStartedAt) / 1000).toFixed(1);
       console.error(`[import] failed after ${elapsed}s:`, err);
