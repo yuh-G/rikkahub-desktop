@@ -1,15 +1,15 @@
-// components/settings/logs.tsx — 请求日志分区（纯搬迁自 routes/settings.tsx）
+// components/settings/logs.tsx — 请求日志分区
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Eye, EyeOff, FileClock, Trash2 } from "lucide-react";
+import { Eye, EyeOff, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "~/components/ui/dialog";
 import { JsonTree, tryParseJson } from "~/components/ui/json-tree";
 import { cn } from "~/lib/utils";
 import { copyTextToClipboard } from "~/lib/clipboard";
-import { SectionHeader } from "~/components/settings/shared";
+import { SectionHeader, SettingsRows } from "~/components/settings/shared";
 import { appErrorText, useAppErrorsStore } from "~/stores";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { AppErrorDto } from "~/types";
@@ -52,7 +52,7 @@ export function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: ()
   return (
     <>
       <SectionHeader title={t("settings:logs.title")} subtitle={t("settings:logs.subtitle")} />
-      <div className="-mt-2 mb-3 flex items-center justify-between gap-2">
+      <div className="mb-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           {filterOptions.map(({ id, label }) => (
             <button
@@ -82,12 +82,12 @@ export function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: ()
           </button>
         ) : null}
       </div>
-      <div className="space-y-2">
-        {feed.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-            {t("settings:logs.empty")}
-          </div>
-        ) : null}
+      {feed.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+          {t("settings:logs.empty")}
+        </div>
+      ) : null}
+      <SettingsRows>
         {feed.map((item) =>
           item.log ? (
             <RequestLogRow key={`req-${item.log.id}`} log={item.log} onClick={() => setActive(item.log!)} />
@@ -95,19 +95,23 @@ export function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: ()
             <AppErrorRow key={`err-${item.error!.id}`} entry={item.error!} onClick={() => setActiveError(item.error!)} />
           ),
         )}
-      </div>
+      </SettingsRows>
       <LogDetailDialog log={active} onClose={() => setActive(null)} />
       <AppErrorDetailDialog entry={activeError} onClose={() => setActiveError(null)} />
     </>
   );
 }
 
+// 时间线行:分隔线列表 + 悬停晕染(与关于页外链行同一内边距与悬停底)。
+const FEED_ROW =
+  "block w-full rounded-[var(--ds-radius-md)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--ds-on-surface)]";
+
 function RequestLogRow({ log, onClick }: { log: RequestLog; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="block w-full rounded-lg border bg-card p-3 text-left transition hover:shadow-sm"
+      className={FEED_ROW}
     >
       <div className="flex items-center justify-between gap-2">
         <span className="font-semibold text-primary">{log.method ?? "POST"}</span>
@@ -141,7 +145,7 @@ function AppErrorRow({ entry, onClick }: { entry: AppErrorDto; onClick: () => vo
     <button
       type="button"
       onClick={onClick}
-      className="block w-full rounded-lg border bg-card p-3 text-left transition hover:shadow-sm"
+      className={FEED_ROW}
     >
       <div className="flex items-center gap-2">
         <span className={cn("rounded px-1.5 py-0.5 text-xs font-medium", SEVERITY_STYLE[entry.severity])}>
