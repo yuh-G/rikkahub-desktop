@@ -1,4 +1,4 @@
-// components/settings/speech.tsx — 语音分区（TTS/ASR provider 配置与试听，纯搬迁自 routes/settings.tsx）
+// components/settings/speech.tsx — 语音分区（TTS/ASR provider 配置与试听）
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";

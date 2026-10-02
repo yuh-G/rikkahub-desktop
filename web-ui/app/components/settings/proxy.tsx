@@ -46,7 +46,7 @@ function isValidProxyUrl(url: string): boolean {
   }
 }
 
-// 设置侧边栏导航项"代理"右侧的状态点(P2-7),由 routes/settings.tsx 渲染:用户打开
+// 设置侧边栏导航项"代理"右侧的状态点(P2-7),由 settings-panel 的导航列表渲染:用户打开
 // 设置任意分区即可看到代理运行态,不必点进本分区。绿=走代理 / 灰=直连(无代理)。
 // 独立轮询,不依赖 ProxySection(后端状态接口有 TTL 缓存,轮询成本趋零)。
 export function ProxyNavDot() {

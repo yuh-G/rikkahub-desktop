@@ -1,4 +1,4 @@
-// components/settings/assistants.tsx — 助手分区（助手配置/模板预览，纯搬迁自 routes/settings.tsx）
+// components/settings/assistants.tsx — 助手分区（助手配置/模板预览）
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";

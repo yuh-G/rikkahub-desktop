@@ -1,4 +1,4 @@
-// components/settings/extensions.tsx — MCP 与扩展分区（MCP 服务器/模式注入/世界书/快捷消息/技能编辑器，纯搬迁自 routes/settings.tsx）
+// components/settings/extensions.tsx — MCP 与扩展分区（MCP 服务器/模式注入/世界书/快捷消息/技能编辑器）
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";

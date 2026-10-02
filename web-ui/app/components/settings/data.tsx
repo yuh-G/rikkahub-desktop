@@ -1,4 +1,4 @@
-// components/settings/data.tsx — 数据备份分区（WebDAV/S3/导入导出，纯搬迁自 routes/settings.tsx）
+// components/settings/data.tsx — 数据备份分区（WebDAV/S3/导入导出）
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";

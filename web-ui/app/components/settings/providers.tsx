@@ -1,4 +1,4 @@
-// components/settings/providers.tsx — 模型提供商分区（配置/测试/余额/模型列表，纯搬迁自 routes/settings.tsx）
+// components/settings/providers.tsx — 模型提供商分区（配置/测试/余额/模型列表）
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
