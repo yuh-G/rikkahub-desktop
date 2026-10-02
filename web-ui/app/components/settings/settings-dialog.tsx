@@ -114,7 +114,7 @@ function SettingsDialogBody() {
       </aside>
       <div className="relative flex min-w-0 flex-1 flex-col">
         {/* 页头兼作窗口拖拽区:无边框窗口被遮罩盖住后,它与左栏标题行是仅有的拖拽把手。 */}
-        <SettingsPageHeader key={section} section={section} sub={sub} onSub={setSettingsDialogSub} reserveEnd />
+        <SettingsPageHeader key={`header:${section}`} section={section} sub={sub} onSub={setSettingsDialogSub} reserveEnd />
         <Button
           variant="ghost"
           size="icon-sm"

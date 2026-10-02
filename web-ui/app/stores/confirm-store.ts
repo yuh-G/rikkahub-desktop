@@ -10,6 +10,8 @@ export interface ConfirmOptions {
   description?: string;
   /** 确认按钮文案;缺省用 common:confirm_dialog.confirm */
   confirmLabel?: string;
+  /** 取消按钮文案;缺省用 common:confirm_dialog.cancel。两个选项都是正当选择时(而非"做/不做")用它说清取消的含义 */
+  cancelLabel?: string;
   /** 危险操作(删除/恢复覆盖)确认钮走 destructive 样式 */
   danger?: boolean;
 }

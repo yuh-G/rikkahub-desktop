@@ -9,10 +9,15 @@ import api from "~/services/api";
 import { useSettingsStore } from "~/stores/app-store";
 import type { DisplaySetting, Settings } from "~/types";
 
-/** 把补丁打到 store 的最新 settings 上(无快照时不动)。 */
-export function patchSettingsLocal(patch: Partial<Settings>): void {
+/**
+ * 把补丁打到 store 的最新 settings 上(无快照时不动)。补丁依赖现值(如改列表里的一项)时
+ * 传函数,拿到的是此刻的最新快照。
+ */
+export function patchSettingsLocal(patch: Partial<Settings> | ((settings: Settings) => Partial<Settings>)): void {
   const store = useSettingsStore.getState();
-  if (store.settings) store.setSettings({ ...store.settings, ...patch });
+  if (!store.settings) return;
+  const next = typeof patch === "function" ? patch(store.settings) : patch;
+  store.setSettings({ ...store.settings, ...next });
 }
 
 function patchDisplayLocal(patch: Partial<DisplaySetting>): void {

@@ -166,7 +166,7 @@ function SettingsPage({
       >
         <WindowControlsBar className="mt-1.5 mr-2" />
         <SettingsPageHeader
-          key={location.section}
+          key={`header:${location.section}`}
           section={location.section}
           sub={location.sub}
           onSub={(sub) => go(location.section, sub)}

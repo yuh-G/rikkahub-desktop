@@ -8,7 +8,7 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Eye, EyeOff, GripVertical } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, GripVertical } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Switch } from "~/components/ui/switch";
@@ -69,6 +69,76 @@ export function PasswordInput({
       >
         {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
       </Button>
+    </div>
+  );
+}
+
+/**
+ * 「高级设置」触发器:挂在常显区第一个分组的标题行右侧(SettingsGroup 的 action 槽),
+ * 展开/收起时自身位置不动——不会把被点的位置换成别的控件。受控:一个状态可同时控制页面上
+ * 不相邻的多段(controls 列出它们的 id)。attention:收起时高级区里有非默认或需要注意的
+ * 配置,旁边亮一个小圆点,避免默认折叠把用户自己的配置藏起来。
+ */
+export function SettingsAdvancedToggle({
+  open,
+  onOpenChange,
+  controls,
+  attention = false,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  controls: string[];
+  attention?: boolean;
+}) {
+  const { t } = useTranslation();
+  const showDot = attention && !open;
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-controls={controls.join(" ")}
+      title={showDot ? t("settings:common.advanced_attention") : undefined}
+      className="inline-flex h-7 items-center gap-1 rounded-[var(--ds-radius-sm)] px-2 text-xs font-medium text-[var(--ds-text-secondary)] outline-none transition-colors duration-(--ds-duration-fast) ease-(--ds-ease-swift) hover:bg-[var(--ds-on-surface)] hover:text-[var(--ds-text-primary)] focus-visible:ring-2 focus-visible:ring-ring/50"
+      onClick={() => onOpenChange(!open)}
+    >
+      {showDot ? <span aria-hidden className="size-1.5 rounded-full bg-[var(--ds-text-secondary)]" /> : null}
+      {t("settings:common.advanced")}
+      <ChevronDown
+        aria-hidden
+        className={cn(
+          "size-3.5 transition-transform duration-(--ds-duration-fast) ease-(--ds-ease-swift) motion-reduce:transition-none",
+          open && "rotate-180",
+        )}
+      />
+    </button>
+  );
+}
+
+/**
+ * 「高级设置」展开出的一段内容:收起时整段不渲染(放在 SettingsRows 里也不会留下多余分隔线),
+ * 展开时淡入(多段同时出现,不做高度动画)。
+ */
+export function SettingsAdvancedRegion({
+  id,
+  open,
+  children,
+  className,
+}: {
+  id: string;
+  open: boolean;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      id={id}
+      className={cn(
+        "animate-in fade-in-0 duration-(--ds-duration-fast) ease-(--ds-ease-swift) motion-reduce:animate-none",
+        className,
+      )}
+    >
+      {children}
     </div>
   );
 }
@@ -199,11 +269,13 @@ export function SettingsSwitchRow({
 }
 
 /**
- * 纵向表单字段:标题在上、控件在下、提示在控件下方。trailing 挂在标题行右侧
- * (如数值读数、「恢复默认」)。htmlFor 指向控件 id 时标题可点击聚焦。
+ * 纵向表单字段:标题在上、控件在下、提示在控件下方。description 是标题下方的说明(先读后填),
+ * hint 是控件下方的补充。trailing 挂在标题行右侧(如数值读数、「恢复默认」「添加」)。
+ * htmlFor 指向控件 id 时标题可点击聚焦。
  */
 export function SettingsField({
   label,
+  description,
   hint,
   trailing,
   htmlFor,
@@ -211,6 +283,7 @@ export function SettingsField({
   className,
 }: {
   label: React.ReactNode;
+  description?: React.ReactNode;
   hint?: React.ReactNode;
   trailing?: React.ReactNode;
   htmlFor?: string;
@@ -221,9 +294,14 @@ export function SettingsField({
   return (
     <div className={cn("space-y-2", className)}>
       <div className="flex min-h-5 items-center justify-between gap-3">
-        <Label htmlFor={htmlFor} className="text-sm font-medium text-[var(--ds-text-primary)]">
-          {label}
-        </Label>
+        <div className="min-w-0">
+          <Label htmlFor={htmlFor} className="block text-sm font-medium text-[var(--ds-text-primary)]">
+            {label}
+          </Label>
+          {description != null ? (
+            <p className="mt-0.5 text-xs text-[var(--ds-text-secondary)]">{description}</p>
+          ) : null}
+        </div>
         {trailing != null ? <div className="flex shrink-0 items-center gap-2">{trailing}</div> : null}
       </div>
       {children}
@@ -259,6 +337,16 @@ export function SettingsSplit({
         </div>
         <div className="min-w-0 @2xl:pl-6">{children}</div>
       </div>
+    </div>
+  );
+}
+
+/** 详情栏收尾行:左侧自动保存状态,右侧删除等危险/收尾动作。与上方内容以一条细线分开。 */
+export function SettingsDetailFooter({ status, children }: { status?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-t border-[var(--ds-divider)] pt-5">
+      <div className="min-w-0">{status}</div>
+      {children != null ? <div className="flex shrink-0 items-center gap-2">{children}</div> : null}
     </div>
   );
 }

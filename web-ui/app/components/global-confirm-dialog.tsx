@@ -19,7 +19,7 @@ export function GlobalConfirmDialog() {
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={() => settle(false)}>
-            {t("confirm_dialog.cancel")}
+            {pending?.cancelLabel ?? t("confirm_dialog.cancel")}
           </Button>
           <Button variant={pending?.danger ? "destructive" : "default"} autoFocus onClick={() => settle(true)}>
             {pending?.confirmLabel ?? t("confirm_dialog.confirm")}

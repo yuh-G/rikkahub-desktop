@@ -1,4 +1,4 @@
-// components/settings/assistants.tsx — 助手分区（助手配置/模板预览）
+// components/settings/assistants.tsx — 助手页:左列表,右配置(基础设定 → 对话行为 → 高级)。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -16,7 +16,7 @@ import { UIAvatar } from "~/components/ui/ui-avatar";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { createId } from "~/lib/id";
 import { getModelDisplayName } from "~/lib/display";
-import { cn } from "~/lib/utils";
+import { patchSettingsLocal } from "~/lib/settings-patch";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -25,17 +25,52 @@ import {
   clone,
   moveItem,
   numberText,
+  SettingsAdvancedRegion,
+  SettingsAdvancedToggle,
+  SettingsDetailFooter,
+  SettingsField,
+  SettingsGroup,
   SettingsRows,
   SettingsSplit,
+  SettingsStack,
   SettingsSwitchRow,
   SortableRow,
   textValue,
 } from "~/components/settings/shared";
 
-// 详情栏各大块(预设消息/正则/参数/开关/本地工具/自定义请求)之间用 --ds-divider 顶线分隔,
-// 取代原先一块一框的描边盒子;与供应商详情同一节奏。
-const ASSISTANT_SECTION = "border-t border-[var(--ds-divider)] pt-5";
+const DEFAULT_MESSAGE_TEMPLATE = "{{ message }}";
+// 与服务端同口径:变量按 \{\{\s*message\s*\}\} 替换,空模板(trim 后)回退默认模板。
+// 只有真正"填了模板却没有 message 变量"才会让用户消息发不出去。
+const MESSAGE_VARIABLE = /\{\{\s*message\s*\}\}/;
 
+/** 常显的两项开关;其余开关在「高级设置」里,展开后接在同一张行列表之后。 */
+const BASIC_SWITCHES = [
+  ["useAssistantAvatar", "settings:assistants.opt.use_avatar"],
+  ["streamOutput", "settings:assistants.opt.stream_output"],
+] as const;
+const ADVANCED_SWITCHES = [
+  ["enableTimeReminder", "settings:assistants.opt.time_reminder"],
+  ["allowConversationSystemPrompt", "settings:assistants.opt.allow_conv_prompt"],
+  ["allowConversationPromptInjection", "settings:assistants.opt.allow_conv_injection"],
+  ["enableRecentChatsReference", "settings:assistants.opt.recent_chats"],
+] as const;
+
+const LOCAL_TOOLS = [
+  ["time_info", "settings:assistants.tools.time_info"],
+  ["clipboard", "settings:assistants.tools.clipboard"],
+  // 语音播报(tts)暂不展示:后端工具与定义保留(预备),只是不在设置里开放开关。
+  // 若未来要把 AI 主动朗读做成卖点再恢复此行,i18n key(tools.tts)仍在。
+  ["ask_user", "settings:assistants.tools.ask_user"],
+] as const;
+
+const ROLE_KEYS = {
+  SYSTEM: "settings:assistants.role.system",
+  USER: "settings:assistants.role.user",
+  ASSISTANT: "settings:assistants.role.assistant",
+} as const;
+const ROLE_VALUES = Object.keys(ROLE_KEYS) as (keyof typeof ROLE_KEYS)[];
+
+const TEMPLATE_VARIABLES = ["role", "message", "time", "date", "cur_datetime", "user", "char", "model_name"];
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -90,9 +125,10 @@ function renderMessageTemplatePreview(
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, key) => values[key] ?? match);
 }
 
+type AssistantAutosave = ReturnType<typeof useAutosaveDraft>;
+
 export function AssistantsSection({
   settings,
-  onSettings,
 }: {
   settings: Settings;
   onSettings: (settings: Settings) => void;
@@ -104,37 +140,42 @@ export function AssistantsSection({
   const [draft, setDraft] = React.useState<AssistantProfile | null>(
     assistant ? clone(assistant) : null,
   );
+  // 「高级设置」展开态:切换助手不收起,离开本页(重挂载)复位为收起。
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
   // R8-2:防抖自动保存统一走共享三件套 hook(保存窗口内键击不丢,语义见 hook 文件头)。
   const autosave = useAutosaveDraft(
     async () => {
       if (!draft) return;
       await api.post("settings/assistant/detail", draft);
-      onSettings({
-        ...settings,
-        assistants: settings.assistants.map((item) => (item.id === draft.id ? draft : item)),
-      });
+      patchSettingsLocal((current) => ({
+        assistants: current.assistants.map((item) => (item.id === draft.id ? draft : item)),
+      }));
     },
     { onSaveError: (error) => toast.error((error as Error).message || t("settings:assistants.autosave_failed")) },
   );
 
   // assistantsRef:重对齐只在切换助手(assistantId)时重载表单。settings.assistants 不能
-  // 作为依赖——否则每次 autosave → onSettings 回环都会重触发,把保存窗口内新敲的字符
-  // 当场清掉(McpServerEditor 点名的旧病根,同模式见 providers/search)。
+  // 作为依赖——否则每次 autosave → 回环都会重触发,把保存窗口内新敲的字符当场清掉
+  // (McpServerEditor 点名的旧病根,同模式见 providers/search)。
+  // 列表从空变为非空(首个助手被创建)时同样要对齐,故 hasAssistants 也是依赖。
   const assistantsRef = React.useRef(settings.assistants);
   assistantsRef.current = settings.assistants;
+  const hasAssistants = settings.assistants.length > 0;
   React.useEffect(() => {
     const next =
       assistantsRef.current.find((item) => item.id === assistantId) ?? assistantsRef.current[0];
     autosave.reset();
     setDraft(next ? clone(next) : null);
-  }, [assistantId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assistantId, hasAssistants]);
 
-  if (!draft) return null;
-
-  const patchDraft = (patch: Partial<AssistantProfile>) => {
-    autosave.markDirty();
-    setDraft({ ...draft, ...patch });
-  };
+  const patchDraft = React.useCallback(
+    (patch: Partial<AssistantProfile>) => {
+      autosave.markDirty();
+      setDraft((current) => (current ? { ...current, ...patch } : current));
+    },
+    [autosave],
+  );
 
   const addAssistant = async () => {
     // issue #49 连带:assistants 意外为空时 clone(undefined) 会 throw(JSON.parse(undefined)),
@@ -150,21 +191,95 @@ export function AssistantsSection({
       systemPrompt: "",
       chatModelId: null,
       allowConversationSystemPrompt: false,
-    };
-    await api.post("settings/assistant/detail", created);
-    onSettings({
-      ...settings,
+    } as AssistantProfile;
+    try {
+      await api.post("settings/assistant/detail", created);
+    } catch (error) {
+      toast.error((error as Error).message || t("settings:assistants.autosave_failed"));
+      return;
+    }
+    patchSettingsLocal((current) => ({
       assistantId: created.id,
-      assistants: [...settings.assistants, created],
-    });
+      assistants: [...current.assistants, created],
+    }));
     setAssistantId(created.id);
     toast.success(t("settings:assistants.added"));
   };
   const moveAssistant = async (from: number, to: number) => {
     const assistants = moveItem(settings.assistants, from, to);
-    onSettings({ ...settings, assistants });
+    patchSettingsLocal({ assistants });
     await api.post("settings/assistants/reorder", { ids: assistants.map((item) => item.id) });
   };
+
+  const list = (
+    <div className="space-y-1">
+      <Button className="mb-1 w-full justify-start" variant="outline" onClick={() => void addAssistant()}>
+        <CopyPlus className="size-4" />
+        {t("settings:assistants.add")}
+      </Button>
+      {settings.assistants.map((item, index) => (
+        <SortableRow
+          key={item.id}
+          id={item.id}
+          index={index}
+          active={item.id === draft?.id}
+          onSelect={() => setAssistantId(item.id)}
+          onMove={moveAssistant}
+        >
+          <span className="flex items-center gap-2">
+            <UIAvatar size="sm" name={item.name || t("settings:assistants.default_name")} avatar={item.avatar} />
+            <span className="truncate">{item.name || t("settings:assistants.default_name")}</span>
+          </span>
+        </SortableRow>
+      ))}
+    </div>
+  );
+
+  return (
+    <SettingsSplit list={list}>
+      {draft ? (
+        <AssistantEditor
+          draft={draft}
+          setDraft={setDraft}
+          patchDraft={patchDraft}
+          autosave={autosave}
+          settings={settings}
+          advancedOpen={advancedOpen}
+          onAdvancedOpenChange={setAdvancedOpen}
+          onDeleted={setAssistantId}
+        />
+      ) : (
+        <div className="rounded-[var(--ds-radius-md)] border border-dashed p-8 text-center text-sm text-[var(--ds-text-secondary)]">
+          {t("settings:assistants.empty")}
+        </div>
+      )}
+    </SettingsSplit>
+  );
+}
+
+function AssistantEditor({
+  draft,
+  setDraft,
+  patchDraft,
+  autosave,
+  settings,
+  advancedOpen,
+  onAdvancedOpenChange,
+  onDeleted,
+}: {
+  draft: AssistantProfile;
+  setDraft: React.Dispatch<React.SetStateAction<AssistantProfile | null>>;
+  patchDraft: (patch: Partial<AssistantProfile>) => void;
+  autosave: AssistantAutosave;
+  settings: Settings;
+  advancedOpen: boolean;
+  onAdvancedOpenChange: (open: boolean) => void;
+  onDeleted: (nextId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const switchesId = React.useId();
+  const advancedId = React.useId();
+
   const removeAssistant = async () => {
     const nameLabel = draft.name || t("settings:assistants.default_name");
     // M4:先查该助手记忆数,有记忆则让用户选"同时删除 / 保留为孤儿"(默认保留,防误删助手连带丢记忆)
@@ -176,66 +291,37 @@ export function AssistantsSection({
     let deleteMemories = false;
     if (memoryCount > 0) {
       if (!(await confirmDialog({ title: t("settings:assistants.delete_confirm_with_memories", { name: nameLabel, n: memoryCount }), danger: true }))) return;
-      // 第二步:确定=同时删记忆,取消=保留为孤儿(记忆板块可管理)
-      deleteMemories = await confirmDialog({ title: t("settings:assistants.delete_memories_confirm", { n: memoryCount }), danger: true });
+      // 第二步:确定=同时删记忆,取消=保留为孤儿(记忆页可管理)
+      deleteMemories = await confirmDialog({
+        title: t("settings:assistants.delete_memories_title", { n: memoryCount }),
+        description: t("settings:assistants.delete_memories_desc"),
+        confirmLabel: t("settings:assistants.delete_memories_label"),
+        cancelLabel: t("settings:assistants.keep_memories_label"),
+        danger: true,
+      });
     } else {
       if (!(await confirmDialog({ title: t("settings:assistants.delete_confirm", { name: nameLabel }), danger: true }))) return;
     }
     // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
     await autosave.discard();
     await api.delete(`settings/assistant/${encodeURIComponent(draft.id)}${deleteMemories ? "?deleteMemories=true" : ""}`);
-    const assistants = settings.assistants.filter((item) => item.id !== draft.id);
-    onSettings({
-      ...settings,
-      assistants,
-      assistantId:
-        settings.assistantId === draft.id ? (assistants[0]?.id ?? "") : settings.assistantId,
+    let nextId = "";
+    patchSettingsLocal((current) => {
+      const assistants = current.assistants.filter((item) => item.id !== draft.id);
+      nextId = assistants[0]?.id ?? "";
+      return {
+        assistants,
+        assistantId: current.assistantId === draft.id ? nextId : current.assistantId,
+      };
     });
-    setAssistantId(assistants[0]?.id ?? "");
+    onDeleted(nextId);
     toast.success(t("settings:assistants.deleted"));
   };
-  const parameterControl = (
-    key: "temperature" | "topP",
-    label: string,
-    max: number,
-    step: number,
-  ) => {
-    const value = typeof draft[key] === "number" ? draft[key] : key === "temperature" ? 1 : 1;
-    const commit = (raw: string) => {
-      if (raw.trim() === "") return;
-      const next = Number(raw);
-      if (!Number.isFinite(next)) return;
-      patchDraft({ [key]: Math.min(max, Math.max(0, next)) } as Partial<AssistantProfile>);
-    };
-    return (
-      <label className="space-y-2">
-        <span className="text-sm font-medium">{label}</span>
-        <div className="flex items-center gap-3">
-          <Slider
-            min={0}
-            max={max}
-            step={step}
-            value={[value]}
-            onValueChange={([next]) =>
-              patchDraft({ [key]: next ?? null } as Partial<AssistantProfile>)
-            }
-          />
-          <Input
-            key={`${key}-${value}`}
-            className="w-24"
-            defaultValue={numberText(value)}
-            onBlur={(event) => commit(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") commit(event.currentTarget.value);
-            }}
-          />
-        </div>
-      </label>
-    );
-  };
+
   const messageTemplateValue =
-    typeof draft.messageTemplate === "string" ? draft.messageTemplate : "{{ message }}";
-  const messageTemplateMissingMessage = !messageTemplateValue.includes("{{ message }}");
+    typeof draft.messageTemplate === "string" ? draft.messageTemplate : DEFAULT_MESSAGE_TEMPLATE;
+  const messageTemplateMissingMessage =
+    messageTemplateValue.trim() !== "" && !MESSAGE_VARIABLE.test(messageTemplateValue);
   const previewModel = React.useMemo(() => {
     const wanted = draft.chatModelId ?? settings.chatModelId;
     return (
@@ -247,21 +333,18 @@ export function AssistantsSection({
   const messageTemplatePreview = React.useMemo(
     () => [
       {
-        role: "user",
+        role: "USER" as const,
         text: renderMessageTemplatePreview(
-          messageTemplateValue,
+          messageTemplateValue.trim() || DEFAULT_MESSAGE_TEMPLATE,
           t("settings:assistants.preview_user_input"),
           "user",
           draft,
           previewModel,
         ),
       },
-      {
-        role: "assistant",
-        text: t("settings:assistants.preview_assistant_response"),
-      },
+      { role: "ASSISTANT" as const, text: t("settings:assistants.preview_assistant_response") },
     ],
-    [draft, messageTemplateValue, previewModel],
+    [draft, messageTemplateValue, previewModel, t],
   );
   const presetMessages = Array.isArray(draft.presetMessages)
     ? (draft.presetMessages as Array<Record<string, unknown>>)
@@ -275,654 +358,492 @@ export function AssistantsSection({
   const customBodies = Array.isArray(draft.customBodies)
     ? (draft.customBodies as Array<Record<string, unknown>>)
     : [];
-  const updatePresetMessage = (index: number, patch: Record<string, unknown>) => {
+  const updateAt = <K extends "presetMessages" | "regexes" | "customHeaders" | "customBodies">(
+    key: K,
+    items: Array<Record<string, unknown>>,
+    index: number,
+    patch: Record<string, unknown>,
+  ) => {
     patchDraft({
-      presetMessages: presetMessages.map((message, itemIndex) =>
-        itemIndex === index ? { ...message, ...patch } : message,
-      ),
-    });
+      [key]: items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)),
+    } as Partial<AssistantProfile>);
   };
-  const updateRegex = (index: number, patch: Record<string, unknown>) => {
-    patchDraft({
-      regexes: assistantRegexes.map((regex, itemIndex) =>
-        itemIndex === index ? { ...regex, ...patch } : regex,
-      ),
-    });
+  const removeAt = <K extends "presetMessages" | "regexes" | "customHeaders" | "customBodies">(
+    key: K,
+    items: Array<Record<string, unknown>>,
+    index: number,
+  ) => {
+    patchDraft({ [key]: items.filter((_, itemIndex) => itemIndex !== index) } as Partial<AssistantProfile>);
   };
-  const updateCustomHeader = (index: number, patch: Record<string, unknown>) => {
-    patchDraft({
-      customHeaders: customHeaders.map((header, itemIndex) =>
-        itemIndex === index ? { ...header, ...patch } : header,
-      ),
-    });
-  };
-  const updateCustomBody = (index: number, patch: Record<string, unknown>) => {
-    patchDraft({
-      customBodies: customBodies.map((body, itemIndex) =>
-        itemIndex === index ? { ...body, ...patch } : body,
-      ),
-    });
-  };
-  return (
-    <>
-      <SettingsSplit
-        list={
-          <div className="space-y-1">
-          <Button className="mb-1 w-full justify-start" variant="outline" onClick={addAssistant}>
-            <CopyPlus className="size-4" />
-            {t("settings:assistants.add")}
-          </Button>
-          {settings.assistants.map((item, index) => (
-            <SortableRow
-              key={item.id}
-              id={item.id}
-              index={index}
-              active={item.id === draft.id}
-              onSelect={() => setAssistantId(item.id)}
-              onMove={moveAssistant}
-            >
-              <span className="flex items-center gap-2">
-                <UIAvatar size="sm" name={item.name || "Assistant"} avatar={item.avatar} />
-                <span className="truncate">
-                  {item.name || t("settings:assistants.default_name")}
-                </span>
-              </span>
-            </SortableRow>
-          ))}
-          </div>
-        }
-      >
-        <div className="space-y-5">
-          <AvatarCropper
-            value={draft.avatar}
-            fallbackName={draft.name || "Assistant"}
-            onChange={async (avatar) => {
-              const nextDraft = { ...draft, avatar, useAssistantAvatar: true };
-              setDraft(nextDraft);
-              await api.post("settings/assistant/detail", nextDraft);
-              onSettings({
-                ...settings,
-                assistantId: nextDraft.id,
-                assistants: settings.assistants.map((item) =>
-                  item.id === nextDraft.id ? nextDraft : item,
-                ),
-              });
+
+  const parameterControl = (key: "temperature" | "topP", label: string, max: number, step: number) => {
+    const value = typeof draft[key] === "number" ? draft[key] : 1;
+    const commit = (raw: string) => {
+      if (raw.trim() === "") return;
+      const next = Number(raw);
+      if (!Number.isFinite(next)) return;
+      patchDraft({ [key]: Math.min(max, Math.max(0, next)) } as Partial<AssistantProfile>);
+    };
+    return (
+      <SettingsField label={label}>
+        <div className="flex items-center gap-3">
+          <Slider
+            min={0}
+            max={max}
+            step={step}
+            value={[value]}
+            aria-label={label}
+            onValueChange={([next]) => patchDraft({ [key]: next ?? null } as Partial<AssistantProfile>)}
+          />
+          <Input
+            key={`${key}-${value}`}
+            className="w-24"
+            aria-label={label}
+            defaultValue={numberText(value)}
+            onBlur={(event) => commit(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commit(event.currentTarget.value);
             }}
           />
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">{t("settings:assistants.name")}</span>
-            <Input
-              value={draft.name}
-              onChange={(event) => patchDraft({ name: event.target.value })}
+        </div>
+      </SettingsField>
+    );
+  };
+
+  const switchRow = ([key, labelKey]: readonly [keyof AssistantProfile, string]) => (
+    <SettingsSwitchRow
+      key={key}
+      label={t(labelKey)}
+      checked={draft[key] === true}
+      onCheckedChange={(checked) => patchDraft({ [key]: checked } as Partial<AssistantProfile>)}
+    />
+  );
+
+  const isTool = (tool: unknown, type: string) => (isPlainRecord(tool) ? tool.type === type : tool === type);
+  const localTools = Array.isArray(draft.localTools) ? draft.localTools : [];
+  const setLocalTool = (type: string, enabled: boolean) => {
+    const others = localTools.filter((tool) => !isTool(tool, type));
+    patchDraft({ localTools: enabled ? [...others, { type }] : others });
+  };
+
+  const emptyHint = (text: string) => (
+    <div className="rounded-[var(--ds-radius-md)] border border-dashed p-4 text-center text-sm text-[var(--ds-text-secondary)]">
+      {text}
+    </div>
+  );
+  const addButton = (onClick: () => void) => (
+    <Button type="button" size="sm" variant="outline" onClick={onClick}>
+      <Plus className="size-4" />
+      {t("settings:assistants.add_button")}
+    </Button>
+  );
+  const deleteButton = (label: string, onClick: () => void, className?: string) => (
+    <Button
+      type="button"
+      size="icon-sm"
+      variant="ghost"
+      className={className}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+    >
+      <Trash2 className="size-4" />
+    </Button>
+  );
+
+  return (
+    <div className="@container">
+      <SettingsStack>
+        <SettingsGroup title={t("settings:assistants.basic_title")} fields>
+          <SettingsField label={t("settings:assistants.avatar")}>
+            <AvatarCropper
+              value={draft.avatar}
+              fallbackName={draft.name || t("settings:assistants.default_name")}
+              onChange={async (avatar) => {
+                // 头像立即保存并强制在聊天中使用助手头像(换了头像却不显示没有意义)。
+                const nextDraft = { ...draft, avatar, useAssistantAvatar: true };
+                setDraft(nextDraft);
+                await api.post("settings/assistant/detail", nextDraft);
+                patchSettingsLocal((current) => ({
+                  assistantId: nextDraft.id,
+                  assistants: current.assistants.map((item) => (item.id === nextDraft.id ? nextDraft : item)),
+                }));
+              }}
             />
-          </label>
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">{t("settings:assistants.system_prompt")}</span>
+          </SettingsField>
+          <SettingsField label={t("settings:assistants.name")}>
+            <Input value={draft.name} onChange={(event) => patchDraft({ name: event.target.value })} />
+          </SettingsField>
+          <SettingsField
+            label={t("settings:assistants.system_prompt")}
+            hint={
+              // 专题11-P0:秒级时间变量每次请求都变,提示词前缀缓存全灭,就地提醒改天级
+              /\{\{\s*(cur_time|cur_datetime|time)\s*\}\}/.test(textValue(draft.systemPrompt)) ? (
+                <span className="text-warning">{t("settings:assistants.system_prompt_cache_hint")}</span>
+              ) : undefined
+            }
+          >
             <Textarea
               className="min-h-52 font-mono text-xs"
               value={textValue(draft.systemPrompt)}
               onChange={(event) => patchDraft({ systemPrompt: event.target.value })}
             />
-            {/* 专题11-P0:秒级时间变量每次请求都变,提示词前缀缓存全灭,就地提醒改天级 */}
-            {/\{\{\s*(cur_time|cur_datetime|time)\s*\}\}/.test(textValue(draft.systemPrompt)) ? (
-              <p className="text-xs text-warning">
-                {t("settings:assistants.system_prompt_cache_hint")}
-              </p>
-            ) : null}
-          </label>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-medium">
-                  {t("settings:assistants.message_template_title")}
-                </div>
-                <div className="mt-0.5 text-xs text-muted-foreground">
-                  {t("settings:assistants.message_template_desc")}
-                </div>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={messageTemplateValue === "{{ message }}"}
-                onClick={() => patchDraft({ messageTemplate: "{{ message }}" })}
-              >
-                <RefreshCw className="size-4" />
-                {t("settings:assistants.reset")}
-              </Button>
-            </div>
-            <Textarea
-              className="min-h-32 font-mono text-xs"
-              value={messageTemplateValue}
-              onChange={(event) => patchDraft({ messageTemplate: event.target.value })}
+          </SettingsField>
+        </SettingsGroup>
+
+        <SettingsGroup
+          title={t("settings:assistants.switches_title")}
+          action={
+            <SettingsAdvancedToggle
+              open={advancedOpen}
+              onOpenChange={onAdvancedOpenChange}
+              controls={[switchesId, advancedId]}
+              attention={messageTemplateMissingMessage}
             />
-            {messageTemplateMissingMessage ? (
-              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                {t("settings:assistants.template_missing_warn", { token: "{{ message }}" })}
-              </div>
-            ) : null}
-            <div className="rounded-md border bg-muted/30 p-3">
-              <div className="mb-2 text-sm font-medium">
-                {t("settings:assistants.template_preview")}
-              </div>
-              <div className="space-y-2">
-                {messageTemplatePreview.map((item) => (
-                  <div key={item.role} className="rounded-md bg-background p-3 text-xs">
-                    <div className="mb-1 text-muted-foreground">{item.role}</div>
-                    <pre className="whitespace-pre-wrap font-sans leading-relaxed">{item.text}</pre>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
-                <span>{t("settings:assistants.available_vars")}</span>
-                {[
-                  "role",
-                  "message",
-                  "time",
-                  "date",
-                  "cur_datetime",
-                  "user",
-                  "char",
-                  "model_name",
-                ].map((variable) => (
-                  <code key={variable} className="rounded bg-muted px-1.5 py-0.5 font-mono">
-                    {`{{ ${variable} }}`}
-                  </code>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className={ASSISTANT_SECTION}>
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-medium">
-                  {t("settings:assistants.preset_messages_title")}
-                </div>
-                <div className="mt-0.5 text-xs text-muted-foreground">
-                  {t("settings:assistants.preset_messages_desc")}
-                </div>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  patchDraft({
-                    presetMessages: [...presetMessages, { role: "ASSISTANT", content: "" }],
-                  })
-                }
-              >
-                <Plus className="size-4" />
-                {t("settings:assistants.add_button")}
-              </Button>
-            </div>
-            <div className="space-y-3">
-              {presetMessages.length === 0 ? (
-                <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
-                  {t("settings:assistants.no_preset")}
-                </div>
-              ) : null}
-              {presetMessages.map((message, index) => (
-                <div
-                  key={String(message.id ?? index)}
-                  className="rounded-md border bg-muted/20 p-3"
-                >
-                  <div className="mb-2 flex items-center gap-2">
-                    <Select
-                      value={textValue(message.role).toUpperCase() || "ASSISTANT"}
-                      onValueChange={(role) => updatePresetMessage(index, { role })}
-                    >
-                      <SelectTrigger className="h-8 w-36">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="SYSTEM">System</SelectItem>
-                        <SelectItem value="USER">User</SelectItem>
-                        <SelectItem value="ASSISTANT">Assistant</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      size="icon-sm"
-                      variant="ghost"
-                      className="ml-auto"
-                      onClick={() =>
-                        patchDraft({
-                          presetMessages: presetMessages.filter(
-                            (_, itemIndex) => itemIndex !== index,
-                          ),
-                        })
-                      }
-                      title={t("settings:assistants.delete_preset")}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </div>
-                  <Textarea
-                    className="min-h-24"
-                    value={textValue(message.content)}
-                    onChange={(event) =>
-                      updatePresetMessage(index, { content: event.target.value })
-                    }
-                  />
-                </div>
+          }
+        >
+          <SettingsRows>
+            {BASIC_SWITCHES.map(switchRow)}
+            <SettingsAdvancedRegion id={switchesId} open={advancedOpen} className="divide-y divide-[var(--ds-divider)]">
+              {ADVANCED_SWITCHES.map(switchRow)}
+            </SettingsAdvancedRegion>
+          </SettingsRows>
+        </SettingsGroup>
+
+        <SettingsAdvancedRegion id={advancedId} open={advancedOpen} className="space-y-8">
+          <SettingsGroup
+            title={t("settings:assistants.local_tools_title")}
+            description={t("settings:assistants.local_tools_desc")}
+          >
+            <SettingsRows>
+              {LOCAL_TOOLS.map(([type, key]) => (
+                <SettingsSwitchRow
+                  key={type}
+                  label={t(`${key}.title`)}
+                  description={t(`${key}.desc`)}
+                  checked={localTools.some((tool) => isTool(tool, type))}
+                  onCheckedChange={(checked) => setLocalTool(type, checked)}
+                />
               ))}
+            </SettingsRows>
+          </SettingsGroup>
+
+          <SettingsGroup title={t("settings:assistants.request_params_title")} fields>
+            <div className="grid gap-5 @xl:grid-cols-2">
+              {parameterControl("temperature", t("settings:assistants.temperature"), 2, 0.05)}
+              {parameterControl("topP", t("settings:assistants.top_p"), 1, 0.01)}
             </div>
-          </div>
-          <div className={ASSISTANT_SECTION}>
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-medium">{t("settings:assistants.regex_title")}</div>
-                <div className="mt-0.5 text-xs text-muted-foreground">
-                  {t("settings:assistants.regex_desc")}
-                </div>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  patchDraft({
-                    regexes: [
-                      ...assistantRegexes,
-                      {
-                        id: createId(),
-                        name: "",
-                        enabled: true,
-                        findRegex: "",
-                        replaceString: "",
-                        affectingScope: ["ASSISTANT"],
-                        visualOnly: false,
-                      },
-                    ],
-                  })
-                }
-              >
-                <Plus className="size-4" />
-                {t("settings:assistants.add_button")}
-              </Button>
-            </div>
-            <div className="space-y-3">
-              {assistantRegexes.length === 0 ? (
-                <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
-                  {t("settings:assistants.no_regex")}
-                </div>
-              ) : null}
-              {assistantRegexes.map((regex, index) => {
-                const scopes = Array.isArray(regex.affectingScope)
-                  ? regex.affectingScope.map(String)
-                  : [];
-                const toggleScope = (scope: "USER" | "ASSISTANT", checked: boolean) => {
-                  const nextScopes = new Set(scopes);
-                  if (checked) nextScopes.add(scope);
-                  else nextScopes.delete(scope);
-                  updateRegex(index, { affectingScope: [...nextScopes] });
-                };
-                return (
-                  <div
-                    key={String(regex.id ?? index)}
-                    className="rounded-md border bg-muted/20 p-3"
-                  >
-                    <div className="mb-3 flex items-center gap-2">
-                      <Switch
-                        checked={regex.enabled !== false}
-                        onCheckedChange={(checked) => updateRegex(index, { enabled: checked })}
-                      />
-                      <Input
-                        className="h-8"
-                        value={textValue(regex.name)}
-                        onChange={(event) => updateRegex(index, { name: event.target.value })}
-                        placeholder={t("settings:assistants.regex_name_ph")}
-                      />
-                      <Button
-                        type="button"
-                        size="icon-sm"
-                        variant="ghost"
-                        onClick={() =>
-                          patchDraft({
-                            regexes: assistantRegexes.filter((_, itemIndex) => itemIndex !== index),
-                          })
-                        }
-                        title={t("settings:assistants.delete_regex")}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <label className="space-y-1">
-                        <span className="text-xs text-muted-foreground">Find Regex</span>
-                        <Input
-                          value={textValue(regex.findRegex)}
-                          onChange={(event) =>
-                            updateRegex(index, { findRegex: event.target.value })
-                          }
-                        />
-                      </label>
-                      <label className="space-y-1">
-                        <span className="text-xs text-muted-foreground">Replace String</span>
-                        <Input
-                          value={textValue(regex.replaceString)}
-                          onChange={(event) =>
-                            updateRegex(index, { replaceString: event.target.value })
-                          }
-                        />
-                      </label>
-                    </div>
-                    <div className="mt-3 flex flex-wrap items-center gap-4 text-sm">
-                      <label className="flex items-center gap-2">
-                        <Checkbox
-                          checked={scopes.includes("USER")}
-                          onCheckedChange={(checked) => toggleScope("USER", checked === true)}
-                        />
-                        User
-                      </label>
-                      <label className="flex items-center gap-2">
-                        <Checkbox
-                          checked={scopes.includes("ASSISTANT")}
-                          onCheckedChange={(checked) => toggleScope("ASSISTANT", checked === true)}
-                        />
-                        Assistant
-                      </label>
-                      <label className="flex items-center gap-2">
-                        <Checkbox
-                          checked={regex.visualOnly === true}
-                          onCheckedChange={(checked) =>
-                            updateRegex(index, { visualOnly: checked === true })
-                          }
-                        />
-                        {t("settings:assistants.visual_only")}
-                      </label>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div className={cn(ASSISTANT_SECTION, "grid gap-4 md:grid-cols-3")}>
-            {parameterControl("temperature", "Temperature", 2, 0.05)}
-            {parameterControl("topP", "Top P", 1, 0.01)}
-            <label className="space-y-2">
-              <span className="text-sm font-medium">Max Tokens</span>
+            <SettingsField label={t("settings:assistants.max_tokens")} hint={t("settings:assistants.max_tokens_desc")}>
               <Input
+                className="max-w-60"
+                inputMode="numeric"
+                aria-label={t("settings:assistants.max_tokens")}
                 value={numberText(draft.maxTokens)}
                 placeholder={t("settings:assistants.max_tokens_ph")}
                 onChange={(event) => {
                   const raw = event.target.value.trim();
-                  setDraft({
-                    ...draft,
-                    maxTokens: raw === "" ? null : Math.max(1, Number(raw) || 1),
-                  });
+                  patchDraft({ maxTokens: raw === "" ? null : Math.max(1, Number(raw) || 1) });
                 }}
               />
-              <div className="text-xs text-muted-foreground">
-                {t("settings:assistants.max_tokens_desc")}
-              </div>
-            </label>
-          </div>
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">
-              {t("settings:assistants.context_message_size")}
-            </span>
-            <div className="flex items-center gap-3">
-              <Slider
-                min={0}
-                max={512}
-                step={1}
-                value={[
-                  typeof draft.contextMessageLimit === "number"
-                    ? draft.contextMessageLimit
-                    : 0,
-                ]}
-                onValueChange={([next]) =>
-                  patchDraft({ contextMessageLimit: next ?? 0 })
-                }
-              />
-              <Input
-                className="w-24"
-                inputMode="numeric"
-                value={
-                  typeof draft.contextMessageLimit === "number" &&
-                  draft.contextMessageLimit > 0
-                    ? String(draft.contextMessageLimit)
-                    : ""
-                }
-                placeholder={t(
-                  "settings:assistants.context_message_unlimited",
-                )}
-                onChange={(event) => {
-                  const raw = event.target.value.trim();
-                  if (raw === "") {
-                    patchDraft({ contextMessageLimit: 0 });
-                    return;
+            </SettingsField>
+            <SettingsField
+              label={t("settings:assistants.context_message_size")}
+              hint={t("settings:assistants.context_message_desc")}
+            >
+              <div className="flex items-center gap-3">
+                <Slider
+                  min={0}
+                  max={512}
+                  step={1}
+                  aria-label={t("settings:assistants.context_message_size")}
+                  value={[typeof draft.contextMessageLimit === "number" ? draft.contextMessageLimit : 0]}
+                  onValueChange={([next]) => patchDraft({ contextMessageLimit: next ?? 0 })}
+                />
+                <Input
+                  className="w-24"
+                  inputMode="numeric"
+                  aria-label={t("settings:assistants.context_message_size")}
+                  value={
+                    typeof draft.contextMessageLimit === "number" && draft.contextMessageLimit > 0
+                      ? String(draft.contextMessageLimit)
+                      : ""
                   }
-                  const parsed = Math.floor(Number(raw));
-                  patchDraft({
-                    contextMessageLimit:
-                      Number.isFinite(parsed) && parsed > 0
-                        ? Math.min(512, parsed)
-                        : 0,
-                  });
-                }}
-              />
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {t("settings:assistants.context_message_desc")}
-            </div>
-          </label>
-          <SettingsRows className={ASSISTANT_SECTION}>
-            {[
-              ["enableRecentChatsReference", t("settings:assistants.opt.recent_chats")],
-              ["streamOutput", t("settings:assistants.opt.stream_output")],
-              ["enableTimeReminder", t("settings:assistants.opt.time_reminder")],
-              ["useAssistantAvatar", t("settings:assistants.opt.use_avatar")],
-              ["allowConversationSystemPrompt", t("settings:assistants.opt.allow_conv_prompt")],
-              ["allowConversationPromptInjection", t("settings:assistants.opt.allow_conv_injection")],
-            ].map(([key, label]) => (
-              <SettingsSwitchRow
-                key={key}
-                label={label}
-                checked={draft[key] === true}
-                onCheckedChange={(checked) =>
-                  patchDraft({ [key]: checked } as Partial<AssistantProfile>)
-                }
-              />
-            ))}
-          </SettingsRows>
-          {/* 1.3.2 记忆管理(含 enableMemory 开关)已移至独立的「记忆」板块,见 nav.memory */}
-          <div className={ASSISTANT_SECTION}>
-            <div className="text-sm font-medium">{t("settings:assistants.local_tools_title")}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {t("settings:assistants.local_tools_desc")}
-            </div>
-            <SettingsRows className="mt-1">
-              {[
-                ["time_info", t("settings:assistants.tools.time_info.title"), t("settings:assistants.tools.time_info.desc")],
-                ["clipboard", t("settings:assistants.tools.clipboard.title"), t("settings:assistants.tools.clipboard.desc")],
-                // 语音播报(tts)暂不展示:后端工具与定义保留(预备),只是不在设置里开放开关。
-                // 若未来要把 AI 主动朗读做成卖点再恢复此卡片,i18n key(tools.tts)仍在。
-                ["ask_user", t("settings:assistants.tools.ask_user.title"), t("settings:assistants.tools.ask_user.desc")],
-              ].map(([type, label, desc]) => {
-                const enabled =
-                  Array.isArray(draft.localTools) &&
-                  draft.localTools.some((tool) =>
-                    isPlainRecord(tool) ? tool.type === type : tool === type,
-                  );
-                return (
-                  <SettingsSwitchRow
-                    key={type}
-                    label={label}
-                    description={desc}
-                    checked={enabled}
-                    onCheckedChange={(checked) => {
-                        const current = Array.isArray(draft.localTools) ? draft.localTools : [];
-                        const next = checked
-                          ? [
-                              ...current.filter(
-                                (tool) =>
-                                  !(isPlainRecord(tool) ? tool.type === type : tool === type),
-                              ),
-                              { type },
-                            ]
-                          : current.filter(
-                              (tool) => !(isPlainRecord(tool) ? tool.type === type : tool === type),
-                            );
-                        patchDraft({ localTools: next });
-                      }}
-                  />
-                );
-              })}
-            </SettingsRows>
-          </div>
-          <div className={ASSISTANT_SECTION}>
-            <div className="mb-3 text-sm font-medium">{t("settings:assistants.custom_request_title")}</div>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm">Headers</div>
-                    <div className="text-xs text-muted-foreground">
-                      {t("settings:assistants.headers_desc")}
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      patchDraft({ customHeaders: [...customHeaders, { name: "", value: "" }] })
+                  placeholder={t("settings:assistants.context_message_unlimited")}
+                  onChange={(event) => {
+                    const raw = event.target.value.trim();
+                    if (raw === "") {
+                      patchDraft({ contextMessageLimit: 0 });
+                      return;
                     }
-                  >
-                    <Plus className="size-4" />
-                    {t("settings:assistants.add_button")}
-                  </Button>
+                    const parsed = Math.floor(Number(raw));
+                    patchDraft({
+                      contextMessageLimit: Number.isFinite(parsed) && parsed > 0 ? Math.min(512, parsed) : 0,
+                    });
+                  }}
+                />
+              </div>
+            </SettingsField>
+          </SettingsGroup>
+
+          <SettingsGroup title={t("settings:assistants.content_title")} fields>
+            <SettingsField
+              label={t("settings:assistants.message_template_title")}
+              description={t("settings:assistants.message_template_desc")}
+              trailing={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={messageTemplateValue === DEFAULT_MESSAGE_TEMPLATE}
+                  onClick={() => patchDraft({ messageTemplate: DEFAULT_MESSAGE_TEMPLATE })}
+                >
+                  <RefreshCw className="size-4" />
+                  {t("settings:assistants.reset")}
+                </Button>
+              }
+            >
+              <Textarea
+                className="min-h-32 font-mono text-xs"
+                value={messageTemplateValue}
+                onChange={(event) => patchDraft({ messageTemplate: event.target.value })}
+              />
+              {messageTemplateMissingMessage ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  {t("settings:assistants.template_missing_warn", { token: DEFAULT_MESSAGE_TEMPLATE })}
                 </div>
-                {customHeaders.length === 0 ? (
-                  <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
-                    {t("settings:assistants.no_header")}
-                  </div>
-                ) : null}
-                {customHeaders.map((header, index) => (
-                  <div
-                    key={index}
-                    className="grid gap-2 rounded-md border bg-muted/20 p-3 md:grid-cols-[1fr_1fr_auto]"
-                  >
-                    <Input
-                      value={textValue(header.name ?? header.key)}
-                      onChange={(event) => updateCustomHeader(index, { name: event.target.value })}
-                      placeholder="Header name"
-                    />
-                    <Input
-                      value={textValue(header.value)}
-                      onChange={(event) => updateCustomHeader(index, { value: event.target.value })}
-                      placeholder="Header value"
-                    />
-                    <Button
-                      type="button"
-                      size="icon-sm"
-                      variant="ghost"
-                      onClick={() =>
-                        patchDraft({
-                          customHeaders: customHeaders.filter(
-                            (_, itemIndex) => itemIndex !== index,
-                          ),
-                        })
+              ) : null}
+              <div className="rounded-md border bg-muted/30 p-3">
+                <div className="mb-2 text-sm font-medium">{t("settings:assistants.template_preview")}</div>
+                <div className="space-y-2">
+                  {messageTemplatePreview.map((item) => (
+                    <div key={item.role} className="rounded-md bg-background p-3 text-xs">
+                      <div className="mb-1 text-muted-foreground">{t(ROLE_KEYS[item.role])}</div>
+                      <pre className="whitespace-pre-wrap font-sans leading-relaxed">{item.text}</pre>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+                  <span>{t("settings:assistants.available_vars")}</span>
+                  {TEMPLATE_VARIABLES.map((variable) => (
+                    <code key={variable} className="rounded bg-muted px-1.5 py-0.5 font-mono">
+                      {`{{ ${variable} }}`}
+                    </code>
+                  ))}
+                </div>
+              </div>
+            </SettingsField>
+
+            <SettingsField
+              label={t("settings:assistants.preset_messages_title")}
+              description={t("settings:assistants.preset_messages_desc")}
+              trailing={addButton(() =>
+                patchDraft({ presetMessages: [...presetMessages, { role: "ASSISTANT", content: "" }] }),
+              )}
+            >
+              <div className="space-y-3">
+                {presetMessages.length === 0 ? emptyHint(t("settings:assistants.no_preset")) : null}
+                {presetMessages.map((message, index) => (
+                  <div key={String(message.id ?? index)} className="rounded-md border bg-muted/20 p-3">
+                    <div className="mb-2 flex items-center gap-2">
+                      <Select
+                        value={textValue(message.role).toUpperCase() || "ASSISTANT"}
+                        onValueChange={(role) => updateAt("presetMessages", presetMessages, index, { role })}
+                      >
+                        <SelectTrigger className="h-8 w-36">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ROLE_VALUES.map((role) => (
+                            <SelectItem key={role} value={role}>
+                              {t(ROLE_KEYS[role])}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {deleteButton(
+                        t("settings:assistants.delete_preset"),
+                        () => removeAt("presetMessages", presetMessages, index),
+                        "ml-auto",
+                      )}
+                    </div>
+                    <Textarea
+                      className="min-h-24"
+                      value={textValue(message.content)}
+                      onChange={(event) =>
+                        updateAt("presetMessages", presetMessages, index, { content: event.target.value })
                       }
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
+                    />
                   </div>
                 ))}
               </div>
+            </SettingsField>
+
+            <SettingsField
+              label={t("settings:assistants.regex_title")}
+              description={t("settings:assistants.regex_desc")}
+              trailing={addButton(() =>
+                patchDraft({
+                  regexes: [
+                    ...assistantRegexes,
+                    {
+                      id: createId(),
+                      name: "",
+                      enabled: true,
+                      findRegex: "",
+                      replaceString: "",
+                      affectingScope: ["ASSISTANT"],
+                      visualOnly: false,
+                    },
+                  ],
+                }),
+              )}
+            >
               <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm">Bodies</div>
-                    <div className="text-xs text-muted-foreground">
-                      {t("settings:assistants.bodies_desc")}
+                {assistantRegexes.length === 0 ? emptyHint(t("settings:assistants.no_regex")) : null}
+                {assistantRegexes.map((regex, index) => {
+                  const scopes = Array.isArray(regex.affectingScope) ? regex.affectingScope.map(String) : [];
+                  const toggleScope = (scope: "USER" | "ASSISTANT", checked: boolean) => {
+                    const nextScopes = new Set(scopes);
+                    if (checked) nextScopes.add(scope);
+                    else nextScopes.delete(scope);
+                    updateAt("regexes", assistantRegexes, index, { affectingScope: [...nextScopes] });
+                  };
+                  return (
+                    <div key={String(regex.id ?? index)} className="rounded-md border bg-muted/20 p-3">
+                      <div className="mb-3 flex items-center gap-2">
+                        <Switch
+                          checked={regex.enabled !== false}
+                          aria-label={t("settings:assistants.regex_enabled")}
+                          onCheckedChange={(checked) => updateAt("regexes", assistantRegexes, index, { enabled: checked })}
+                        />
+                        <Input
+                          className="h-8"
+                          value={textValue(regex.name)}
+                          onChange={(event) => updateAt("regexes", assistantRegexes, index, { name: event.target.value })}
+                          placeholder={t("settings:assistants.regex_name_ph")}
+                        />
+                        {deleteButton(t("settings:assistants.delete_regex"), () =>
+                          removeAt("regexes", assistantRegexes, index),
+                        )}
+                      </div>
+                      <div className="grid gap-3 @xl:grid-cols-2">
+                        <label className="space-y-1">
+                          <span className="text-xs text-muted-foreground">{t("settings:assistants.regex_find")}</span>
+                          <Input
+                            value={textValue(regex.findRegex)}
+                            onChange={(event) =>
+                              updateAt("regexes", assistantRegexes, index, { findRegex: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-xs text-muted-foreground">{t("settings:assistants.regex_replace")}</span>
+                          <Input
+                            value={textValue(regex.replaceString)}
+                            onChange={(event) =>
+                              updateAt("regexes", assistantRegexes, index, { replaceString: event.target.value })
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-4 text-sm">
+                        {(["USER", "ASSISTANT"] as const).map((scope) => (
+                          <label key={scope} className="flex items-center gap-2">
+                            <Checkbox
+                              checked={scopes.includes(scope)}
+                              onCheckedChange={(checked) => toggleScope(scope, checked === true)}
+                            />
+                            {t(ROLE_KEYS[scope])}
+                          </label>
+                        ))}
+                        <label className="flex items-center gap-2">
+                          <Checkbox
+                            checked={regex.visualOnly === true}
+                            onCheckedChange={(checked) =>
+                              updateAt("regexes", assistantRegexes, index, { visualOnly: checked === true })
+                            }
+                          />
+                          {t("settings:assistants.visual_only")}
+                        </label>
+                      </div>
                     </div>
+                  );
+                })}
+              </div>
+            </SettingsField>
+          </SettingsGroup>
+
+          <SettingsGroup title={t("settings:assistants.custom_request_title")} fields>
+            <SettingsField
+              label={t("settings:assistants.headers")}
+              description={t("settings:assistants.headers_desc")}
+              trailing={addButton(() => patchDraft({ customHeaders: [...customHeaders, { name: "", value: "" }] }))}
+            >
+              <div className="space-y-2">
+                {customHeaders.length === 0 ? emptyHint(t("settings:assistants.no_header")) : null}
+                {customHeaders.map((header, index) => (
+                  <div key={index} className="grid gap-2 rounded-md border bg-muted/20 p-3 @xl:grid-cols-[1fr_1fr_auto]">
+                    <Input
+                      value={textValue(header.name ?? header.key)}
+                      onChange={(event) => updateAt("customHeaders", customHeaders, index, { name: event.target.value })}
+                      placeholder={t("settings:assistants.header_name_ph")}
+                      aria-label={t("settings:assistants.header_name_ph")}
+                    />
+                    <Input
+                      value={textValue(header.value)}
+                      onChange={(event) => updateAt("customHeaders", customHeaders, index, { value: event.target.value })}
+                      placeholder={t("settings:assistants.header_value_ph")}
+                      aria-label={t("settings:assistants.header_value_ph")}
+                    />
+                    {deleteButton(t("settings:assistants.delete_header"), () =>
+                      removeAt("customHeaders", customHeaders, index),
+                    )}
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      patchDraft({ customBodies: [...customBodies, { key: "", value: '""' }] })
-                    }
-                  >
-                    <Plus className="size-4" />
-                    {t("settings:assistants.add_button")}
-                  </Button>
-                </div>
-                {customBodies.length === 0 ? (
-                  <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
-                    {t("settings:assistants.no_body")}
-                  </div>
-                ) : null}
+                ))}
+              </div>
+            </SettingsField>
+            <SettingsField
+              label={t("settings:assistants.bodies")}
+              description={t("settings:assistants.bodies_desc")}
+              trailing={addButton(() => patchDraft({ customBodies: [...customBodies, { key: "", value: '""' }] }))}
+            >
+              <div className="space-y-2">
+                {customBodies.length === 0 ? emptyHint(t("settings:assistants.no_body")) : null}
                 {customBodies.map((body, index) => (
                   <div key={index} className="rounded-md border bg-muted/20 p-3">
                     <div className="mb-2 flex items-center gap-2">
                       <Input
                         value={textValue(body.key ?? body.name)}
-                        onChange={(event) => updateCustomBody(index, { key: event.target.value })}
-                        placeholder="Body key"
+                        onChange={(event) => updateAt("customBodies", customBodies, index, { key: event.target.value })}
+                        placeholder={t("settings:assistants.body_key_ph")}
+                        aria-label={t("settings:assistants.body_key_ph")}
                       />
-                      <Button
-                        type="button"
-                        size="icon-sm"
-                        variant="ghost"
-                        onClick={() =>
-                          patchDraft({
-                            customBodies: customBodies.filter(
-                              (_, itemIndex) => itemIndex !== index,
-                            ),
-                          })
-                        }
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
+                      {deleteButton(t("settings:assistants.delete_body"), () =>
+                        removeAt("customBodies", customBodies, index),
+                      )}
                     </div>
                     <Textarea
                       className="min-h-24 font-mono text-xs"
-                      value={
-                        typeof body.value === "string"
-                          ? body.value
-                          : JSON.stringify(body.value ?? "", null, 2)
-                      }
-                      onChange={(event) => updateCustomBody(index, { value: event.target.value })}
+                      value={typeof body.value === "string" ? body.value : JSON.stringify(body.value ?? "", null, 2)}
+                      onChange={(event) => updateAt("customBodies", customBodies, index, { value: event.target.value })}
                       placeholder={t("settings:assistants.body_value_ph")}
                     />
                   </div>
                 ))}
               </div>
-            </div>
-          </div>
-          <div className={ASSISTANT_SECTION}>
-            <div className="text-sm font-medium">{t("settings:assistants.ext_summary_title")}</div>
-            <div className="mt-2 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
-              <div>{t("settings:assistants.ext_injection")}: {(draft.modeInjectionIds ?? []).length}</div>
-              <div>{t("settings:assistants.ext_lorebook")}: {(draft.lorebookIds ?? []).length}</div>
-              <div>MCP: {(draft.mcpServers ?? []).length}</div>
-              <div>
-                Local tools: {Array.isArray(draft.localTools) ? draft.localTools.length : 0}
-              </div>
-            </div>
-          </div>
-          <div className={cn(ASSISTANT_SECTION, "flex justify-end")}>
-            <Button
-              variant="outline"
-              onClick={removeAssistant}
-              disabled={settings.assistants.length <= 1}
-            >
-              <Trash2 className="size-4" />
-              {t("settings:assistants.delete")}
-            </Button>
-            <AutosaveStatusRow
-              status={autosave.status}
-              onRetry={() => void autosave.saveNow()}
-            />
-          </div>
-        </div>
-      </SettingsSplit>
-    </>
+            </SettingsField>
+          </SettingsGroup>
+        </SettingsAdvancedRegion>
+
+        <SettingsDetailFooter
+          status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+        >
+          <Button variant="outline" onClick={() => void removeAssistant()} disabled={settings.assistants.length <= 1}>
+            <Trash2 className="size-4" />
+            {t("settings:assistants.delete")}
+          </Button>
+        </SettingsDetailFooter>
+      </SettingsStack>
+    </div>
   );
 }
