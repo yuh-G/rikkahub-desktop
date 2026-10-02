@@ -44,7 +44,7 @@ export function DonateSection() {
   const { t } = useTranslation();
   return (
     <>
-      <SectionHeader icon={Heart} title={t("settings:donate.title")} subtitle={t("settings:donate.subtitle")} />
+      <SectionHeader title={t("settings:donate.title")} subtitle={t("settings:donate.subtitle")} />
       <div className="space-y-6">
         <div className="rounded-lg border bg-card">
           <button
@@ -151,7 +151,6 @@ export function AboutSection() {
   return (
     <>
       <SectionHeader
-        icon={CheckCircle2}
         title={t("settings:about.title")}
         subtitle={t("settings:about.subtitle")}
       />

@@ -304,7 +304,6 @@ export function ProxySection({
   return (
     <>
       <SectionHeader
-        icon={Globe}
         title={t("settings:proxy.title")}
         subtitle={t("settings:proxy.subtitle")}
       />

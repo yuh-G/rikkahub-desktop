@@ -8,8 +8,9 @@
  */
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Keyboard, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 
+import { SettingsGroup, SettingsRows } from "~/components/settings/shared";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
 import { setHotkeysPaused } from "~/lib/hotkey-events";
@@ -115,19 +116,16 @@ export function KeybindingSettings() {
     editingAction && conflictAction ? t(`settings:hotkeys.actions.${conflictAction}`) : null;
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Keyboard className="text-muted-foreground size-4" />
-          <span className="text-sm font-medium">{t("settings:hotkeys.title")}</span>
-        </div>
+    <SettingsGroup
+      title={t("settings:hotkeys.title")}
+      action={
         <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetAll}>
           <RotateCcw className="size-3" />
           {t("settings:hotkeys.reset_all")}
         </Button>
-      </div>
-
-      <div className="space-y-0.5">
+      }
+    >
+      <SettingsRows>
         {KEYBINDING_ORDER.map((action) => {
           const entry = resolved[action];
           const isEditing = editingAction === action;
@@ -138,7 +136,7 @@ export function KeybindingSettings() {
             <div
               key={action}
               className={cn(
-                "flex items-center justify-between gap-2 rounded-md px-2 py-1.5",
+                "flex items-center justify-between gap-2 py-2",
                 !entry.enabled && "opacity-60",
               )}
             >
@@ -196,13 +194,13 @@ export function KeybindingSettings() {
             </div>
           );
         })}
-      </div>
+      </SettingsRows>
 
       {editingAction && conflictLabel && (
         <p className="text-destructive text-xs">
           {t("settings:hotkeys.conflict_with", { name: conflictLabel })}
         </p>
       )}
-    </div>
+    </SettingsGroup>
   );
 }

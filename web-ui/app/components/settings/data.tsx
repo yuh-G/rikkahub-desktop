@@ -782,7 +782,6 @@ export function DataSection({
         </div>
       )}
       <SectionHeader
-        icon={Database}
         title={t("settings:data.title")}
         subtitle={t("settings:data.subtitle")}
       />

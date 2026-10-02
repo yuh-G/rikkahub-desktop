@@ -51,7 +51,7 @@ export function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: ()
   ];
   return (
     <>
-      <SectionHeader icon={FileClock} title={t("settings:logs.title")} subtitle={t("settings:logs.subtitle")} />
+      <SectionHeader title={t("settings:logs.title")} subtitle={t("settings:logs.subtitle")} />
       <div className="-mt-2 mb-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           {filterOptions.map(({ id, label }) => (

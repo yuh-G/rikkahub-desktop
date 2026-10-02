@@ -1209,7 +1209,6 @@ export function ProvidersSection({
   return (
     <>
       <SectionHeader
-        icon={KeyRound}
         title={t("settings:providers.title")}
         subtitle={t("settings:providers.subtitle")}
       />

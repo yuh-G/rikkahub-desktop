@@ -299,7 +299,6 @@ export function AssistantsSection({
   return (
     <>
       <SectionHeader
-        icon={Bot}
         title={t("settings:assistants.title")}
         subtitle={t("settings:assistants.subtitle")}
       />

@@ -103,7 +103,6 @@ export function StatsSection({ stats }: { stats: StatsPayload | null }) {
   return (
     <>
       <SectionHeader
-        icon={Database}
         title={t("settings:stats.title")}
         subtitle={t("settings:stats.subtitle")}
       />

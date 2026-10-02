@@ -98,7 +98,6 @@ export function McpExtensionsSection({
     return (
       <>
         <SectionHeader
-          icon={CopyPlus}
           title={t("settings:mcp.title")}
           subtitle={t("settings:mcp.subtitle")}
         />
@@ -112,7 +111,6 @@ export function McpExtensionsSection({
   return (
     <>
       <SectionHeader
-        icon={CopyPlus}
         title={t("settings:mcp.title")}
         subtitle={t("settings:mcp.subtitle")}
       />

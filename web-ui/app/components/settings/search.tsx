@@ -451,7 +451,6 @@ export function SearchSection({
   return (
     <>
       <SectionHeader
-        icon={Search}
         title={t("settings:search.title")}
         subtitle={t("settings:search.subtitle")}
       />

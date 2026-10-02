@@ -394,7 +394,6 @@ export function DefaultModelsSection({
   return (
     <>
       <SectionHeader
-        icon={Settings2}
         title={t("settings:models.title")}
         subtitle={t("settings:models.subtitle")}
       />

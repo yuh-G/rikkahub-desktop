@@ -119,7 +119,9 @@
       "show_thinking": "Show thinking content",
       "send_on_enter": "Send on Enter",
       "auto_scroll": "Auto-scroll"
-    }
+    },
+    "font_title": "Fonts",
+    "display_title": "Chat display"
   },
   "providers": {
     "title": "Providers",

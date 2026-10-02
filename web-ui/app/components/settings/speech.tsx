@@ -1325,14 +1325,12 @@ export function SpeechSection({
   return (
     <>
       <SectionHeader
-        icon={Mic}
         title={t("settings:speech.tts_title")}
         subtitle={t("settings:speech.tts_subtitle")}
       />
       <TtsSettingsPanel settings={settings} onSettings={onSettings} />
       <Separator className="my-8" />
       <SectionHeader
-        icon={Mic}
         title={t("settings:speech.asr_title")}
         subtitle={t("settings:speech.asr_subtitle")}
       />

@@ -119,7 +119,9 @@
       "show_thinking": "显示思考内容",
       "send_on_enter": "Enter 发送",
       "auto_scroll": "自动滚动"
-    }
+    },
+    "font_title": "字体与字号",
+    "display_title": "对话显示"
   },
   "providers": {
     "title": "供应商",

@@ -8,7 +8,6 @@ import { useNavigate } from "react-router";
 
 import { SETTINGS_SECTION_COMPONENTS } from "~/components/settings/settings-registry";
 import { SettingsNavList, useSettingsSnapshot } from "~/components/settings/settings-panel";
-import { SettingsSurfaceContext } from "~/components/settings/settings-surface";
 import { Button } from "~/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "~/components/ui/dialog";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -110,9 +109,7 @@ function SettingsDialogBody() {
           // key=section:切分区时滚动位置归零并重放淡入,与整页切换的"新页从顶部开始"一致。
           <ScrollArea key={section} className="min-h-0 flex-1">
             <div className="animate-in fade-in-0 px-6 pt-4 pb-8 duration-(--ds-duration-fast) ease-(--ds-ease-swift) motion-reduce:animate-none">
-              <SettingsSurfaceContext.Provider value="dialog">
-                <Section settings={settings} onSettings={setSettings} />
-              </SettingsSurfaceContext.Provider>
+              <Section settings={settings} onSettings={setSettings} />
             </div>
           </ScrollArea>
         ) : (

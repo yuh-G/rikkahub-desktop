@@ -1,11 +1,18 @@
-// components/settings/shared.tsx — 设置页各分区共用的小组件与工具（纯搬迁自 routes/settings.tsx）
+// components/settings/shared.tsx — 设置页各分区共用的小组件与工具
+//
+// 版式纪律(无卡片行式):分区内容直接铺在面板底上,用「分组标题 + 行 + 分隔线 + 间距」
+// 组织层次,不再用 `rounded border bg-card` 盒子去「分组」。判断一个带边框的容器该不该
+// 留,问一句:它是在「分组」还是在「装载」?
+//   - 分组的拆:改用 SettingsGroup / SettingsRows / SettingsRow,别再手写 flex justify-between。
+//   - 装载的留:代码/JSON/日志预览、警示条、虚线空状态、可点击的列表项卡——内容需要边界才读得清。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { Eye, EyeOff, GripVertical } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { useSettingsSurface } from "~/components/settings/settings-surface";
+import { Switch } from "~/components/ui/switch";
+import { cn } from "~/lib/utils";
 
 export function textValue(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -66,33 +73,227 @@ export function PasswordInput({
   );
 }
 
-export function SectionHeader({
-  icon: Icon,
-  title,
-  subtitle,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  subtitle: string;
-}) {
-  // 模态面板尺幅小于整页且右上角有关闭钮:去掉图标块、标题降一档,右侧让出关闭钮的位置。
-  if (useSettingsSurface() === "dialog") {
-    return (
-      <div className="mb-6 pr-10">
-        <h1 className="text-lg font-semibold tracking-normal text-[var(--ds-text-primary)]">{title}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
-      </div>
-    );
-  }
+/**
+ * 分区页头。承载形态(模态/整页)的外壳都已给出导航与返回,这里只做标题 + 一句说明;
+ * 右侧 pr-10 给模态右上角的绝对定位关闭钮让位(整页无关闭钮,多出的留白无害)。
+ */
+export function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <div className="mb-6 flex items-start gap-3">
-      <div className="rounded-md border bg-card p-2">
-        <Icon className="size-5" />
+    <div className="mb-8 pr-10">
+      <h1 className="text-lg font-semibold tracking-normal text-[var(--ds-text-primary)]">{title}</h1>
+      <p className="mt-1 text-sm text-[var(--ds-text-secondary)]">{subtitle}</p>
+    </div>
+  );
+}
+
+/** 分区内容的纵向骨架:各 SettingsGroup 之间统一 2rem 节奏。 */
+export function SettingsStack({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <div className={cn("space-y-8", className)}>{children}</div>;
+}
+
+/**
+ * 一组设置:小号分组标题(+ 可选说明、右侧动作)+ 内容。取代"一组设置包进一张卡"——
+ * 层次靠标题与间距,而非边框。内容是 SettingsRows 时行自带上下留白;是纵向字段时
+ * 用 `fields` 让字段之间与标题之下拉开同样的节奏。
+ */
+export function SettingsGroup({
+  title,
+  description,
+  action,
+  fields = false,
+  children,
+  className,
+}: {
+  title?: React.ReactNode;
+  description?: React.ReactNode;
+  /** 标题行右侧的次要动作(如「全部恢复默认」)。 */
+  action?: React.ReactNode;
+  /** 内容是 SettingsField 等纵向字段(而非行列表)。 */
+  fields?: boolean;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const hasHeader = title != null || description != null || action != null;
+  return (
+    <section className={className}>
+      {hasHeader ? (
+        <div className="flex min-h-7 items-start justify-between gap-4">
+          <div className="min-w-0">
+            {title != null ? (
+              <h2 className="text-xs font-semibold leading-7 text-[var(--ds-text-secondary)]">{title}</h2>
+            ) : null}
+            {description != null ? (
+              <p className="text-xs text-[var(--ds-text-tertiary)]">{description}</p>
+            ) : null}
+          </div>
+          {action != null ? <div className="flex shrink-0 items-center gap-1">{action}</div> : null}
+        </div>
+      ) : null}
+      {fields ? <div className={cn("space-y-5", hasHeader && "pt-3")}>{children}</div> : children}
+    </section>
+  );
+}
+
+/** 行列表:相邻行之间一条 --ds-divider 细线(条件渲染为 null 的行不占线)。 */
+export function SettingsRows({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <div className={cn("divide-y divide-[var(--ds-divider)]", className)}>{children}</div>;
+}
+
+/**
+ * 设置行:左标题(+说明)、右控件;children 是挂在行下方的附属内容(如展开的子表单)。
+ * 各分区一律用它,不再各写一遍 flex justify-between。
+ */
+export function SettingsRow({
+  label,
+  description,
+  control,
+  htmlFor,
+  children,
+  className,
+}: {
+  label: React.ReactNode;
+  description?: React.ReactNode;
+  control?: React.ReactNode;
+  /** 标题点击聚焦/切换的目标控件 id(开关行由 SettingsSwitchRow 自动接好)。 */
+  htmlFor?: string;
+  children?: React.ReactNode;
+  className?: string;
+}) {
+  const Label = htmlFor ? "label" : "div";
+  return (
+    <div className={cn("py-3", className)}>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <Label
+            htmlFor={htmlFor}
+            className="block text-sm font-medium text-[var(--ds-text-primary)]"
+          >
+            {label}
+          </Label>
+          {description != null ? (
+            <div className="mt-0.5 text-xs text-[var(--ds-text-secondary)]">{description}</div>
+          ) : null}
+        </div>
+        {control != null ? <div className="flex shrink-0 items-center gap-2">{control}</div> : null}
       </div>
-      <div>
-        <h1 className="text-2xl font-semibold tracking-normal">{title}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+      {children != null ? <div className="mt-3">{children}</div> : null}
+    </div>
+  );
+}
+
+/** 开关行:标题可点击切换(label↔switch 经 useId 绑定)。 */
+export function SettingsSwitchRow({
+  label,
+  description,
+  checked,
+  onCheckedChange,
+  disabled,
+  children,
+}: {
+  label: React.ReactNode;
+  description?: React.ReactNode;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  disabled?: boolean;
+  children?: React.ReactNode;
+}) {
+  const id = React.useId();
+  return (
+    <SettingsRow
+      label={label}
+      description={description}
+      htmlFor={id}
+      control={<Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />}
+    >
+      {children}
+    </SettingsRow>
+  );
+}
+
+/**
+ * 纵向表单字段:标题在上、控件在下、提示在控件下方。trailing 挂在标题行右侧
+ * (如数值读数、「恢复默认」)。htmlFor 指向控件 id 时标题可点击聚焦。
+ */
+export function SettingsField({
+  label,
+  hint,
+  trailing,
+  htmlFor,
+  children,
+  className,
+}: {
+  label: React.ReactNode;
+  hint?: React.ReactNode;
+  trailing?: React.ReactNode;
+  htmlFor?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const Label = htmlFor ? "label" : "div";
+  return (
+    <div className={cn("space-y-2", className)}>
+      <div className="flex min-h-5 items-center justify-between gap-3">
+        <Label htmlFor={htmlFor} className="text-sm font-medium text-[var(--ds-text-primary)]">
+          {label}
+        </Label>
+        {trailing != null ? <div className="flex shrink-0 items-center gap-2">{trailing}</div> : null}
       </div>
+      {children}
+      {hint != null ? <p className="text-xs text-[var(--ds-text-secondary)]">{hint}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * 列表/详情双栏(助手、供应商、搜索、语音、拓展)。断点按**自身宽度**(容器查询)而非视口:
+ * 同一分区在模态里与整页里可用宽度不同,视口断点会在模态里过早或过晚换栏。
+ * 两栏之间是一条竖分隔线,不再是两张并排的卡。
+ */
+export function SettingsSplit({
+  list,
+  children,
+  listClassName,
+}: {
+  list: React.ReactNode;
+  children: React.ReactNode;
+  listClassName?: string;
+}) {
+  return (
+    <div className="@container">
+      <div className="grid gap-6 @2xl:grid-cols-[17.5rem_minmax(0,1fr)] @2xl:gap-0">
+        <div
+          className={cn(
+            "min-w-0 @2xl:border-r @2xl:border-[var(--ds-divider)] @2xl:pr-3",
+            listClassName,
+          )}
+        >
+          {list}
+        </div>
+        <div className="min-w-0 @2xl:pl-6">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/** 详情栏的标题行:名称(+说明)+ 右侧动作。替代各详情卡顶部的手写 flex 头。 */
+export function SettingsDetailHeader({
+  title,
+  description,
+  action,
+}: {
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <h2 className="truncate text-base font-semibold text-[var(--ds-text-primary)]">{title}</h2>
+        {description != null ? (
+          <p className="mt-0.5 text-xs text-[var(--ds-text-secondary)]">{description}</p>
+        ) : null}
+      </div>
+      {action != null ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
     </div>
   );
 }

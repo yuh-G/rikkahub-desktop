@@ -1,8 +1,7 @@
-// components/settings/general.tsx — 通用设置分区（纯搬迁自 routes/settings.tsx）
+// components/settings/general.tsx — 通用设置分区
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { AvatarCropper } from "~/components/avatar-cropper";
 import { FontPickerPair } from "~/components/font-picker";
@@ -12,14 +11,32 @@ import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { KeybindingSettings } from "~/components/keybinding-settings";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { Separator } from "~/components/ui/separator";
 import { Slider } from "~/components/ui/slider";
-import { Switch } from "~/components/ui/switch";
 import api from "~/services/api";
 import type { AssistantAvatar, Settings } from "~/types";
-import { SectionHeader, textValue } from "~/components/settings/shared";
+import {
+  SectionHeader,
+  SettingsField,
+  SettingsGroup,
+  SettingsRow,
+  SettingsRows,
+  SettingsStack,
+  SettingsSwitchRow,
+  textValue,
+} from "~/components/settings/shared";
 import { isWindowsPlatform, getSystemInfo } from "~/lib/system-info";
 import { extractErrorMessage } from "~/lib/error";
+
+const DISPLAY_TOGGLES = [
+  ["showUserAvatar", "settings:general.opt.show_user_avatar"],
+  ["showAssistantBubble", "settings:general.opt.show_assistant_bubble"],
+  ["showModelIcon", "settings:general.opt.show_model_icon"],
+  ["showModelName", "settings:general.opt.show_model_name"],
+  ["showTokenUsage", "settings:general.opt.show_token_usage"],
+  ["showThinkingContent", "settings:general.opt.show_thinking"],
+  ["sendOnEnter", "settings:general.opt.send_on_enter"],
+  ["enableAutoScroll", "settings:general.opt.auto_scroll"],
+] as const;
 
 export function GeneralSection({
   settings,
@@ -29,6 +46,8 @@ export function GeneralSection({
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
+  const nicknameId = React.useId();
+  const shellPathId = React.useId();
   const display = settings.displaySetting;
   const [name, setName] = React.useState(textValue(display.userNickname));
   const [avatar, setAvatar] = React.useState<AssistantAvatar>(
@@ -124,16 +143,14 @@ export function GeneralSection({
     onSettings({ ...settings, displaySetting: nextDisplay });
   };
 
-
   return (
     <>
       <SectionHeader
-        icon={UserRound}
         title={t("settings:general.title")}
         subtitle={t("settings:general.subtitle")}
       />
-      <div className="grid gap-6">
-        <div className="space-y-4 rounded-lg border bg-card p-5">
+      <SettingsStack>
+        <div className="space-y-5">
           <AvatarCropper
             value={avatar}
             fallbackName={name || "User"}
@@ -148,18 +165,30 @@ export function GeneralSection({
               onSettings({ ...settings, displaySetting: nextDisplay });
             }}
           />
-          <Separator />
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">{t("settings:general.nickname")}</span>
+          <SettingsField
+            label={t("settings:general.nickname")}
+            htmlFor={nicknameId}
+            trailing={
+              <AutosaveStatusRow
+                status={autosave.status}
+                onRetry={() => void autosave.saveNow()}
+                className="px-0"
+              />
+            }
+          >
             <Input
+              id={nicknameId}
               value={name}
               onChange={(event) => {
                 autosave.markDirty();
                 setName(event.target.value);
               }}
             />
-          </label>
-          <div className="grid gap-3 md:grid-cols-2">
+          </SettingsField>
+        </div>
+
+        <SettingsGroup title={t("settings:general.font_title")} fields>
+          <div className="grid gap-5 md:grid-cols-2">
             <FontPickerPair
               label={t("settings:general.ui_font")}
               enValue={textValue(display.uiFontFamily)}
@@ -193,11 +222,12 @@ export function GeneralSection({
               }
             />
           </div>
-          <div className="block space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">{t("settings:general.ui_font_size")}</span>
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground text-xs tabular-nums">
+          <SettingsField
+            label={t("settings:general.ui_font_size")}
+            hint={t("settings:general.ui_font_size_hint")}
+            trailing={
+              <>
+                <span className="text-xs tabular-nums text-[var(--ds-text-secondary)]">
                   {Math.round(uiFontSlider * 100)}%
                 </span>
                 <Button
@@ -210,8 +240,9 @@ export function GeneralSection({
                 >
                   {t("settings:general.reset")}
                 </Button>
-              </div>
-            </div>
+              </>
+            }
+          >
             <Slider
               value={[uiFontSlider]}
               min={0.85}
@@ -227,56 +258,33 @@ export function GeneralSection({
                 void patchDisplay({ uiFontSize: normalized });
               }}
             />
-            <p className="text-muted-foreground text-xs">
-              {t("settings:general.ui_font_size_hint")}
-            </p>
-          </div>
-          <div className="rounded-md border px-3 py-3">
-            <KeybindingSettings />
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            {[
-              ["showUserAvatar", "settings:general.opt.show_user_avatar"],
-              ["showAssistantBubble", "settings:general.opt.show_assistant_bubble"],
-              ["showModelIcon", "settings:general.opt.show_model_icon"],
-              ["showModelName", "settings:general.opt.show_model_name"],
-              ["showTokenUsage", "settings:general.opt.show_token_usage"],
-              ["showThinkingContent", "settings:general.opt.show_thinking"],
-              ["sendOnEnter", "settings:general.opt.send_on_enter"],
-              ["enableAutoScroll", "settings:general.opt.auto_scroll"],
-            ].map(([key, labelKey]) => (
-              <label
+          </SettingsField>
+        </SettingsGroup>
+
+        <SettingsGroup title={t("settings:general.display_title")}>
+          <SettingsRows>
+            {DISPLAY_TOGGLES.map(([key, labelKey]) => (
+              <SettingsSwitchRow
                 key={key}
-                className="flex items-center justify-between rounded-md border px-3 py-2"
-              >
-                <span className="text-sm">{t(labelKey)}</span>
-                <Switch
-                  checked={display[key] !== false}
-                  onCheckedChange={(checked) => void patchDisplay({ [key]: checked })}
-                />
-              </label>
+                label={t(labelKey)}
+                checked={display[key] !== false}
+                onCheckedChange={(checked) => void patchDisplay({ [key]: checked })}
+              />
             ))}
-          </div>
-          <div className="flex justify-end">
-            <AutosaveStatusRow
-              status={autosave.status}
-              onRetry={() => void autosave.saveNow()}
-            />
-          </div>
-        </div>
+          </SettingsRows>
+        </SettingsGroup>
+
+        <KeybindingSettings />
+
         {tauriReady && (
-          <div className="space-y-4 rounded-lg border bg-card p-5">
-            <div>
-              <h2 className="text-base font-medium">{t("settings:general.tray_title")}</h2>
-              <p className="mt-1 text-sm text-muted-foreground">{t("settings:general.tray_desc")}</p>
-            </div><label className="flex items-start justify-between gap-4 rounded-md border px-3 py-3">
-              <div className="min-w-0">
-                <div className="text-sm">{t("settings:general.minimize_to_tray")}</div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {t("settings:general.minimize_to_tray_hint")}
-                </div>
-              </div>
-              <Switch
+          <SettingsGroup
+            title={t("settings:general.tray_title")}
+            description={t("settings:general.tray_desc")}
+          >
+            <SettingsRows>
+              <SettingsSwitchRow
+                label={t("settings:general.minimize_to_tray")}
+                description={t("settings:general.minimize_to_tray_hint")}
                 checked={minimizeToTray}
                 onCheckedChange={async (checked) => {
                   // 乐观更新:先改 UI,失败回滚。invoke 走 Tauri command 写 user-config.json。
@@ -292,42 +300,40 @@ export function GeneralSection({
                   }
                 }}
               />
-            </label>
-            <div className="flex items-center justify-between gap-4 rounded-md border px-3 py-3">
-              <div className="min-w-0">
-                <div className="text-sm">{t("settings:general.quit_app")}</div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {t("settings:general.quit_app_hint")}
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  try {
-                    const { exit } = await import("@tauri-apps/plugin-process");
-                    await exit(0);
-                  } catch (err) {
-                    toast.error(t("settings:general.quit_failed"));
-                    console.warn("[tray] exit failed", err);
-                  }
-                }}
-              >
-                {t("settings:general.quit_app_button")}
-              </Button>
-            </div>
-          </div>
+              <SettingsRow
+                label={t("settings:general.quit_app")}
+                description={t("settings:general.quit_app_hint")}
+                control={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        const { exit } = await import("@tauri-apps/plugin-process");
+                        await exit(0);
+                      } catch (err) {
+                        toast.error(t("settings:general.quit_failed"));
+                        console.warn("[tray] exit failed", err);
+                      }
+                    }}
+                  >
+                    {t("settings:general.quit_app_button")}
+                  </Button>
+                }
+              />
+            </SettingsRows>
+          </SettingsGroup>
         )}
         {isWindows && (
-          <div className="space-y-4 rounded-lg border bg-card p-5">
-            <div>
-              <h2 className="text-base font-medium">{t("settings:general.shell_title")}</h2>
-              <p className="mt-1 text-sm text-muted-foreground">{t("settings:general.shell_path_hint")}</p>
-            </div>
-            <label className="block space-y-2">
-              <span className="text-sm">{t("settings:general.shell_path")}</span>
+          <SettingsGroup
+            title={t("settings:general.shell_title")}
+            description={t("settings:general.shell_path_hint")}
+            fields
+          >
+            <SettingsField label={t("settings:general.shell_path")} htmlFor={shellPathId}>
               <div className="flex items-center gap-2">
                 <Input
+                  id={shellPathId}
                   value={shellPath}
                   disabled={shellBusy}
                   placeholder={t("settings:general.shell_path_placeholder")}
@@ -349,10 +355,10 @@ export function GeneralSection({
                   {t("settings:general.shell_recheck")}
                 </Button>
               </div>
-            </label>
-          </div>
+            </SettingsField>
+          </SettingsGroup>
         )}
-      </div>
+      </SettingsStack>
     </>
   );
 }
