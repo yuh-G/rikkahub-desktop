@@ -160,10 +160,11 @@ export function SettingsRow({
   className?: string;
 }) {
   const Label = htmlFor ? "label" : "div";
+  // flex-wrap:窄屏整页里宽控件(下拉框)放不下时整体折到标题下方,而不是把标题挤成一列字。
   return (
     <div className={cn("py-3", className)}>
-      <div className="flex items-center justify-between gap-4">
-        <div className="min-w-0 flex-1">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="min-w-[min(12rem,100%)] flex-1">
           <Label
             htmlFor={htmlFor}
             className="block text-sm font-medium text-[var(--ds-text-primary)]"

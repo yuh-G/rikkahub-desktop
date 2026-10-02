@@ -1,4 +1,4 @@
-// components/settings/default-models.tsx — 默认模型与系统提示词分区（纯搬迁自 routes/settings.tsx）
+// components/settings/default-models.tsx — 默认模型与系统提示词分区
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -29,7 +29,14 @@ import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import api from "~/services/api";
 import type { Settings } from "~/types";
-import { SectionHeader, textValue } from "~/components/settings/shared";
+import {
+  SectionHeader,
+  SettingsGroup,
+  SettingsRow,
+  SettingsRows,
+  textValue,
+} from "~/components/settings/shared";
+
 
 type ModelKey =
   | "chatModelId"
@@ -397,46 +404,50 @@ export function DefaultModelsSection({
         title={t("settings:models.title")}
         subtitle={t("settings:models.subtitle")}
       />
-      <div className="space-y-4">
-        <div className="rounded-md border bg-card p-3 text-sm text-muted-foreground">
-          {t("settings:models.note")}
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
+      <SettingsGroup
+        description={t("settings:models.note")}
+        action={
+          <span className="text-xs text-[var(--ds-text-secondary)]">{t("settings:models.autosaved")}</span>
+        }
+      >
+        <SettingsRows className="mt-2">
           {features.map((feature) => {
             const Icon = feature.icon;
             return (
-              <div key={feature.modelKey} className="rounded-lg border bg-card p-4">
-                <div className="mb-3 flex items-start gap-3">
-                  <div className="rounded-md border bg-muted/40 p-2">
-                    <Icon className="size-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium">{feature.title}</div>
-                    <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
-                      {feature.description}
-                    </div>
-                  </div>
-                  {feature.promptKey ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => setEditingPrompt(feature.promptKey ?? null)}
-                      title={t("settings:models.edit_prompt")}
-                    >
-                      <Settings2 className="size-4" />
-                    </Button>
-                  ) : null}
-                </div>
-                {modelSelect(feature.modelKey)}
-              </div>
+              <SettingsRow
+                key={feature.modelKey}
+                label={
+                  <span className="flex items-center gap-2">
+                    <Icon className="size-4 shrink-0 text-[var(--ds-icon)]" />
+                    {feature.title}
+                  </span>
+                }
+                description={<span className="block pl-6">{feature.description}</span>}
+                control={
+                  <>
+                    <div className="w-60">{modelSelect(feature.modelKey)}</div>
+                    {/* 无 Prompt 的场景占同宽空位,保证各行下拉框右缘对齐成一列。 */}
+                    {feature.promptKey ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setEditingPrompt(feature.promptKey ?? null)}
+                        title={t("settings:models.edit_prompt")}
+                        aria-label={t("settings:models.edit_prompt")}
+                      >
+                        <Settings2 className="size-4" />
+                      </Button>
+                    ) : (
+                      <span className="size-8 shrink-0" aria-hidden="true" />
+                    )}
+                  </>
+                }
+              />
             );
           })}
-        </div>
-        <div className="flex justify-end text-xs text-muted-foreground">
-          {t("settings:models.autosaved")}
-        </div>
-      </div>
+        </SettingsRows>
+      </SettingsGroup>
       <Dialog
         open={Boolean(editingPrompt)}
         onOpenChange={(open) => {
