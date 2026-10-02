@@ -84,18 +84,19 @@
   "search": {
     "default_service_label": "搜索",
     "update_search_failed": "更新网络搜索失败",
-    "switch_service_failed": "切换搜索服务失败",
+    "switch_service_failed": "切换搜索引擎失败",
     "update_builtin_failed": "更新内置搜索失败",
     "title": "网络搜索",
-    "description": "配置联网搜索与搜索服务",
+    "description": "配置联网搜索与搜索引擎",
     "builtin_title": "模型内置搜索",
     "builtin_desc": "使用模型原生搜索能力",
     "web_title": "联网搜索",
     "status_enabled": "已启用",
     "status_disabled": "已关闭",
     "unknown": "未知",
-    "empty": "暂无可用搜索服务",
-    "builtin_notice": "当前已启用模型内置搜索，应用搜索服务设置暂不生效。"
+    "empty": "暂无可用搜索引擎",
+    "builtin_notice": "当前已启用模型内置搜索，应用搜索引擎设置暂不生效。",
+    "empty_hint": "没有可用的搜索引擎。请前往「设置 → 网络 → 搜索引擎」，配置 API Key 并通过测试。"
   },
   "chat": {
     "attachment_image": "图片",

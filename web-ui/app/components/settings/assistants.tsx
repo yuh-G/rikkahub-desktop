@@ -16,7 +16,7 @@ import { UIAvatar } from "~/components/ui/ui-avatar";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { createId } from "~/lib/id";
 import { getModelDisplayName } from "~/lib/display";
-import { patchSettingsLocal } from "~/lib/settings-patch";
+import { patchSettingsLocal, upsertById } from "~/lib/settings-patch";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -200,7 +200,7 @@ export function AssistantsSection({
     }
     patchSettingsLocal((current) => ({
       assistantId: created.id,
-      assistants: [...current.assistants, created],
+      assistants: upsertById(current.assistants, created),
     }));
     setAssistantId(created.id);
     toast.success(t("settings:assistants.added"));
@@ -466,7 +466,7 @@ function AssistantEditor({
                 await api.post("settings/assistant/detail", nextDraft);
                 patchSettingsLocal((current) => ({
                   assistantId: nextDraft.id,
-                  assistants: current.assistants.map((item) => (item.id === nextDraft.id ? nextDraft : item)),
+                  assistants: upsertById(current.assistants, nextDraft),
                 }));
               }}
             />

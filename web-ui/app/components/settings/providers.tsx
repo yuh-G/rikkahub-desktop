@@ -29,7 +29,7 @@ import { cn } from "~/lib/utils";
 import { isBalanceResultPathValid } from "~/lib/json-expression";
 import { createId } from "~/lib/id";
 import { getModelDisplayName } from "~/lib/display";
-import { patchSettingsLocal } from "~/lib/settings-patch";
+import { patchSettingsLocal, upsertById } from "~/lib/settings-patch";
 import { copyTextToClipboard } from "~/lib/clipboard";
 import { isDesktopShell, openExternal } from "~/lib/external-link";
 import api, { appendWebAuthQuery } from "~/services/api";
@@ -1212,7 +1212,7 @@ export function ProvidersSection({
     next.name = t("settings:providers.custom_name");
     next.shortDescription = t("settings:providers.custom_desc");
     await api.post("settings/provider", next);
-    patchSettingsLocal((current) => ({ providers: [...current.providers, next] }));
+    patchSettingsLocal((current) => ({ providers: upsertById(current.providers, next) }));
     setSelectedId(next.id);
     toast.success(t("settings:providers.added"));
   };

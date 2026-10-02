@@ -311,7 +311,7 @@ export function SearchPickerButtonImpl({ disabled = false, className }: SearchPi
                     if (visibleServices.length === 0) {
                       return (
                         <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                          没有可用的搜索服务。请前往设置 → 搜索服务，配置 API Key 并通过测试。
+                          {t("search.empty_hint")}
                         </div>
                       );
                     }

@@ -7,6 +7,7 @@ import type { Assistant, JsonValue, Provider, ProxyConfig, SearchService } from 
 import type { Settings } from "../../foundation/types/settings";
 import { getStringArray, id, isRecord } from "../../foundation/utils";
 import { RUNNING_IN_CONTAINER } from "../../foundation/platform";
+import { searchSelectionAfterDelete } from "../../foundation/search-selection";
 import { handleSetWebPassword, handleWebAuthStatus, stripAuthSecrets } from "../auth";
 import { refreshShellAvailability } from "../../workspace/runtime";
 import { shellStatusPayload } from "./workspaces";
@@ -702,8 +703,8 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     }
     updateSettings({
       ...state.settings,
+      // 新建只追加,不改对话正在用的搜索服务:当前服务只在主界面搜索选择器里切换。
       searchServices: existing ? services.map((item) => (String(item.id) === String(service.id) ? service : item)) : [...services, service],
-      searchServiceSelected: existing ? state.settings.searchServiceSelected : services.length,
       // R1-12:手动保存/重加某 type → 撤销其删除墓碑(之后再删会重新记录)。
       dismissedSearchServiceTypes: state.settings.dismissedSearchServiceTypes
         .filter((t) => t !== String(service.type ?? "").toLowerCase()),
@@ -754,7 +755,7 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
       dismissedSearchServiceTypes: removedType && !typeStillPresent
         ? uniqueStrings([...state.settings.dismissedSearchServiceTypes, removedType])
         : state.settings.dismissedSearchServiceTypes,
-      searchServiceSelected: Math.min(state.settings.searchServiceSelected, Math.max(0, nextServices.length - 1)),
+      searchServiceSelected: searchSelectionAfterDelete(services, state.settings.searchServiceSelected, idValue),
     });
     return json({ status: "deleted" });
   }

@@ -13,6 +13,8 @@ import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { cn } from "~/lib/utils";
 import { createId } from "~/lib/id";
+import { patchSettingsLocal, upsertById } from "~/lib/settings-patch";
+import { refreshSettingsStore } from "~/lib/settings-sync";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { SearchServiceOption, Settings } from "~/types";
@@ -24,12 +26,16 @@ import {
   resolveServiceEndpoint,
   serviceEndpointBase,
 } from "@server/search/service-endpoints";
+import { searchSelectionAfterDelete } from "@server/foundation/search-selection";
 import {
   clone,
   moveItem,
   numberText,
   PasswordInput,
+  SettingsDetailFooter,
+  SettingsDetailHeader,
   SettingsSplit,
+  SettingsStack,
   SortableRow,
   textValue,
 } from "~/components/settings/shared";
@@ -251,7 +257,6 @@ function toSearchService(value: Record<string, unknown>): SearchServiceOption {
 
 export function SearchSection({
   settings,
-  onSettings,
 }: {
   settings: Settings;
   onSettings: (settings: Settings) => void;
@@ -283,15 +288,7 @@ export function SearchSection({
         draft,
       );
       const savedService = toSearchService(result.service);
-      const exists = settings.searchServices.some(
-        (item) => String(item.id) === String(savedService.id),
-      );
-      const searchServices = exists
-        ? settings.searchServices.map((item) =>
-            String(item.id) === String(savedService.id) ? savedService : item,
-          )
-        : [...settings.searchServices, savedService];
-      onSettings({ ...settings, searchServices });
+      patchSettingsLocal((current) => ({ searchServices: upsertById(current.searchServices, savedService) }));
     },
     { onSaveError: (error) => toast.error((error as Error).message || t("settings:search.autosave_failed")) },
   );
@@ -310,7 +307,7 @@ export function SearchSection({
 
   const patchDraft = (patch: Record<string, unknown>) => {
     autosave.markDirty();
-    setDraft({ ...draft, ...patch });
+    setDraft((current) => ({ ...current, ...patch }));
   };
 
   const moveSearchService = async (from: number, to: number) => {
@@ -320,17 +317,11 @@ export function SearchSection({
       0,
       searchServices.findIndex((item) => item.id === selectedId),
     );
-    const next = { ...settings, searchServices, searchServiceSelected };
-    onSettings(next);
+    patchSettingsLocal({ searchServices, searchServiceSelected });
     await api.post("settings/search/reorder", {
       ids: searchServices.map((item) => item.id),
       selectedId,
     });
-  };
-  const selectService = async (index: number) => {
-    setSelectedId(String(settings.searchServices[index]?.id ?? ""));
-    onSettings({ ...settings, searchServiceSelected: index });
-    await api.post("settings/search/service", { index });
   };
   // 测试前的"确保服务端拿到当前草稿"。原手动 save 与自动保存是两份重复的 POST+合并逻辑,
   // 现统一为 hook 的 persist 体;原顺带改写全局 searchServiceSelected 的行为是自动保存
@@ -342,12 +333,8 @@ export function SearchSection({
       .post<{ service: Record<string, unknown> }>("settings/search/service/detail", service)
       .then((result) => {
         const savedService = toSearchService(result.service);
-        const searchServices = [...settings.searchServices, savedService];
-        onSettings({
-          ...settings,
-          searchServices,
-          searchServiceSelected: searchServices.length - 1,
-        });
+        // 新建只追加并打开编辑,不改对话正在用的搜索服务(与后端一致)。
+        patchSettingsLocal((current) => ({ searchServices: upsertById(current.searchServices, savedService) }));
         setDraft(savedService as unknown as Record<string, unknown>);
         setSelectedId(String(savedService.id));
         setTestResult("");
@@ -395,7 +382,7 @@ export function SearchSection({
         }
         toast.success(t("settings:search.test_ok"));
         // Refresh settings so the "已通过测试" badge updates (server marks testPassed on success).
-        onSettings(await api.get<Settings>("settings"));
+        await refreshSettingsStore();
       } else {
         // 多 key 全部失败:展示汇总 + 每个 key 的失败明细;单 key 失败:直接给出友好原因
         // (如"密钥无效或已过期"),比原来的 "401: {body}" 更易懂。
@@ -437,10 +424,18 @@ export function SearchSection({
     // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
     await autosave.discard();
     await api.delete(`settings/search/service/${encodeURIComponent(String(draft.id))}`);
-    const searchServices = settings.searchServices.filter(
-      (item) => String(item.id) !== String(draft.id),
-    );
-    onSettings({ ...settings, searchServices, searchServiceSelected: 0 });
+    let searchServices: Settings["searchServices"] = [];
+    patchSettingsLocal((current) => {
+      searchServices = current.searchServices.filter((item) => String(item.id) !== String(draft.id));
+      return {
+        searchServices,
+        searchServiceSelected: searchSelectionAfterDelete(
+          current.searchServices,
+          current.searchServiceSelected,
+          String(draft.id),
+        ),
+      };
+    });
     setSelectedId(String(searchServices[0]?.id ?? ""));
     // 删到空:重对齐 effect 无条目可载,草稿若停留在已删实体上,再编辑一笔就会经
     // 自动保存复活它。复位为挂载空列表时同款的空白新草稿(复审 F2)。
@@ -463,10 +458,10 @@ export function SearchSection({
               id={String(service.id ?? index)}
               index={index}
               active={String(service.id) === String(draft.id)}
-              onSelect={() => selectService(index)}
+              onSelect={() => setSelectedId(String(service.id ?? ""))}
               onMove={moveSearchService}
             >
-              <span className="grid min-w-0 grid-cols-[34px_minmax(0,1fr)_36px] items-center gap-3 text-left">
+              <span className="grid min-w-0 grid-cols-[34px_minmax(0,1fr)] items-center gap-3 text-left">
                 <AIIcon
                   name={searchServiceLabelForType(textValue(service.type))}
                   size={30}
@@ -509,35 +504,39 @@ export function SearchSection({
                     ) : null}
                   </span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    {textValue(service.type) || JSON.stringify(service)}
+                    {/* 缺 type 时绝不能回退成整条 JSON——里面有明文 apiKey。 */}
+                    {textValue(service.type) || t("settings:search.field.custom")}
                   </span>
                 </span>
-                {index === settings.searchServiceSelected ? (
-                  <span className="shrink-0 text-xs text-primary">
-                    {t("settings:search.current")}
-                  </span>
-                ) : null}
               </span>
             </SortableRow>
           ))}
           </div>
         }
       >
-        <div className="space-y-5">
+        <div className="@container">
+        <SettingsStack>
           <div className="flex items-center gap-3">
             <AIIcon name={searchServiceLabelForType(textValue(draft.type))} size={40} />
-            <div>
-              <div className="text-lg font-medium">
-                {textValue(draft.name) ||
+            <div className="min-w-0 flex-1">
+              <SettingsDetailHeader
+                title={
+                  textValue(draft.name) ||
                   searchServiceLabelForType(textValue(draft.type)) ||
-                  t("settings:search.service_default")}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {textValue(draft.type) || "custom"}
-              </div>
+                  t("settings:search.service_default")
+                }
+                description={textValue(draft.type) || t("settings:search.field.custom")}
+                action={
+                  <Button variant="outline" size="sm" onClick={() => void test()} disabled={testing}>
+                    {testing ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
+                    {t("settings:search.test")}
+                  </Button>
+                }
+              />
             </div>
           </div>
-          <div className="grid gap-4 md:grid-cols-2">
+          <section>
+          <div className="grid gap-4 @xl:grid-cols-2">
             <label className="space-y-2">
               <span className="text-sm font-medium">{t("settings:search.name")}</span>
               <Input
@@ -590,7 +589,7 @@ export function SearchSection({
               </Select>
             </label>
             {textValue(draft.type) !== "searxng" && textValue(draft.type) !== "custom_js" ? (
-              <div className="space-y-2 md:col-span-2">
+              <div className="space-y-2 @xl:col-span-2">
                 <span className="text-sm font-medium">API Key</span>
                 <SearchApiKeyList
                   value={textValue(draft.apiKey)}
@@ -612,7 +611,7 @@ export function SearchSection({
               const preview = raw ? resolveServiceEndpoint(draft as Record<string, unknown>) : "";
               const badScheme = raw.length > 0 && !/^https?:\/\//i.test(raw);
               return (
-                <label className="space-y-2 md:col-span-2">
+                <label className="space-y-2 @xl:col-span-2">
                   <span className="text-sm font-medium">
                     {t("settings:search.request_url")}
                     {type === "searxng" ? ` — ${t("settings:search.request_url_required")}` : ""}
@@ -643,7 +642,7 @@ export function SearchSection({
               // 豆包(火山 Search-Infinity)两模:global=综合搜索(带图),custom=网页搜索。
               // 对齐 APP DoubaoOptions 的 Mode 分段选择器。
               <label className="space-y-2">
-                <span className="text-sm font-medium">Mode</span>
+                <span className="text-sm font-medium">{t("settings:search.field.mode")}</span>
                 <Select
                   value={textValue(draft.mode) || "custom"}
                   onValueChange={(mode) => patchDraft({ mode })}
@@ -652,8 +651,8 @@ export function SearchSection({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="global">Global</SelectItem>
-                    <SelectItem value="custom">Custom</SelectItem>
+                    <SelectItem value="global">{t("settings:search.field.global")}</SelectItem>
+                    <SelectItem value="custom">{t("settings:search.field.custom")}</SelectItem>
                   </SelectContent>
                 </Select>
               </label>
@@ -661,7 +660,7 @@ export function SearchSection({
             {textValue(draft.type) === "searxng" ? (
               <>
                 <label className="space-y-2">
-                  <span className="text-sm font-medium">Engines</span>
+                  <span className="text-sm font-medium">{t("settings:search.field.engines")}</span>
                   <Input
                     value={textValue(draft.engines)}
                     onChange={(event) => patchDraft({ engines: event.target.value })}
@@ -669,7 +668,7 @@ export function SearchSection({
                   />
                 </label>
                 <label className="space-y-2">
-                  <span className="text-sm font-medium">Language</span>
+                  <span className="text-sm font-medium">{t("settings:search.field.language")}</span>
                   <Input
                     value={textValue(draft.language)}
                     onChange={(event) => patchDraft({ language: event.target.value })}
@@ -677,14 +676,14 @@ export function SearchSection({
                   />
                 </label>
                 <label className="space-y-2">
-                  <span className="text-sm font-medium">Username</span>
+                  <span className="text-sm font-medium">{t("settings:search.field.username")}</span>
                   <Input
                     value={textValue(draft.username)}
                     onChange={(event) => patchDraft({ username: event.target.value })}
                   />
                 </label>
                 <label className="space-y-2">
-                  <span className="text-sm font-medium">Password</span>
+                  <span className="text-sm font-medium">{t("settings:search.field.password")}</span>
                   <PasswordInput
                     value={textValue(draft.password)}
                     onChange={(password) => patchDraft({ password })}
@@ -694,8 +693,8 @@ export function SearchSection({
             ) : null}
             {textValue(draft.type) === "custom_js" ? (
               <>
-                <label className="space-y-2 md:col-span-2">
-                  <span className="text-sm font-medium">Search Script</span>
+                <label className="space-y-2 @xl:col-span-2">
+                  <span className="text-sm font-medium">{t("settings:search.field.search_script")}</span>
                   <Textarea
                     value={textValue(draft.searchScript)}
                     onChange={(event) => patchDraft({ searchScript: event.target.value })}
@@ -705,8 +704,8 @@ export function SearchSection({
                     }
                   />
                 </label>
-                <label className="space-y-2 md:col-span-2">
-                  <span className="text-sm font-medium">Scrape Script</span>
+                <label className="space-y-2 @xl:col-span-2">
+                  <span className="text-sm font-medium">{t("settings:search.field.scrape_script")}</span>
                   <Textarea
                     value={textValue(draft.scrapeScript)}
                     onChange={(event) => patchDraft({ scrapeScript: event.target.value })}
@@ -728,9 +727,9 @@ export function SearchSection({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="basic">Basic</SelectItem>
-                  <SelectItem value="standard">Standard</SelectItem>
-                  <SelectItem value="advanced">Advanced</SelectItem>
+                  <SelectItem value="basic">{t("settings:search.field.depth_basic")}</SelectItem>
+                  <SelectItem value="standard">{t("settings:search.field.depth_standard")}</SelectItem>
+                  <SelectItem value="advanced">{t("settings:search.field.depth_advanced")}</SelectItem>
                 </SelectContent>
               </Select>
             </label>
@@ -744,37 +743,13 @@ export function SearchSection({
               />
             </label>
           </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={test} disabled={testing}>
-              {testing ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Database className="size-4" />
-              )}
-              {t("settings:search.test")}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={remove}
-              disabled={
-                !settings.searchServices.some((item) => String(item.id) === String(draft.id))
-              }
-            >
-              <Trash2 className="size-4" />
-              {t("settings:search.delete")}
-            </Button>
-            <AutosaveStatusRow
-              status={autosave.status}
-              onRetry={() => void autosave.saveNow()}
-            />
-          </div>
           {testResult ? (
-            <pre className="max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
+            <pre className="mt-4 max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
               {testResult}
             </pre>
           ) : null}
           {keyTestEntries.length > 1 ? (
-            <div className="space-y-1.5 rounded-md border bg-card p-3">
+            <div className="mt-3 space-y-1.5 rounded-md border bg-card p-3">
               <div className="text-xs font-medium text-muted-foreground">
                 {t("settings:search.key_status_title")}
               </div>
@@ -808,9 +783,22 @@ export function SearchSection({
               ))}
             </div>
           ) : null}
+          </section>
+          <SettingsDetailFooter
+            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+          >
+            <Button
+              variant="outline"
+              onClick={() => void remove()}
+              disabled={!settings.searchServices.some((item) => String(item.id) === String(draft.id))}
+            >
+              <Trash2 className="size-4" />
+              {t("settings:search.delete")}
+            </Button>
+          </SettingsDetailFooter>
+        </SettingsStack>
         </div>
       </SettingsSplit>
     </>
-
   );
 }

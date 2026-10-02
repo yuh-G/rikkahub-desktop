@@ -84,18 +84,19 @@
   "search": {
     "default_service_label": "Search",
     "update_search_failed": "Failed to update web search",
-    "switch_service_failed": "Failed to switch search service",
+    "switch_service_failed": "Failed to switch search engine",
     "update_builtin_failed": "Failed to update built-in search",
     "title": "Web Search",
-    "description": "Configure web search and search services",
+    "description": "Configure web search and search engines",
     "builtin_title": "Built-in model search",
     "builtin_desc": "Use the model's native search capability",
     "web_title": "Web search",
     "status_enabled": "Enabled",
     "status_disabled": "Disabled",
     "unknown": "Unknown",
-    "empty": "No search services available",
-    "builtin_notice": "Built-in model search is enabled. App search service settings won't take effect."
+    "empty": "No search engines available",
+    "builtin_notice": "Built-in model search is enabled. App search engine settings won't take effect.",
+    "empty_hint": "No search engines available. Go to Settings → Network → Search engines, set an API key and pass the test."
   },
   "chat": {
     "attachment_image": "Image",

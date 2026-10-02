@@ -20,6 +20,17 @@ export function patchSettingsLocal(patch: Partial<Settings> | ((settings: Settin
   store.setSettings({ ...store.settings, ...next });
 }
 
+/**
+ * 按 id 替换列表中的一项,不存在则追加。新建/保存后的乐观写入一律用它:SSE 回推可能先于
+ * 请求响应到达,此时最新快照里已经有这一项,直接追加会出现重复条目。
+ */
+export function upsertById<T extends { id?: unknown }>(items: readonly T[], item: T): T[] {
+  const id = String(item.id);
+  return items.some((existing) => String(existing.id) === id)
+    ? items.map((existing) => (String(existing.id) === id ? item : existing))
+    : [...items, item];
+}
+
 function patchDisplayLocal(patch: Partial<DisplaySetting>): void {
   const settings = useSettingsStore.getState().settings;
   if (settings) patchSettingsLocal({ displaySetting: { ...settings.displaySetting, ...patch } });
