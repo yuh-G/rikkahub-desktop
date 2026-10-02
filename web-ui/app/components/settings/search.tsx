@@ -30,6 +30,7 @@ import {
   numberText,
   PasswordInput,
   SectionHeader,
+  SettingsSplit,
   SortableRow,
   textValue,
 } from "~/components/settings/shared";
@@ -454,9 +455,10 @@ export function SearchSection({
         title={t("settings:search.title")}
         subtitle={t("settings:search.subtitle")}
       />
-      <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <div className="space-y-2 rounded-lg border bg-card p-2">
-          <Button className="w-full justify-start" variant="outline" onClick={addService}>
+      <SettingsSplit
+        list={
+          <div className="space-y-1">
+          <Button className="mb-1 w-full justify-start" variant="outline" onClick={addService}>
             <Plus className="size-4" />
             {t("settings:search.add")}
           </Button>
@@ -523,8 +525,10 @@ export function SearchSection({
               </span>
             </SortableRow>
           ))}
-        </div>
-        <div className="space-y-5 rounded-lg border bg-card p-5">
+          </div>
+        }
+      >
+        <div className="space-y-5">
           <div className="flex items-center gap-3">
             <AIIcon name={searchServiceLabelForType(textValue(draft.type))} size={40} />
             <div>
@@ -810,7 +814,8 @@ export function SearchSection({
             </div>
           ) : null}
         </div>
-      </div>
+      </SettingsSplit>
     </>
+
   );
 }
