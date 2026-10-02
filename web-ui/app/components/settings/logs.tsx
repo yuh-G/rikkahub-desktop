@@ -10,6 +10,7 @@ import { JsonTree, tryParseJson } from "~/components/ui/json-tree";
 import { cn } from "~/lib/utils";
 import { copyTextToClipboard } from "~/lib/clipboard";
 import { SettingsRows } from "~/components/settings/shared";
+import { SegmentedTabs } from "~/components/ui/segmented-tabs";
 import { appErrorText, useAppErrorsStore } from "~/stores";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { AppErrorDto } from "~/types";
@@ -51,25 +52,14 @@ export function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: ()
   ];
   return (
     <>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          {filterOptions.map(({ id, label }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setFilter(id)}
-              aria-pressed={filter === id}
-              className={cn(
-                "rounded-full border px-3 py-1 text-xs transition",
-                filter === id
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <SegmentedTabs
+          size="sm"
+          aria-label={t("settings:subnav.stats.logs")}
+          items={filterOptions.map(({ id, label }) => ({ value: id, label }))}
+          value={filter}
+          onChange={setFilter}
+        />
         {feed.length > 0 ? (
           <button
             type="button"
@@ -81,6 +71,7 @@ export function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: ()
           </button>
         ) : null}
       </div>
+      <p className="mb-3 text-xs text-[var(--ds-text-tertiary)]">{t("settings:logs.subtitle")}</p>
       {feed.length === 0 ? (
         <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           {t("settings:logs.empty")}

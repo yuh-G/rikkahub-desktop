@@ -223,6 +223,12 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
     });
     return new Response(stream, { headers: sseHeaders() });
   }
+  // 「知道了」:清除上次云端恢复的降级报告(PC-only、不参与导出)。只在报告有跳过/降级时
+  // 才会显示,用户确认后即消失,刷新不再出现。
+  if (path === "data/restore-report" && request.method === "DELETE") {
+    if (state.settings.lastRestoreReport) updateSettings({ ...state.settings, lastRestoreReport: null });
+    return json({ status: "ok" });
+  }
   if (path === "data/export/status" && request.method === "GET") {
     const cachedDbPath = join(dataDir, "rikka_hub_cached.db");
     let schemaInfo: { identityHash: string; version: number } | null = null;

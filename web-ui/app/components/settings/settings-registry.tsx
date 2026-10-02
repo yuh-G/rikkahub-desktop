@@ -9,7 +9,7 @@ import { useTranslation } from "react-i18next";
 
 import { AboutSection, DonateSection } from "~/components/settings/about";
 import { AssistantsSection } from "~/components/settings/assistants";
-import { DataSection } from "~/components/settings/data";
+import { BackupSection, WebServiceSection } from "~/components/settings/data";
 import { DefaultModelsSection } from "~/components/settings/default-models";
 import {
   McpSection,
@@ -98,8 +98,8 @@ export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<Setting
   "speech/tts": TtsSection,
   "speech/asr": AsrSection,
   memory: MemorySection,
-  "data/backup": DataSection,
-  "data/server": DataSection,
+  "data/backup": BackupSection,
+  "data/server": WebServiceSection,
   "stats/usage": StatsSectionHost,
   "stats/logs": LogsSectionHost,
   donate: DonateSectionHost,

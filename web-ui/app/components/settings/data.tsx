@@ -1,4 +1,4 @@
-// components/settings/data.tsx — 数据备份分区（WebDAV/S3/导入导出）
+// components/settings/data.tsx — 数据管理两页:备份与恢复(本地 / WebDAV / S3)、Web 服务(访问密码)。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -23,6 +23,9 @@ import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { cn } from "~/lib/utils";
 import api, { appendWebAuthQuery, clearWebAuthToken, fetchWebAuthStatus, requestWebAuthToken, setWebPassword, type WebAuthStatus } from "~/services/api";
 import { isTauriEnvironment } from "~/lib/system-info";
+import { patchSettingsLocal } from "~/lib/settings-patch";
+import { useSettingsStore } from "~/stores/app-store";
+import { patchBackupTask, patchRemoteTask, useBackupTaskStore, type RemoteBackupItem } from "~/stores/backup-task-store";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { S3Config, Settings, WebDavConfig } from "~/types";
 import {
@@ -32,20 +35,6 @@ import {
 } from "~/components/settings/shared";
 
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
-
-interface S3BackupItem {
-  href: string;
-  displayName: string;
-  size: number;
-  lastModified: string;
-}
-
-interface WebDavBackupItem {
-  href: string;
-  displayName: string;
-  size: number;
-  lastModified: string;
-}
 
 interface AndroidSchemaStatus {
   hasAndroidSchema: boolean;
@@ -58,6 +47,10 @@ interface AndroidSchemaStatus {
 // 同步"徽章)从界面隐藏但代码完整保留:后端 data/register-schema 端点与本组件的上传/
 // 状态逻辑原样在,未来若需重新引导用户注册(例如换底座到更高版本 schema),翻此开关即回。
 const ANDROID_COMPAT_CARD_ENABLED: boolean = false;
+
+// WebDAV「设置与会话 / 上传文件」选择:items 字段只被规整、备份流程从不读取(恒为全量备份),
+// 复选框等于假开关,先隐藏。后端实现选择性备份后置 true 恢复;字段与文案保留。
+const WEBDAV_ITEMS_SELECTION_ENABLED: boolean = false;
 
 // A 族闪动修复:schemaStatus 上次已知值缓存(内存 + localStorage 镜像)。
 // 病根:该状态挂载后异步 GET,首帧 null 曾被当"未注册"渲染 —— 安卓兼容卡片以
@@ -90,9 +83,9 @@ function rememberSchemaStatus(status: AndroidSchemaStatus): void {
   }
 }
 
-export function DataSection({
+/** 数据管理 › 备份与恢复:本地备份与恢复、上次云端恢复报告、WebDAV、S3。 */
+export function BackupSection({
   settings,
-  onSettings,
 }: {
   settings: Settings;
   onSettings: (settings: Settings) => void;
@@ -101,12 +94,18 @@ export function DataSection({
   const s3PathStyleId = React.useId();
   const importInputRef = React.useRef<HTMLInputElement>(null);
   const schemaInputRef = React.useRef<HTMLInputElement>(null);
-  const [exporting, setExporting] = React.useState(false);
-  const [exportProgress, setExportProgress] = React.useState(0);
-  const [exportedBytes, setExportedBytes] = React.useState(0);
-  const [exportTotalBytes, setExportTotalBytes] = React.useState(0);
-  const [importing, setImporting] = React.useState(false);
-  const [importPhase, setImportPhase] = React.useState<"idle" | "uploading" | "processing">("idle");
+  // 长任务状态在模块级 store(见 backup-task-store):切到别的页再回来,进度与禁用态仍在。
+  const task = useBackupTaskStore();
+  const { exporting, importing, importPhase, importProgress } = task;
+  const exportedBytes = task.exportLoaded;
+  const exportTotalBytes = task.exportTotal;
+  const exportProgress = exportTotalBytes > 0 ? Math.round((exportedBytes / exportTotalBytes) * 100) : 0;
+  const webDavBusy = task.remote.webdav.busy;
+  const webDavBackupProgress = task.remote.webdav.progress;
+  const webDavItems = task.remote.webdav.items;
+  const s3Busy = task.remote.s3.busy;
+  const s3BackupProgress = task.remote.s3.progress;
+  const s3Items = task.remote.s3.items;
 
   // 缓存播种 + 写穿透(下方 effect):所有 setSchemaStatus 调用点(挂载 GET/导出前刷新/
   // 注册成功)的结果统一落缓存,回访零闪动。
@@ -115,90 +114,34 @@ export function DataSection({
   );
   const [registeringSchema, setRegisteringSchema] = React.useState(false);
   const [schemaExpanded, setSchemaExpanded] = React.useState(false);
-  const [importProgress, setImportProgress] = React.useState(0); // 0-100 during upload
   // webDavConfig/s3Config 由服务端 normalizeState 保证在场且默认值同源,类型单源后无需兜底。
   const defaultWebDav = settings.webDavConfig;
   const [webDavDraft, setWebDavDraft] = React.useState<WebDavConfig>(defaultWebDav);
-  const [webDavItems, setWebDavItems] = React.useState<WebDavBackupItem[]>([]);
-  const [webDavBusy, setWebDavBusy] = React.useState("");
-  const [webDavBackupProgress, setWebDavBackupProgress] = React.useState<{
-    message: string;
-    percent: number;
-  } | null>(null);
   const [showWebDavPassword, setShowWebDavPassword] = React.useState(false);
   // R8-2:防抖自动保存统一走共享三件套 hook(保存窗口内键击不丢,语义见 hook 文件头)。
   const webDavAutosave = useAutosaveDraft(
     async () => {
       const result = await api.post<{ config: WebDavConfig }>("data/webdav/config", webDavDraft);
-      onSettings({ ...settings, webDavConfig: result.config });
+      patchSettingsLocal({ webDavConfig: result.config });
     },
     { onSaveError: (error) => toast.error((error as Error).message || t("settings:data.webdav_autosave_failed")) },
   );
 
   const defaultS3 = settings.s3Config;
   const [s3Draft, setS3Draft] = React.useState<S3Config>(defaultS3);
-  const [s3Items, setS3Items] = React.useState<S3BackupItem[]>([]);
-  const [s3Busy, setS3Busy] = React.useState("");
-  const [s3BackupProgress, setS3BackupProgress] = React.useState<{
-    message: string;
-    percent: number;
-  } | null>(null);
   const [showS3Secret, setShowS3Secret] = React.useState(false);
-
-  // —— 访问密码(P1):状态经独立端点 /api/web-auth/status(只回布尔,不含哈希)。——
-  const [webAuthStatus, setWebAuthStatus] = React.useState<WebAuthStatus | null>(null);
-  const [webPwCurrent, setWebPwCurrent] = React.useState("");
-  const [webPwNew, setWebPwNew] = React.useState("");
-  const [webPwBusy, setWebPwBusy] = React.useState(false);
-  const refreshWebAuthStatus = React.useCallback(async () => {
-    try {
-      setWebAuthStatus(await fetchWebAuthStatus());
-    } catch {
-      // 状态探测失败(网络抖动)→ 保持现状,密码表单按已有 settings.webServerJwtEnabled 兜底显示。
-    }
-  }, []);
-  React.useEffect(() => {
-    void refreshWebAuthStatus();
-  }, [refreshWebAuthStatus]);
-  const webAuthConfigured = webAuthStatus?.configured ?? settings.webServerJwtEnabled === true;
-  const submitWebPassword = React.useCallback(
-    async (clear: boolean) => {
-      if (webPwBusy) return;
-      setWebPwBusy(true);
-      try {
-        await setWebPassword({
-          currentPassword: webAuthConfigured ? webPwCurrent : undefined,
-          newPassword: clear ? "" : webPwNew,
-        });
-        // 改/设密码后旧 token 已失效:立刻用新密码换发,避免下次请求 401 弹登录墙的假锁定。
-        // 清密码则清掉本地 token。
-        if (clear) clearWebAuthToken();
-        else await requestWebAuthToken(webPwNew);
-        setWebPwCurrent("");
-        setWebPwNew("");
-        await refreshWebAuthStatus();
-        onSettings({ ...settings, webServerJwtEnabled: !clear });
-        toast.success(t(clear ? "settings:data.web_password_cleared" : "settings:data.web_password_saved"));
-      } catch (error) {
-        toast.error((error as Error).message || t("settings:data.web_password_failed"));
-      } finally {
-        setWebPwBusy(false);
-      }
-    },
-    [webPwBusy, webAuthConfigured, webPwCurrent, webPwNew, refreshWebAuthStatus, onSettings, settings, t],
-  );
 
   const s3Autosave = useAutosaveDraft(
     async () => {
       const result = await api.post<{ config: S3Config }>("data/s3/config", s3Draft);
-      onSettings({ ...settings, s3Config: result.config });
+      patchSettingsLocal({ s3Config: result.config });
     },
     { onSaveError: (error) => toast.error((error as Error).message || t("settings:data.s3_autosave_failed")) },
   );
 
   React.useEffect(() => {
     // 用户正在编辑(含保存窗口内的键击)时不让 settings 回环覆盖草稿——原实现无条件回填,
-    // autosave→onSettings 一回环就把窗口内新敲的字符当场清掉(R8-2 点名的病根)。
+    // autosave→SSE 一回环就把窗口内新敲的字符当场清掉(R8-2 点名的病根)。
     if (webDavAutosave.isDirty()) return;
     setWebDavDraft(defaultWebDav);
   }, [
@@ -280,23 +223,23 @@ export function DataSection({
   const saveWebDav = () => webDavAutosave.saveNow();
 
   const refreshWebDavList = async () => {
-    setWebDavBusy("list");
+    patchRemoteTask("webdav", { busy: "list" });
     try {
       await saveWebDav();
-      const result = await api.get<{ items: WebDavBackupItem[] }>("data/webdav/list", {
+      const result = await api.get<{ items: RemoteBackupItem[] }>("data/webdav/list", {
         timeout: false,
       });
-      setWebDavItems(result.items);
+      patchRemoteTask("webdav", { items: result.items });
     } catch (error) {
       // 7-3:与 refreshS3List 对齐,失败不再静默
       toast.error(error instanceof Error ? error.message : t("settings:data.webdav_list_failed"));
     } finally {
-      setWebDavBusy("");
+      patchRemoteTask("webdav", { busy: "" });
     }
   };
 
   const testWebDav = async () => {
-    setWebDavBusy("test");
+    patchRemoteTask("webdav", { busy: "test" });
     try {
       await saveWebDav();
       await api.post("data/webdav/test", { config: webDavDraft }, { timeout: false });
@@ -304,11 +247,14 @@ export function DataSection({
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("settings:data.webdav_conn_failed"));
     } finally {
-      setWebDavBusy("");
+      patchRemoteTask("webdav", { busy: "" });
     }
   };
 
+  // 只在安卓兼容卡启用时提示:hasAndroidSchema 只看缓存库是否存在,而导出在无缓存库时用内置
+  // schema 建库,备份照样含对话——卡片关闭(现状)时这条提示对纯 PC 用户是误报。
   const warnIfNoSchema = async () => {
+    if (!ANDROID_COMPAT_CARD_ENABLED) return;
     try {
       const res = await fetch(appendWebAuthQuery("/api/data/export/status"));
       if (res.ok) {
@@ -318,68 +264,64 @@ export function DataSection({
         }
       }
     } catch {
-      /* */
+      /* 提示是尽力而为:状态查询失败不阻断备份 */
     }
   };
 
   const backupWebDav = async () => {
     await warnIfNoSchema();
-    setWebDavBusy("backup");
-    setWebDavBackupProgress({ message: t("settings:data.preparing"), percent: 0 });
+    patchRemoteTask("webdav", { busy: "backup", progress: { message: t("settings:data.preparing"), percent: 0 } });
     try {
       await saveWebDav();
       const data = await consumeBackupSse("/api/data/webdav/backup/stream", (message, percent) => {
-        setWebDavBackupProgress({ message, percent });
+        patchRemoteTask("webdav", { progress: { message, percent } });
       });
-      if (Array.isArray(data.items)) setWebDavItems(data.items as WebDavBackupItem[]);
+      if (Array.isArray(data.items)) patchRemoteTask("webdav", { items: data.items as RemoteBackupItem[] });
       toast.success(t("settings:data.webdav_backup_done"));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("settings:data.webdav_backup_failed"));
     } finally {
-      setWebDavBusy("");
-      setWebDavBackupProgress(null);
+      patchRemoteTask("webdav", { busy: "", progress: null });
     }
   };
 
-  const restoreWebDav = async (item: WebDavBackupItem) => {
+  const restoreWebDav = async (item: RemoteBackupItem) => {
     if (!(await confirmDialog({ title: t("settings:data.restore_confirm", { name: item.displayName }), danger: true }))) return;
-    setWebDavBusy(`restore:${item.displayName}`);
-    setWebDavBackupProgress({ message: t("settings:data.preparing"), percent: 0 });
+    patchRemoteTask("webdav", { busy: `restore:${item.displayName}`, progress: { message: t("settings:data.preparing"), percent: 0 } });
     try {
       const data = await consumeBackupSse(
         "/api/data/webdav/restore/stream",
         (message, percent) => {
-          setWebDavBackupProgress({ message, percent });
+          patchRemoteTask("webdav", { progress: { message, percent } });
         },
         JSON.stringify({ fileName: item.displayName }),
       );
-      if (data.settings) onSettings(data.settings as Settings);
+      if (data.settings) useSettingsStore.getState().setSettings(data.settings as Settings);
       toast.success(t("settings:data.webdav_restored"));
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t("settings:data.webdav_restore_failed"),
       );
     } finally {
-      setWebDavBusy("");
-      setWebDavBackupProgress(null);
+      patchRemoteTask("webdav", { busy: "", progress: null });
     }
   };
 
-  const deleteWebDav = async (item: WebDavBackupItem) => {
+  const deleteWebDav = async (item: RemoteBackupItem) => {
     if (!(await confirmDialog({ title: t("settings:data.delete_confirm", { name: item.displayName }), danger: true }))) return;
-    setWebDavBusy(`delete:${item.displayName}`);
+    patchRemoteTask("webdav", { busy: `delete:${item.displayName}` });
     try {
-      const result = await api.post<{ items: WebDavBackupItem[] }>(
+      const result = await api.post<{ items: RemoteBackupItem[] }>(
         "data/webdav/delete",
         { fileName: item.displayName },
         { timeout: false },
       );
-      setWebDavItems(result.items);
+      patchRemoteTask("webdav", { items: result.items });
       toast.success(t("settings:data.webdav_deleted"));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("settings:data.webdav_delete_failed"));
     } finally {
-      setWebDavBusy("");
+      patchRemoteTask("webdav", { busy: "" });
     }
   };
 
@@ -404,19 +346,19 @@ export function DataSection({
   // 列表/测试/备份前的"确保已保存"(仅脏时落盘,语义同原 announce=false)。
   const saveS3 = () => s3Autosave.saveNow();
   const refreshS3List = async () => {
-    setS3Busy("list");
+    patchRemoteTask("s3", { busy: "list" });
     try {
       await saveS3();
-      const result = await api.get<{ items: S3BackupItem[] }>("data/s3/list", { timeout: false });
-      setS3Items(result.items);
+      const result = await api.get<{ items: RemoteBackupItem[] }>("data/s3/list", { timeout: false });
+      patchRemoteTask("s3", { items: result.items });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("settings:data.s3_list_failed"));
     } finally {
-      setS3Busy("");
+      patchRemoteTask("s3", { busy: "" });
     }
   };
   const testS3 = async () => {
-    setS3Busy("test");
+    patchRemoteTask("s3", { busy: "test" });
     try {
       await saveS3();
       await api.post("data/s3/test", { config: s3Draft }, { timeout: false });
@@ -424,63 +366,59 @@ export function DataSection({
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("settings:data.s3_conn_failed"));
     } finally {
-      setS3Busy("");
+      patchRemoteTask("s3", { busy: "" });
     }
   };
   const backupS3 = async () => {
     await warnIfNoSchema();
-    setS3Busy("backup");
-    setS3BackupProgress({ message: t("settings:data.preparing"), percent: 0 });
+    patchRemoteTask("s3", { busy: "backup", progress: { message: t("settings:data.preparing"), percent: 0 } });
     try {
       await saveS3();
       const data = await consumeBackupSse("/api/data/s3/backup/stream", (message, percent) => {
-        setS3BackupProgress({ message, percent });
+        patchRemoteTask("s3", { progress: { message, percent } });
       });
-      if (Array.isArray(data.items)) setS3Items(data.items as S3BackupItem[]);
+      if (Array.isArray(data.items)) patchRemoteTask("s3", { items: data.items as RemoteBackupItem[] });
       toast.success(t("settings:data.s3_backup_done"));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("settings:data.s3_backup_failed"));
     } finally {
-      setS3Busy("");
-      setS3BackupProgress(null);
+      patchRemoteTask("s3", { busy: "", progress: null });
     }
   };
-  const restoreS3 = async (item: S3BackupItem) => {
+  const restoreS3 = async (item: RemoteBackupItem) => {
     if (!(await confirmDialog({ title: t("settings:data.s3_restore_confirm", { name: item.displayName }), danger: true }))) return;
-    setS3Busy(`restore:${item.displayName}`);
-    setS3BackupProgress({ message: t("settings:data.preparing"), percent: 0 });
+    patchRemoteTask("s3", { busy: `restore:${item.displayName}`, progress: { message: t("settings:data.preparing"), percent: 0 } });
     try {
       const data = await consumeBackupSse(
         "/api/data/s3/restore/stream",
         (message, percent) => {
-          setS3BackupProgress({ message, percent });
+          patchRemoteTask("s3", { progress: { message, percent } });
         },
         JSON.stringify({ fileName: item.displayName }),
       );
-      if (data.settings) onSettings(data.settings as Settings);
+      if (data.settings) useSettingsStore.getState().setSettings(data.settings as Settings);
       toast.success(t("settings:data.s3_restored"));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("settings:data.s3_restore_failed"));
     } finally {
-      setS3Busy("");
-      setS3BackupProgress(null);
+      patchRemoteTask("s3", { busy: "", progress: null });
     }
   };
-  const deleteS3 = async (item: S3BackupItem) => {
+  const deleteS3 = async (item: RemoteBackupItem) => {
     if (!(await confirmDialog({ title: t("settings:data.delete_confirm", { name: item.displayName }), danger: true }))) return;
-    setS3Busy(`delete:${item.displayName}`);
+    patchRemoteTask("s3", { busy: `delete:${item.displayName}` });
     try {
-      const result = await api.post<{ items: S3BackupItem[] }>(
+      const result = await api.post<{ items: RemoteBackupItem[] }>(
         "data/s3/delete",
         { fileName: item.displayName },
         { timeout: false },
       );
-      setS3Items(result.items);
+      patchRemoteTask("s3", { items: result.items });
       toast.success(t("settings:data.s3_deleted"));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("settings:data.s3_delete_failed"));
     } finally {
-      setS3Busy("");
+      patchRemoteTask("s3", { busy: "" });
     }
   };
 
@@ -561,7 +499,7 @@ export function DataSection({
       return;
     }
     if (!target) return; // 用户取消:零生成零残留
-    setExporting(true);
+    patchBackupTask({ exporting: true });
     const prepToast = toast.loading(t("settings:data.export_preparing"));
     try {
       const res = await fetch(appendWebAuthQuery("/api/data/export/to-path"), {
@@ -583,7 +521,7 @@ export function DataSection({
       toast.dismiss(prepToast);
       toast.error(err instanceof Error ? err.message : t("settings:data.export_failed"));
     } finally {
-      setExporting(false);
+      patchBackupTask({ exporting: false });
     }
   };
 
@@ -592,10 +530,7 @@ export function DataSection({
       await doExportToPickedPath();
       return;
     }
-    setExporting(true);
-    setExportProgress(0);
-    setExportedBytes(0);
-    setExportTotalBytes(0);
+    patchBackupTask({ exporting: true, exportLoaded: 0, exportTotal: 0 });
     const prepToast = toast.loading(t("settings:data.export_preparing"));
     try {
       // Download the zip via XHR so we can read onprogress (loaded / total) and surface a
@@ -608,13 +543,11 @@ export function DataSection({
         xhr.responseType = "blob";
         xhr.onprogress = (ev) => {
           if (ev.lengthComputable && ev.total > 0) {
-            setExportTotalBytes(ev.total);
-            setExportedBytes(ev.loaded);
-            setExportProgress(Math.round((ev.loaded / ev.total) * 100));
+            patchBackupTask({ exportTotal: ev.total, exportLoaded: ev.loaded });
           } else {
             // Server didn't send Content-Length (shouldn't happen with our endpoint, but be
             // defensive). At least bump the byte counter so the user sees something moving.
-            setExportedBytes(ev.loaded);
+            patchBackupTask({ exportLoaded: ev.loaded });
           }
         };
         xhr.onerror = () => reject(new Error(t("settings:data.export_network_error")));
@@ -668,10 +601,7 @@ export function DataSection({
       toast.dismiss(prepToast);
       toast.error(error instanceof Error ? error.message : t("settings:data.export_failed"));
     } finally {
-      setExporting(false);
-      setExportProgress(0);
-      setExportedBytes(0);
-      setExportTotalBytes(0);
+      patchBackupTask({ exporting: false, exportLoaded: 0, exportTotal: 0 });
     }
   };
 
@@ -681,9 +611,7 @@ export function DataSection({
     if (!file) return;
     if (!(await confirmDialog({ title: t("settings:data.import_confirm"), danger: true }))) return;
 
-    setImporting(true);
-    setImportPhase("uploading");
-    setImportProgress(0);
+    patchBackupTask({ importing: true, importPhase: "uploading", importProgress: 0 });
     try {
       // Stream the file body directly to /api/data/import as application/octet-stream rather
       // than wrap it in multipart/form-data. Two reasons:
@@ -712,13 +640,13 @@ export function DataSection({
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
             const pct = Math.round((e.loaded / e.total) * 100);
-            setImportProgress(pct);
+            patchBackupTask({ importProgress: pct });
           }
         };
         xhr.upload.onload = () => {
           // Upload finished, but server is still processing — switch phase so the UI shows
           // the indeterminate "processing" hint instead of stuck-at-100% progress bar.
-          setImportPhase("processing");
+          patchBackupTask({ importPhase: "processing" });
         };
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) {
@@ -745,7 +673,7 @@ export function DataSection({
         xhr.timeout = 0;
         xhr.send(file);
       });
-      onSettings(result.settings);
+      useSettingsStore.getState().setSettings(result.settings);
       if (result.source === "android-zip") {
         const lines = (result.summary ?? []).filter(Boolean);
         toast.success(
@@ -763,9 +691,7 @@ export function DataSection({
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("settings:data.import_failed"));
     } finally {
-      setImporting(false);
-      setImportPhase("idle");
-      setImportProgress(0);
+      patchBackupTask({ importing: false, importPhase: "idle", importProgress: 0 });
     }
   };
 
@@ -907,8 +833,11 @@ export function DataSection({
                 </span>
                 {exportTotalBytes > 0 ? (
                   <span>
-                    {(exportedBytes / (1024 * 1024)).toFixed(1)} /{" "}
-                    {(exportTotalBytes / (1024 * 1024)).toFixed(1)} MB · {exportProgress}%
+                    {t("settings:data.progress_mb", {
+                      loaded: (exportedBytes / (1024 * 1024)).toFixed(1),
+                      total: (exportTotalBytes / (1024 * 1024)).toFixed(1),
+                      percent: exportProgress,
+                    })}
                   </span>
                 ) : null}
               </div>
@@ -936,7 +865,7 @@ export function DataSection({
                   {importPhase === "processing" && t("settings:data.extracting")}
                   {importPhase === "idle" && t("settings:data.preparing")}
                 </span>
-                {importPhase === "uploading" ? <span>{importProgress}%</span> : null}
+                {importPhase === "uploading" ? <span>{t("settings:data.progress_percent", { percent: importProgress })}</span> : null}
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                 <div
@@ -955,95 +884,7 @@ export function DataSection({
             </div>
           ) : null}
         </SettingsGroup>
-        <SettingsGroup
-          title={t("settings:data.chat_files_title")}
-          description={t("settings:data.chat_files_desc")}
-        >
-          {/* B2:云端(WebDAV/S3)流式恢复无导入结果卡,把后端结构化降级报告
-              (settings.lastRestoreReport,经设置 SSE 推送)在此展示——「成功但跳过/降级了 N 项」可见。 */}
-          {settings.lastRestoreReport ? (
-            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs dark:border-amber-800 dark:bg-amber-950">
-              <div className="font-medium">
-                {t("settings:data.restore_report_title")} ·{" "}
-                {new Date(settings.lastRestoreReport.finishedAt).toLocaleString()}
-              </div>
-              <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-muted-foreground">
-                {settings.lastRestoreReport.dbReadError ? (
-                  <li className="text-amber-700 dark:text-amber-300">
-                    {t("settings:data.restore_report_db_error", { error: settings.lastRestoreReport.dbReadError })}
-                  </li>
-                ) : null}
-                {settings.lastRestoreReport.messageNodesUnreadable > 0 ? (
-                  <li className="text-amber-700 dark:text-amber-300">
-                    {t("settings:data.restore_report_nodes_skipped", { count: settings.lastRestoreReport.messageNodesUnreadable })}
-                  </li>
-                ) : null}
-                {settings.lastRestoreReport.filesDeduped > 0 ? (
-                  <li>{t("settings:data.restore_report_files_deduped", { count: settings.lastRestoreReport.filesDeduped })}</li>
-                ) : null}
-                {!settings.lastRestoreReport.dbReadError &&
-                settings.lastRestoreReport.messageNodesUnreadable === 0 &&
-                settings.lastRestoreReport.filesDeduped === 0 ? (
-                  <li>{t("settings:data.restore_report_ok")}</li>
-                ) : null}
-              </ul>
-            </div>
-          ) : null}
-        </SettingsGroup>
-        <SettingsGroup
-          title={t("settings:data.web_service_title")}
-          description={t("settings:data.web_service_desc", {
-            status: webAuthConfigured ? t("settings:data.enabled") : t("settings:data.disabled"),
-          })}
-        >
-          {/* 访问密码(P1):对外暴露(Docker/反代)时必备。部署者锁定(argv/env)时只读提示;
-              否则就地设/改/清。密码存派生哈希,这里只见布尔状态。 */}
-          {webAuthStatus?.lockedByDeployment ? (
-            <div className="mt-3 text-xs text-muted-foreground">
-              {t("settings:data.web_password_locked")}
-            </div>
-          ) : (
-            <div className="mt-3 max-w-md space-y-2">
-              {webAuthConfigured ? (
-                <PasswordInput
-                  value={webPwCurrent}
-                  onChange={setWebPwCurrent}
-                  placeholder={t("settings:data.web_password_current")}
-                />
-              ) : null}
-              <PasswordInput
-                value={webPwNew}
-                onChange={setWebPwNew}
-                placeholder={
-                  webAuthConfigured
-                    ? t("settings:data.web_password_new")
-                    : t("settings:data.web_password_set")
-                }
-              />
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  disabled={webPwBusy || (webAuthConfigured ? !webPwCurrent || !webPwNew : !webPwNew)}
-                  onClick={() => void submitWebPassword(false)}
-                >
-                  {webAuthConfigured
-                    ? t("settings:data.web_password_change")
-                    : t("settings:data.web_password_set_action")}
-                </Button>
-                {webAuthConfigured ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={webPwBusy || !webPwCurrent}
-                    onClick={() => void submitWebPassword(true)}
-                  >
-                    {t("settings:data.web_password_clear")}
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          )}
-        </SettingsGroup>
+        <RestoreReport report={settings.lastRestoreReport} />
         <SettingsGroup
           title={
             <span className="flex items-center gap-2">
@@ -1109,12 +950,14 @@ export function DataSection({
                   variant="outline"
                   size="icon"
                   onClick={() => setShowWebDavPassword((value) => !value)}
+                  aria-label={showWebDavPassword ? t("settings:proxy.hide_password") : t("settings:proxy.show_password")}
                 >
                   {showWebDavPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                 </Button>
               </div>
             </label>
           </div>
+          {WEBDAV_ITEMS_SELECTION_ENABLED ? (
           <div className="mt-3 flex flex-wrap gap-2">
             {(["DATABASE", "FILES"] as const).map((item) => (
               <label
@@ -1136,6 +979,7 @@ export function DataSection({
               </label>
             ))}
           </div>
+          ) : null}
           <div className="mt-4 flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -1179,7 +1023,7 @@ export function DataSection({
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>{webDavBackupProgress.message}</span>
                 {webDavBackupProgress.percent > 0 ? (
-                  <span>{webDavBackupProgress.percent}%</span>
+                  <span>{t("settings:data.progress_percent", { percent: webDavBackupProgress.percent })}</span>
                 ) : null}
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
@@ -1235,6 +1079,8 @@ export function DataSection({
                       variant="ghost"
                       onClick={() => void deleteWebDav(item)}
                       disabled={Boolean(webDavBusy)}
+                      aria-label={t("settings:data.delete_backup")}
+                      title={t("settings:data.delete_backup")}
                     >
                       {webDavBusy === `delete:${item.displayName}` ? (
                         <Loader2 className="size-4 animate-spin" />
@@ -1268,7 +1114,7 @@ export function DataSection({
                 className="px-0"
               />
               <label htmlFor={s3PathStyleId} className="ml-2 text-xs text-[var(--ds-text-secondary)]">
-                Path-style
+                {t("settings:data.s3.path_style")}
               </label>
               <Switch
                 id={s3PathStyleId}
@@ -1290,7 +1136,7 @@ export function DataSection({
               />
             </label>
             <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">Region</span>
+              <span className="text-xs font-medium text-muted-foreground">{t("settings:data.s3.region")}</span>
               <Input
                 value={s3Draft.region}
                 onChange={(event) => patchS3({ region: event.target.value })}
@@ -1298,7 +1144,7 @@ export function DataSection({
               />
             </label>
             <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">Bucket</span>
+              <span className="text-xs font-medium text-muted-foreground">{t("settings:data.s3.bucket")}</span>
               <Input
                 value={s3Draft.bucket}
                 onChange={(event) => patchS3({ bucket: event.target.value })}
@@ -1306,14 +1152,14 @@ export function DataSection({
               />
             </label>
             <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">Access Key ID</span>
+              <span className="text-xs font-medium text-muted-foreground">{t("settings:data.s3.access_key_id")}</span>
               <Input
                 value={s3Draft.accessKeyId}
                 onChange={(event) => patchS3({ accessKeyId: event.target.value })}
               />
             </label>
             <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">Secret Access Key</span>
+              <span className="text-xs font-medium text-muted-foreground">{t("settings:data.s3.secret_access_key")}</span>
               <div className="flex gap-2">
                 <Input
                   type={showS3Secret ? "text" : "password"}
@@ -1325,6 +1171,7 @@ export function DataSection({
                   variant="outline"
                   size="icon"
                   onClick={() => setShowS3Secret((value) => !value)}
+                  aria-label={showS3Secret ? t("settings:proxy.hide_password") : t("settings:proxy.show_password")}
                 >
                   {showS3Secret ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                 </Button>
@@ -1372,7 +1219,7 @@ export function DataSection({
             <div className="mt-3 space-y-1.5">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>{s3BackupProgress.message}</span>
-                {s3BackupProgress.percent > 0 ? <span>{s3BackupProgress.percent}%</span> : null}
+                {s3BackupProgress.percent > 0 ? <span>{t("settings:data.progress_percent", { percent: s3BackupProgress.percent })}</span> : null}
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                 <div
@@ -1427,6 +1274,8 @@ export function DataSection({
                       variant="ghost"
                       onClick={() => void deleteS3(item)}
                       disabled={Boolean(s3Busy)}
+                      aria-label={t("settings:data.delete_backup")}
+                      title={t("settings:data.delete_backup")}
                     >
                       {s3Busy === `delete:${item.displayName}` ? (
                         <Loader2 className="size-4 animate-spin" />
@@ -1442,5 +1291,162 @@ export function DataSection({
         </SettingsGroup>
       </SettingsStack>
     </>
+  );
+}
+
+/** 数据管理 › Web 服务:访问密码。对外暴露(Docker/反代)时必备。 */
+export function WebServiceSection({ settings }: { settings: Settings; onSettings: (settings: Settings) => void }) {
+  const { t } = useTranslation();
+  // —— 访问密码(P1):状态经独立端点 /api/web-auth/status(只回布尔,不含哈希)。——
+  const [webAuthStatus, setWebAuthStatus] = React.useState<WebAuthStatus | null>(null);
+  const [webPwCurrent, setWebPwCurrent] = React.useState("");
+  const [webPwNew, setWebPwNew] = React.useState("");
+  const [webPwBusy, setWebPwBusy] = React.useState(false);
+  const refreshWebAuthStatus = React.useCallback(async () => {
+    try {
+      setWebAuthStatus(await fetchWebAuthStatus());
+    } catch {
+      // 状态探测失败(网络抖动)→ 保持现状,密码表单按已有 settings.webServerJwtEnabled 兜底显示。
+    }
+  }, []);
+  React.useEffect(() => {
+    void refreshWebAuthStatus();
+  }, [refreshWebAuthStatus]);
+  const webAuthConfigured = webAuthStatus?.configured ?? settings.webServerJwtEnabled === true;
+  const submitWebPassword = React.useCallback(
+    async (clear: boolean) => {
+      if (webPwBusy) return;
+      setWebPwBusy(true);
+      try {
+        await setWebPassword({
+          currentPassword: webAuthConfigured ? webPwCurrent : undefined,
+          newPassword: clear ? "" : webPwNew,
+        });
+        // 改/设密码后旧 token 已失效:立刻用新密码换发,避免下次请求 401 弹登录墙的假锁定。
+        // 清密码则清掉本地 token。
+        if (clear) clearWebAuthToken();
+        else await requestWebAuthToken(webPwNew);
+        setWebPwCurrent("");
+        setWebPwNew("");
+        await refreshWebAuthStatus();
+        patchSettingsLocal({ webServerJwtEnabled: !clear });
+        toast.success(t(clear ? "settings:data.web_password_cleared" : "settings:data.web_password_saved"));
+      } catch (error) {
+        toast.error((error as Error).message || t("settings:data.web_password_failed"));
+      } finally {
+        setWebPwBusy(false);
+      }
+    },
+    [webPwBusy, webAuthConfigured, webPwCurrent, webPwNew, refreshWebAuthStatus, t],
+  );
+
+  return (
+    <SettingsStack>
+      <SettingsGroup
+        title={t("settings:data.web_password_title")}
+        description={t("settings:data.web_password_desc")}
+        action={
+          <span className="text-xs text-[var(--ds-text-secondary)]">
+            {webAuthConfigured ? t("settings:data.enabled") : t("settings:data.disabled")}
+          </span>
+        }
+      >
+        {/* 访问密码(P1):对外暴露(Docker/反代)时必备。部署者锁定(argv/env)时只读提示;
+            否则就地设/改/清。密码存派生哈希,这里只见布尔状态。 */}
+        {webAuthStatus?.lockedByDeployment ? (
+          <div className="mt-3 text-xs text-muted-foreground">
+            {t("settings:data.web_password_locked")}
+          </div>
+        ) : (
+          <div className="mt-3 max-w-md space-y-2">
+            {webAuthConfigured ? (
+              <PasswordInput
+                value={webPwCurrent}
+                onChange={setWebPwCurrent}
+                placeholder={t("settings:data.web_password_current")}
+              />
+            ) : null}
+            <PasswordInput
+              value={webPwNew}
+              onChange={setWebPwNew}
+              placeholder={
+                webAuthConfigured
+                  ? t("settings:data.web_password_new")
+                  : t("settings:data.web_password_set")
+              }
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                disabled={webPwBusy || (webAuthConfigured ? !webPwCurrent || !webPwNew : !webPwNew)}
+                onClick={() => void submitWebPassword(false)}
+              >
+                {webAuthConfigured
+                  ? t("settings:data.web_password_change")
+                  : t("settings:data.web_password_set_action")}
+              </Button>
+              {webAuthConfigured ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={webPwBusy || !webPwCurrent}
+                  onClick={() => void submitWebPassword(true)}
+                >
+                  {t("settings:data.web_password_clear")}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        )}
+      </SettingsGroup>
+    </SettingsStack>
+  );
+}
+
+/**
+ * 上次云端恢复的降级报告。只在确有跳过/降级时显示(全部成功已有恢复完成 toast,不常驻;
+ * 附件去重属正常现象,单独存在不触发)。「知道了」由后端清除,刷新不再出现。
+ */
+function RestoreReport({ report }: { report: Settings["lastRestoreReport"] }) {
+  const { t } = useTranslation();
+  const [dismissing, setDismissing] = React.useState(false);
+  if (!report || (!report.dbReadError && report.messageNodesUnreadable === 0)) return null;
+  const dismiss = async () => {
+    setDismissing(true);
+    try {
+      await api.delete("data/restore-report");
+      patchSettingsLocal({ lastRestoreReport: null });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("settings:common.save_failed"));
+    } finally {
+      setDismissing(false);
+    }
+  };
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs dark:border-amber-800 dark:bg-amber-950">
+      <div className="min-w-0">
+        <div className="font-medium">
+          {t("settings:data.restore_report_title")} · {new Date(report.finishedAt).toLocaleString()}
+        </div>
+        <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-muted-foreground">
+          {report.dbReadError ? (
+            <li className="text-amber-700 dark:text-amber-300">
+              {t("settings:data.restore_report_db_error", { error: report.dbReadError })}
+            </li>
+          ) : null}
+          {report.messageNodesUnreadable > 0 ? (
+            <li className="text-amber-700 dark:text-amber-300">
+              {t("settings:data.restore_report_nodes_skipped", { count: report.messageNodesUnreadable })}
+            </li>
+          ) : null}
+          {report.filesDeduped > 0 ? (
+            <li>{t("settings:data.restore_report_files_deduped", { count: report.filesDeduped })}</li>
+          ) : null}
+        </ul>
+      </div>
+      <Button size="sm" variant="outline" className="shrink-0" disabled={dismissing} onClick={() => void dismiss()}>
+        {t("settings:data.restore_report_dismiss")}
+      </Button>
+    </div>
   );
 }

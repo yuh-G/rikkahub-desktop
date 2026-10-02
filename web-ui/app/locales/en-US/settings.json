@@ -86,7 +86,6 @@
     "add": "Add memory"
   },
   "donate": {
-    "title": "Donate",
     "subtitle": "If this app helps you, consider supporting it to keep it going.",
     "methods": "Donation methods",
     "afdian": "Afdian",
@@ -99,13 +98,12 @@
     "sponsor_failed": "Failed to load sponsor list"
   },
   "about": {
-    "title": "About",
-    "subtitle": "App identity, version, system info, website, GitHub and License.",
     "version": "Version",
     "system": "System",
     "website": "Website",
     "check_update": "Check for updates",
-    "check_failed": "Failed to check for updates"
+    "check_failed": "Failed to check for updates",
+    "license": "License"
   },
   "common": {
     "save_failed": "Save failed",
@@ -118,7 +116,8 @@
     "hide_key": "Hide API Key",
     "show_key": "Show API Key",
     "advanced": "Advanced settings",
-    "advanced_attention": "Some advanced settings need attention"
+    "advanced_attention": "Some advanced settings need attention",
+    "none_dash": "—"
   },
   "general": {
     "nickname": "Nickname",
@@ -471,8 +470,6 @@
   },
   "stats": {
     "loading": "Loading stats",
-    "title": "Statistics",
-    "subtitle": "Usage stats and an activity heatmap based on local chats, request logs and model usage.",
     "t_messages": "Messages",
     "t_input_tokens": "Input tokens",
     "t_input_tokens_tip": "Total input {{input}} (incl. local estimates where the provider reported no usage)",
@@ -497,7 +494,6 @@
     "no_provider_requests": "No request records"
   },
   "logs": {
-    "title": "App logs",
     "subtitle": "Model and search request records, plus app errors from background tasks.",
     "filter_all": "All",
     "filter_requests": "Requests",
@@ -895,8 +891,7 @@
     "extracting": "Upload done, extracting and importing data...",
     "pack_slow": "With many attachments, packing may take tens of seconds. Please wait.",
     "extract_slow": "Parsing chat history from a large backup may take a few minutes. Don't close the app.",
-    "processing": "Processing...",
-    "no_schema_warn": "Note: the phone-side database schema isn't registered yet, so backups won't include conversations. Export a backup under “Data backup” to register the schema.",
+    "no_schema_warn": "Note: the phone database format hasn't been captured yet, so backups won't include conversations. Click \"Export backup\" under Local backup & restore to register the format.",
     "restore_confirm": "Restoring {{name}} overwrites your current local settings, conversations and logs. Continue?",
     "delete_confirm": "Delete the remote backup {{name}}?",
     "s3_restore_confirm": "Restore from the remote backup {{name}}? This overwrites the current local state.",
@@ -941,8 +936,6 @@
     "export_without_schema": "The phone-side schema isn't registered, so the backup won't include conversations. Register it under “Android compatibility” above first.",
     "confirm_export": "Confirm export",
     "export_no_chat": "Export (no conversations)",
-    "title": "Data",
-    "subtitle": "Local import/export, chat file storage, and WebDAV / S3 remote sync.",
     "android_compat": "Android compatibility",
     "ready": "Ready",
     "unregistered": "Unregistered",
@@ -957,19 +950,14 @@
     "step2": "Click the button below and pick that .zip to upload",
     "step3": "The PC extracts only the schema (no data is imported to PC)",
     "upload_phone_backup": "Upload phone backup (schema only)",
-    "backup_title": "Backup",
+    "backup_title": "Local backup & restore",
     "backup_desc": "Export a .zip (Android-compatible) containing settings, conversations, files, Skills, MCP / prompt injections / lorebooks / quick messages. Import also accepts Android .zip and legacy PC .json. Large backups may take 1-2 minutes.",
     "export_backup": "Export backup",
     "import_backup": "Import backup",
-    "chat_files_title": "Chat file storage",
-    "chat_files_desc": "Uploaded avatars and attachments are saved to the local data directory and served via /api/files.",
     "restore_report_title": "Last cloud restore",
-    "restore_report_ok": "Nothing was skipped or downgraded",
     "restore_report_db_error": "Conversation import failed: {{error}} (fell back to settings-only)",
     "restore_report_nodes_skipped": "{{count}} messages were skipped due to corrupted data in the backup",
     "restore_report_files_deduped": "{{count}} attachments matched existing content and were reused (no extra space used)",
-    "web_service_title": "Web service",
-    "web_service_desc": "Web JWT: {{status}}",
     "enabled": "enabled",
     "disabled": "disabled",
     "webdav_title": "WebDAV backup",
@@ -988,7 +976,6 @@
     "s3_title": "S3 backup",
     "s3_desc": "Standard AWS S3 and compatible endpoints (MinIO/R2/Tencent COS/Alibaba OSS, etc.). Backup contents match WebDAV.",
     "endpoint_label": "Endpoint (blank = official AWS)",
-    "prefix_path": "Prefix path",
     "web_password_current": "Current password",
     "web_password_new": "New password",
     "web_password_set": "Set an access password",
@@ -1000,7 +987,20 @@
     "web_password_failed": "Operation failed",
     "web_password_locked": "The access password is managed by deployment config (--password / RIKKAHUB_PASSWORD); change it there.",
     "username": "Username",
-    "password": "Password"
+    "password": "Password",
+    "restore_report_dismiss": "Dismiss",
+    "web_password_title": "Access password",
+    "web_password_desc": "Required when the app is accessed over the network (Web service / Docker / reverse proxy). Always set one before exposing the service.",
+    "s3": {
+      "path_style": "Path-style",
+      "region": "Region",
+      "bucket": "Bucket",
+      "access_key_id": "Access Key ID",
+      "secret_access_key": "Secret Access Key"
+    },
+    "progress_mb": "{{loaded}} / {{total}} MB · {{percent}}%",
+    "progress_percent": "{{percent}}%",
+    "delete_backup": "Delete this backup"
   },
   "hotkeys": {
     "reset_all": "Reset all to defaults",

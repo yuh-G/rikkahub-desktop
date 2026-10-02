@@ -86,7 +86,6 @@
     "add": "添加记忆"
   },
   "donate": {
-    "title": "赞助",
     "subtitle": "如果这个应用对你有帮助，欢迎支持一下，让项目持续发展。",
     "methods": "赞助方式",
     "afdian": "爱发电",
@@ -99,13 +98,12 @@
     "sponsor_failed": "赞助者列表加载失败"
   },
   "about": {
-    "title": "关于",
-    "subtitle": "应用标识、版本、系统信息、官网、GitHub 与 License。",
     "version": "版本",
     "system": "系统",
     "website": "官网",
     "check_update": "检查更新",
-    "check_failed": "检查更新失败"
+    "check_failed": "检查更新失败",
+    "license": "许可证"
   },
   "common": {
     "save_failed": "保存失败",
@@ -118,7 +116,8 @@
     "hide_key": "隐藏 API Key",
     "show_key": "显示 API Key",
     "advanced": "高级设置",
-    "advanced_attention": "高级设置中有需要注意的配置"
+    "advanced_attention": "高级设置中有需要注意的配置",
+    "none_dash": "—"
   },
   "general": {
     "nickname": "昵称",
@@ -471,8 +470,6 @@
   },
   "stats": {
     "loading": "加载统计",
-    "title": "统计",
-    "subtitle": "基于本地聊天、请求日志和模型使用情况生成的用量统计与活动热力图。",
     "t_messages": "总消息数",
     "t_input_tokens": "输入 Token",
     "t_input_tokens_tip": "累计输入 {{input}}(含厂商未回报用量时的本地估算)",
@@ -497,7 +494,6 @@
     "no_provider_requests": "暂无请求记录"
   },
   "logs": {
-    "title": "应用日志",
     "subtitle": "模型与搜索等请求的记录，以及后台环节的应用错误。",
     "filter_all": "全部",
     "filter_requests": "请求",
@@ -895,8 +891,7 @@
     "extracting": "上传完成，正在解压并导入数据...",
     "pack_slow": "附件较多时打包可能需要几十秒，请耐心等待",
     "extract_slow": "大备份的对话历史解析可能需要几分钟，请勿关闭应用",
-    "processing": "正在处理...",
-    "no_schema_warn": "提示：尚未获取手机端数据库格式，备份不含对话记录。请在「数据备份」区域点击「导出备份」完成格式注册。",
+    "no_schema_warn": "提示：尚未获取手机端数据库格式，备份不含对话记录。请在「本地备份与恢复」中点击「导出备份」完成格式注册。",
     "restore_confirm": "恢复 {{name}} 会覆盖当前本地设置、会话和日志。继续？",
     "delete_confirm": "删除远端备份 {{name}}？",
     "s3_restore_confirm": "从远端备份 {{name}} 恢复？这会覆盖当前本地状态。",
@@ -941,8 +936,6 @@
     "export_without_schema": "当前未注册手机端格式，导出的备份不含对话记录。请先在上方「手机端适配」区域完成注册。",
     "confirm_export": "确认导出",
     "export_no_chat": "导出（不含对话）",
-    "title": "数据",
-    "subtitle": "本地状态导入导出、聊天文件存储路径，以及 WebDAV / S3 远端同步。",
     "android_compat": "手机端适配",
     "ready": "已就绪",
     "unregistered": "未注册",
@@ -957,19 +950,14 @@
     "step2": "点击下方按钮，选择刚才导出的 .zip 文件上传",
     "step3": "PC 端会从中提取数据库格式信息（不会导入任何数据到 PC）",
     "upload_phone_backup": "上传手机备份（仅提取格式）",
-    "backup_title": "数据备份",
+    "backup_title": "本地备份与恢复",
     "backup_desc": "导出 .zip 备份（兼容 Android 端导入），包含设置、会话、文件、Skills、MCP / 提示注入 / 世界书 / 快捷消息等。导入也接受 Android 端导出的 .zip 备份及历史 PC 版本的 .json 备份。备份较大时导入可能需要 1-2 分钟。",
     "export_backup": "导出备份",
     "import_backup": "导入备份",
-    "chat_files_title": "聊天文件储存",
-    "chat_files_desc": "上传的头像和附件会保存到本地数据目录，并通过 /api/files 提供内容。",
     "restore_report_title": "上次云端恢复",
-    "restore_report_ok": "未跳过或降级任何内容",
     "restore_report_db_error": "对话历史导入失败：{{error}}（已降级为仅恢复设置）",
     "restore_report_nodes_skipped": "{{count}} 条消息因备份内数据损坏被跳过",
     "restore_report_files_deduped": "{{count}} 个附件与本机已有内容一致，已复用（未重复占用空间）",
-    "web_service_title": "Web 服务",
-    "web_service_desc": "当前 Web JWT：{{status}}",
     "enabled": "已启用",
     "disabled": "未启用",
     "webdav_title": "WebDAV 备份",
@@ -988,7 +976,6 @@
     "s3_title": "S3 备份",
     "s3_desc": "支持标准 AWS S3 与兼容 endpoint（MinIO/R2/腾讯云 COS/阿里云 OSS 等）。备份内容与 WebDAV 一致。",
     "endpoint_label": "Endpoint（留空使用 AWS 官方）",
-    "prefix_path": "前缀路径",
     "web_password_current": "当前密码",
     "web_password_new": "新密码",
     "web_password_set": "设置访问密码",
@@ -1000,7 +987,20 @@
     "web_password_failed": "操作失败",
     "web_password_locked": "访问密码由部署配置(--password / RIKKAHUB_PASSWORD)管理,请在部署层修改。",
     "username": "用户名",
-    "password": "密码"
+    "password": "密码",
+    "restore_report_dismiss": "知道了",
+    "web_password_title": "访问密码",
+    "web_password_desc": "通过网络（Web 服务 / Docker / 反向代理）访问时需要输入的密码。对外暴露服务时务必设置。",
+    "s3": {
+      "path_style": "路径风格（Path-style）",
+      "region": "区域（Region）",
+      "bucket": "存储桶（Bucket）",
+      "access_key_id": "Access Key ID",
+      "secret_access_key": "Secret Access Key"
+    },
+    "progress_mb": "{{loaded}} / {{total}} MB · {{percent}}%",
+    "progress_percent": "{{percent}}%",
+    "delete_backup": "删除此备份"
   },
   "hotkeys": {
     "reset_all": "全部恢复默认",

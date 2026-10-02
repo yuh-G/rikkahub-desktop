@@ -1,4 +1,4 @@
-// components/settings/stats.tsx — 用量统计分区
+// components/settings/stats.tsx — 统计日志 › 统计
 
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
@@ -145,7 +145,7 @@ export function StatsSection({ stats }: { stats: StatsPayload | null }) {
               const denominator = stats.totals.reportedInputTokens ?? 0;
               return denominator > 0
                 ? `${Math.min(100, (cached / denominator) * 100).toFixed(2)}%`
-                : "—";
+                : t("settings:common.none_dash");
             })(),
             // D3(复查):悬停口径写明命中率分母只用厂商真实回报。
             full: t("settings:stats.t_cache_hit_rate_tip", {

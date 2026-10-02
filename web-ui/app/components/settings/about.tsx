@@ -46,6 +46,7 @@ export function DonateSection() {
   const { t } = useTranslation();
   return (
     <>
+      <p className="mb-4 text-sm text-[var(--ds-text-secondary)]">{t("settings:donate.subtitle")}</p>
       <SettingsRows>
           <button
             type="button"
@@ -137,7 +138,7 @@ export function AboutSection() {
     },
     {
       key: "license",
-      label: "License",
+      label: t("settings:about.license"),
       value: "https://github.com/yuh-G/rikkahub-desktop/blob/master/LICENSE",
       icon: FileClock,
       onClick: () =>
