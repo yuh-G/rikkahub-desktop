@@ -1,14 +1,12 @@
-// components/settings/about.tsx — 赞助与关于分区（纯搬迁自 routes/settings.tsx）
+// components/settings/about.tsx — 赞助与关于分区
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import {
-  CheckCircle2,
   ExternalLink,
   FileClock,
   Github,
   Globe,
-  Heart,
   Loader2,
   RefreshCw,
   Settings2,
@@ -16,12 +14,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
-import { Separator } from "~/components/ui/separator";
 import { UpdateDialog, type UpdateInfo } from "~/components/update-dialog";
 import api from "~/services/api";
 import { getSystemInfo } from "~/lib/system-info";
 import { openExternal } from "~/lib/external-link";
-import { SectionHeader } from "~/components/settings/shared";
+import { cn } from "~/lib/utils";
+import { SectionHeader, SettingsRows, SettingsStack } from "~/components/settings/shared";
 
 // 爱发电品牌图标。path 数据取自 Rikkahub-Android 的 VectorDrawable,保持品牌识别度。
 function AfdianIcon({ className }: { className?: string }) {
@@ -31,6 +29,10 @@ function AfdianIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+// 外链行与静态行共用同一水平内边距:列表里两种行交错出现,左缘与分隔线才对得齐。
+const STATIC_ROW = "flex w-full items-center px-3 py-3.5";
+const LINK_ROW = `${STATIC_ROW} rounded-[var(--ds-radius-md)] text-left transition-colors hover:bg-[var(--ds-on-surface)]`;
 
 // 赞助者数据结构(预留)。赞助用户列表上线后由 /api/sponsors 返回此结构;
 // 接入方案见后端该接口注释。
@@ -45,11 +47,10 @@ export function DonateSection() {
   return (
     <>
       <SectionHeader title={t("settings:donate.title")} subtitle={t("settings:donate.subtitle")} />
-      <div className="space-y-6">
-        <div className="rounded-lg border bg-card">
+      <SettingsRows>
           <button
             type="button"
-            className="flex w-full items-center gap-3 p-4 text-left transition hover:bg-accent/50"
+            className={cn(LINK_ROW, "gap-3")}
             onClick={() => void openExternal("https://afdian.com/a/mirsky")}
           >
             <AfdianIcon className="size-5 shrink-0 text-muted-foreground" />
@@ -59,8 +60,7 @@ export function DonateSection() {
             </div>
             <ExternalLink className="size-4 shrink-0 text-muted-foreground" />
           </button>
-          <Separator />
-          <div className="flex items-center gap-3 p-4">
+          <div className={cn(STATIC_ROW, "gap-3")}>
             <Globe className="size-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <div className="font-medium">{t("settings:donate.international")}</div>
@@ -70,10 +70,8 @@ export function DonateSection() {
               {t("settings:donate.coming_soon")}
             </span>
           </div>
-        </div>
-
-        {/* 赞助用户列表暂未上线;数据源就绪后在此恢复,结构见 Sponsor 类型与后端 /api/sponsors 注释。 */}
-      </div>
+      </SettingsRows>
+      {/* 赞助用户列表暂未上线;数据源就绪后在此恢复,结构见 Sponsor 类型与后端 /api/sponsors 注释。 */}
     </>
   );
 }
@@ -154,13 +152,13 @@ export function AboutSection() {
         title={t("settings:about.title")}
         subtitle={t("settings:about.subtitle")}
       />
-      <div className="space-y-6">
-        <div className="flex flex-col items-center gap-3 rounded-lg border bg-card p-8 text-center">
-          <img src="/app-icon.png" alt="RikkaHub" className="size-28 rounded-full shadow-sm" />
-          <div className="text-3xl font-semibold tracking-normal">RikkaHub</div>
+      <SettingsStack>
+        <div className="flex flex-col items-center gap-3 py-4 text-center">
+          <img src="/app-icon.png" alt="RikkaHub" className="size-24 rounded-full shadow-sm" />
+          <div className="text-2xl font-semibold tracking-normal">RikkaHub</div>
         </div>
-        <div className="rounded-lg border bg-card">
-          {aboutRows.map((row, index) => {
+        <SettingsRows>
+          {aboutRows.map((row) => {
             const Icon = row.icon;
             const content = (
               <>
@@ -196,24 +194,24 @@ export function AboutSection() {
               </>
             );
             return (
-              <React.Fragment key={row.key}>
-                {index > 0 ? <Separator /> : null}
-                {row.onClick ? (
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-accent/50"
-                    onClick={row.onClick}
-                  >
-                    {content}
-                  </button>
-                ) : (
-                  <div className="flex items-center justify-between gap-4 p-4">{content}</div>
-                )}
-              </React.Fragment>
+              row.onClick ? (
+                <button
+                  key={row.key}
+                  type="button"
+                  className={cn(LINK_ROW, "justify-between gap-4")}
+                  onClick={row.onClick}
+                >
+                  {content}
+                </button>
+              ) : (
+                <div key={row.key} className={cn(STATIC_ROW, "justify-between gap-4")}>
+                  {content}
+                </div>
+              )
             );
           })}
-        </div>
-      </div>
+        </SettingsRows>
+      </SettingsStack>
       {updateInfo && (
         <UpdateDialog info={updateInfo} open={true} onClose={() => setUpdateInfo(null)} />
       )}
