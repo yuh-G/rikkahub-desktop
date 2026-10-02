@@ -1,4 +1,4 @@
-// components/settings/default-models.tsx — 默认模型与系统提示词分区
+// components/settings/default-models.tsx — 模型 › 场景模型:各场景的模型与 Prompt。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -27,6 +27,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~
 import { getModelDisplayName } from "~/lib/display";
 import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
+import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
+import { patchSettingsLocal } from "~/lib/settings-patch";
+import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import api from "~/services/api";
 import type { Settings } from "~/types";
 import {
@@ -141,7 +144,6 @@ Requirements:
 
 export function DefaultModelsSection({
   settings,
-  onSettings,
 }: {
   settings: Settings;
   onSettings: (settings: Settings) => void;
@@ -253,18 +255,19 @@ export function DefaultModelsSection({
       cancelled = true;
     };
   }, [editingPrompt, piCompactionPrompt]);
-  const save = async () => {
-    await api.post("settings/default-models", draft);
-    onSettings({ ...settings, ...draft });
+  // 防抖保存走共享三件套 hook:卸载(切页/关设置)时补发未落盘的编辑,挂载不发请求,
+  // 状态行反映真实保存状态。后端 settings/default-models 按字段合并,整份草稿提交即可。
+  const autosave = useAutosaveDraft(
+    async () => {
+      await api.post("settings/default-models", draft);
+      patchSettingsLocal(draft);
+    },
+    { delayMs: 500, onSaveError: (error) => toast.error((error as Error).message || t("settings:models.autosave_failed")) },
+  );
+  const patchDraft = (patch: Partial<Draft>) => {
+    autosave.markDirty();
+    setDraft((current) => ({ ...current, ...patch }));
   };
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void save().catch((error: Error) =>
-        toast.error(error.message || t("settings:models.autosave_failed")),
-      );
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [draft]);
   const modelSelect = (key: ModelKey) => {
     const options = key === "imageGenerationModelId" ? imageModels : allModels;
     // 「未设置」的含义按功能分三档(与后端行为一一对应,勿随意增删档位):
@@ -286,7 +289,7 @@ export function DefaultModelsSection({
     return (
       <Select
         value={selected ? draft[key] : "__none"}
-        onValueChange={(value) => setDraft({ ...draft, [key]: value === "__none" ? "" : value })}
+        onValueChange={(value) => patchDraft({ [key]: value === "__none" ? "" : value })}
       >
         <SelectTrigger className="w-full">
           <SelectValue />
@@ -401,9 +404,7 @@ export function DefaultModelsSection({
     <>
       <SettingsGroup
         description={t("settings:models.note")}
-        action={
-          <span className="text-xs text-[var(--ds-text-secondary)]">{t("settings:models.autosaved")}</span>
-        }
+        action={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
       >
         <SettingsRows className="mt-2">
           {features.map((feature) => {
@@ -455,12 +456,12 @@ export function DefaultModelsSection({
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <div className="flex items-center justify-between gap-3 pr-8">
-              <DialogTitle>{activePrompt?.title ?? "Prompt"}</DialogTitle>
+              <DialogTitle>{activePrompt?.title ?? t("settings:models.edit_prompt")}</DialogTitle>
               {fastToggleKey ? (
                 <Switch
                   size="sm"
                   checked={draft[fastToggleKey]}
-                  onCheckedChange={(checked) => setDraft({ ...draft, [fastToggleKey]: checked })}
+                  onCheckedChange={(checked) => patchDraft({ [fastToggleKey]: checked })}
                   aria-label={activePrompt?.title}
                 />
               ) : null}
@@ -514,7 +515,7 @@ export function DefaultModelsSection({
             ) : (
               <Textarea
                 value={draft[activePromptKey]}
-                onChange={(event) => setDraft({ ...draft, [activePromptKey]: event.target.value })}
+                onChange={(event) => patchDraft({ [activePromptKey]: event.target.value })}
                 className="h-[420px] font-mono text-xs"
               />
             )
@@ -524,9 +525,7 @@ export function DefaultModelsSection({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() =>
-                  setDraft({ ...draft, [activePromptKey]: promptMeta[activePromptKey].defaultValue })
-                }
+                onClick={() => patchDraft({ [activePromptKey]: promptMeta[activePromptKey].defaultValue })}
               >
                 <RefreshCw className="size-4" />
                 {t("settings:models.reset_default")}

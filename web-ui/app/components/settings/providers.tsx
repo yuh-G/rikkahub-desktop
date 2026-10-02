@@ -1,4 +1,4 @@
-// components/settings/providers.tsx — 模型提供商分区（配置/测试/余额/模型列表）
+// components/settings/providers.tsx — 模型 › 供应商页:左列表,右配置(连接 → 模型 → 测试 → 高级)。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -13,6 +13,7 @@ import {
   Trash2,
   TriangleAlert,
   X,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AIIcon } from "~/components/ui/ai-icon";
@@ -28,6 +29,7 @@ import { cn } from "~/lib/utils";
 import { isBalanceResultPathValid } from "~/lib/json-expression";
 import { createId } from "~/lib/id";
 import { getModelDisplayName } from "~/lib/display";
+import { patchSettingsLocal } from "~/lib/settings-patch";
 import { copyTextToClipboard } from "~/lib/clipboard";
 import { isDesktopShell, openExternal } from "~/lib/external-link";
 import api, { appendWebAuthQuery } from "~/services/api";
@@ -36,19 +38,25 @@ import { useSettingsStore } from "~/stores/app-store";
 import { confirmDialog } from "~/stores/confirm-store";
 import { getSettingsParam } from "~/stores/settings-dialog-store";
 import type { ProviderModel, ProviderProfile, Settings } from "~/types";
+import { SegmentedControl } from "~/components/ui/segmented-tabs";
 import {
   clone,
   moveItem,
   PasswordInput,
+  SettingsAdvancedRegion,
+  SettingsAdvancedToggle,
+  SettingsDetailFooter,
+  SettingsDetailHeader,
+  SettingsField,
+  SettingsGroup,
+  SettingsRows,
   SettingsSplit,
+  SettingsStack,
+  SettingsSwitchRow,
   SortableRow,
   textValue,
 } from "~/components/settings/shared";
 
-// 详情栏的层次:高级开关行之间、以及模型/测试/余额几大块之间用 --ds-divider 细线分隔,
-// 取代原先一块一框的描边盒子(两列网格里的行占满整行)。
-const PROVIDER_ROW = "border-t border-[var(--ds-divider)] pt-4 md:col-span-2";
-const PROVIDER_SECTION = "border-t border-[var(--ds-divider)] pt-5";
 
 // API 格式切换的 base 换算(协议默认/出厂/登记三张表 + 机器地址判定 + 换算规则)独立在
 // lib/provider-base-urls.ts——纯函数零依赖,行为锁在 pc-server/api/provider-base-urls.test.ts
@@ -295,7 +303,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
   // 凭据复用 Claude Code 客户端身份有 ToS 风险,且此订阅不进对话模式,选择器里不可见。
   const workspaceOnlyWarning =
     provider.oauthStatus?.chatCapable === false ? (
-      <div className="rounded-md border border-amber-300 bg-amber-50/60 px-3 py-2.5 md:col-span-2 dark:border-amber-900 dark:bg-amber-950/30">
+      <div className="rounded-md border border-amber-300 bg-amber-50/60 px-3 py-2.5 dark:border-amber-900 dark:bg-amber-950/30">
         <div className="flex items-start gap-2 text-sm font-medium text-amber-700 dark:text-amber-400">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" />
           {t("settings:providers.oauth.workspace_only_title")}
@@ -319,7 +327,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
     return (
       <>
         {workspaceOnlyWarning}
-        <div className="rounded-md border border-emerald-200 bg-emerald-50/50 px-3 py-3 md:col-span-2 dark:border-emerald-900 dark:bg-emerald-950/30">
+        <div className="rounded-md border border-emerald-200 bg-emerald-50/50 px-3 py-3 dark:border-emerald-900 dark:bg-emerald-950/30">
           <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
             <CheckCircle2 className="size-4" />
             {t("settings:providers.oauth.signed_in")}
@@ -340,7 +348,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
     return (
       <>
         {workspaceOnlyWarning}
-        <div className="rounded-md border px-3 py-3 md:col-span-2">
+        <div className="rounded-md border px-3 py-3">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Loader2 className="size-4 animate-spin" />
           {authEvent.phase === "select_method" && t("settings:providers.oauth.select_method")}
@@ -457,7 +465,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
   return (
     <>
       {workspaceOnlyWarning}
-      <div className="rounded-md border border-dashed px-3 py-3 md:col-span-2">
+      <div className="rounded-md border border-dashed px-3 py-3">
         <p className="text-sm text-muted-foreground">{t("settings:providers.oauth.not_signed_in")}</p>
         <Button size="sm" className="mt-2" onClick={() => void start()} disabled={submitting}>
           {submitting ? <Loader2 className="mr-1 size-4 animate-spin" /> : null}
@@ -599,6 +607,30 @@ function createProvider(): ProviderProfile {
   };
 }
 
+// Single model dialog instance reused for both add (+ button) and edit (row click). The mode +
+// modelIdLocked flags determine the dialog UX. State is reset every time the dialog opens
+// (see ModelEditDialog's useEffect on `open`), so reusing one instance is safe.
+type ModelDialogState = {
+  mode: "add" | "edit";
+  model: ProviderModel;
+  modelIdLocked: boolean;
+};
+
+const KIND_LABEL_KEYS: Record<ProviderKind, string> = {
+  openai: "settings:providers.kind.openai",
+  claude: "settings:providers.kind.claude",
+  google: "settings:providers.kind.google",
+};
+const PROVIDER_KINDS = Object.keys(KIND_LABEL_KEYS) as ProviderKind[];
+
+/** 当前格式下请求端点尾缀是否被用户改过(只有 OpenAI 格式可改)。 */
+function hasCustomEndpointPath(provider: ProviderProfile): boolean {
+  if (providerKind(provider) !== "openai") return false;
+  const chat = textValue(provider.chatCompletionsPath) || "/chat/completions";
+  const responses = textValue(provider.responsesPath) || "/responses";
+  return chat !== "/chat/completions" || responses !== "/responses";
+}
+
 function normalizeKindPatch(provider: ProviderProfile, kind: ProviderKind): ProviderProfile {
   return {
     ...provider,
@@ -633,8 +665,11 @@ export function ProvidersSection({
     // every settings update because that pulls selectedId back to the default.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const urlProviderId = React.useMemo(() => getSettingsParam("providerId"), []);
-  const focusedModelId = React.useMemo(() => getSettingsParam("modelId") ?? "", []);
+  // 深链高亮的模型只属于深链指向的那个供应商;切到别的供应商不再高亮同名模型。
+  const deepLink = React.useMemo(
+    () => ({ providerId: getSettingsParam("providerId"), modelId: getSettingsParam("modelId") ?? "" }),
+    [],
+  );
   const [selectedId, setSelectedId] = React.useState(initialProviderId);
   const selected =
     settings.providers.find((provider) => provider.id === selectedId) ?? settings.providers[0];
@@ -663,26 +698,20 @@ export function ProvidersSection({
     async () => {
       if (!draft) return;
       await api.post("settings/provider", draft);
-      onSettings({
-        ...settings,
-        providers: settings.providers.map((provider) =>
-          provider.id === draft.id ? draft : provider,
-        ),
-      });
+      patchSettingsLocal((current) => ({
+        providers: current.providers.map((provider) => (provider.id === draft.id ? draft : provider)),
+      }));
     },
     { onSaveError: (error) => toast.error((error as Error).message || t("settings:providers.autosave_failed")) },
   );
   const lastSelectedRef = React.useRef(selectedId);
 
-  // Only honor ?providerId=... deep-link navigation when the URL parameter is actually present
-  // AND it differs from current selection. Otherwise (no URL param), do not reassert anything —
-  // the user's clicks must win.
-  React.useEffect(() => {
-    if (!urlProviderId) return;
-    if (urlProviderId === selectedId) return;
-    if (!settings.providers.some((provider) => provider.id === urlProviderId)) return;
-    setSelectedId(urlProviderId);
-  }, [urlProviderId, selectedId, settings.providers]);
+  // 「高级设置」展开态:切换供应商不收起,离开本页(重挂载)复位为收起。
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const advancedId = React.useId();
+  const [modelDialog, setModelDialog] = React.useState<ModelDialogState | null>(null);
+  // 深链高亮的模型行只滚动进视野一次(列表限高,靠后的模型否则在可视区外)。
+  const focusScrolledRef = React.useRef(false);
 
   // providersRef lets this realignment effect read the freshest providers list without
   // depending on settings.providers — otherwise every autosave → onSettings round-trip
@@ -801,7 +830,7 @@ export function ProvidersSection({
 
   const patchDraft = (patch: Partial<ProviderProfile>) => {
     autosave.markDirty();
-    setDraft({ ...draft, ...patch });
+    setDraft((current) => (current ? { ...current, ...patch } : current));
   };
   // 测试/查余额前的"确保服务端拿到当前草稿"。force:与原实现一致,无条件落一次。
   const save = () => autosave.saveNow({ force: true });
@@ -1095,17 +1124,6 @@ export function ProvidersSection({
       patchDraft({ models: remaining });
     }
   };
-  // -------- Model add/edit dialog state ----------------------------------------------------
-  // Single dialog instance reused for both add (+ button) and edit (row click). The mode +
-  // modelIdLocked flags determine the dialog UX. State is reset every time the dialog opens
-  // (see ModelEditDialog's useEffect on `open`), so reusing one instance is safe.
-  type ModelDialogState = {
-    mode: "add" | "edit";
-    model: ProviderModel;
-    modelIdLocked: boolean;
-  };
-  const [modelDialog, setModelDialog] = React.useState<ModelDialogState | null>(null);
-
   const openAddModelDialog = () => {
     if (!draft) return;
     const uuid = createId();
@@ -1194,13 +1212,13 @@ export function ProvidersSection({
     next.name = t("settings:providers.custom_name");
     next.shortDescription = t("settings:providers.custom_desc");
     await api.post("settings/provider", next);
-    onSettings({ ...settings, providers: [...settings.providers, next] });
+    patchSettingsLocal((current) => ({ providers: [...current.providers, next] }));
     setSelectedId(next.id);
     toast.success(t("settings:providers.added"));
   };
   const moveProvider = async (from: number, to: number) => {
     const nextProviders = moveItem(settings.providers, from, to);
-    onSettings({ ...settings, providers: nextProviders });
+    patchSettingsLocal({ providers: nextProviders });
     await api.post("settings/provider/reorder", {
       ids: nextProviders.map((provider) => provider.id),
     });
@@ -1211,636 +1229,617 @@ export function ProvidersSection({
     tools: t("settings:providers.mode_tools"),
   };
 
+  const scrollFocusedIntoView = (element: HTMLDivElement | null) => {
+    if (!element || focusScrolledRef.current) return;
+    focusScrolledRef.current = true;
+    element.scrollIntoView({ block: "nearest" });
+  };
+
+  const isOauth = draft.authMode === "oauth";
+  // 收起时高级区里有非默认配置就亮小圆点,免得默认折叠把用户自己的配置藏起来。
+  const advancedAttention =
+    (!isOauth &&
+      kind === "openai" &&
+      (hasCustomEndpointPath(draft) || draft.includeHistoryReasoning === false || draft.promptCacheKey === true)) ||
+    (!isOauth && kind === "claude" && draft.promptCaching === true) ||
+    balanceOption.enabled === true;
+  const getKeyUrl = providerGetKeyUrl(textValue(draft.baseUrl));
+  const resultPathValid = isBalanceResultPathValid(textValue(balanceOption.resultPath));
+  const selectAllLabel = allFilteredEnabled
+    ? modelFilter
+      ? t("settings:providers.models_deselect_all_filtered")
+      : t("settings:providers.models_deselect_all")
+    : modelFilter
+      ? t("settings:providers.models_select_all_filtered")
+      : t("settings:providers.models_select_all");
+
+  const changeKind = (value: ProviderKind) => {
+    // 类型切换也是编辑,必须置脏,否则永不自动保存(复审 F3 补获)
+    autosave.markDirty();
+    const next = normalizeKindPatch(draft, value);
+    // 按登记表/协议默认换算过地址时告知用户去向;自定义地址不动则不打扰。端点尾缀在折叠区里,
+    // 被静默归位时一并说明。
+    const baseChanged = next.baseUrl !== textValue(draft.baseUrl) && textValue(draft.baseUrl) !== "";
+    const pathReset = hasCustomEndpointPath(draft);
+    if (baseChanged || pathReset) {
+      toast(
+        [
+          baseChanged ? t("settings:providers.base_url_switched", { url: next.baseUrl }) : null,
+          pathReset ? t("settings:providers.path_reset_on_kind") : null,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+    }
+    setDraft(next);
+  };
+
+  const deleteProvider = async () => {
+    if (!(await confirmDialog({ title: t("settings:providers.delete_confirm", { name: draft.name }), danger: true }))) return;
+    // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
+    await autosave.discard();
+    await api.delete(`settings/provider/${encodeURIComponent(draft.id)}`);
+    let nextId = "";
+    patchSettingsLocal((current) => {
+      const providers = current.providers.filter((item) => item.id !== draft.id);
+      nextId = providers[0]?.id ?? "";
+      return { providers };
+    });
+    setSelectedId(nextId);
+    toast.success(t("settings:providers.deleted"));
+  };
+
   return (
     <>
       <SettingsSplit
         list={
           <div className="space-y-1">
-          <Button className="mb-1 w-full justify-start" variant="outline" onClick={addProvider}>
-            <Plus className="size-4" />
-            {t("settings:providers.add")}
-          </Button>
-          {settings.providers.map((provider, index) => (
-            <SortableRow
-              key={provider.id}
-              id={provider.id}
-              index={index}
-              active={provider.id === draft.id}
-              onSelect={() => setSelectedId(provider.id)}
-              onMove={moveProvider}
-            >
-              <span className="grid min-w-0 grid-cols-[28px_10px_minmax(0,1fr)_auto] items-center gap-2 text-left">
-                <AIIcon name={provider.name} size={24} className="justify-self-start" />
-                <span
-                  className={`size-2 rounded-full ${provider.enabled ? "bg-success" : "bg-muted-foreground/40"}`}
-                />
-                <span className="min-w-0 flex-1 truncate">{provider.name}</span>
-                {provider.authMode === "oauth" ? (
-                  <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                    {t("settings:providers.oauth.badge")}
-                  </span>
-                ) : null}
-              </span>
-            </SortableRow>
-          ))}
+            <Button className="mb-1 w-full justify-start" variant="outline" onClick={() => void addProvider()}>
+              <Plus className="size-4" />
+              {t("settings:providers.add")}
+            </Button>
+            {settings.providers.map((provider, index) => (
+              <SortableRow
+                key={provider.id}
+                id={provider.id}
+                index={index}
+                active={provider.id === draft.id}
+                onSelect={() => setSelectedId(provider.id)}
+                onMove={moveProvider}
+              >
+                <span className="grid min-w-0 grid-cols-[28px_10px_minmax(0,1fr)_auto] items-center gap-2 text-left">
+                  <AIIcon name={provider.name} size={24} className="justify-self-start" />
+                  <span
+                    className={`size-2 rounded-full ${provider.enabled ? "bg-success" : "bg-muted-foreground/40"}`}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{provider.name}</span>
+                  {provider.authMode === "oauth" ? (
+                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                      {t("settings:providers.oauth.badge")}
+                    </span>
+                  ) : null}
+                </span>
+              </SortableRow>
+            ))}
           </div>
         }
       >
-        <div className="space-y-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-lg font-medium">{draft.name}</div>
-              <div className="text-xs text-muted-foreground">
-                {textValue(draft.shortDescription) || providerKind(draft)}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">{t("settings:providers.enabled_label")}</span>
-              <Switch
-                checked={draft.enabled}
-                disabled={fetchingModels}
-                onCheckedChange={(enabled) => void handleToggleEnabled(enabled)}
-              />
-            </div>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="space-y-2">
-              <span className="text-sm font-medium">{t("settings:providers.name")}</span>
-              <Input
-                value={draft.name}
-                onChange={(event) => patchDraft({ name: event.target.value })}
-              />
-            </label>
-            {draft.authMode !== "oauth" ? (
-              <label className="space-y-2">
-                <span className="text-sm font-medium">{t("settings:providers.type")}</span>
-                <Select
-                  value={kind}
-                  onValueChange={(value) => {
-                    // 类型切换也是编辑,必须置脏,否则永不自动保存(复审 F3 补获)
-                    autosave.markDirty();
-                    const next = normalizeKindPatch(draft, value as ProviderKind);
-                    // 按登记表/协议默认换算过地址时告知用户去向;自定义地址不动则不打扰
-                    if (next.baseUrl !== textValue(draft.baseUrl) && textValue(draft.baseUrl)) {
-                      toast(t("settings:providers.base_url_switched", { url: next.baseUrl }));
+        <div className="@container">
+          <SettingsStack>
+            <SettingsDetailHeader
+              title={draft.name || t(KIND_LABEL_KEYS[kind])}
+              description={textValue(draft.shortDescription) || t(KIND_LABEL_KEYS[kind])}
+              action={
+                <label className="flex items-center gap-2 text-sm text-[var(--ds-text-secondary)]">
+                  {t("settings:providers.enabled_label")}
+                  <Switch
+                    checked={draft.enabled}
+                    disabled={fetchingModels}
+                    onCheckedChange={(enabled) => void handleToggleEnabled(enabled)}
+                  />
+                </label>
+              }
+            />
+
+            <SettingsGroup
+              title={t("settings:providers.connection_title")}
+              fields
+              action={
+                <SettingsAdvancedToggle
+                  open={advancedOpen}
+                  onOpenChange={setAdvancedOpen}
+                  controls={[advancedId]}
+                  attention={advancedAttention}
+                />
+              }
+            >
+              <SettingsField label={t("settings:providers.name")}>
+                <Input value={draft.name} onChange={(event) => patchDraft({ name: event.target.value })} />
+              </SettingsField>
+              {!isOauth ? (
+                <>
+                  <SettingsField label={t("settings:providers.type")}>
+                    <SegmentedControl
+                      stretch
+                      aria-label={t("settings:providers.type")}
+                      items={PROVIDER_KINDS.map((value) => ({ value, label: t(KIND_LABEL_KEYS[value]) }))}
+                      value={kind}
+                      onChange={changeKind}
+                    />
+                  </SettingsField>
+                  <SettingsField
+                    label="Base URL"
+                    hint={
+                      <span className="block space-y-0.5 break-all">
+                        <span className="block">{t("settings:providers.chat_url", { url: endpointPreview(draft) })}</span>
+                        <span className="block">
+                          {t("settings:providers.models_url", { url: modelListEndpointPreview(draft) })}
+                        </span>
+                      </span>
                     }
-                    setDraft(next);
-                  }}
+                  >
+                    <Input
+                      value={textValue(draft.baseUrl)}
+                      onChange={(event) => patchDraft({ baseUrl: event.target.value })}
+                      placeholder={DEFAULT_BASE_URLS[kind]}
+                    />
+                  </SettingsField>
+                </>
+              ) : null}
+              {isOauth ? (
+                // 登录态读 SSE 真值(selected)而非 draft:draft 只在切换供应商/登录态翻转时重对齐,
+                // 用 draft 会让卡片在登出/登录后仍停留在旧状态。
+                // key 绑 provider.id:切换供应商时强制重挂载,清掉上次残留的 manualCode/textInput/
+                // 已打开授权 URL 等瞬态——否则 A 供应商输入的授权码会带进 B 的登录框。
+                <ProviderLoginPanel key={(selected ?? draft).id} provider={selected ?? draft} />
+              ) : (
+                <SettingsField
+                  label="API Key"
+                  trailing={
+                    getKeyUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => void openExternal(getKeyUrl)}
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                        title={t("settings:providers.get_key_title")}
+                      >
+                        <ExternalLink className="size-3" />
+                        {t("settings:providers.get_key")}
+                      </button>
+                    ) : undefined
+                  }
                 >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
+                  <PasswordInput value={textValue(draft.apiKey)} onChange={(apiKey) => patchDraft({ apiKey })} />
+                </SettingsField>
+              )}
+            </SettingsGroup>
+
+            <SettingsGroup
+              title={t("settings:providers.models_title")}
+              description={t("settings:providers.models_desc", { count: draft.models?.length ?? 0 })}
+              action={
+                <>
+                  <Button variant="outline" size="sm" onClick={openAddModelDialog} title={t("settings:providers.add_model_title")}>
+                    <Plus className="size-4" />
+                    {t("settings:providers.add_model")}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => void fetchModels()} disabled={fetchingModels}>
+                    {fetchingModels ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                    {t("settings:providers.fetch_models")}
+                  </Button>
+                </>
+              }
+              fields
+            >
+              {/* 搜索 + 全选工具条:列表为空(未拉取、无手动模型)时不显示。 */}
+              {(fetchedModels.length > 0 || (draft.models ?? []).length > 0) && (
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={modelFilter}
+                      onChange={(event) => setModelFilter(event.target.value)}
+                      placeholder={t("settings:providers.models_search_placeholder")}
+                      aria-label={t("settings:providers.models_search_placeholder")}
+                      className="h-8 pl-9 pr-8"
+                    />
+                    {modelFilter ? (
+                      <button
+                        type="button"
+                        onClick={() => setModelFilter("")}
+                        aria-label={t("settings:providers.clear_search")}
+                        title={t("settings:providers.clear_search")}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="size-4" />
+                      </button>
+                    ) : null}
+                  </div>
+                  {/* 已启用/总数:当前过滤后还剩多少一目了然。 */}
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {t("settings:providers.models_selection_count", {
+                      enabled: draft.models?.length ?? 0,
+                      total: displayModels.length,
+                    })}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setModelsEnabled(visibleModels, !allFilteredEnabled)}
+                    disabled={visibleModels.length === 0}
+                    title={selectAllLabel}
+                  >
+                    {selectAllLabel}
+                  </Button>
+                </div>
+              )}
+              <div className="max-h-72 space-y-2 overflow-auto">
+                {visibleModels.map((model) => {
+                    const focused =
+                      draft.id === deepLink.providerId &&
+                      deepLink.modelId !== "" &&
+                      (model.modelId === deepLink.modelId || model.id === deepLink.modelId);
+                    const enabled = selectedModelIds.has(model.modelId);
+                    const persisted = (draft.models ?? []).find(
+                      (item) => item.modelId === model.modelId,
+                    );
+                    const currentType =
+                      (persisted?.type as "CHAT" | "IMAGE" | "EMBEDDING" | undefined) ?? "CHAT";
+                    const currentAbilities = Array.isArray(persisted?.abilities)
+                      ? persisted!.abilities
+                      : [];
+                    const hasTool = currentAbilities.includes("TOOL");
+                    const hasReasoning = currentAbilities.includes("REASONING");
+                    return (
+                      <div
+                        key={model.id ?? model.modelId}
+                        ref={focused ? scrollFocusedIntoView : undefined}
+                        // The row itself is the click target for the edit dialog. The checkbox and
+                        // ability buttons inside stop propagation so they keep their own semantics.
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openEditModelDialog(model)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openEditModelDialog(model);
+                          }
+                        }}
+                        className={cn(
+                          "flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 transition hover:border-primary/40 hover:bg-muted/40",
+                          focused && "border-primary bg-primary/5 shadow-sm",
+                        )}
+                      >
+                        <span onClick={(event) => event.stopPropagation()}>
+                          <Checkbox
+                            checked={enabled}
+                            onCheckedChange={(checked) => toggleModel(model, checked === true)}
+                          />
+                        </span>
+                        <AIIcon name={model.modelId} size={28} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">
+                            {getModelDisplayName(model.displayName, model.modelId)}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {model.modelId}
+                          </span>
+                        </span>
+                        {enabled && currentType === "CHAT" ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                event.preventDefault();
+                                toggleModelAbility(model.modelId, "TOOL", !hasTool);
+                              }}
+                              className={cn(
+                                "h-7 rounded-md border px-2 text-xs transition",
+                                hasTool
+                                  ? "border-warning/50 bg-warning/10 text-warning"
+                                  : "border-border text-muted-foreground hover:bg-muted",
+                              )}
+                              title={hasTool ? t("settings:providers.tool_enabled") : t("settings:providers.tool_disabled")}
+                            >
+                              {t("settings:providers.tool_short")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                event.preventDefault();
+                                toggleModelAbility(model.modelId, "REASONING", !hasReasoning);
+                              }}
+                              className={cn(
+                                "h-7 rounded-md border px-2 text-xs transition",
+                                hasReasoning
+                                  ? "border-sky-500/50 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                                  : "border-border text-muted-foreground hover:bg-muted",
+                              )}
+                              title={hasReasoning ? t("settings:providers.reasoning_enabled") : t("settings:providers.reasoning_disabled")}
+                            >
+                              {t("settings:providers.reasoning_short")}
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {displayModels.length === 0 ? (
+                    <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                      {t("settings:providers.no_models")}
+                    </div>
+                  ) : visibleModels.length === 0 ? (
+                    <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                      {t("settings:providers.models_no_match")}
+                    </div>
+                  ) : null}
+              </div>
+            </SettingsGroup>
+
+            <SettingsGroup
+              title={t("settings:providers.test_title")}
+              action={
+                <Button variant="outline" size="sm" onClick={() => void test()} disabled={testing}>
+                  {testing ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
+                  {t("settings:providers.test")}
+                </Button>
+              }
+              fields
+            >
+              <SettingsField label={t("settings:providers.test_model")}>
+                <Select value={effectiveTestModelId} onValueChange={setTestModelId}>
+                  <SelectTrigger className="w-full" aria-label={t("settings:providers.test_model")}>
+                    <SelectValue placeholder={t("settings:providers.test_model_ph")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="openai">OpenAI-compatible</SelectItem>
-                    <SelectItem value="claude">Anthropic Claude</SelectItem>
-                    <SelectItem value="google">Google Gemini</SelectItem>
+                    {mergedTestModels.map((model) => (
+                      <SelectItem key={model.id ?? model.modelId} value={model.modelId}>
+                        {getModelDisplayName(model.displayName, model.modelId)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-              </label>
-            ) : null}
-            {draft.authMode === "oauth" ? (
-              // 登录态读 SSE 真值(selected)而非 draft:draft 只在切换供应商/登录态翻转时重对齐,
-              // 用 draft 会让卡片在登出/登录后仍停留在旧状态。
-              // key 绑 provider.id:切换供应商时强制重挂载,清掉上次残留的 manualCode/textInput/
-              // 已打开授权 URL 等瞬态——否则 A 供应商输入的授权码会带进 B 的登录框。
-              <ProviderLoginPanel key={(selected ?? draft).id} provider={selected ?? draft} />
-            ) : (
-              <label className="space-y-2 md:col-span-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">API Key</span>
-                  {providerGetKeyUrl(textValue(draft.baseUrl)) ? (
-                    <button
-                      type="button"
-                      onClick={() => void openExternal(providerGetKeyUrl(textValue(draft.baseUrl))!)}
-                      className="ml-auto inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                      title={t("settings:providers.get_key_title")}
-                    >
-                      <ExternalLink className="size-3" />
-                      {t("settings:providers.get_key")}
-                    </button>
-                  ) : null}
-                </div>
-                <PasswordInput
-                  value={textValue(draft.apiKey)}
-                  onChange={(apiKey) => patchDraft({ apiKey })}
-                />
-              </label>
-            )}
-            {draft.authMode !== "oauth" ? (
-              <>
-                <label className="space-y-2 md:col-span-2">
-                  <span className="text-sm font-medium">Base URL</span>
-                  <Input
-                    value={textValue(draft.baseUrl)}
-                    onChange={(event) => patchDraft({ baseUrl: event.target.value })}
-                    placeholder={DEFAULT_BASE_URLS[kind]}
-                  />
-                  <span className="block break-all text-xs text-muted-foreground">
-                    {t("settings:providers.chat_url", { url: endpointPreview(draft) })}
-                  </span>
-                  <span className="block break-all text-xs text-muted-foreground">
-                    {t("settings:providers.models_url", { url: modelListEndpointPreview(draft) })}
-                  </span>
-                </label>
-                <div className={cn(PROVIDER_ROW, "grid gap-x-6 gap-y-3 md:grid-cols-2")}>
-                  <label className="space-y-2">
-                    {/* 单输入框按开关切换绑定字段(对齐安卓 ProviderConfigure):关→chatCompletionsPath,开→responsesPath */}
-                    <span className="text-sm font-medium">
-                      {draft.useResponseApi === true
-                        ? t("settings:providers.responses_path_label")
-                        : t("settings:providers.chat_completions_path_label")}
-                    </span>
-                    <Input
-                      disabled={kind !== "openai"}
-                      value={
-                        draft.useResponseApi === true
-                          ? textValue(draft.responsesPath) || "/responses"
-                          : textValue(draft.chatCompletionsPath) || defaultPathForKind(kind, false)
-                      }
-                      onChange={(event) =>
-                        patchDraft(
-                          draft.useResponseApi === true
-                            ? { responsesPath: event.target.value }
-                            : { chatCompletionsPath: event.target.value },
-                        )
-                      }
-                    />
-                  </label>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0 space-y-1">
-                      <div className="text-sm font-medium">Response API</div>
-                      <div className="text-xs leading-relaxed text-muted-foreground">
-                        {t("settings:providers.response_api_desc")}
-                      </div>
+              </SettingsField>
+              {(testing || testChecks.length > 0 || testInfo) &&
+              !isImageTestMode &&
+              !imageTestResult ? (
+                <div className="rounded-md border bg-muted/40 p-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-medium">{t("settings:providers.test_summary")}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {testInfo?.testModelId
+                        ? t("settings:providers.test_summary_model", { model: testInfo.testModelId })
+                        : testing
+                          ? t("settings:providers.testing")
+                          : t("settings:providers.awaiting")}
                     </div>
-                    <Switch
-                      className="shrink-0"
-                      disabled={kind !== "openai"}
+                  </div>
+                  <div className="grid gap-2 @xl:grid-cols-3">
+                    {(["non_stream", "stream", "tools"] as ProviderTestMode[]).map((mode) => {
+                      const check = testChecks.find((item) => item.mode === mode);
+                      const pending = testing && !check;
+                      return (
+                        <div
+                          key={mode}
+                          className={cn(
+                            "rounded-md border bg-background px-3 py-2",
+                            check?.ok === true && "border-success/30 bg-success/5",
+                            check?.ok === false && "border-destructive/30 bg-destructive/5",
+                          )}
+                        >
+                          <div className="flex items-center gap-2 text-sm font-medium">
+                            {pending ? (
+                              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                            ) : check?.ok ? (
+                              <CheckCircle2 className="size-4 text-success" />
+                            ) : check ? (
+                              <XCircle className="size-4 text-destructive" />
+                            ) : (
+                              <span className="size-2 rounded-full bg-muted-foreground/40" />
+                            )}
+                            <span>{testModeLabels[mode]}</span>
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {check
+                              ? check.ok
+                                ? t("settings:providers.check_ok", { status: check.status })
+                                : t("settings:providers.check_failed", { status: check.status || t("settings:providers.not_connected") })
+                              : pending
+                                ? t("settings:providers.in_progress")
+                                : t("settings:providers.not_tested")}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+              {isImageTestMode && testing && !imageTestResult ? (
+                <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+                  <Loader2 className="mr-2 inline size-4 animate-spin align-middle" />
+                  {t("settings:providers.img_test_generating_pre")}<span className="font-medium text-foreground">
+                    {effectiveTestModelId}
+                  </span>{" "}
+                  {t("settings:providers.img_test_generating_post")}
+                </div>
+              ) : null}
+              {imageTestResult ? (
+                <div className="rounded-md border bg-muted/40 p-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-medium">{t("settings:providers.img_test_result")}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {t("settings:providers.img_test_model", { model: imageTestResult.modelId, duration: (imageTestResult.durationMs / 1000).toFixed(2) })}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-start gap-3">
+                    {imageTestResult.url ? (
+                      <img
+                        src={appendWebAuthQuery(imageTestResult.url)}
+                        alt={t("settings:providers.img_alt")}
+                        className="h-40 w-40 rounded-md border object-cover"
+                      />
+                    ) : null}
+                    <div className="min-w-0 flex-1 text-xs text-muted-foreground">
+                      <div className="mb-1 font-medium text-foreground">{t("settings:providers.prompt_label")}</div>
+                      <div className="whitespace-pre-wrap">{imageTestResult.prompt}</div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              {testResult ? (
+                <pre className="max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
+                  {testResult}
+                </pre>
+              ) : null}
+            </SettingsGroup>
+
+            <SettingsAdvancedRegion id={advancedId} open={advancedOpen}>
+              <SettingsGroup title={t("settings:common.advanced")}>
+                <SettingsRows>
+                  {!isOauth && kind === "openai" ? (
+                    // 单输入框按开关切换绑定字段(对齐安卓 ProviderConfigure):关→chatCompletionsPath,
+                    // 开→responsesPath。两者必须同在一个渲染单元:标签/值/写入字段都随开关变。
+                    <SettingsSwitchRow
+                      label="Response API"
+                      description={t("settings:providers.response_api_desc")}
                       checked={draft.useResponseApi === true}
                       onCheckedChange={(useResponseApi) => patchDraft({ useResponseApi })}
-                    />
-                  </div>
-                </div>
-                {kind === "openai" ? (
-                  <div className={cn(PROVIDER_ROW, "flex items-start justify-between gap-3")}>
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <div className="text-sm font-medium">{t("settings:providers.history_reasoning_title")}</div>
-                      <div className="text-xs leading-relaxed text-muted-foreground">
-                        {t("settings:providers.history_reasoning_desc")}
-                      </div>
-                    </div>
-                    <Switch
-                      className="mt-1 shrink-0"
+                    >
+                      <SettingsField
+                        label={
+                          draft.useResponseApi === true
+                            ? t("settings:providers.responses_path_label")
+                            : t("settings:providers.chat_completions_path_label")
+                        }
+                      >
+                        <Input
+                          value={
+                            draft.useResponseApi === true
+                              ? textValue(draft.responsesPath) || "/responses"
+                              : textValue(draft.chatCompletionsPath) || defaultPathForKind(kind, false)
+                          }
+                          onChange={(event) =>
+                            patchDraft(
+                              draft.useResponseApi === true
+                                ? { responsesPath: event.target.value }
+                                : { chatCompletionsPath: event.target.value },
+                            )
+                          }
+                        />
+                      </SettingsField>
+                    </SettingsSwitchRow>
+                  ) : null}
+                  {!isOauth && kind === "openai" ? (
+                    <SettingsSwitchRow
+                      label={t("settings:providers.history_reasoning_title")}
+                      description={t("settings:providers.history_reasoning_desc")}
                       checked={draft.includeHistoryReasoning !== false}
-                      onCheckedChange={(includeHistoryReasoning) =>
-                        patchDraft({ includeHistoryReasoning })
-                      }
+                      onCheckedChange={(includeHistoryReasoning) => patchDraft({ includeHistoryReasoning })}
                     />
-                  </div>
-                ) : null}
-                {kind === "openai" ? (
-                  <div className={cn(PROVIDER_ROW, "flex items-start justify-between gap-3")}>
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <div className="text-sm font-medium">{t("settings:providers.prompt_cache_key_title")}</div>
-                      <div className="text-xs leading-relaxed text-muted-foreground">
-                        {t("settings:providers.prompt_cache_key_desc")}
-                      </div>
-                    </div>
-                    <Switch
-                      className="mt-1 shrink-0"
+                  ) : null}
+                  {!isOauth && kind === "openai" ? (
+                    <SettingsSwitchRow
+                      label={t("settings:providers.prompt_cache_key_title")}
+                      description={t("settings:providers.prompt_cache_key_desc")}
                       checked={draft.promptCacheKey === true}
                       onCheckedChange={(promptCacheKey) => patchDraft({ promptCacheKey })}
                     />
-                  </div>
-                ) : null}
-                {kind === "claude" ? (
-                  <div className={cn(PROVIDER_ROW, "grid gap-3 md:grid-cols-[1fr_180px]")}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-medium">{t("settings:providers.prompt_cache_title")}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {t("settings:providers.prompt_cache_desc")}
-                        </div>
-                      </div>
-                      <Switch
-                        checked={draft.promptCaching === true}
-                        onCheckedChange={(promptCaching) => patchDraft({ promptCaching })}
-                      />
-                    </div>
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium">{t("settings:providers.cache_ttl")}</span>
-                      <Select
-                        value={textValue(draft.promptCacheTtl) || "5m"}
-                        onValueChange={(promptCacheTtl) =>
-                          patchDraft({ promptCacheTtl: promptCacheTtl as "5m" | "1h" })
-                        }
-                        disabled={draft.promptCaching !== true}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="5m">{t("settings:providers.cache_5m")}</SelectItem>
-                          <SelectItem value="1h">{t("settings:providers.cache_1h")}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </label>
-                  </div>
-                ) : null}
-              </>
-            ) : null}
-          </div>
-          <div className={cn(PROVIDER_SECTION, "space-y-3")}>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-medium">{t("settings:providers.models_title")}</div>
-                <div className="text-xs text-muted-foreground">
-                  {t("settings:providers.models_desc", { count: draft.models?.length ?? 0 })}
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={openAddModelDialog}
-                  title={t("settings:providers.add_model_title")}
-                >
-                  <Plus className="size-4" />
-                  {t("settings:providers.add_model")}
-                </Button>
-                <Button variant="outline" onClick={fetchModels} disabled={fetchingModels}>
-                  {fetchingModels ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="size-4" />
-                  )}
-                  {t("settings:providers.fetch_models")}
-                </Button>
-              </div>
-            </div>
-            {/* Search + select-all toolbar. Only relevant when there's something to show;
-                hidden while the list is empty (no fetch yet, no manual models). */}
-            {(fetchedModels.length > 0 || (draft.models ?? []).length > 0) && (
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={modelFilter}
-                    onChange={(event) => setModelFilter(event.target.value)}
-                    placeholder={t("settings:providers.models_search_placeholder")}
-                    className="h-8 pl-9 pr-8"
-                  />
-                  {modelFilter ? (
-                    <button
-                      type="button"
-                      onClick={() => setModelFilter("")}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      <X className="size-4" />
-                    </button>
                   ) : null}
-                </div>
-                {/* Visible/total counts — surfaces how many survive the current filter. */}
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {t("settings:providers.models_selection_count", {
-                    enabled: draft.models?.length ?? 0,
-                    total: displayModels.length,
-                  })}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setModelsEnabled(visibleModels, !allFilteredEnabled)}
-                  disabled={visibleModels.length === 0}
-                  title={
-                    allFilteredEnabled
-                      ? modelFilter
-                        ? t("settings:providers.models_deselect_all_filtered")
-                        : t("settings:providers.models_deselect_all")
-                      : modelFilter
-                        ? t("settings:providers.models_select_all_filtered")
-                        : t("settings:providers.models_select_all")
-                  }
-                >
-                  {allFilteredEnabled
-                    ? modelFilter
-                      ? t("settings:providers.models_deselect_all_filtered")
-                      : t("settings:providers.models_deselect_all")
-                    : modelFilter
-                      ? t("settings:providers.models_select_all_filtered")
-                      : t("settings:providers.models_select_all")}
-                </Button>
-              </div>
-            )}
-            <div className="max-h-72 space-y-2 overflow-auto">
-              {visibleModels.map((model) => {
-                const focused =
-                  focusedModelId &&
-                  (model.modelId === focusedModelId || model.id === focusedModelId);
-                const enabled = selectedModelIds.has(model.modelId);
-                const persisted = (draft.models ?? []).find(
-                  (item) => item.modelId === model.modelId,
-                );
-                const currentType =
-                  (persisted?.type as "CHAT" | "IMAGE" | "EMBEDDING" | undefined) ?? "CHAT";
-                const currentAbilities = Array.isArray(persisted?.abilities)
-                  ? persisted!.abilities
-                  : [];
-                const hasTool = currentAbilities.includes("TOOL");
-                const hasReasoning = currentAbilities.includes("REASONING");
-                return (
-                  <div
-                    key={model.id ?? model.modelId}
-                    // The row itself is the click target for the edit dialog. The checkbox and
-                    // ability buttons inside stop propagation so they keep their own semantics.
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => openEditModelDialog(model)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        openEditModelDialog(model);
-                      }
-                    }}
-                    className={cn(
-                      "flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 transition hover:border-primary/40 hover:bg-muted/40",
-                      focused && "border-primary bg-primary/5 shadow-sm",
-                    )}
+                  {!isOauth && kind === "claude" ? (
+                    <SettingsSwitchRow
+                      label={t("settings:providers.prompt_cache_title")}
+                      description={t("settings:providers.prompt_cache_desc")}
+                      checked={draft.promptCaching === true}
+                      onCheckedChange={(promptCaching) => patchDraft({ promptCaching })}
+                    >
+                      {draft.promptCaching === true ? (
+                        <SettingsField label={t("settings:providers.cache_ttl")}>
+                          <Select
+                            value={textValue(draft.promptCacheTtl) || "5m"}
+                            onValueChange={(promptCacheTtl) => patchDraft({ promptCacheTtl: promptCacheTtl as "5m" | "1h" })}
+                          >
+                            <SelectTrigger className="w-full max-w-60" aria-label={t("settings:providers.cache_ttl")}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="5m">{t("settings:providers.cache_5m")}</SelectItem>
+                              <SelectItem value="1h">{t("settings:providers.cache_1h")}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </SettingsField>
+                      ) : null}
+                    </SettingsSwitchRow>
+                  ) : null}
+                  <SettingsSwitchRow
+                    label={t("settings:providers.balance_title")}
+                    description={t("settings:providers.balance_desc")}
+                    checked={balanceOption.enabled === true}
+                    onCheckedChange={(enabled) => patchDraft({ balanceOption: { ...balanceOptionOf(draft), enabled } })}
                   >
-                    <span onClick={(event) => event.stopPropagation()}>
-                      <Checkbox
-                        checked={enabled}
-                        onCheckedChange={(checked) => toggleModel(model, checked === true)}
-                      />
-                    </span>
-                    <AIIcon name={model.modelId} size={28} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">
-                        {getModelDisplayName(model.displayName, model.modelId)}
-                      </span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {model.modelId}
-                      </span>
-                    </span>
-                    {enabled && currentType === "CHAT" ? (
-                      <div className="flex items-center gap-1.5">
-                        <button
+                    {balanceOption.enabled === true ? (
+                      <div className="space-y-3">
+                        <div className="grid gap-3 @xl:grid-cols-2">
+                          <SettingsField label={t("settings:providers.balance_api_path")}>
+                            <Input
+                              value={textValue(balanceOption.apiPath) || "/credits"}
+                              onChange={(event) =>
+                                patchDraft({ balanceOption: { ...balanceOptionOf(draft), apiPath: event.target.value } })
+                              }
+                            />
+                          </SettingsField>
+                          <SettingsField
+                            label={t("settings:providers.balance_result_path")}
+                            hint={
+                              resultPathValid ? undefined : (
+                                <span className="text-destructive">
+                                  {t("settings:providers.balance_result_path_invalid")}
+                                </span>
+                              )
+                            }
+                          >
+                            <Input
+                              value={textValue(balanceOption.resultPath)}
+                              onChange={(event) =>
+                                patchDraft({ balanceOption: { ...balanceOptionOf(draft), resultPath: event.target.value } })
+                              }
+                              aria-invalid={!resultPathValid}
+                              className={cn(!resultPathValid && "border-destructive focus-visible:ring-destructive/30")}
+                            />
+                          </SettingsField>
+                        </div>
+                        <Button
                           type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            event.preventDefault();
-                            toggleModelAbility(model.modelId, "TOOL", !hasTool);
-                          }}
-                          className={cn(
-                            "h-7 rounded-md border px-2 text-xs transition",
-                            hasTool
-                              ? "border-warning/50 bg-warning/10 text-warning"
-                              : "border-border text-muted-foreground hover:bg-muted",
-                          )}
-                          title={hasTool ? t("settings:providers.tool_enabled") : t("settings:providers.tool_disabled")}
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void checkBalance()}
+                          disabled={checkingBalance}
                         >
-                          {t("settings:providers.tool_short")}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            event.preventDefault();
-                            toggleModelAbility(model.modelId, "REASONING", !hasReasoning);
-                          }}
-                          className={cn(
-                            "h-7 rounded-md border px-2 text-xs transition",
-                            hasReasoning
-                              ? "border-sky-500/50 bg-sky-500/10 text-sky-700 dark:text-sky-300"
-                              : "border-border text-muted-foreground hover:bg-muted",
-                          )}
-                          title={hasReasoning ? t("settings:providers.reasoning_enabled") : t("settings:providers.reasoning_disabled")}
-                        >
-                          {t("settings:providers.reasoning_short")}
-                        </button>
+                          {checkingBalance ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
+                          {t("settings:providers.query")}
+                        </Button>
+                        {balanceResult ? (
+                          <pre className="max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
+                            {balanceResult}
+                          </pre>
+                        ) : null}
                       </div>
                     ) : null}
-                  </div>
-                );
-              })}
-              {displayModels.length === 0 ? (
-                <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  {t("settings:providers.no_models")}
-                </div>
-              ) : visibleModels.length === 0 ? (
-                <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  {t("settings:providers.models_no_match")}
-                </div>
-              ) : null}
-            </div>
-          </div>
-          <div className={cn(PROVIDER_SECTION, "space-y-2")}>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium">{t("settings:providers.test_model")}</span>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={test} disabled={testing}>
-                  {testing ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Database className="size-4" />
-                  )}
-                  {t("settings:providers.test")}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={async () => {
-                    if (!(await confirmDialog({ title: t("settings:providers.delete_confirm", { name: draft.name }), danger: true }))) return;
-                    // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
-                    await autosave.discard();
-                    await api.delete(`settings/provider/${encodeURIComponent(draft.id)}`);
-                    const providers = settings.providers.filter((item) => item.id !== draft.id);
-                    onSettings({ ...settings, providers });
-                    setSelectedId(providers[0]?.id ?? "");
-                    toast.success(t("settings:providers.deleted"));
-                  }}
-                  disabled={settings.providers.length <= 1}
-                >
-                  <Trash2 className="size-4" />
-                  {t("settings:providers.delete")}
-                </Button>
-                <AutosaveStatusRow
-                  status={autosave.status}
-                  onRetry={() => void autosave.saveNow()}
-                />
-              </div>
-            </div>
-            <Select value={effectiveTestModelId} onValueChange={setTestModelId}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder={t("settings:providers.test_model_ph")} />
-              </SelectTrigger>
-              <SelectContent>
-                {mergedTestModels.map((model) => (
-                  <SelectItem key={model.id ?? model.modelId} value={model.modelId}>
-                    {getModelDisplayName(model.displayName, model.modelId)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className={cn(PROVIDER_SECTION, "space-y-3")}>
-            <div className="flex items-end justify-between gap-3">
-              <div>
-                <div className="text-sm font-medium">{t("settings:providers.balance_title")}</div>
-                <div className="text-xs text-muted-foreground">
-                  {t("settings:providers.balance_desc")}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={balanceOption.enabled === true}
-                  onCheckedChange={(enabled) =>
-                    patchDraft({ balanceOption: { ...balanceOptionOf(draft), enabled } })
-                  }
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void checkBalance()}
-                  disabled={checkingBalance || balanceOption.enabled !== true}
-                >
-                  {checkingBalance ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Database className="size-4" />
-                  )}
-                  {t("settings:providers.query")}
-                </Button>
-              </div>
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="space-y-2">
-                <span className="text-sm font-medium">{t("settings:providers.balance_api_path")}</span>
-                <Input
-                  value={textValue(balanceOption.apiPath) || "/credits"}
-                  onChange={(event) =>
-                    patchDraft({
-                      balanceOption: { ...balanceOptionOf(draft), apiPath: event.target.value },
-                    })
-                  }
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-medium">{t("settings:providers.balance_result_path")}</span>
-                <Input
-                  value={textValue(balanceOption.resultPath)}
-                  onChange={(event) =>
-                    patchDraft({
-                      balanceOption: { ...balanceOptionOf(draft), resultPath: event.target.value },
-                    })
-                  }
-                  aria-invalid={!isBalanceResultPathValid(textValue(balanceOption.resultPath))}
-                  className={cn(
-                    !isBalanceResultPathValid(textValue(balanceOption.resultPath)) &&
-                      "border-destructive focus-visible:ring-destructive/30",
-                  )}
-                />
-                {!isBalanceResultPathValid(textValue(balanceOption.resultPath)) ? (
-                  <p className="text-xs text-destructive">{t("settings:providers.balance_result_path_invalid")}</p>
-                ) : null}
-              </label>
-            </div>
-          </div>
-          {(testing || testChecks.length > 0 || testInfo) &&
-          !isImageTestMode &&
-          !imageTestResult ? (
-            <div className="rounded-md border bg-muted/40 p-3">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-medium">{t("settings:providers.test_summary")}</div>
-                <div className="text-xs text-muted-foreground">
-                  {testInfo?.testModelId
-                    ? t("settings:providers.test_summary_model", { model: testInfo.testModelId })
-                    : testing
-                      ? t("settings:providers.testing")
-                      : t("settings:providers.awaiting")}
-                </div>
-              </div>
-              <div className="grid gap-2 md:grid-cols-3">
-                {(["non_stream", "stream", "tools"] as ProviderTestMode[]).map((mode) => {
-                  const check = testChecks.find((item) => item.mode === mode);
-                  const pending = testing && !check;
-                  return (
-                    <div
-                      key={mode}
-                      className={cn(
-                        "rounded-md border bg-background px-3 py-2",
-                        check?.ok === true && "border-success/30 bg-success/5",
-                        check?.ok === false && "border-destructive/30 bg-destructive/5",
-                      )}
-                    >
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        {pending ? (
-                          <Loader2 className="size-4 animate-spin text-muted-foreground" />
-                        ) : check?.ok ? (
-                          <CheckCircle2 className="size-4 text-success" />
-                        ) : check ? (
-                          <Trash2 className="size-4 text-destructive" />
-                        ) : (
-                          <span className="size-2 rounded-full bg-muted-foreground/40" />
-                        )}
-                        <span>{testModeLabels[mode]}</span>
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {check
-                          ? check.ok
-                            ? t("settings:providers.check_ok", { status: check.status })
-                            : t("settings:providers.check_failed", { status: check.status || t("settings:providers.not_connected") })
-                          : pending
-                            ? t("settings:providers.in_progress")
-                            : t("settings:providers.not_tested")}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-          {isImageTestMode && testing && !imageTestResult ? (
-            <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
-              <Loader2 className="mr-2 inline size-4 animate-spin align-middle" />
-              {t("settings:providers.img_test_generating_pre")}<span className="font-medium text-foreground">
-                {effectiveTestModelId}
-              </span>{" "}
-              {t("settings:providers.img_test_generating_post")}
-            </div>
-          ) : null}
-          {imageTestResult ? (
-            <div className="rounded-md border bg-muted/40 p-3">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-medium">{t("settings:providers.img_test_result")}</div>
-                <div className="text-xs text-muted-foreground">
-                  {t("settings:providers.img_test_model", { model: imageTestResult.modelId, duration: (imageTestResult.durationMs / 1000).toFixed(2) })}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-start gap-3">
-                {imageTestResult.url ? (
-                  <img
-                    src={appendWebAuthQuery(imageTestResult.url)}
-                    alt={t("settings:providers.img_alt")}
-                    className="h-40 w-40 rounded-md border object-cover"
-                  />
-                ) : null}
-                <div className="min-w-0 flex-1 text-xs text-muted-foreground">
-                  <div className="mb-1 font-medium text-foreground">{t("settings:providers.prompt_label")}</div>
-                  <div className="whitespace-pre-wrap">{imageTestResult.prompt}</div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-          {testResult ? (
-            <pre className="max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
-              {testResult}
-            </pre>
-          ) : null}
-          {balanceResult ? (
-            <pre className="max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
-              {balanceResult}
-            </pre>
-          ) : null}
+                  </SettingsSwitchRow>
+                </SettingsRows>
+              </SettingsGroup>
+            </SettingsAdvancedRegion>
+
+            <SettingsDetailFooter
+              status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+            >
+              <Button variant="outline" onClick={() => void deleteProvider()} disabled={settings.providers.length <= 1}>
+                <Trash2 className="size-4" />
+                {t("settings:providers.delete")}
+              </Button>
+            </SettingsDetailFooter>
+          </SettingsStack>
         </div>
       </SettingsSplit>
       {modelDialog ? (

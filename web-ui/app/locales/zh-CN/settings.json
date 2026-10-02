@@ -154,13 +154,10 @@
     "avatar": "头像"
   },
   "providers": {
-    "title": "供应商",
-    "subtitle": "管理 AI 模型，提供对 Base URL、Key 管理、API 路径、模型开关与测试和余额查询等配置。",
     "add": "添加供应商",
-    "name": "名称",
-    "type": "类型",
+    "name": "供应商名称",
+    "type": "API 格式",
     "enabled_label": "启用",
-    "autosaved": "已自动保存",
     "autosave_failed": "自动保存供应商失败",
     "added": "供应商已添加",
     "deleted": "供应商已删除",
@@ -175,8 +172,8 @@
     "chat_url": "聊天完整 URL：{{url}}",
     "models_url": "模型列表 URL：{{url}}",
     "response_api_desc": "开启后聊天端点自动切换为 /responses",
-    "chat_completions_path_label": "Chat Completions Path",
-    "responses_path_label": "Responses Path",
+    "chat_completions_path_label": "请求端点尾缀",
+    "responses_path_label": "请求端点尾缀（Responses API）",
     "history_reasoning_title": "回传历史思考过程",
     "history_reasoning_desc": "新一代模型（例如 DeepSeek V4）要求回传 reasoning_content。开启后，历史 assistant 消息的 reasoning_content 字段将会随请求回传，不要求回传的模型会静默忽略该字段。若部分供应商不识别该字段而拒绝请求时，可手动关闭。",
     "prompt_cache_title": "Claude 提示缓存",
@@ -303,7 +300,16 @@
       "logout_success": "已退出登录",
       "copied": "已复制",
       "copy_failed": "复制失败，请手动选择复制"
-    }
+    },
+    "connection_title": "连接",
+    "test_title": "供应商测试",
+    "kind": {
+      "openai": "OpenAI 兼容",
+      "claude": "Anthropic",
+      "google": "Gemini"
+    },
+    "path_reset_on_kind": "已同时恢复默认请求端点尾缀。",
+    "clear_search": "清除搜索"
   },
   "assistants": {
     "add": "添加助手",
@@ -566,13 +572,10 @@
     "not_passed": "未通过测试"
   },
   "models": {
-    "title": "默认模型与提示词",
-    "subtitle": "为聊天、快速模型、翻译、OCR、压缩等场景分别指定默认模型和 Prompt。",
-    "note": "这里只显示已通过供应商测试的模型。标题、翻译、聊天建议、OCR 和压缩 Prompt 均预置了合理的默认模板，点右侧工具按钮可查看和恢复默认值。",
+    "note": "这里列出已启用供应商中的可用模型。为各场景分别指定模型；带 Prompt 的场景可点右侧按钮查看和恢复默认值。",
     "not_set": "未设置",
     "not_set_fallback": "未设置（自动跟随会话模型）",
     "not_set_disabled": "未设置（功能不可用）",
-    "autosaved": "已自动保存",
     "autosave_failed": "自动保存默认模型失败",
     "edit_prompt": "编辑 Prompt",
     "variables_label": "变量：",

@@ -154,13 +154,10 @@
     "avatar": "Avatar"
   },
   "providers": {
-    "title": "Providers",
-    "subtitle": "Built-in templates, enabled state, Base URL, API paths, Response API, balance path and model configuration.",
     "add": "Add provider",
-    "name": "Name",
-    "type": "Type",
+    "name": "Provider name",
+    "type": "API format",
     "enabled_label": "Enabled",
-    "autosaved": "Saved automatically",
     "autosave_failed": "Failed to auto-save provider",
     "added": "Provider added",
     "deleted": "Provider deleted",
@@ -303,7 +300,16 @@
       "logout_success": "Signed out",
       "copied": "Copied",
       "copy_failed": "Copy failed — please select and copy manually"
-    }
+    },
+    "connection_title": "Connection",
+    "test_title": "Provider test",
+    "kind": {
+      "openai": "OpenAI-compatible",
+      "claude": "Anthropic",
+      "google": "Gemini"
+    },
+    "path_reset_on_kind": "The endpoint path was also reset to its default.",
+    "clear_search": "Clear search"
   },
   "assistants": {
     "add": "Add assistant",
@@ -566,13 +572,10 @@
     "not_passed": "Did not pass the test"
   },
   "models": {
-    "title": "Default models & prompts",
-    "subtitle": "Pick a default model and prompt for chat, the fast model, translation, OCR, compression and more.",
-    "note": "Only models that passed the provider test are shown here. Title, translation, chat suggestion, OCR and compression prompts ship with sensible defaults — click the tool button on the right to view or restore them.",
+    "note": "Lists the available models from enabled providers. Pick a model for each scene; for scenes with a prompt, use the button on the right to view or restore the default.",
     "not_set": "Not set",
     "not_set_fallback": "Not set (follows the conversation model)",
     "not_set_disabled": "Not set (feature unavailable)",
-    "autosaved": "Saved automatically",
     "autosave_failed": "Failed to auto-save default models",
     "edit_prompt": "Edit prompt",
     "variables_label": "Variables: ",
