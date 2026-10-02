@@ -32,6 +32,7 @@ import {
   useSettingsDialogStore,
   withSettingsLocation,
 } from "~/stores/settings-dialog-store";
+import { resetBindingAssistant } from "~/stores/extension-binding-store";
 
 export function meta() {
   return [{ title: i18n.t("settings:nav.meta_title") }];
@@ -54,6 +55,7 @@ export default function SettingsRoute() {
   // 深链带来的位置记进共用记忆(渲染期不写 store,放到提交后)。
   React.useEffect(() => {
     rememberSettingsLocation(current);
+    resetBindingAssistant();
     // 只在进入时记一次;之后的切换由 SettingsPage 的 go() 负责写记忆。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

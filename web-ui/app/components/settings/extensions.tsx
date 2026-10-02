@@ -1,26 +1,15 @@
-// components/settings/extensions.tsx — MCP 与扩展分区（MCP 服务器/模式注入/世界书/快捷消息/技能编辑器）
+// components/settings/extensions.tsx — 拓展四页:MCP / 技能 / 提示词注入(模式注入 + 世界书)/ 快捷消息模板。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Bot,
-  CopyPlus,
-  Database,
-  Download,
-  Loader2,
-  MessageSquareText,
-  Plus,
-  Trash2,
-  TriangleAlert,
-  Upload,
-  WandSparkles,
-} from "lucide-react";
+import { Download, Loader2, Plus, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
+import { SegmentedTabs } from "~/components/ui/segmented-tabs";
 import { Textarea } from "~/components/ui/textarea";
 import Markdown from "~/components/markdown/markdown";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
@@ -30,6 +19,7 @@ import { cn } from "~/lib/utils";
 import { createId } from "~/lib/id";
 import api, { appendWebAuthQuery } from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
+import { setBindingAssistant, useExtensionBindingStore } from "~/stores/extension-binding-store";
 import { getSettingsParam } from "~/stores/settings-dialog-store";
 import { useMcpHealthStore } from "~/stores";
 import type { AssistantProfile, McpHealthEntryDto, Settings } from "~/types";
@@ -62,117 +52,153 @@ interface SkillProfile {
   issues?: Array<{ level: "error" | "warning"; message: string }>;
 }
 
-export function McpExtensionsSection({
+type SectionProps = { settings: Settings; onSettings: (settings: Settings) => void };
+
+/** 拓展 › MCP。MCP 服务器是全局配置(哪个助手用它在输入框 MCP 选择器里决定),无需选助手。 */
+export function McpSection({ settings, onSettings }: SectionProps) {
+  return <McpServerEditor settings={settings} onSettings={onSettings} />;
+}
+
+/**
+ * 技能 / 提示词注入 / 快捷消息模板 三页的「作用于助手」:三页共享同一选择(模块级 store),
+ * 未手动选过时跟随当前对话助手,直接推导不回写(无闪烁)。
+ * issue #49(1.5.0):异常数据(Docker 卷手改 state、导入损坏备份、跨版本错配)可能让助手
+ * 列表为空,渲染期裸解引用会把整页放大成错误边界白屏——空则返回 null,由调用方渲染空态。
+ */
+function useBindingAssistant(settings: Settings): AssistantProfile | null {
+  const stored = useExtensionBindingStore((state) => state.assistantId);
+  const assistants = Array.isArray(settings.assistants) ? settings.assistants : [];
+  return (
+    assistants.find((item) => item.id === stored) ??
+    assistants.find((item) => item.id === settings.assistantId) ??
+    assistants[0] ??
+    null
+  );
+}
+
+function BindingAssistantToolbar({
   settings,
-  onSettings,
+  assistant,
+  leading,
 }: {
   settings: Settings;
-  onSettings: (settings: Settings) => void;
+  assistant: AssistantProfile;
+  leading?: React.ReactNode;
 }) {
   const { t } = useTranslation();
-  type Tab = "mcp" | "mode" | "lorebook" | "quick" | "skills";
-  const tabFromQuery = React.useMemo<Tab>(() => {
-    const value = getSettingsParam("tab");
-    return value === "mcp" ||
-      value === "mode" ||
-      value === "lorebook" ||
-      value === "quick" ||
-      value === "skills"
-      ? value
-      : "mcp";
-  }, []);
-  const [tab, setTab] = React.useState<Tab>(tabFromQuery);
-  const [selectedAssistantId, setSelectedAssistantId] = React.useState(settings.assistantId);
-  // issue #49(1.5.0):本分区是设置页唯一按助手配置的分区,顶部选择器与五个子编辑器全依赖
-  // selectedAssistant。正常契约下 assistants 恒非空(normalize 播种+删除防线),但异常数据
-  // (Docker 卷手改 state、导入损坏备份、跨版本错配)会让渲染期裸解引用把整个分区放大成
-  // 错误边界白屏("Oops")。此处按 boundary 数据收口:空则渲染引导空态,恒不裸传 undefined。
-  const assistants = Array.isArray(settings.assistants) ? settings.assistants : [];
-  const selectedAssistant =
-    assistants.find((item) => item.id === selectedAssistantId) ?? assistants[0];
+  const selectId = React.useId();
+  return (
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+      <div className="min-w-0">{leading}</div>
+      <div className="flex items-center gap-2">
+        <label htmlFor={selectId} className="text-xs text-[var(--ds-text-secondary)]" title={t("settings:mcp.binding_assistant_desc")}>
+          {t("settings:mcp.binding_assistant")}
+        </label>
+        <Select value={assistant.id} onValueChange={setBindingAssistant}>
+          <SelectTrigger id={selectId} className="h-8 w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {settings.assistants.map((item) => (
+              <SelectItem key={item.id} value={item.id}>
+                {item.name || t("settings:assistants.default_name")}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  );
+}
 
-  React.useEffect(() => {
-    if (!assistants.some((item) => item.id === selectedAssistantId))
-      setSelectedAssistantId(settings.assistantId);
-  }, [selectedAssistantId, settings.assistantId, assistants]);
+function NoAssistantsState() {
+  const { t } = useTranslation();
+  return (
+    <div className="rounded-[var(--ds-radius-md)] border border-dashed p-8 text-center text-sm text-[var(--ds-text-secondary)]">
+      {t("settings:mcp.no_assistants")}
+    </div>
+  );
+}
 
-  if (!selectedAssistant) {
-    return (
-      <>
-        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          {t("settings:mcp.no_assistants")}
-        </div>
-      </>
-    );
-  }
-
+/** 拓展 › 技能。 */
+export function SkillsSection({ settings, onSettings }: SectionProps) {
+  const assistant = useBindingAssistant(settings);
+  if (!assistant) return <NoAssistantsState />;
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        {(
-          [
-            ["mcp", "MCP", CopyPlus],
-            ["mode", t("settings:mcp.tab.mode"), WandSparkles],
-            ["lorebook", t("settings:mcp.tab.lorebook"), Database],
-            ["quick", t("settings:mcp.tab.quick"), MessageSquareText],
-            ["skills", "Skills", Bot],
-          ] as Array<[Tab, string, React.ComponentType<{ className?: string }>]>
-        ).map(([idValue, label, Icon]) => (
-          <Button
-            key={String(idValue)}
-            variant={tab === idValue ? "default" : "outline"}
-            size="sm"
-            onClick={() => setTab(idValue as Tab)}
-          >
-            {React.createElement(Icon as React.ComponentType<{ className?: string }>, {
-              className: "size-4",
-            })}
-            {label}
-          </Button>
-        ))}
-        <div className="ml-auto min-w-56">
-          <Select value={selectedAssistant.id} onValueChange={setSelectedAssistantId}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {assistants.map((assistant) => (
-                <SelectItem key={assistant.id} value={assistant.id}>
-                  {assistant.name || t("settings:assistants.default_name")}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-      {tab === "mcp" && (
-        <McpServerEditor
-          settings={settings}
-          assistant={selectedAssistant}
-          onSettings={onSettings}
-        />
-      )}
-      {tab === "mode" && (
-        <ModeInjectionEditor
-          settings={settings}
-          assistant={selectedAssistant}
-          onSettings={onSettings}
-        />
-      )}
-      {tab === "lorebook" && (
-        <LorebookEditor settings={settings} assistant={selectedAssistant} onSettings={onSettings} />
-      )}
-      {tab === "quick" && (
-        <QuickMessageEditor
-          settings={settings}
-          assistant={selectedAssistant}
-          onSettings={onSettings}
-        />
-      )}
-      {tab === "skills" && (
-        <SkillsEditor settings={settings} assistant={selectedAssistant} onSettings={onSettings} />
-      )}
+      <BindingAssistantToolbar settings={settings} assistant={assistant} />
+      <SkillsEditor settings={settings} assistant={assistant} onSettings={onSettings} />
     </>
+  );
+}
+
+/** 拓展 › 快捷消息模板。 */
+export function QuickMessagesSection({ settings, onSettings }: SectionProps) {
+  const assistant = useBindingAssistant(settings);
+  if (!assistant) return <NoAssistantsState />;
+  return (
+    <>
+      <BindingAssistantToolbar settings={settings} assistant={assistant} />
+      <QuickMessageEditor settings={settings} assistant={assistant} onSettings={onSettings} />
+    </>
+  );
+}
+
+type InjectionPanel = "mode" | "lorebook";
+
+/**
+ * 拓展 › 提示词注入:模式注入与世界书两个板块,页内分段切换,一次只显示一个。两个编辑器都
+ * 挂载、用 hidden 切换:编辑器挂载时从 settings 取草稿、之后只在切换条目时同步,来回切换若
+ * 重挂载,"防抖窗口内编辑 → 切走 → 保存往返未完成就切回"会显示改之前的内容,再改一笔即
+ * 覆盖已保存值;常驻挂载同时保留各自列表的选中项。
+ */
+export function PromptInjectionSection({ settings, onSettings }: SectionProps) {
+  const { t } = useTranslation();
+  // 深链 tab 只在进入时读一次(切页即清空,见 settings-dialog-store),之后由页内状态决定。
+  const [panel, setPanel] = React.useState<InjectionPanel>(() =>
+    getSettingsParam("tab") === "lorebook" ? "lorebook" : "mode",
+  );
+  const assistant = useBindingAssistant(settings);
+  if (!assistant) return <NoAssistantsState />;
+  return (
+    <>
+      <BindingAssistantToolbar
+        settings={settings}
+        assistant={assistant}
+        leading={
+          <SegmentedTabs
+            size="sm"
+            aria-label={t("settings:subnav.extensions.injection")}
+            items={[
+              { value: "mode", label: t("settings:mcp.tab.mode") },
+              { value: "lorebook", label: t("settings:mcp.tab.lorebook") },
+            ]}
+            value={panel}
+            onChange={setPanel}
+          />
+        }
+      />
+      <div hidden={panel !== "mode"}>
+        <ModeInjectionEditor settings={settings} assistant={assistant} onSettings={onSettings} />
+      </div>
+      <div hidden={panel !== "lorebook"}>
+        <LorebookEditor settings={settings} assistant={assistant} onSettings={onSettings} />
+      </div>
+    </>
+  );
+}
+
+/** 详情标题旁的「对此助手启用」开关:带可见标签,与条目自身的「启用」区分开。 */
+function BindingSwitch({ checked, onCheckedChange }: { checked: boolean; onCheckedChange: (checked: boolean) => void }) {
+  const { t } = useTranslation();
+  const id = React.useId();
+  return (
+    <div className="flex items-center gap-2">
+      <label htmlFor={id} className="text-xs text-[var(--ds-text-secondary)]">
+        {t("settings:mcp.enable_for_assistant")}
+      </label>
+      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
   );
 }
 
@@ -195,12 +221,12 @@ async function pullSettings(onSettings: (settings: Settings) => void) {
   return next;
 }
 
-function mcpName(server: Record<string, unknown>) {
+function mcpName(server: Record<string, unknown>, fallback: string) {
   const common =
     server.commonOptions && typeof server.commonOptions === "object"
       ? (server.commonOptions as Record<string, unknown>)
       : {};
-  return textValue(common.name) || "MCP Server";
+  return textValue(common.name) || fallback;
 }
 
 /** 状态灯(决策①克制口径):健康快照驱动,而非 lastSyncError 化石。
@@ -226,11 +252,9 @@ function mcpStatusKey(server: Record<string, unknown>, health?: McpHealthEntryDt
 
 function McpServerEditor({
   settings,
-  assistant,
   onSettings,
 }: {
   settings: Settings;
-  assistant: AssistantProfile;
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
@@ -281,7 +305,7 @@ function McpServerEditor({
       applyServerResult(result.server);
       await pullSettings(onSettings);
     },
-    { delayMs: 800, errorLabel: t("settings:mcp.title") },
+    { delayMs: 800, errorLabel: t("settings:subnav.extensions.mcp") },
   );
   // serversRef lets the realignment effect read the freshest servers list WITHOUT taking
   // settings.mcpServers as a dependency. If settings.mcpServers were a dep, the effect
@@ -460,7 +484,7 @@ function McpServerEditor({
       emptyLabel={t("settings:mcp.server.empty")}
       onSelect={setSelectedId}
       onMove={reorder}
-      titleOf={mcpName}
+      titleOf={(item) => mcpName(item, t("settings:mcp.server.default_name"))}
       renderItem={(item) => {
         const status = mcpStatusKey(item, mcpHealth[String(item.id ?? "")]);
         return (
@@ -478,7 +502,7 @@ function McpServerEditor({
               )}
               title={t(`settings:mcp.status_${status.key}`)}
             />
-            <span className="truncate">{mcpName(item)}</span>
+            <span className="truncate">{mcpName(item, t("settings:mcp.server.default_name"))}</span>
           </div>
         );
       }}
@@ -533,11 +557,13 @@ function McpServerEditor({
           </label>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
+          <label className="space-y-1">
+          <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.transport")}</span>
           <Select
             value={textValue(draft.type) || "streamable_http"}
             onValueChange={(value) => patchDraft({ ...draft, type: value })}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-full" aria-label={t("settings:mcp.transport")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -545,6 +571,7 @@ function McpServerEditor({
               <SelectItem value="sse">SSE</SelectItem>
             </SelectContent>
           </Select>
+          </label>
         </div>
         <label className="space-y-1">
           <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.server.url")}</span>
@@ -682,7 +709,7 @@ function McpServerEditor({
                 the per-tool switches are read-only and greyed out — but they STILL show the
                 user's last preference, which the master-on transition will revive. */}
             {tools.map((tool, index) => {
-              const name = textValue(tool.name) || "unnamed_tool";
+              const name = textValue(tool.name) || t("settings:mcp.unnamed_tool");
               const description = textValue(tool.description);
               const enabled = tool.enable !== false;
               const needsApproval = tool.needsApproval === true;
@@ -758,7 +785,7 @@ function McpServerEditor({
                                     ? "bg-blue-500/10 text-blue-700 dark:text-blue-300"
                                     : "bg-background text-muted-foreground border",
                                 )}
-                                title={isRequired ? `${propName} (required)` : propName}
+                                title={isRequired ? `${propName} ${t("settings:mcp.param_required")}` : propName}
                               >
                                 {propName}
                               </span>
@@ -794,7 +821,7 @@ function createMcpServer(): Record<string, unknown> {
     id: createId(),
     type: "streamable_http",
     url: "",
-    commonOptions: { enable: true, name: "MCP Server", headers: [], tools: [] },
+    commonOptions: { enable: true, name: "", headers: [], tools: [] },
   };
 }
 
@@ -848,7 +875,7 @@ function createModeInjection(): Record<string, unknown> {
   return {
     id: createId(),
     type: "mode",
-    name: "提示词注入",
+    name: "",
     enabled: true,
     priority: 0,
     position: "after_system_prompt",
@@ -967,8 +994,8 @@ function LorebookEntryRow({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="USER">User</SelectItem>
-                    <SelectItem value="ASSISTANT">Assistant</SelectItem>
+                    <SelectItem value="USER">{t("settings:assistants.role.user")}</SelectItem>
+                    <SelectItem value="ASSISTANT">{t("settings:assistants.role.assistant")}</SelectItem>
                   </SelectContent>
                 </Select>
               </label>
@@ -1230,7 +1257,7 @@ function LorebookEditor({
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">{t("settings:mcp.lorebook.detail")}</div>
-          <Switch
+          <BindingSwitch
             checked={(assistant.lorebookIds ?? []).includes(String(draft.id))}
             onCheckedChange={(checked) => void bind(checked)}
           />
@@ -1332,7 +1359,7 @@ function LorebookEditor({
 function createLorebook(): Record<string, unknown> {
   return {
     id: createId(),
-    name: "世界书",
+    name: "",
     description: "",
     enabled: true,
     entries: [
@@ -1417,17 +1444,29 @@ function QuickMessageEditor({
           ids: next.map((item) => String(item.id)),
         });
       }}
-      onCreate={() => {
+      onCreate={async () => {
+        // 新建即保存(与另外四个编辑器同款):只置脏等防抖的话,选中校正 effect 在 settings
+        // 里找不到新 id,会把选中跳回第一条,新建的模板随之丢失。
         const next = { id: createId(), title: t("settings:mcp.tab.quick"), content: "" };
-        setSelectedId(String(next.id));
-        setDraft(next);
-        autosave.markDirty();
+        try {
+          await api.post("settings/quick-message/detail", next);
+          await pullSettings(onSettings);
+          setSelectedId(String(next.id));
+          setDraft(next);
+          autosave.reset();
+        } catch (error) {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : t("settings:mcp.item_create_failed", { title: t("settings:mcp.tab.quick") }),
+          );
+        }
       }}
     >
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">{t("settings:mcp.quick.detail")}</div>
-          <Switch
+          <BindingSwitch
             checked={(assistant.quickMessageIds ?? []).includes(String(draft.id))}
             onCheckedChange={(checked) => void bind(checked)}
           />
@@ -1587,7 +1626,7 @@ function PromptItemEditor({
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">{t("settings:mcp.item_detail", { title })}</div>
-          <Switch
+          <BindingSwitch
             checked={(assistant[bindKey] ?? []).includes(String(draft.id))}
             onCheckedChange={(checked) => void bind(checked)}
           />
@@ -1633,8 +1672,8 @@ function PromptItemEditor({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="USER">User</SelectItem>
-                  <SelectItem value="ASSISTANT">Assistant</SelectItem>
+                  <SelectItem value="USER">{t("settings:assistants.role.user")}</SelectItem>
+                  <SelectItem value="ASSISTANT">{t("settings:assistants.role.assistant")}</SelectItem>
                 </SelectContent>
               </Select>
             </label>
@@ -1738,7 +1777,7 @@ function SkillsEditor({
       await load();
       setSelected(name);
     },
-    { delayMs: 900, errorLabel: "Skills" },
+    { delayMs: 900, errorLabel: t("settings:subnav.extensions.skills") },
   );
 
   const load = React.useCallback(async () => {
@@ -1871,7 +1910,8 @@ function SkillsEditor({
         return (
           <div className="flex min-w-0 items-center gap-2 text-left">
             <span
-              className={`size-2 shrink-0 rounded-full ${enabled ? "bg-success" : "bg-destructive"}`}
+              // 未对当前助手启用是正常状态,用中性灰;真正的问题由右侧 TriangleAlert 标出。
+              className={`size-2 shrink-0 rounded-full ${enabled ? "bg-success" : "bg-muted-foreground/40"}`}
             />
             <span className="block min-w-0 truncate font-medium">{name}</span>
             {issues.length > 0 ? (
@@ -1948,6 +1988,9 @@ function SkillsEditor({
           </Button>
         </div>
         <div className="space-y-0.5 border-t border-[var(--ds-divider)] pt-4">
+          <div className="px-2 pb-1 text-xs font-semibold text-[var(--ds-text-secondary)]">
+            {t("settings:mcp.enable_for_assistant")}
+          </div>
           {skills.map((skill) => (
             <label
               key={skill.name}
@@ -2054,7 +2097,7 @@ function EditorShell({
   onMove?: (from: number, to: number) => void | Promise<void>;
   titleOf: (item: Record<string, unknown>) => string;
   renderItem?: (item: Record<string, unknown>) => React.ReactNode;
-  onCreate: () => void;
+  onCreate: () => void | Promise<void>;
   children: React.ReactNode;
 }) {
   const { t } = useTranslation();
@@ -2062,7 +2105,7 @@ function EditorShell({
     <SettingsSplit
       list={
       <div>
-        <Button className="mb-2 w-full justify-start" variant="outline" onClick={onCreate}>
+        <Button className="mb-2 w-full justify-start" variant="outline" onClick={() => void onCreate()}>
           <Plus className="size-4" />
           {t("settings:mcp.add_new")}
         </Button>

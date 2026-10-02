@@ -11,7 +11,12 @@ import { AboutSection, DonateSection } from "~/components/settings/about";
 import { AssistantsSection } from "~/components/settings/assistants";
 import { DataSection } from "~/components/settings/data";
 import { DefaultModelsSection } from "~/components/settings/default-models";
-import { McpExtensionsSection } from "~/components/settings/extensions";
+import {
+  McpSection,
+  PromptInjectionSection,
+  QuickMessagesSection,
+  SkillsSection,
+} from "~/components/settings/extensions";
 import { AppSection, AppearanceSection, ProfileSection, ShortcutsSection } from "~/components/settings/general";
 import { LogsSection, type RequestLog } from "~/components/settings/logs";
 import { PortRequestSection, ProxySection } from "~/components/settings/proxy";
@@ -84,10 +89,10 @@ export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<Setting
   "network/search": SearchSection,
   "network/proxy": ProxySection,
   "network/port": PortRequestSection,
-  "extensions/mcp": McpExtensionsSection,
-  "extensions/skills": McpExtensionsSection,
-  "extensions/injection": McpExtensionsSection,
-  "extensions/quick": McpExtensionsSection,
+  "extensions/mcp": McpSection,
+  "extensions/skills": SkillsSection,
+  "extensions/injection": PromptInjectionSection,
+  "extensions/quick": QuickMessagesSection,
   "personalization/appearance": AppearanceSection,
   "personalization/shortcuts": ShortcutsSection,
   "speech/tts": SpeechSection,

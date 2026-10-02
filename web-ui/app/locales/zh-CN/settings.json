@@ -648,20 +648,16 @@
     }
   },
   "mcp": {
-    "title": "MCP 与拓展",
-    "subtitle": "管理 MCP 服务器、提示词注入、世界书、快捷消息与 Agent Skills。",
-    "no_assistants": "暂无可配置的助手。请先在「助手」分区创建一个助手，再回到这里进行配置。",
+    "no_assistants": "暂无可配置的助手。请先在「助手」页创建一个助手，再回到这里进行配置。",
     "tab": {
-      "mode": "提示词注入",
+      "mode": "模式注入",
       "lorebook": "世界书",
-      "quick": "快捷消息"
+      "quick": "快捷消息模板"
     },
     "name": "名称",
     "name_ph": "名称",
     "enabled": "启用",
     "disabled": "已禁用",
-    "autosaved": "已自动保存",
-    "autosaving": "正在自动保存...",
     "save_failed": "保存失败",
     "delete": "删除",
     "priority": "优先级",
@@ -728,7 +724,8 @@
       "tools_empty": "启用并保存后会自动同步工具。",
       "needs_approval": "需要用户审核",
       "collapse": "收起",
-      "expand": "展开"
+      "expand": "展开",
+      "default_name": "MCP 服务器"
     },
     "entry_n": "条目 {{n}}",
     "entry_name_ph": "（可选）条目名称",
@@ -759,24 +756,24 @@
       "delete_confirm": "删除世界书「{{name}}」？"
     },
     "quick": {
-      "empty": "还没有快捷消息",
-      "detail": "快捷消息详情",
+      "empty": "还没有快捷消息模板",
+      "detail": "快捷消息模板详情",
       "title": "标题",
       "content": "内容",
-      "delete_confirm": "删除快捷消息「{{name}}」？"
+      "delete_confirm": "删除快捷消息模板「{{name}}」？"
     },
-    "empty_item": "还没有 {{title}}",
+    "empty_item": "还没有{{title}}",
     "item_create_failed": "新增{{title}}失败",
-    "item_detail": "{{title}} 详情",
+    "item_detail": "{{title}}详情",
     "inject_content_template_ph": "注入内容，支持 {{cur_datetime}} 等模板变量",
-    "inject_delete_confirm": "删除注入模板「{{name}}」？",
+    "inject_delete_confirm": "删除模式注入「{{name}}」？",
     "template_vars": "模板变量",
-    "skill_imported": "Skill 已导入：{{name}}",
+    "skill_imported": "技能已导入：{{name}}",
     "import_failed": "导入失败",
-    "empty_skill": "还没有 Skill",
+    "empty_skill": "还没有技能",
     "skill_issues_title": "规范化检查",
     "skill_unavailable_hint": "缺少 description，AI 引擎不会加载该技能（在 SKILL.md 的 frontmatter 中补上即可）",
-    "delete_skill_confirm": "删除这个 Skill？",
+    "delete_skill_confirm": "删除这个技能？",
     "import_github": "从 GitHub 导入",
     "github_url_ph": "https://github.com/owner/repo 或 /tree/branch/sub/path",
     "import_btn": "导入",
@@ -786,9 +783,15 @@
     "file_list": "文件列表",
     "no_files": "暂无文件",
     "directory": "目录",
-    "skill_desc_default": "描述何时应使用这个 skill",
-    "skill_body_default": "写入 Skill 指令。",
-    "add_new": "新增"
+    "skill_desc_default": "描述何时应使用这个技能",
+    "skill_body_default": "写入技能指令。",
+    "add_new": "新增",
+    "binding_assistant": "作用于助手",
+    "binding_assistant_desc": "下方「对此助手启用」决定所选助手是否使用该项。",
+    "enable_for_assistant": "对此助手启用",
+    "transport": "传输方式",
+    "unnamed_tool": "未命名工具",
+    "param_required": "（必填）"
   },
   "speech": {
     "tts_delete_confirm": "删除语音合成服务「{{name}}」？",

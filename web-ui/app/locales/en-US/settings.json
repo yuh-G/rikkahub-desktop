@@ -648,20 +648,16 @@
     }
   },
   "mcp": {
-    "title": "MCP & extensions",
-    "subtitle": "Manage MCP servers, prompt injections, lorebooks, quick messages and Agent Skills.",
-    "no_assistants": "No assistants to configure yet. Create one in the Assistants section first, then come back here.",
+    "no_assistants": "No assistants to configure yet. Create one on the Assistants page first, then come back here.",
     "tab": {
-      "mode": "Prompt injection",
+      "mode": "Mode injection",
       "lorebook": "Lorebook",
-      "quick": "Quick message"
+      "quick": "Quick message template"
     },
     "name": "Name",
     "name_ph": "Name",
     "enabled": "Enabled",
     "disabled": "Disabled",
-    "autosaved": "Saved automatically",
-    "autosaving": "Auto-saving...",
     "save_failed": "Save failed",
     "delete": "Delete",
     "priority": "Priority",
@@ -728,7 +724,8 @@
       "tools_empty": "Tools are synced automatically once enabled and saved.",
       "needs_approval": "Needs approval",
       "collapse": "Collapse",
-      "expand": "Expand"
+      "expand": "Expand",
+      "default_name": "MCP server"
     },
     "entry_n": "Entry {{n}}",
     "entry_name_ph": "(optional) entry name",
@@ -759,17 +756,17 @@
       "delete_confirm": "Delete the lorebook \"{{name}}\"?"
     },
     "quick": {
-      "empty": "No quick messages yet",
-      "detail": "Quick message details",
+      "empty": "No quick message templates yet",
+      "detail": "Quick message template details",
       "title": "Title",
       "content": "Content",
-      "delete_confirm": "Delete the quick message \"{{name}}\"?"
+      "delete_confirm": "Delete the quick message template \"{{name}}\"?"
     },
     "empty_item": "No {{title}} yet",
     "item_create_failed": "Failed to create {{title}}",
     "item_detail": "{{title}} details",
     "inject_content_template_ph": "Injection content, supports template variables like {{cur_datetime}}",
-    "inject_delete_confirm": "Delete the injection template \"{{name}}\"?",
+    "inject_delete_confirm": "Delete the mode injection \"{{name}}\"?",
     "template_vars": "Template variables",
     "skill_imported": "Skill imported: {{name}}",
     "import_failed": "Import failed",
@@ -788,7 +785,13 @@
     "directory": "Directory",
     "skill_desc_default": "Describe when this skill should be used",
     "skill_body_default": "Write skill instructions.",
-    "add_new": "Add"
+    "add_new": "Add",
+    "binding_assistant": "Applies to assistant",
+    "binding_assistant_desc": "\"Enable for this assistant\" below controls whether the selected assistant uses each item.",
+    "enable_for_assistant": "Enable for this assistant",
+    "transport": "Transport",
+    "unnamed_tool": "Unnamed tool",
+    "param_required": "(required)"
   },
   "speech": {
     "tts_delete_confirm": "Delete the TTS provider \"{{name}}\"?",

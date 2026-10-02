@@ -80,11 +80,11 @@ type ActiveTab = "mcp" | "quickmessages" | "mode" | "lorebook" | "skills";
 
 // 「管理」深链:选择器的 tab → 设置里的二级页(模式注入与世界书同在提示词注入页,tab 选板块)。
 const SETTINGS_LINK_BY_ACTIVE_TAB: Record<ActiveTab, string> = {
-  mcp: "?section=extensions&sub=mcp&tab=mcp",
-  quickmessages: "?section=extensions&sub=quick&tab=quick",
+  mcp: "?section=extensions&sub=mcp",
+  quickmessages: "?section=extensions&sub=quick",
   mode: "?section=extensions&sub=injection&tab=mode",
   lorebook: "?section=extensions&sub=injection&tab=lorebook",
-  skills: "?section=extensions&sub=skills&tab=skills",
+  skills: "?section=extensions&sub=skills",
 };
 
 interface SkillProfile {
@@ -524,7 +524,7 @@ export function ExtensionPickerButtonImpl({ disabled = false, className }: Exten
                 }}
                 disabled={skills.length === 0}
               >
-                {t("injection.tab_skills", "Skills")}
+                {t("injection.tab_skills")}
               </button>
             </div>
             <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
@@ -533,7 +533,7 @@ export function ExtensionPickerButtonImpl({ disabled = false, className }: Exten
                 onClick={() => popoverProps.onOpenChange(false)}
               >
                 <ExternalLink className="size-3.5" />
-                {t("injection.manage", "管理")}
+                {t("injection.manage")}
               </SettingsLink>
             </Button>
           </div>
@@ -725,7 +725,7 @@ export function ExtensionPickerButtonImpl({ disabled = false, className }: Exten
               </div>
             ) : (
               <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                {t("injection.empty_skills", "No Skills")}
+                {t("injection.empty_skills")}
               </div>
             )}
           </ScrollArea>
