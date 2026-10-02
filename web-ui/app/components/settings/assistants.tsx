@@ -2,14 +2,13 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Bot, CopyPlus, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CopyPlus, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AvatarCropper } from "~/components/avatar-cropper";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
-import { Separator } from "~/components/ui/separator";
 import { Slider } from "~/components/ui/slider";
 import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
@@ -17,6 +16,7 @@ import { UIAvatar } from "~/components/ui/ui-avatar";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { createId } from "~/lib/id";
 import { getModelDisplayName } from "~/lib/display";
+import { cn } from "~/lib/utils";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -26,9 +26,17 @@ import {
   moveItem,
   numberText,
   SectionHeader,
+  SettingsRows,
+  SettingsSplit,
+  SettingsSwitchRow,
   SortableRow,
   textValue,
 } from "~/components/settings/shared";
+
+// 详情栏各大块(预设消息/正则/参数/开关/本地工具/自定义请求)之间用 --ds-divider 顶线分隔,
+// 取代原先一块一框的描边盒子;与供应商详情同一节奏。
+const ASSISTANT_SECTION = "border-t border-[var(--ds-divider)] pt-5";
+
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -302,9 +310,10 @@ export function AssistantsSection({
         title={t("settings:assistants.title")}
         subtitle={t("settings:assistants.subtitle")}
       />
-      <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <div className="rounded-lg border bg-card p-2">
-          <Button className="mb-2 w-full justify-start" variant="outline" onClick={addAssistant}>
+      <SettingsSplit
+        list={
+          <div className="space-y-1">
+          <Button className="mb-1 w-full justify-start" variant="outline" onClick={addAssistant}>
             <CopyPlus className="size-4" />
             {t("settings:assistants.add")}
           </Button>
@@ -325,8 +334,10 @@ export function AssistantsSection({
               </span>
             </SortableRow>
           ))}
-        </div>
-        <div className="space-y-5 rounded-lg border bg-card p-5">
+          </div>
+        }
+      >
+        <div className="space-y-5">
           <AvatarCropper
             value={draft.avatar}
             fallbackName={draft.name || "Assistant"}
@@ -343,7 +354,6 @@ export function AssistantsSection({
               });
             }}
           />
-          <Separator />
           <label className="block space-y-2">
             <span className="text-sm font-medium">{t("settings:assistants.name")}</span>
             <Input
@@ -427,7 +437,7 @@ export function AssistantsSection({
               </div>
             </div>
           </div>
-          <div className="rounded-md border p-3">
+          <div className={ASSISTANT_SECTION}>
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-medium">
@@ -504,7 +514,7 @@ export function AssistantsSection({
               ))}
             </div>
           </div>
-          <div className="rounded-md border p-3">
+          <div className={ASSISTANT_SECTION}>
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-medium">{t("settings:assistants.regex_title")}</div>
@@ -633,7 +643,7 @@ export function AssistantsSection({
               })}
             </div>
           </div>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className={cn(ASSISTANT_SECTION, "grid gap-4 md:grid-cols-3")}>
             {parameterControl("temperature", "Temperature", 2, 0.05)}
             {parameterControl("topP", "Top P", 1, 0.01)}
             <label className="space-y-2">
@@ -654,7 +664,7 @@ export function AssistantsSection({
               </div>
             </label>
           </div>
-          <label className="space-y-2">
+          <label className="block space-y-2">
             <span className="text-sm font-medium">
               {t("settings:assistants.context_message_size")}
             </span>
@@ -704,7 +714,7 @@ export function AssistantsSection({
               {t("settings:assistants.context_message_desc")}
             </div>
           </label>
-          <div className="grid gap-3 md:grid-cols-2">
+          <SettingsRows className={ASSISTANT_SECTION}>
             {[
               ["enableRecentChatsReference", t("settings:assistants.opt.recent_chats")],
               ["streamOutput", t("settings:assistants.opt.stream_output")],
@@ -713,27 +723,23 @@ export function AssistantsSection({
               ["allowConversationSystemPrompt", t("settings:assistants.opt.allow_conv_prompt")],
               ["allowConversationPromptInjection", t("settings:assistants.opt.allow_conv_injection")],
             ].map(([key, label]) => (
-              <label
+              <SettingsSwitchRow
                 key={key}
-                className="flex items-center justify-between rounded-md border px-3 py-2"
-              >
-                <span className="text-sm">{label}</span>
-                <Switch
-                  checked={draft[key] === true}
-                  onCheckedChange={(checked) =>
-                    patchDraft({ [key]: checked } as Partial<AssistantProfile>)
-                  }
-                />
-              </label>
+                label={label}
+                checked={draft[key] === true}
+                onCheckedChange={(checked) =>
+                  patchDraft({ [key]: checked } as Partial<AssistantProfile>)
+                }
+              />
             ))}
-          </div>
+          </SettingsRows>
           {/* 1.3.2 记忆管理(含 enableMemory 开关)已移至独立的「记忆」板块,见 nav.memory */}
-          <div className="rounded-md border p-3">
+          <div className={ASSISTANT_SECTION}>
             <div className="text-sm font-medium">{t("settings:assistants.local_tools_title")}</div>
             <div className="mt-1 text-xs text-muted-foreground">
               {t("settings:assistants.local_tools_desc")}
             </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <SettingsRows className="mt-1">
               {[
                 ["time_info", t("settings:assistants.tools.time_info.title"), t("settings:assistants.tools.time_info.desc")],
                 ["clipboard", t("settings:assistants.tools.clipboard.title"), t("settings:assistants.tools.clipboard.desc")],
@@ -747,17 +753,12 @@ export function AssistantsSection({
                     isPlainRecord(tool) ? tool.type === type : tool === type,
                   );
                 return (
-                  <label
+                  <SettingsSwitchRow
                     key={type}
-                    className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
-                  >
-                    <span>
-                      <span className="block text-sm">{label}</span>
-                      <span className="block text-xs text-muted-foreground">{desc}</span>
-                    </span>
-                    <Switch
-                      checked={enabled}
-                      onCheckedChange={(checked) => {
+                    label={label}
+                    description={desc}
+                    checked={enabled}
+                    onCheckedChange={(checked) => {
                         const current = Array.isArray(draft.localTools) ? draft.localTools : [];
                         const next = checked
                           ? [
@@ -772,13 +773,12 @@ export function AssistantsSection({
                             );
                         patchDraft({ localTools: next });
                       }}
-                    />
-                  </label>
+                  />
                 );
               })}
-            </div>
+            </SettingsRows>
           </div>
-          <div className="rounded-md border p-3">
+          <div className={ASSISTANT_SECTION}>
             <div className="mb-3 text-sm font-medium">{t("settings:assistants.custom_request_title")}</div>
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="space-y-3">
@@ -901,7 +901,7 @@ export function AssistantsSection({
               </div>
             </div>
           </div>
-          <div className="rounded-md border p-3">
+          <div className={ASSISTANT_SECTION}>
             <div className="text-sm font-medium">{t("settings:assistants.ext_summary_title")}</div>
             <div className="mt-2 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
               <div>{t("settings:assistants.ext_injection")}: {(draft.modeInjectionIds ?? []).length}</div>
@@ -912,7 +912,7 @@ export function AssistantsSection({
               </div>
             </div>
           </div>
-          <div className="flex justify-end">
+          <div className={cn(ASSISTANT_SECTION, "flex justify-end")}>
             <Button
               variant="outline"
               onClick={removeAssistant}
@@ -927,7 +927,7 @@ export function AssistantsSection({
             />
           </div>
         </div>
-      </div>
+      </SettingsSplit>
     </>
   );
 }

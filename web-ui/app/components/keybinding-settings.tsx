@@ -19,7 +19,6 @@ import {
   KEYBINDING_ORDER,
   eventToTokens,
   findConflict,
-  formatBinding,
   formatToken,
   isValidBinding,
   normalizeTokens,

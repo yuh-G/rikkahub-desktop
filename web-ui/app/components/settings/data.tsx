@@ -5,7 +5,6 @@ import { useTranslation } from "react-i18next";
 import {
   Check,
   CheckCircle2,
-  Database,
   Download,
   Eye,
   EyeOff,

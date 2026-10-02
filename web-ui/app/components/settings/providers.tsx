@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Database,
   ExternalLink,
-  KeyRound,
   Loader2,
   Plus,
   RefreshCw,
