@@ -61,6 +61,16 @@ export function SettingsDialog() {
         onEscapeKeyDown={(event) => {
           if (areHotkeysPaused()) event.preventDefault();
         }}
+        // Radix 默认聚焦第一个可聚焦元素(侧栏首项「通用」):停在别的分区时,焦点环落在一个
+        // 并未选中的项上,像是选错了位置。改为聚焦当前分区的导航项,焦点与选中态一致。
+        onOpenAutoFocus={(event) => {
+          const active = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>(
+            'nav [aria-current="page"]',
+          );
+          if (!active) return;
+          event.preventDefault();
+          active.focus({ preventScroll: true });
+        }}
         className="flex h-[min(720px,calc(100svh-48px))] w-[min(1060px,calc(100vw-32px))] max-w-none gap-0 overflow-hidden bg-[var(--ds-surface-200)] p-0 duration-(--ds-duration-fast) ease-(--ds-ease-swift) data-[state=closed]:zoom-out-[0.985] data-[state=open]:zoom-in-[0.985] sm:max-w-none motion-reduce:animate-none"
       >
         <SettingsDialogBody />
