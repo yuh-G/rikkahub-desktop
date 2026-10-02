@@ -1,4 +1,4 @@
-// components/settings/logs.tsx — 请求日志分区
+// components/settings/logs.tsx — 统计日志 › 日志(请求与应用错误合一的时间线)
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";

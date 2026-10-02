@@ -68,7 +68,7 @@ export interface EngineCompactContext {
   assistant: Assistant;
   provider: Provider;
   model: Model;
-  /** 执行摘要的模型(「设置-默认模型与提示词」的压缩模型,公共基础设施:配置即对
+  /** 执行摘要的模型(「设置 → 模型 → 场景模型」的压缩模型,公共基础设施:配置即对
    *  所有引擎生效;未配置=会话模型)。与 provider/model 的角色分工:后者是"压缩对象
    *  的视角"——窗口锚定/富化裁决/上下文极限都按会话模型算,摘要文本由 summarizer
    *  生成。引擎用不了此模型时(如 pi 映射失败)由 adapter 自行回退会话模型——

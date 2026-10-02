@@ -279,6 +279,6 @@ export function warnIfExposedWithoutAuth(bindHostname: string): void {
   if (isLoopbackHostname(bindHostname) || webAuthEnabled()) return;
   console.warn(
     "[security] 服务绑定在 " + bindHostname + " 且未设置访问密码：同一网络内任何设备都能读取全部会话与 API Key。" +
-    "可在设置 → 数据中设置访问密码,或通过 --password <密码> / 环境变量 RIKKAHUB_PASSWORD 注入。",
+    "可在 设置 → 数据管理 → Web 服务 中设置访问密码,或通过 --password <密码> / 环境变量 RIKKAHUB_PASSWORD 注入。",
   );
 }

@@ -36,8 +36,8 @@ export interface SettingsSectionProps {
   onSettings: (settings: Settings) => void;
 }
 
-// stats 的数据不在 settings 里、由本分区自取(此前挂在路由层,随分区启用而拉取)。
-// 改成自取后,承载形态(整页/模态)无论怎样换壳,分区的数据依赖都不必外传。
+// stats 的数据不在 settings 里、由本页自取。承载形态(整页/模态)无论怎样换壳,
+// 页面的数据依赖都不必外传。
 function StatsSectionHost() {
   const [stats, setStats] = React.useState<StatsPayload | null>(null);
   React.useEffect(() => {
@@ -72,7 +72,7 @@ function LogsSectionHost() {
   return <LogsSection logs={logs} onClear={clearLogs} />;
 }
 
-/** 无入参的分区:闭包吞掉 props,函数体不进 jsx 泄漏 unused 符号。 */
+/** 无入参的页:闭包吞掉 props,函数体不进 jsx 泄漏 unused 符号。 */
 function DonateSectionHost() {
   return <DonateSection />;
 }

@@ -66,7 +66,7 @@
         "compress_in_progress": "A compression is already in progress, please wait"
       },
       "dialog_title": "Compress conversation history",
-      "dialog_description": "Uses the context compression model from the default model and prompt settings to summarize earlier messages while keeping recent ones.",
+      "dialog_description": "Uses the context compression model from Scene models to summarize earlier messages while keeping recent ones.",
       "workspace_description": "Compacts the workspace engine's working memory: the current chat model summarizes earlier execution history. Your message history in the UI stays intact, and the next generation uses the compacted context.",
       "target_tokens": "Target tokens",
       "keep_recent": "Keep recent messages",

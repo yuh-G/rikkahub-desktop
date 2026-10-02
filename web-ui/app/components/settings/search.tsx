@@ -1,4 +1,4 @@
-// components/settings/search.tsx — 搜索服务分区（19 种服务配置/测试/排序）
+// components/settings/search.tsx — 网络 › 搜索引擎(各类搜索服务的配置/测试/排序)
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";

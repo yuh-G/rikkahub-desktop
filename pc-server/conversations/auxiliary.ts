@@ -313,7 +313,7 @@ export function resolvePostGenerationModelIds(): { title: string | null; suggest
  *  上下文,用户必须知情。 */
 export function requireOcrModelId(): string {
   if (modelExists(state.settings.ocrModelId)) return state.settings.ocrModelId;
-  throw new Error("当前聊天模型不支持图片输入,且未配置 OCR 模型。请到「设置 - 默认模型与提示词」为 OCR 指定一个支持视觉的模型");
+  throw new Error("当前聊天模型不支持图片输入,且未配置 OCR 模型。请到「设置 → 模型 → 场景模型」为 OCR 指定一个支持视觉的模型");
 }
 
 async function fetchAuxiliaryOcrText(imageUrl: string) {

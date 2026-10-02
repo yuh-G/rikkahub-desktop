@@ -8,7 +8,7 @@ import { isDesktopViewport } from "~/hooks/use-mobile";
 import { openSettingsDialog } from "~/stores/settings-dialog-store";
 
 type SettingsLinkProps = Omit<React.ComponentProps<typeof Link>, "to"> & {
-  /** 深链查询串,如 "?section=models&sub=providers&providerId=…";省略则回到上次停留的分区。 */
+  /** 深链查询串,如 "?section=models&sub=providers&providerId=…";省略则回到上次停留的位置。 */
   search?: string;
 };
 

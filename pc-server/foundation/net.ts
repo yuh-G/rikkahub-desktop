@@ -27,7 +27,7 @@ export function getDefaultUserAgent(): string {
   return (cachedDefaultUserAgent ??= `RikkaHub-Desktop/${APP_VERSION}`);
 }
 
-/** 生效 UA:用户在 设置→网络 配了自定义 UA 用它(去空白),否则品牌默认。对齐安卓
+/** 生效 UA:用户在 设置 → 网络 → 端口与请求 配了自定义 UA 用它(去空白),否则品牌默认。对齐安卓
  *  DataSourceModule 拦截器:userAgent.trim().ifEmpty { 默认 }。 */
 export function resolveUserAgent(cfg: ProxyConfig | undefined | null): string {
   const custom = cfg?.userAgent?.trim();
@@ -408,7 +408,7 @@ export function classifyProxyError(err: unknown, cfg: ProxyConfig): string | nul
   const { url, source } = resolveEffectiveProxy(cfg);
   if (!url && source === "none") return null; // 无代理，是普通网络/API 问题，不冒充代理错误
   const display = url ? redactProxyForLog(url) : "系统代理";
-  return `代理连接失败 (${display}) —— 请检查代理地址 / 端口 / 密码是否正确，或在 设置 → 代理 中切换为「直连」模式。\n[原始错误] ${msg}`;
+  return `代理连接失败 (${display}) —— 请检查代理地址 / 端口 / 密码是否正确，或在 设置 → 网络 → 代理 中切换为「强制直连」。\n[原始错误] ${msg}`;
 }
 
 // 测试端点（供应商 / 搜索 / 图片 / 流式）共用的错误信息构造：命中代理错误给友好提示，

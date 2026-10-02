@@ -89,7 +89,7 @@ export function classifyOutputCapError(err: unknown): string | null {
 }
 
 export const OAUTH_CREDENTIAL_MESSAGE =
-  "订阅登录凭证已失效或无法刷新，请到「设置 → 供应商」对该供应商重新登录";
+  "订阅登录凭证已失效或无法刷新，请到「设置 → 模型 → 供应商」对该供应商重新登录";
 
 // 订阅(OAuth)供应商的凭证解析失败——refresh token 被上游拒绝、或凭证缺失。
 // pi 侧只抛不删(resolve.ts 的 refresh 失败不给 terminal 语义),故每轮请求都会重试并

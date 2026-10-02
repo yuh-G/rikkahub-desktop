@@ -1,6 +1,6 @@
-// components/settings/shared.tsx — 设置页各分区共用的小组件与工具
+// components/settings/shared.tsx — 设置页各页共用的小组件与工具
 //
-// 版式纪律(无卡片行式):分区内容直接铺在面板底上,用「分组标题 + 行 + 分隔线 + 间距」
+// 版式纪律(无卡片行式):页面内容直接铺在面板底上,用「分组标题 + 行 + 分隔线 + 间距」
 // 组织层次,不再用 `rounded border bg-card` 盒子去「分组」。判断一个带边框的容器该不该
 // 留,问一句:它是在「分组」还是在「装载」?
 //   - 分组的拆:改用 SettingsGroup / SettingsRows / SettingsRow,别再手写 flex justify-between。
@@ -143,7 +143,7 @@ export function SettingsAdvancedRegion({
   );
 }
 
-/** 分区内容的纵向骨架:各 SettingsGroup 之间统一 2rem 节奏。 */
+/** 页面内容的纵向骨架:各 SettingsGroup 之间统一 2rem 节奏。 */
 export function SettingsStack({ children, className }: { children: React.ReactNode; className?: string }) {
   return <div className={cn("space-y-8", className)}>{children}</div>;
 }
@@ -198,7 +198,7 @@ export function SettingsRows({ children, className }: { children: React.ReactNod
 
 /**
  * 设置行:左标题(+说明)、右控件;children 是挂在行下方的附属内容(如展开的子表单)。
- * 各分区一律用它,不再各写一遍 flex justify-between。
+ * 各页一律用它,不再各写一遍 flex justify-between。
  */
 export function SettingsRow({
   label,
@@ -312,7 +312,7 @@ export function SettingsField({
 
 /**
  * 列表/详情双栏(助手、供应商、搜索、语音、拓展)。断点按**自身宽度**(容器查询)而非视口:
- * 同一分区在模态里与整页里可用宽度不同,视口断点会在模态里过早或过晚换栏。
+ * 同一页在模态里与整页里可用宽度不同,视口断点会在模态里过早或过晚换栏。
  * 两栏之间是一条竖分隔线,不再是两张并排的卡。
  */
 export function SettingsSplit({

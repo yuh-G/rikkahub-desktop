@@ -66,7 +66,7 @@
         "compress_in_progress": "已有压缩正在进行，请稍候"
       },
       "dialog_title": "压缩对话历史",
-      "dialog_description": "使用默认模型与提示词中的上下文压缩模型，将较早消息压缩成摘要并保留最近消息。",
+      "dialog_description": "使用场景模型中的上下文压缩模型，将较早消息压缩成摘要并保留最近消息。",
       "workspace_description": "压缩工作区引擎的工作记忆：由当前对话模型将较早的执行历史归纳为摘要，界面消息记录保持不变，下一轮生成即按压缩后的上下文进行。",
       "target_tokens": "目标 Token",
       "keep_recent": "保留最近消息",

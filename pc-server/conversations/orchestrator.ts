@@ -990,7 +990,7 @@ export async function compactEngineConversation(
   const adapter = resolveEngine(ENGINE_REGISTRY, conversation, assistant);
   if (!adapter.compact) return null;
   const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
-  // 压缩模型公共化(「设置-默认模型与提示词」是公共基础设施):配置了压缩模型则
+  // 压缩模型公共化(「设置 → 模型 → 场景模型」是公共基础设施):配置了压缩模型则
   // 所有引擎的摘要生成都用它,未配置回退会话模型。modelExists 先行:压缩模型被
   // 删除后设置残留 id 不该改变语义(findModel 对不存在 id 会兜底 chatModelId,
   // 那是"默认聊天模型"不是"用户指定的压缩模型",宁可回退会话模型)。

@@ -374,7 +374,7 @@ console.log(`Data directory: ${dataDir}`);
 // 明确出路。到期随脚手架拆除(§13.11)。
 if (!RUNNING_IN_CONTAINER && !portValue && !process.env.PORT && peekedPreferredPort === null && port !== 8080) {
   console.log(
-    `[startup] 默认端口已由 8080 改为 ${DESKTOP_DEFAULT_PORT};如需保持 8080,请使用 --port 8080 / PORT=8080,或在 设置→网络 填写 8080。Docker 部署不受影响(容器内固定 8080)。`,
+    `[startup] 默认端口已由 8080 改为 ${DESKTOP_DEFAULT_PORT};如需保持 8080,请使用 --port 8080 / PORT=8080,或在 设置 → 网络 → 端口与请求 填写 8080。Docker 部署不受影响(容器内固定 8080)。`,
   );
 }
 

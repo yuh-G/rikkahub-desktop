@@ -112,7 +112,7 @@ export function SettingsPageHeader({
 }
 
 /**
- * 页面所需的 settings。SSE 推送的全局快照即权威值;分区保存后的乐观更新也写回同一处
+ * 页面所需的 settings。SSE 推送的全局快照即权威值;页面保存后的乐观更新也写回同一处
  * (setSettings 是全应用唯一写入点)。快照尚未到达(冷启动直达设置)时主动拉一次。
  */
 export function useSettingsSnapshot() {

@@ -1,4 +1,4 @@
-// components/settings/speech.tsx — 语音分区（TTS/ASR provider 配置与试听）
+// components/settings/speech.tsx — 语音 › 文字转语音 / 语音识别两页(服务配置与试听)
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";

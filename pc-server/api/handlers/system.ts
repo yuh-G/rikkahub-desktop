@@ -224,7 +224,7 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
     const conversationId = String(body.conversationId ?? "").trim();
     const conversation = conversationId ? getConversation(conversationId) : undefined;
     if (!modelExists(state.settings.promptOptimizeModelId) && !conversation) {
-      return error("未配置提示词优化模型,请在「设置 - 默认模型与提示词」中指定一个模型", 400);
+      return error("未配置提示词优化模型,请在「设置 → 模型 → 场景模型」中指定一个模型", 400);
     }
     // 配置的模型存在用之;不存在回退会话模型;会话也拿不到(已被删/未传)时兜底全局
     // chatModelId(conversationModelIdFor 对无助手覆盖的会话返回的就是它,最后一段只是

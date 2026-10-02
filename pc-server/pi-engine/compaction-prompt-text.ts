@@ -1,4 +1,4 @@
-// pi 引擎原生压缩 prompt 的展示副本(设置-默认模型与提示词 → 压缩 prompt → 工作区
+// pi 引擎原生压缩 prompt 的展示副本(设置 → 模型 → 场景模型 → 压缩 prompt → 工作区
 // 引擎标签页,只读)。
 //
 // 为什么是副本:vendor 源 (pi/packages/coding-agent/src/core/compaction/compaction.ts)

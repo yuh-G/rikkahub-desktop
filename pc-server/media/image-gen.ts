@@ -123,7 +123,7 @@ export async function callImageGeneration(input: {
   // 兜底"第一个供应商 + 猜 gpt-image-2",未配置时这里必须显式拦截,不许走到那一步。
   // provider 测试路径带 overrideModelUuid(modelItem 已在端点里校验过),只拦全局设置。
   if (!input.overrideModelUuid && !modelExists(state.settings.imageGenerationModelId)) {
-    throw new Error("未配置图像生成模型,请在「设置 - 默认模型与提示词」中指定一个");
+    throw new Error("未配置图像生成模型,请在「设置 → 模型 → 场景模型」中指定一个");
   }
   const picked = findModel(input.overrideModelUuid || state.settings.imageGenerationModelId);
   const providerItem = picked.provider;

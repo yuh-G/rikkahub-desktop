@@ -69,8 +69,8 @@ export function SettingsDialog() {
         onEscapeKeyDown={(event) => {
           if (areHotkeysPaused()) event.preventDefault();
         }}
-        // Radix 默认聚焦第一个可聚焦元素(侧栏首项「通用」):停在别的分区时,焦点环落在一个
-        // 并未选中的项上,像是选错了位置。改为聚焦当前分区的导航项,焦点与选中态一致。
+        // Radix 默认聚焦第一个可聚焦元素(侧栏首项「通用」):停在别的一级时,焦点环落在一个
+        // 并未选中的项上,像是选错了位置。改为聚焦当前一级的导航项,焦点与选中态一致。
         onOpenAutoFocus={(event) => {
           const active = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>(
             'nav [aria-current="page"]',

@@ -1,4 +1,4 @@
-// components/settings/about.tsx — 赞助与关于分区
+// components/settings/about.tsx — 赞助页与关于页
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
