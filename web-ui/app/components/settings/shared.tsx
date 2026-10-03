@@ -741,7 +741,10 @@ export function SettingsListRow({
             {badge != null ? (
               <span
                 className={cn(
-                  "col-start-1 row-start-1 inline-flex items-center transition-opacity",
+                  // 徽标纯展示,永不参与命中:opacity<1 自成 stacking context,绘制在普通流之上
+                  // (CSS 绘制顺序),让位中的徽标(视觉已隐)会盖住同格的「⋯」拦截点击——
+                  // 不加 pointer-events-none 时订阅行的「⋯」点不到就是它。
+                  "col-start-1 row-start-1 inline-flex items-center transition-opacity pointer-events-none",
                   // 有删除钮时:常态让位给「⋯」(悬停/键盘聚焦),打开态靠行根的数据标志(见下)。
                   showTrigger && "group-focus-visible-within/settings-row:opacity-0 group-hover/settings-row:opacity-0 group-data-[menu=open]/settings-row:opacity-0",
                 )}

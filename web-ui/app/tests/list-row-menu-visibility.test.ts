@@ -45,6 +45,14 @@ describe("设置列表 SettingsListRow", () => {
     expect(triggerIdx).toBeGreaterThan(badgeIdx);
   });
 
+  test("徽标永不参与命中测试(pointer-events-none)", () => {
+    // opacity<1 自成 stacking context,绘制在普通文档流之上:让位中的徽标(视觉已隐)
+    // 会盖住同格的「⋯」拦截点击——opacity:0 不摘除命中测试,订阅行的「⋯」点不到就是它。
+    const badgeWrapIdx = SHARED.indexOf('col-start-1 row-start-1 inline-flex items-center transition-opacity');
+    expect(badgeWrapIdx).toBeGreaterThan(-1);
+    expect(SHARED.slice(badgeWrapIdx, badgeWrapIdx + 90)).toContain("pointer-events-none");
+  });
+
   test("「⋯」桌面常态隐藏、悬停/键盘聚焦浮现(焦点态用 focus-visible,鼠标点按不劫持)", () => {
     expect(SHARED).toContain("opacity-0 group-focus-visible-within/settings-row:opacity-100 group-hover/settings-row:opacity-100");
     // 鼠标点按留下的 :focus 不该让「⋯」常显(菜单关闭焦点还原滞留的根因),故禁用 focus-within 常显类。
