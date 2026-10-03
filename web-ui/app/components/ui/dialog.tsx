@@ -31,6 +31,7 @@ function DialogClose({
 
 function DialogOverlay({
   className,
+  style,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
   return (
@@ -40,6 +41,7 @@ function DialogOverlay({
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-[var(--ds-overlay)]",
         className
       )}
+      style={style}
       {...props}
     />
   )
@@ -50,14 +52,17 @@ function DialogContent({
   children,
   showCloseButton = true,
   overlayClassName,
+  overlayProps,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
   overlayClassName?: string
+  /** 透传给遮罩的属性(如 data-* 标记、事件处理器)。 */
+  overlayProps?: React.HTMLAttributes<HTMLDivElement>
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay className={overlayClassName} />
+      <DialogOverlay className={overlayClassName} {...overlayProps} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(

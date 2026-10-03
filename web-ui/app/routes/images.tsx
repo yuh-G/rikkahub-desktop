@@ -358,6 +358,7 @@ export default function ImagesPage() {
           窗控条只嵌在右侧内容列顶部,不再横贯全宽把侧栏压下一条。 */}
       <aside
         data-sidebar-surface=""
+        data-app-titlebar=""
         className="hidden w-[340px] shrink-0 border-r bg-sidebar/80 px-4 pb-4 pt-1 md:block"
       >
         {/* 问题7回访:品牌行(Logo+RikkaHub,SidebarBrandRow 三页同源)延续主界面设计,
@@ -455,8 +456,9 @@ export default function ImagesPage() {
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
         {/* I1:无边框窗口拖拽区 + 窗控钮(仅内容列;侧栏顶部由顶行承担)。
-            mt-1.5/mr-2 对齐主界面 SidebarInset 的 pt-1.5/pr-2:窗控钮三页同一坐标。 */}
-        <WindowControlsBar className="mt-1.5 mr-2" />
+            mt-1.5/mr-2 对齐主界面 SidebarInset 的 pt-1.5/pr-2:窗控钮三页同一坐标。
+            data-app-titlebar:设置模态打开时窗控行豁免 body 级 pointer-events 锁(app.css)。 */}
+        <WindowControlsBar className="mt-1.5 mr-2" data-app-titlebar="" />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="border-b px-4 py-3 md:hidden">
           <div className="flex items-center justify-between">

@@ -2724,8 +2724,11 @@ function ConversationsPageInner() {
   return (
     <div className="flex h-svh flex-col overflow-hidden bg-background">
       {/* 顶带(用户产品决策):Logo 品牌行 + 窗口控制钮直接坐在画布上,不属于任何卡片;
-          侧栏卡片自其下方(头像行)起。整带即窗口拖拽区,双击最大化行为不变。 */}
+          侧栏卡片自其下方(头像行)起。整带即窗口拖拽区,双击最大化行为不变。
+          data-app-titlebar:窗口 chrome 的标记——设置模态遮罩从带下缘起算,模态打开时
+          这条带豁免 body 级 pointer-events 锁(app.css),始终可拖可点。 */}
       <div
+        data-app-titlebar=""
         {...windowDragRegionProps()}
         className="flex h-[var(--app-band-h)] shrink-0 select-none items-start"
       >

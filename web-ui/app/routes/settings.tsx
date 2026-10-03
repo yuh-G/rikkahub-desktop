@@ -115,7 +115,7 @@ function SettingsPage({
   if (!settings) {
     return (
       <div className="flex h-svh flex-col overflow-hidden bg-background">
-        <WindowControlsBar className="mt-1.5 mr-2" />
+        <WindowControlsBar className="mt-1.5 mr-2" data-app-titlebar="" />
         <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
           <Loader2 className="mr-2 size-4 animate-spin" />
           {t("settings:providers.loading")}
@@ -131,6 +131,7 @@ function SettingsPage({
     <div className="flex h-svh overflow-hidden bg-background">
       <aside
         data-sidebar-surface=""
+        data-app-titlebar=""
         className={cn(
           "w-full flex-col bg-sidebar text-sidebar-foreground",
           contentOpen ? "hidden" : "flex",
@@ -166,7 +167,7 @@ function SettingsPage({
           contentOpen ? "flex" : "hidden",
         )}
       >
-        <WindowControlsBar className="mt-1.5 mr-2" />
+        <WindowControlsBar className="mt-1.5 mr-2" data-app-titlebar="" />
         <SettingsPageHeader
           key={`header:${location.section}`}
           section={location.section}

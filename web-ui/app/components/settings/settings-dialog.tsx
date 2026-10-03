@@ -17,7 +17,7 @@ import {
 import { Button } from "~/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "~/components/ui/dialog";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { windowDragRegionProps } from "~/components/window-controls";
+import { measureAppBandHeight, windowDragRegionProps } from "~/components/window-controls";
 import { useIsDesktop } from "~/hooks/use-mobile";
 import { areHotkeysPaused } from "~/lib/hotkey-events";
 import { DEFAULT_KEYBINDINGS, formatToken, normalizeTokens } from "~/lib/hotkeys";
@@ -65,6 +65,21 @@ export function SettingsDialog() {
       <DialogContent
         showCloseButton={false}
         overlayClassName="backdrop-blur-sm"
+        // 顶栏豁免(P0-2):窗口 chrome(品牌行 + 窗控钮)不参与内容模态——桌面应用标准
+        // 语义(原生模态的客户区禁用但标题栏仍可最小化)。遮罩与面板都从窗控带下缘
+        // (--app-band-h,三页同源单源)起算,顶栏保持完全清晰、可拖、窗控可点。
+        // data-settings-overlay:app.css 里的 body:has() 规则据此给 [data-app-titlebar]
+        // 恢复 pointer-events(模态打开时 Radix 会锁整个 body)。
+        overlayProps={{
+          "data-settings-overlay": true,
+          style: { top: "var(--app-band-h)" },
+        } as React.HTMLAttributes<HTMLDivElement>}
+        // 顶栏在遮罩之上:点击窗控/拖拽窗口时该次 pointerdown 不算"模态外关闭"。
+        onPointerDownOutside={(event) => {
+          const y = (event.detail.originalEvent as PointerEvent).clientY;
+          const bandH = measureAppBandHeight();
+          if (y < bandH) event.preventDefault();
+        }}
         // 快捷键录制中 Esc 是"取消录制",由录制按钮自己消费;此时不能顺带关掉整个设置。
         onEscapeKeyDown={(event) => {
           if (areHotkeysPaused()) event.preventDefault();
@@ -79,7 +94,13 @@ export function SettingsDialog() {
           event.preventDefault();
           active.focus({ preventScroll: true });
         }}
-        className="flex h-[min(720px,calc(100svh-48px))] w-[min(1060px,calc(100vw-32px))] max-w-none gap-0 overflow-hidden bg-[var(--ds-surface-200)] p-0 duration-(--ds-duration-fast) ease-(--ds-ease-swift) data-[state=closed]:zoom-out-[0.985] data-[state=open]:zoom-in-[0.985] sm:max-w-none motion-reduce:animate-none"
+        className="flex h-[min(720px,calc(100svh-48px-var(--app-band-h)))] w-[min(1060px,calc(100vw-32px))] max-w-none gap-0 overflow-hidden bg-[var(--ds-surface-200)] p-0 duration-(--ds-duration-fast) ease-(--ds-ease-swift) data-[state=closed]:zoom-out-[0.985] data-[state=open]:zoom-in-[0.985] sm:max-w-none motion-reduce:animate-none"
+        style={{
+          // 居中基准 = 顶带以下的区域(与遮罩同一切割线),视口极矮时面板才不会顶进顶带。
+          // 居中偏移交给基础类的 translate-x/y-[-50%](tailwind v4 是独立 translate 属性,
+          // 这里若再写 transform 会与之叠加成双重 -50%)。
+          top: "calc((100svh - var(--app-band-h)) / 2 + var(--app-band-h))",
+        }}
       >
         <SettingsDialogBody />
       </DialogContent>

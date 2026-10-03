@@ -85,7 +85,26 @@ export function windowDragRegionProps() {
   } as const;
 }
 
-export function WindowControlsBar({ className }: { className?: string }) {
+/**
+ * 顶带(品牌行 + 窗控钮)的实时像素高度。--app-band-h 是 rem 值,随 UI 缩放变化,
+ * JS 判定"某次点击是否落在顶带"时按当前值换算,不写死 32px。
+ */
+export function measureAppBandHeight(): number {
+  if (typeof window === "undefined") return 0;
+  const probe = document.createElement("div");
+  probe.style.position = "absolute";
+  probe.style.visibility = "hidden";
+  probe.style.height = "var(--app-band-h)";
+  document.body.appendChild(probe);
+  const px = probe.getBoundingClientRect().height;
+  probe.remove();
+  return Number.isFinite(px) ? px : 0;
+}
+
+export function WindowControlsBar({
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & { className?: string }) {
   const { t } = useTranslation("page");
   const [maximized, setMaximized] = React.useState(false);
   const [tauri, setTauri] = React.useState(false);
@@ -127,6 +146,7 @@ export function WindowControlsBar({ className }: { className?: string }) {
   return (
     <div
       {...windowDragRegionProps()}
+      {...props}
       className={cn(
         "flex h-[22px] shrink-0 select-none items-center justify-end",
         className,
