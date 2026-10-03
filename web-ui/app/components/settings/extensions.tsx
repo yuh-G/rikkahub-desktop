@@ -76,6 +76,41 @@ function useBindingAssistant(settings: Settings): AssistantProfile | null {
   );
 }
 
+/** 「作用于助手」选择器本体:label + Select。整行工具栏(注入页)与左栏列表头(技能/
+ *  快捷消息页)共用;窄容器里 label 与下拉同排放不下时折行,label 仍读得清。 */
+function BindingAssistantSelect({
+  settings,
+  assistant,
+  className,
+}: {
+  settings: Settings;
+  assistant: AssistantProfile;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  const selectId = React.useId();
+  return (
+    <div className={cn("flex flex-wrap items-center gap-2", className)}>
+      <label htmlFor={selectId} className="text-xs text-[var(--ds-text-secondary)]" title={t("settings:mcp.binding_assistant_desc")}>
+        {t("settings:mcp.binding_assistant")}
+      </label>
+      <Select value={assistant.id} onValueChange={setBindingAssistant}>
+        <SelectTrigger id={selectId} className="h-8 w-48">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {settings.assistants.map((item) => (
+            <SelectItem key={item.id} value={item.id}>
+              {item.name || t("settings:assistants.default_name")}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+/** 提示词注入页的整行工具栏:分段切换器(模式注入/世界书)与「作用于助手」同排。 */
 function BindingAssistantToolbar({
   settings,
   assistant,
@@ -85,28 +120,10 @@ function BindingAssistantToolbar({
   assistant: AssistantProfile;
   leading?: React.ReactNode;
 }) {
-  const { t } = useTranslation();
-  const selectId = React.useId();
   return (
     <div className="mb-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
       <div className="min-w-0">{leading}</div>
-      <div className="flex items-center gap-2">
-        <label htmlFor={selectId} className="text-xs text-[var(--ds-text-secondary)]" title={t("settings:mcp.binding_assistant_desc")}>
-          {t("settings:mcp.binding_assistant")}
-        </label>
-        <Select value={assistant.id} onValueChange={setBindingAssistant}>
-          <SelectTrigger id={selectId} className="h-8 w-48">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {settings.assistants.map((item) => (
-              <SelectItem key={item.id} value={item.id}>
-                {item.name || t("settings:assistants.default_name")}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <BindingAssistantSelect settings={settings} assistant={assistant} />
     </div>
   );
 }
@@ -125,10 +142,12 @@ export function SkillsSection({ settings, onSettings }: SectionProps) {
   const assistant = useBindingAssistant(settings);
   if (!assistant) return <NoAssistantsState />;
   return (
-    <>
-      <BindingAssistantToolbar settings={settings} assistant={assistant} />
-      <SkillsEditor settings={settings} assistant={assistant} onSettings={onSettings} />
-    </>
+    <SkillsEditor
+      settings={settings}
+      assistant={assistant}
+      onSettings={onSettings}
+      bindingSelect={<BindingAssistantSelect settings={settings} assistant={assistant} className="mb-2" />}
+    />
   );
 }
 
@@ -137,10 +156,12 @@ export function QuickMessagesSection({ settings, onSettings }: SectionProps) {
   const assistant = useBindingAssistant(settings);
   if (!assistant) return <NoAssistantsState />;
   return (
-    <>
-      <BindingAssistantToolbar settings={settings} assistant={assistant} />
-      <QuickMessageEditor settings={settings} assistant={assistant} onSettings={onSettings} />
-    </>
+    <QuickMessageEditor
+      settings={settings}
+      assistant={assistant}
+      onSettings={onSettings}
+      bindingSelect={<BindingAssistantSelect settings={settings} assistant={assistant} className="mb-2" />}
+    />
   );
 }
 
@@ -1385,10 +1406,12 @@ function QuickMessageEditor({
   settings,
   assistant,
   onSettings,
+  bindingSelect,
 }: {
   settings: Settings;
   assistant: AssistantProfile;
   onSettings: (settings: Settings) => void;
+  bindingSelect: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const items = (settings.quickMessages ?? []) as unknown as Array<Record<string, unknown>>;
@@ -1437,6 +1460,7 @@ function QuickMessageEditor({
       emptyLabel={t("settings:mcp.quick.empty")}
       onSelect={setSelectedId}
       titleOf={(item) => textValue(item.title) || t("settings:mcp.tab.quick")}
+      listHeader={bindingSelect}
       onMove={async (from, to) => {
         const next = moveItem(items, from, to);
         onSettings({ ...settings, quickMessages: next as unknown as Settings["quickMessages"] });
@@ -1754,10 +1778,12 @@ function SkillsEditor({
   settings,
   assistant,
   onSettings,
+  bindingSelect,
 }: {
   settings: Settings;
   assistant: AssistantProfile;
   onSettings: (settings: Settings) => void;
+  bindingSelect: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const [skills, setSkills] = React.useState<SkillProfile[]>([]);
@@ -1902,6 +1928,7 @@ function SkillsEditor({
       emptyLabel={t("settings:mcp.empty_skill")}
       onSelect={setSelected}
       titleOf={(item) => textValue(item.name)}
+      listHeader={bindingSelect}
       renderItem={(item) => {
         const name = textValue(item.name);
         const enabled = (assistant.enabledSkills as string[] | undefined)?.includes(name) ?? false;
@@ -2088,6 +2115,7 @@ function EditorShell({
   titleOf,
   renderItem,
   onCreate,
+  listHeader,
   children,
 }: {
   items: Array<Record<string, unknown>>;
@@ -2098,6 +2126,8 @@ function EditorShell({
   titleOf: (item: Record<string, unknown>) => string;
   renderItem?: (item: Record<string, unknown>) => React.ReactNode;
   onCreate: () => void | Promise<void>;
+  /** 左栏列表头部(「添加」钮与列表之间):技能/快捷消息页的「作用于助手」选择器。 */
+  listHeader?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const { t } = useTranslation();
@@ -2109,6 +2139,7 @@ function EditorShell({
           <Plus className="size-4" />
           {t("settings:mcp.add_new")}
         </Button>
+        {listHeader}
         <div className="space-y-1">
           {items.length === 0 ? (
             <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
