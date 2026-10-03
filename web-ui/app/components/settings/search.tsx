@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { CheckCircle2, Database, Link2, Loader2, Plus, Search, Trash2, X, XCircle } from "lucide-react";
+import { CheckCircle2, Database, Link2, Loader2, Plus, Search, X, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { AIIcon } from "~/components/ui/ai-icon";
 import { Button } from "~/components/ui/button";
@@ -35,9 +35,9 @@ import {
   SettingsDetailFooter,
   SettingsDetailHeader,
   SettingsListAddButton,
+  SettingsListRow,
   SettingsSplit,
   SettingsStack,
-  SortableRow,
   textValue,
 } from "~/components/settings/shared";
 
@@ -412,35 +412,41 @@ export function SearchSection({
       setTesting(false);
     }
   };
-  const remove = async () => {
+  // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
+  const removeById = async (targetId: string) => {
+    const target = settings.searchServices.find((item) => String(item.id) === targetId);
+    if (!target) return;
     if (
       !(await confirmDialog({
         title: t("settings:search.delete_confirm", {
-          name: textValue(draft.name) || textValue(draft.type),
+          name: textValue(target.name) || textValue(target.type),
         }),
         danger: true,
       }))
     )
       return;
-    // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
-    await autosave.discard();
-    await api.delete(`settings/search/service/${encodeURIComponent(String(draft.id))}`);
+    // 防复活:仅当删的是正在编辑的那条才 discard(丢脏编辑+等在飞保存,DELETE 不与迟到 POST 乱序)。
+    const removingActive = String(draft.id) === targetId;
+    if (removingActive) await autosave.discard();
+    await api.delete(`settings/search/service/${encodeURIComponent(targetId)}`);
     let searchServices: Settings["searchServices"] = [];
     patchSettingsLocal((current) => {
-      searchServices = current.searchServices.filter((item) => String(item.id) !== String(draft.id));
+      searchServices = current.searchServices.filter((item) => String(item.id) !== targetId);
       return {
         searchServices,
         searchServiceSelected: searchSelectionAfterDelete(
           current.searchServices,
           current.searchServiceSelected,
-          String(draft.id),
+          targetId,
         ),
       };
     });
-    setSelectedId(String(searchServices[0]?.id ?? ""));
-    // 删到空:重对齐 effect 无条目可载,草稿若停留在已删实体上,再编辑一笔就会经
-    // 自动保存复活它。复位为挂载空列表时同款的空白新草稿(复审 F2)。
-    if (!searchServices.length) setDraft(createSearchService());
+    if (removingActive) {
+      setSelectedId(String(searchServices[0]?.id ?? ""));
+      // 删到空:重对齐 effect 无条目可载,草稿若停留在已删实体上,再编辑一笔就会经
+      // 自动保存复活它。复位为挂载空列表时同款的空白新草稿(复审 F2)。
+      if (!searchServices.length) setDraft(createSearchService());
+    }
     toast.success(t("settings:search.deleted"));
   };
 
@@ -451,13 +457,14 @@ export function SearchSection({
           <div className="space-y-1">
           <SettingsListAddButton label={t("settings:search.add")} onClick={addService} />
           {settings.searchServices.map((service, index) => (
-            <SortableRow
+            <SettingsListRow
               key={String(service.id ?? index)}
               id={String(service.id ?? index)}
               index={index}
               active={String(service.id) === String(draft.id)}
               onSelect={() => setSelectedId(String(service.id ?? ""))}
               onMove={moveSearchService}
+              onDelete={() => removeById(String(service.id ?? ""))}
             >
               <span className="grid min-w-0 grid-cols-[34px_minmax(0,1fr)] items-center gap-3 text-left">
                 <AIIcon
@@ -507,7 +514,7 @@ export function SearchSection({
                   </span>
                 </span>
               </span>
-            </SortableRow>
+            </SettingsListRow>
           ))}
           </div>
         }
@@ -784,16 +791,7 @@ export function SearchSection({
           </section>
           <SettingsDetailFooter
             status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
-          >
-            <Button
-              variant="destructive"
-              onClick={() => void remove()}
-              disabled={!settings.searchServices.some((item) => String(item.id) === String(draft.id))}
-            >
-              <Trash2 className="size-4" />
-              {t("settings:search.delete")}
-            </Button>
-          </SettingsDetailFooter>
+          />
         </SettingsStack>
         </div>
       </SettingsSplit>

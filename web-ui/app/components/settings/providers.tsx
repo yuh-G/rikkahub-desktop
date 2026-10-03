@@ -57,10 +57,10 @@ import {
   SettingsGroup,
   SettingsRows,
   SettingsListAddButton,
+  SettingsListRow,
   SettingsSplit,
   SettingsStack,
   SettingsSwitchRow,
-  SortableRow,
   textValue,
 } from "~/components/settings/shared";
 
@@ -1333,18 +1333,24 @@ export function ProvidersSection({
       : { value, label: t(KIND_LABEL_KEYS[value]) },
   );
 
-  const deleteProvider = async () => {
-    if (!(await confirmDialog({ title: t("settings:providers.delete_confirm", { name: draft.name }), danger: true }))) return;
-    // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
-    await autosave.discard();
-    await api.delete(`settings/provider/${encodeURIComponent(draft.id)}`);
+  // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。至少保留一个供应商。
+  const deleteProviderById = async (targetId: string) => {
+    if (settings.providers.length <= 1) return;
+    const target = settings.providers.find((item) => item.id === targetId);
+    if (!target) return;
+    if (!(await confirmDialog({ title: t("settings:providers.delete_confirm", { name: target.name }), danger: true }))) return;
+    // 防复活:仅当删的是正在编辑的那条才 discard(丢脏编辑+等在飞保存,DELETE 不与迟到 POST 乱序)。
+    const removingActive = draft.id === targetId;
+    if (removingActive) await autosave.discard();
+    await api.delete(`settings/provider/${encodeURIComponent(targetId)}`);
     let nextId = "";
     patchSettingsLocal((current) => {
-      const providers = current.providers.filter((item) => item.id !== draft.id);
+      const providers = current.providers.filter((item) => item.id !== targetId);
       nextId = providers[0]?.id ?? "";
       return { providers };
     });
-    setSelectedId(nextId);
+    // 删的是当前编辑行:选中下一个;删的是别的行:选中保持不动。
+    if (removingActive) setSelectedId(nextId);
     toast.success(t("settings:providers.deleted"));
   };
 
@@ -1355,27 +1361,30 @@ export function ProvidersSection({
           <div className="space-y-1">
             <SettingsListAddButton label={t("settings:providers.add")} onClick={() => void addProvider()} />
             {settings.providers.map((provider, index) => (
-              <SortableRow
+              <SettingsListRow
                 key={provider.id}
                 id={provider.id}
                 index={index}
                 active={provider.id === draft.id}
                 onSelect={() => setSelectedId(provider.id)}
                 onMove={moveProvider}
+                onDelete={() => deleteProviderById(provider.id)}
+                badge={
+                  provider.authMode === "oauth" ? (
+                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                      {t("settings:providers.oauth.badge")}
+                    </span>
+                  ) : null
+                }
               >
-                <span className="grid min-w-0 grid-cols-[28px_10px_minmax(0,1fr)_auto] items-center gap-2 text-left">
+                <span className="grid min-w-0 grid-cols-[28px_10px_minmax(0,1fr)] items-center gap-2 text-left">
                   <AIIcon name={provider.name} size={24} className="justify-self-start" />
                   <span
                     className={`size-2 rounded-full ${provider.enabled ? "bg-success" : "bg-muted-foreground/40"}`}
                   />
                   <span className="min-w-0 flex-1 truncate">{provider.name}</span>
-                  {provider.authMode === "oauth" ? (
-                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                      {t("settings:providers.oauth.badge")}
-                    </span>
-                  ) : null}
                 </span>
-              </SortableRow>
+              </SettingsListRow>
             ))}
           </div>
         }
@@ -1871,12 +1880,7 @@ export function ProvidersSection({
 
             <SettingsDetailFooter
               status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
-            >
-              <Button variant="destructive" onClick={() => void deleteProvider()} disabled={settings.providers.length <= 1}>
-                <Trash2 className="size-4" />
-                {t("settings:providers.delete")}
-              </Button>
-            </SettingsDetailFooter>
+            />
           </SettingsStack>
         </div>
       </SettingsSplit>

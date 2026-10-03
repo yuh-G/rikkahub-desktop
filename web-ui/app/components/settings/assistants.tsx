@@ -33,10 +33,10 @@ import {
   SettingsRows,
   SettingsKeyValueList,
   SettingsListAddButton,
+  SettingsListRow,
   SettingsSplit,
   SettingsStack,
   SettingsSwitchRow,
-  SortableRow,
   textValue,
 } from "~/components/settings/shared";
 
@@ -212,6 +212,50 @@ export function AssistantsSection({
     patchSettingsLocal({ assistants });
     await api.post("settings/assistants/reorder", { ids: assistants.map((item) => item.id) });
   };
+  // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。至少保留一个助手。
+  const removeAssistantById = async (targetId: string) => {
+    if (settings.assistants.length <= 1) return;
+    const target = settings.assistants.find((item) => item.id === targetId);
+    if (!target) return;
+    const nameLabel = target.name || t("settings:assistants.default_name");
+    // M4:先查该助手记忆数,有记忆则让用户选"同时删除 / 保留为孤儿"(默认保留,防误删助手连带丢记忆)
+    let memoryCount = 0;
+    try {
+      const result = await api.get<{ memories: unknown[] }>(`memory/assistant/${encodeURIComponent(targetId)}`);
+      memoryCount = result.memories?.length ?? 0;
+    } catch { /* 记忆查询失败按 0 处理 */ }
+    let deleteMemories = false;
+    if (memoryCount > 0) {
+      if (!(await confirmDialog({ title: t("settings:assistants.delete_confirm_with_memories", { name: nameLabel, n: memoryCount }), danger: true }))) return;
+      // 第二步:确定=同时删记忆,取消=保留为孤儿(记忆页可管理)
+      deleteMemories = await confirmDialog({
+        title: t("settings:assistants.delete_memories_title", { n: memoryCount }),
+        description: t("settings:assistants.delete_memories_desc"),
+        confirmLabel: t("settings:assistants.delete_memories_label"),
+        cancelLabel: t("settings:assistants.keep_memories_label"),
+        danger: true,
+      });
+    } else {
+      if (!(await confirmDialog({ title: t("settings:assistants.delete_confirm", { name: nameLabel }), danger: true }))) return;
+    }
+    // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)。
+    // 仅当删的是正在编辑的那条才需要 discard(其余行的草稿与本编辑会话无关)。
+    const removingActive = draft?.id === targetId;
+    if (removingActive) await autosave.discard();
+    await api.delete(`settings/assistant/${encodeURIComponent(targetId)}${deleteMemories ? "?deleteMemories=true" : ""}`);
+    let nextId = "";
+    patchSettingsLocal((current) => {
+      const assistants = current.assistants.filter((item) => item.id !== targetId);
+      nextId = assistants[0]?.id ?? "";
+      return {
+        assistants,
+        assistantId: current.assistantId === targetId ? nextId : current.assistantId,
+      };
+    });
+    // 删的是当前编辑行:选中下一个;删的是别的行:选中保持不动。
+    if (removingActive) setAssistantId(nextId);
+    toast.success(t("settings:assistants.deleted"));
+  };
 
   const list = (
     <div className="space-y-1">
@@ -221,19 +265,20 @@ export function AssistantsSection({
         onClick={() => void addAssistant()}
       />
       {settings.assistants.map((item, index) => (
-        <SortableRow
+        <SettingsListRow
           key={item.id}
           id={item.id}
           index={index}
           active={item.id === draft?.id}
           onSelect={() => setAssistantId(item.id)}
           onMove={moveAssistant}
+          onDelete={() => removeAssistantById(item.id)}
         >
           <span className="flex items-center gap-2">
             <UIAvatar size="sm" name={item.name || t("settings:assistants.default_name")} avatar={item.avatar} />
             <span className="truncate">{item.name || t("settings:assistants.default_name")}</span>
           </span>
-        </SortableRow>
+        </SettingsListRow>
       ))}
     </div>
   );
@@ -249,7 +294,6 @@ export function AssistantsSection({
           settings={settings}
           advancedOpen={advancedOpen}
           onAdvancedOpenChange={setAdvancedOpen}
-          onDeleted={setAssistantId}
         />
       ) : (
         <div className="rounded-[var(--ds-radius-md)] border border-dashed p-8 text-center text-sm text-[var(--ds-text-secondary)]">
@@ -268,7 +312,6 @@ function AssistantEditor({
   settings,
   advancedOpen,
   onAdvancedOpenChange,
-  onDeleted,
 }: {
   draft: AssistantProfile;
   setDraft: React.Dispatch<React.SetStateAction<AssistantProfile | null>>;
@@ -277,49 +320,10 @@ function AssistantEditor({
   settings: Settings;
   advancedOpen: boolean;
   onAdvancedOpenChange: (open: boolean) => void;
-  onDeleted: (nextId: string) => void;
 }) {
   const { t } = useTranslation();
   const switchesId = React.useId();
   const advancedId = React.useId();
-
-  const removeAssistant = async () => {
-    const nameLabel = draft.name || t("settings:assistants.default_name");
-    // M4:先查该助手记忆数,有记忆则让用户选"同时删除 / 保留为孤儿"(默认保留,防误删助手连带丢记忆)
-    let memoryCount = 0;
-    try {
-      const result = await api.get<{ memories: unknown[] }>(`memory/assistant/${encodeURIComponent(draft.id)}`);
-      memoryCount = result.memories?.length ?? 0;
-    } catch { /* 记忆查询失败按 0 处理 */ }
-    let deleteMemories = false;
-    if (memoryCount > 0) {
-      if (!(await confirmDialog({ title: t("settings:assistants.delete_confirm_with_memories", { name: nameLabel, n: memoryCount }), danger: true }))) return;
-      // 第二步:确定=同时删记忆,取消=保留为孤儿(记忆页可管理)
-      deleteMemories = await confirmDialog({
-        title: t("settings:assistants.delete_memories_title", { n: memoryCount }),
-        description: t("settings:assistants.delete_memories_desc"),
-        confirmLabel: t("settings:assistants.delete_memories_label"),
-        cancelLabel: t("settings:assistants.keep_memories_label"),
-        danger: true,
-      });
-    } else {
-      if (!(await confirmDialog({ title: t("settings:assistants.delete_confirm", { name: nameLabel }), danger: true }))) return;
-    }
-    // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
-    await autosave.discard();
-    await api.delete(`settings/assistant/${encodeURIComponent(draft.id)}${deleteMemories ? "?deleteMemories=true" : ""}`);
-    let nextId = "";
-    patchSettingsLocal((current) => {
-      const assistants = current.assistants.filter((item) => item.id !== draft.id);
-      nextId = assistants[0]?.id ?? "";
-      return {
-        assistants,
-        assistantId: current.assistantId === draft.id ? nextId : current.assistantId,
-      };
-    });
-    onDeleted(nextId);
-    toast.success(t("settings:assistants.deleted"));
-  };
 
   const messageTemplateValue =
     typeof draft.messageTemplate === "string" ? draft.messageTemplate : DEFAULT_MESSAGE_TEMPLATE;
@@ -827,12 +831,7 @@ function AssistantEditor({
 
         <SettingsDetailFooter
           status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
-        >
-          <Button variant="destructive" onClick={() => void removeAssistant()} disabled={settings.assistants.length <= 1}>
-            <Trash2 className="size-4" />
-            {t("settings:assistants.delete")}
-          </Button>
-        </SettingsDetailFooter>
+        />
       </SettingsStack>
     </div>
   );
