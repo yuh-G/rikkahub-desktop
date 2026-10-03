@@ -520,6 +520,9 @@ export function SettingsField({
  * fragment 也无妨(h-full 在每个流内子项上各自解析,Dialog 走 portal 不占位)。Split 外
  * 还有整页级兄弟内容的页面(语音朗读页的「朗读过滤」)别开——兄弟内容与栏内滚动两套滚
  * 轴打架。堆叠形态(@2xl 以下)自动退回宿主整页滚动:窄栏里再塞根栏内滚动条只会裁内容。
+ * 栏内滚动条不显示(滚轮仍有效)——双栏各自一根细条与宿主滚动观感重复,而堆叠形态下
+ * 滚动权本就归宿主,栏内隐藏类不该在窄屏生效,故挂在无条件类位(无 @2xl: 前缀也无妨,
+ * 堆叠时栏内 overflow 类本身不生效,隐藏滚动条无处生效)。
  */
 export function SettingsSplit({
   list,
@@ -544,7 +547,8 @@ export function SettingsSplit({
         <div
           className={cn(
             "min-w-0 @2xl:border-r @2xl:border-[var(--ds-divider)] @2xl:pr-3",
-            scroll && "@2xl:min-h-0 @2xl:overflow-y-auto @2xl:overscroll-contain",
+            scroll &&
+              "@2xl:min-h-0 @2xl:overflow-y-auto @2xl:overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
             listClassName,
           )}
         >
@@ -553,7 +557,8 @@ export function SettingsSplit({
         <div
           className={cn(
             "min-w-0 @2xl:pl-6",
-            scroll && "@2xl:min-h-0 @2xl:overflow-y-auto @2xl:overscroll-contain",
+            scroll &&
+              "@2xl:min-h-0 @2xl:overflow-y-auto @2xl:overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
           )}
         >
           {children}
