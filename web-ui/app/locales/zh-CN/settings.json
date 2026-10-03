@@ -584,8 +584,8 @@
   "models": {
     "note": "这里列出已启用供应商中的可用模型。为各场景分别指定模型；带 Prompt 的场景可点右侧按钮查看和恢复默认值。",
     "not_set": "未设置",
-    "not_set_fallback": "未设置（自动跟随会话模型）",
-    "not_set_disabled": "未设置（功能不可用）",
+    "not_set_fallback": "跟随对话模型",
+    "not_set_disabled": "未设置",
     "autosave_failed": "自动保存默认模型失败",
     "edit_prompt": "编辑 Prompt",
     "variables_label": "变量：",

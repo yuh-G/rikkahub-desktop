@@ -273,7 +273,9 @@ export function DefaultModelsSection({
     // 「未设置」的含义按功能分三档(与后端行为一一对应,勿随意增删档位):
     //   兜底档(优化/翻译/压缩)→ 跟随会话模型;静默档(快速模型)→ 标题用首条消息文本、
     //   建议不生成;报错档(OCR/图像生成)→ 功能不可用,用时提示去配置。
-    // 下拉首项文案据此区分,免得用户以为「未设置=不工作」或反之。
+    // 报错档触发器留白(未设置就是不工作,不占文案),但列表里首项仍带「未设置」字样,
+    // 否则下拉里出现一行空白选项没人知道点了是什么——功能后果已在各卡描述里写明。
+    const disabledScene = !FALLBACK_MODEL_KEYS.has(key) && key !== "fastModelId";
     const emptyLabel = FALLBACK_MODEL_KEYS.has(key)
       ? t("settings:models.not_set_fallback")
       : key === "fastModelId"
@@ -292,7 +294,11 @@ export function DefaultModelsSection({
         onValueChange={(value) => patchDraft({ [key]: value === "__none" ? "" : value })}
       >
         <SelectTrigger className="w-full">
-          <SelectValue />
+          <SelectValue>
+            {/* 空字符串 children 拦住 Radix 把选中项文本门户搬进触发器:未设置=空白;
+                一旦选中真实模型改回 undefined,门户恢复、触发器正常显示模型名。 */}
+            {selected ? undefined : disabledScene ? "" : undefined}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="__none">{emptyLabel}</SelectItem>

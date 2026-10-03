@@ -584,8 +584,8 @@
   "models": {
     "note": "Lists the available models from enabled providers. Pick a model for each scene; for scenes with a prompt, use the button on the right to view or restore the default.",
     "not_set": "Not set",
-    "not_set_fallback": "Not set (follows the conversation model)",
-    "not_set_disabled": "Not set (feature unavailable)",
+    "not_set_fallback": "Follow conversation model",
+    "not_set_disabled": "Not set",
     "autosave_failed": "Failed to auto-save default models",
     "edit_prompt": "Edit prompt",
     "variables_label": "Variables: ",
