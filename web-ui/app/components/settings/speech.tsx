@@ -3,7 +3,7 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Square, Trash2, Volume2 } from "lucide-react";
+import { Check, Square, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -22,11 +22,11 @@ import {
   SettingsField,
   SettingsGroup,
   SettingsListAddButton,
+  SettingsListRow,
   SettingsRows,
   SettingsSplit,
   SettingsStack,
   SettingsSwitchRow,
-  SortableRow,
 } from "~/components/settings/shared";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import {
@@ -193,24 +193,28 @@ export function TtsSection({
     [onSettings, settings],
   );
 
-  const removeProvider = React.useCallback(async () => {
-    if (!draft || draft.type === "system") return;
+  // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。系统语音不可删。
+  const removeProviderById = React.useCallback(async (targetId: string) => {
+    const target = providers.find((provider) => provider.id === targetId);
+    if (!target || target.type === "system") return;
     // R8-1:破坏性删除必须确认(与供应商/助手/MCP 删除同规)
-    if (!(await confirmDialog({ title: t("settings:speech.tts_delete_confirm", { name: String(draft.name ?? "") }), danger: true }))) return;
-    // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
-    await autosave.discard();
-    await api.delete(`settings/tts-provider/${encodeURIComponent(draft.id)}`);
-    const ttsProviders = providers.filter((provider) => provider.id !== draft.id);
+    if (!(await confirmDialog({ title: t("settings:speech.tts_delete_confirm", { name: String(target.name ?? "") }), danger: true }))) return;
+    // 防复活:仅当删的是正在编辑的那条才 discard(丢脏编辑+等在飞保存,DELETE 不与迟到 POST 乱序,复审 F1)
+    const removingActive = draft?.id === targetId;
+    if (removingActive) await autosave.discard();
+    await api.delete(`settings/tts-provider/${encodeURIComponent(targetId)}`);
+    const ttsProviders = providers.filter((provider) => provider.id !== targetId);
     onSettings({
       ...settings,
       ttsProviders,
       selectedTTSProviderId:
-        settings.selectedTTSProviderId === draft.id
+        settings.selectedTTSProviderId === targetId
           ? (ttsProviders[0]?.id ?? null)
           : settings.selectedTTSProviderId,
     });
-    setSelectedId(ttsProviders[0]?.id ?? "");
-  }, [draft, onSettings, providers, settings, t]);
+    // 删的是当前编辑行:选中下一个;删的是别的行:选中保持不动。
+    if (removingActive) setSelectedId(ttsProviders[0]?.id ?? "");
+  }, [draft?.id, onSettings, providers, settings, t, autosave]);
 
   // Test playback uses the global audio singleton with a synthetic key so the test button
   // can toggle (play vs stop) and so that starting the test stops any in-progress chat
@@ -295,20 +299,23 @@ export function TtsSection({
               }))}
             />
             {providers.map((provider, index) => (
-              <SortableRow
+              <SettingsListRow
                 key={provider.id}
                 id={provider.id}
                 index={index}
                 active={provider.id === selectedId}
                 onSelect={() => setSelectedId(provider.id)}
                 onMove={reorderProviders}
+                onDelete={
+                  provider.type === "system" ? undefined : () => removeProviderById(provider.id)
+                }
               >
                 <ProviderListItem
                   name={provider.name}
                   typeLabel={typeLabel(provider.type)}
                   current={provider.id === settings.selectedTTSProviderId}
                 />
-              </SortableRow>
+              </SettingsListRow>
             ))}
             {providers.length === 0 ? (
               <div className="p-6 text-center text-sm text-[var(--ds-text-secondary)]">{t("settings:speech.tts_empty")}</div>
@@ -357,15 +364,7 @@ export function TtsSection({
 
               <SettingsDetailFooter
                 status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
-              >
-                {/* 系统语音是内置兜底,不可删除。 */}
-                {draft.type !== "system" ? (
-                  <Button variant="destructive" onClick={() => void removeProvider()}>
-                    <Trash2 className="size-4" />
-                    {t("settings:common.delete")}
-                  </Button>
-                ) : null}
-              </SettingsDetailFooter>
+              />
             </SettingsStack>
           </div>
         ) : (
@@ -487,24 +486,28 @@ export function AsrSection({
     [onSettings, settings],
   );
 
-  const removeProvider = React.useCallback(async () => {
-    if (!draft) return;
+  // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
+  const removeProviderById = React.useCallback(async (targetId: string) => {
+    const target = providers.find((provider) => provider.id === targetId);
+    if (!target) return;
     // R8-1:破坏性删除必须确认(与供应商/助手/MCP 删除同规)
-    if (!(await confirmDialog({ title: t("settings:speech.asr_delete_confirm", { name: String(draft.name ?? "") }), danger: true }))) return;
-    // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
-    await autosave.discard();
-    await api.delete(`settings/asr-provider/${encodeURIComponent(draft.id)}`);
-    const asrProviders = providers.filter((provider) => provider.id !== draft.id);
+    if (!(await confirmDialog({ title: t("settings:speech.asr_delete_confirm", { name: String(target.name ?? "") }), danger: true }))) return;
+    // 防复活:仅当删的是正在编辑的那条才 discard(丢脏编辑+等在飞保存,DELETE 不与迟到 POST 乱序,复审 F1)
+    const removingActive = draft?.id === targetId;
+    if (removingActive) await autosave.discard();
+    await api.delete(`settings/asr-provider/${encodeURIComponent(targetId)}`);
+    const asrProviders = providers.filter((provider) => provider.id !== targetId);
     onSettings({
       ...settings,
       asrProviders,
       selectedASRProviderId:
-        settings.selectedASRProviderId === draft.id
+        settings.selectedASRProviderId === targetId
           ? (asrProviders[0]?.id ?? null)
           : settings.selectedASRProviderId,
     });
-    setSelectedId(asrProviders[0]?.id ?? "");
-  }, [draft, onSettings, providers, settings, t]);
+    // 删的是当前编辑行:选中下一个;删的是别的行:选中保持不动。
+    if (removingActive) setSelectedId(asrProviders[0]?.id ?? "");
+  }, [draft?.id, onSettings, providers, settings, t, autosave]);
 
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const fields = draft ? asrFields(draft.type) : [];
@@ -523,20 +526,21 @@ export function AsrSection({
             }))}
           />
           {providers.map((provider, index) => (
-            <SortableRow
+            <SettingsListRow
               key={provider.id}
               id={provider.id}
               index={index}
               active={provider.id === selectedId}
               onSelect={() => setSelectedId(provider.id)}
               onMove={reorderProviders}
+              onDelete={() => removeProviderById(provider.id)}
             >
               <ProviderListItem
                 name={provider.name}
                 typeLabel={asrTypeLabel(provider.type)}
                 current={provider.id === settings.selectedASRProviderId}
               />
-            </SortableRow>
+            </SettingsListRow>
           ))}
           {providers.length === 0 ? (
             <div className="p-6 text-center text-sm text-[var(--ds-text-secondary)]">{t("settings:speech.asr_empty")}</div>
@@ -579,12 +583,7 @@ export function AsrSection({
 
             <SettingsDetailFooter
               status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
-            >
-              <Button variant="destructive" onClick={() => void removeProvider()}>
-                <Trash2 className="size-4" />
-                {t("settings:common.delete")}
-              </Button>
-            </SettingsDetailFooter>
+            />
           </SettingsStack>
         </div>
       ) : (
