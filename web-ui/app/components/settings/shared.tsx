@@ -74,21 +74,23 @@ export function PasswordInput({
 }
 
 /**
- * 「高级设置」触发器:挂在常显区第一个分组的标题行右侧(SettingsGroup 的 action 槽),
- * 展开/收起时自身位置不动——不会把被点的位置换成别的控件。受控:一个状态可同时控制页面上
- * 不相邻的多段(controls 列出它们的 id)。attention:收起时高级区里有非默认或需要注意的
- * 配置,旁边亮一个小圆点,避免默认折叠把用户自己的配置藏起来。
+ * 「高级设置」触发器:必须挂在常显位置——常显分组标题行右侧(SettingsGroup 的 action 槽),
+ * 或页尾独立一节的标题行。展开/收起时自身位置不动——不会把被点的位置换成别的控件。
+ * 受控:一个状态可同时控制页面上不相邻的多段(controls 列出它们的 id)。attention:收起时
+ * 高级区里有非默认或需要注意的配置,旁边亮一个小圆点,避免默认折叠把用户自己的配置藏起来。
  */
 export function SettingsAdvancedToggle({
   open,
   onOpenChange,
   controls,
   attention = false,
+  className,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   controls: string[];
   attention?: boolean;
+  className?: string;
 }) {
   const { t } = useTranslation();
   const showDot = attention && !open;
@@ -98,7 +100,10 @@ export function SettingsAdvancedToggle({
       aria-expanded={open}
       aria-controls={controls.join(" ")}
       title={showDot ? t("settings:common.advanced_attention") : undefined}
-      className="inline-flex h-7 items-center gap-1 rounded-[var(--ds-radius-sm)] px-2 text-xs font-medium text-[var(--ds-text-secondary)] outline-none transition-colors duration-(--ds-duration-fast) ease-(--ds-ease-swift) hover:bg-[var(--ds-on-surface)] hover:text-[var(--ds-text-primary)] focus-visible:ring-2 focus-visible:ring-ring/50"
+      className={cn(
+        "inline-flex h-7 items-center gap-1 rounded-[var(--ds-radius-sm)] px-2 text-xs font-medium text-[var(--ds-text-secondary)] outline-none transition-colors duration-(--ds-duration-fast) ease-(--ds-ease-swift) hover:bg-[var(--ds-on-surface)] hover:text-[var(--ds-text-primary)] focus-visible:ring-2 focus-visible:ring-ring/50",
+        className,
+      )}
       onClick={() => onOpenChange(!open)}
     >
       {showDot ? <span aria-hidden className="size-1.5 rounded-full bg-[var(--ds-text-secondary)]" /> : null}

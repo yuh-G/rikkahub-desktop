@@ -169,7 +169,6 @@
     "base_url_switched": "Base URL switched to {{url}}",
     "chat_url": "Chat endpoint URL: {{url}}",
     "models_url": "Model list URL: {{url}}",
-    "response_api_desc": "When enabled, the chat endpoint switches to /responses",
     "chat_completions_path_label": "Chat Completions Path",
     "responses_path_label": "Responses Path",
     "history_reasoning_title": "Echo historical reasoning",
@@ -302,9 +301,13 @@
     "connection_title": "Connection",
     "test_title": "Provider test",
     "kind": {
-      "openai": "OpenAI-compatible",
+      "openai": "OpenAI *",
       "claude": "Anthropic",
       "google": "Gemini"
+    },
+    "openai_format": {
+      "chat": "OpenAI Chat Completions",
+      "responses": "OpenAI Response API"
     },
     "path_reset_on_kind": "The endpoint path was also reset to its default.",
     "clear_search": "Clear search"

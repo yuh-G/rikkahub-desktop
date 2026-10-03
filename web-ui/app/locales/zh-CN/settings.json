@@ -169,7 +169,6 @@
     "base_url_switched": "已切换请求地址：{{url}}",
     "chat_url": "聊天完整 URL：{{url}}",
     "models_url": "模型列表 URL：{{url}}",
-    "response_api_desc": "开启后聊天端点自动切换为 /responses",
     "chat_completions_path_label": "请求端点尾缀",
     "responses_path_label": "请求端点尾缀（Responses API）",
     "history_reasoning_title": "回传历史思考过程",
@@ -302,9 +301,13 @@
     "connection_title": "连接",
     "test_title": "供应商测试",
     "kind": {
-      "openai": "OpenAI 兼容",
+      "openai": "OpenAI *",
       "claude": "Anthropic",
       "google": "Gemini"
+    },
+    "openai_format": {
+      "chat": "OpenAI Chat Completions",
+      "responses": "OpenAI Response API"
     },
     "path_reset_on_kind": "已同时恢复默认请求端点尾缀。",
     "clear_search": "清除搜索"

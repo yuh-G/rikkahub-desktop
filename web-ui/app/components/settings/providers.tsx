@@ -1,8 +1,9 @@
-// components/settings/providers.tsx — 模型 › 供应商页:左列表,右配置(连接 → 模型 → 测试 → 高级)。
+// components/settings/providers.tsx — 模型 › 供应商页:左列表,右配置(连接 → 模型 → 测试 → 高级[默认收起])。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import {
+  Check,
   CheckCircle2,
   Database,
   ExternalLink,
@@ -19,6 +20,12 @@ import { toast } from "sonner";
 import { AIIcon } from "~/components/ui/ai-icon";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "~/components/ui/dropdown-menu";
 import { Input } from "~/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
@@ -623,6 +630,18 @@ const KIND_LABEL_KEYS: Record<ProviderKind, string> = {
 };
 const PROVIDER_KINDS = Object.keys(KIND_LABEL_KEYS) as ProviderKind[];
 
+// OpenAI 格式的两种请求协议:点「OpenAI *」分段弹出选择。未选过即 Chat Completions(useResponseApi 缺省)。
+const OPENAI_FORMATS = [
+  { responseApi: false, labelKey: "settings:providers.openai_format.chat" },
+  { responseApi: true, labelKey: "settings:providers.openai_format.responses" },
+] as const;
+
+/** 详情页头的格式名:OpenAI 格式落到具体协议,不显示分段上的「OpenAI *」。 */
+function providerFormatLabelKey(kind: ProviderKind, provider: ProviderProfile): string {
+  if (kind !== "openai") return KIND_LABEL_KEYS[kind];
+  return OPENAI_FORMATS[provider.useResponseApi === true ? 1 : 0].labelKey;
+}
+
 /** 当前格式下请求端点尾缀是否被用户改过(只有 OpenAI 格式可改)。 */
 function hasCustomEndpointPath(provider: ProviderProfile): boolean {
   if (providerKind(provider) !== "openai") return false;
@@ -637,10 +656,8 @@ function normalizeKindPatch(provider: ProviderProfile, kind: ProviderKind): Prov
     type: kind,
     baseUrl: baseUrlForKindSwitch(provider.id, textValue(provider.baseUrl), kind),
     useResponseApi: kind === "openai" ? provider.useResponseApi === true : false,
-    chatCompletionsPath: defaultPathForKind(
-      kind,
-      kind === "openai" && provider.useResponseApi === true,
-    ),
+    // chatCompletionsPath 只承载 Chat Completions 尾缀;Responses 尾缀在 responsesPath,两者不混写。
+    chatCompletionsPath: defaultPathForKind(kind),
     // kind 切换时把 responsesPath 一并归位默认,避免切到 openai+ResponseAPI 时残留旧自定义路径。
     responsesPath: "/responses",
   };
@@ -1253,10 +1270,13 @@ export function ProvidersSection({
       ? t("settings:providers.models_select_all_filtered")
       : t("settings:providers.models_select_all");
 
-  const changeKind = (value: ProviderKind) => {
+  const changeKind = (value: ProviderKind, useResponseApi?: boolean) => {
     // 类型切换也是编辑,必须置脏,否则永不自动保存(复审 F3 补获)
     autosave.markDirty();
-    const next = normalizeKindPatch(draft, value);
+    const next: ProviderProfile = {
+      ...normalizeKindPatch(draft, value),
+      ...(useResponseApi !== undefined ? { useResponseApi } : {}),
+    };
     // 按登记表/协议默认换算过地址时告知用户去向;自定义地址不动则不打扰。端点尾缀在折叠区里,
     // 被静默归位时一并说明。
     const baseChanged = next.baseUrl !== textValue(draft.baseUrl) && textValue(draft.baseUrl) !== "";
@@ -1273,6 +1293,46 @@ export function ProvidersSection({
     }
     setDraft(next);
   };
+
+  // 已是 OpenAI 格式时只换协议(地址、尾缀都不动);从别的格式进来走完整的格式切换。
+  const selectOpenAiFormat = (useResponseApi: boolean) => {
+    if (kind !== "openai") {
+      changeKind("openai", useResponseApi);
+      return;
+    }
+    if ((draft.useResponseApi === true) !== useResponseApi) patchDraft({ useResponseApi });
+  };
+
+  const kindItems = PROVIDER_KINDS.map((value) =>
+    value === "openai"
+      ? {
+          value,
+          label: t(KIND_LABEL_KEYS[value]),
+          wrap: (button: React.ReactElement) => (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>{button}</DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-(--radix-dropdown-menu-trigger-width)">
+                {OPENAI_FORMATS.map((format) => {
+                  const active = kind === "openai" && (draft.useResponseApi === true) === format.responseApi;
+                  return (
+                    <DropdownMenuItem
+                      key={String(format.responseApi)}
+                      data-active={active || undefined}
+                      onSelect={() => selectOpenAiFormat(format.responseApi)}
+                    >
+                      <span className="flex w-[18px] shrink-0 items-center justify-center">
+                        {active ? <Check className="size-4 !text-current" /> : null}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">{t(format.labelKey)}</span>
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ),
+        }
+      : { value, label: t(KIND_LABEL_KEYS[value]) },
+  );
 
   const deleteProvider = async () => {
     if (!(await confirmDialog({ title: t("settings:providers.delete_confirm", { name: draft.name }), danger: true }))) return;
@@ -1327,8 +1387,8 @@ export function ProvidersSection({
         <div className="@container">
           <SettingsStack>
             <SettingsDetailHeader
-              title={draft.name || t(KIND_LABEL_KEYS[kind])}
-              description={textValue(draft.shortDescription) || t(KIND_LABEL_KEYS[kind])}
+              title={draft.name || t(providerFormatLabelKey(kind, draft))}
+              description={textValue(draft.shortDescription) || t(providerFormatLabelKey(kind, draft))}
               action={
                 <label className="flex items-center gap-2 text-sm text-[var(--ds-text-secondary)]">
                   {t("settings:providers.enabled_label")}
@@ -1341,20 +1401,7 @@ export function ProvidersSection({
               }
             />
 
-            <SettingsGroup
-              title={t("settings:providers.connection_title")}
-              // 「高级」触发器挂在常显区(本组标题行):展开区收起时整段不渲染,触发器若放进
-              // 展开区会随之消失、无处可点。内容仍在下方原位,点开后恰在本组之下展开。
-              action={
-                <SettingsAdvancedToggle
-                  open={advancedOpen}
-                  onOpenChange={setAdvancedOpen}
-                  controls={[advancedId]}
-                  attention={advancedAttention}
-                />
-              }
-              fields
-            >
+            <SettingsGroup title={t("settings:providers.connection_title")} fields>
               <SettingsField label={t("settings:providers.name")}>
                 <Input value={draft.name} onChange={(event) => patchDraft({ name: event.target.value })} />
               </SettingsField>
@@ -1364,7 +1411,7 @@ export function ProvidersSection({
                     <SegmentedControl
                       stretch
                       aria-label={t("settings:providers.type")}
-                      items={PROVIDER_KINDS.map((value) => ({ value, label: t(KIND_LABEL_KEYS[value]) }))}
+                      items={kindItems}
                       value={kind}
                       onChange={changeKind}
                     />
@@ -1415,144 +1462,6 @@ export function ProvidersSection({
                 </SettingsField>
               )}
             </SettingsGroup>
-
-            {/* 高级展开区:收起时整段不渲染(触发器在上方「连接」组标题行,常显)。
-                内容保持原位,不与其它分组重排。 */}
-            <SettingsAdvancedRegion id={advancedId} open={advancedOpen}>
-              <SettingsGroup title={t("settings:common.advanced")}>
-                  <SettingsRows>
-                    {!isOauth && kind === "openai" ? (
-                      // 单输入框按开关切换绑定字段(对齐安卓 ProviderConfigure):关→chatCompletionsPath,
-                      // 开→responsesPath。两者必须同在一个渲染单元:标签/值/写入字段都随开关变。
-                      <SettingsSwitchRow
-                        label="Response API"
-                        description={t("settings:providers.response_api_desc")}
-                        checked={draft.useResponseApi === true}
-                        onCheckedChange={(useResponseApi) => patchDraft({ useResponseApi })}
-                      >
-                        <SettingsField
-                          label={
-                            draft.useResponseApi === true
-                              ? t("settings:providers.responses_path_label")
-                              : t("settings:providers.chat_completions_path_label")
-                          }
-                        >
-                          <Input
-                            value={
-                              draft.useResponseApi === true
-                                ? textValue(draft.responsesPath) || "/responses"
-                                : textValue(draft.chatCompletionsPath) || defaultPathForKind(kind, false)
-                            }
-                            onChange={(event) =>
-                              patchDraft(
-                                draft.useResponseApi === true
-                                  ? { responsesPath: event.target.value }
-                                  : { chatCompletionsPath: event.target.value },
-                              )
-                            }
-                          />
-                        </SettingsField>
-                      </SettingsSwitchRow>
-                    ) : null}
-                    {!isOauth && kind === "openai" ? (
-                      <SettingsSwitchRow
-                        label={t("settings:providers.history_reasoning_title")}
-                        description={t("settings:providers.history_reasoning_desc")}
-                        checked={draft.includeHistoryReasoning !== false}
-                        onCheckedChange={(includeHistoryReasoning) => patchDraft({ includeHistoryReasoning })}
-                      />
-                    ) : null}
-                    {!isOauth && kind === "openai" ? (
-                      <SettingsSwitchRow
-                        label={t("settings:providers.prompt_cache_key_title")}
-                        description={t("settings:providers.prompt_cache_key_desc")}
-                        checked={draft.promptCacheKey === true}
-                        onCheckedChange={(promptCacheKey) => patchDraft({ promptCacheKey })}
-                      />
-                    ) : null}
-                    {!isOauth && kind === "claude" ? (
-                      <SettingsSwitchRow
-                        label={t("settings:providers.prompt_cache_title")}
-                        description={t("settings:providers.prompt_cache_desc")}
-                        checked={draft.promptCaching === true}
-                        onCheckedChange={(promptCaching) => patchDraft({ promptCaching })}
-                      >
-                        {draft.promptCaching === true ? (
-                          <SettingsField label={t("settings:providers.cache_ttl")}>
-                            <Select
-                              value={textValue(draft.promptCacheTtl) || "5m"}
-                              onValueChange={(promptCacheTtl) => patchDraft({ promptCacheTtl: promptCacheTtl as "5m" | "1h" })}
-                            >
-                              <SelectTrigger className="w-full max-w-60" aria-label={t("settings:providers.cache_ttl")}>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="5m">{t("settings:providers.cache_5m")}</SelectItem>
-                                <SelectItem value="1h">{t("settings:providers.cache_1h")}</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </SettingsField>
-                        ) : null}
-                      </SettingsSwitchRow>
-                    ) : null}
-                    <SettingsSwitchRow
-                      label={t("settings:providers.balance_title")}
-                      description={t("settings:providers.balance_desc")}
-                      checked={balanceOption.enabled === true}
-                      onCheckedChange={(enabled) => patchDraft({ balanceOption: { ...balanceOptionOf(draft), enabled } })}
-                    >
-                      {balanceOption.enabled === true ? (
-                        <div className="space-y-3">
-                          <div className="grid gap-3 @xl:grid-cols-2">
-                            <SettingsField label={t("settings:providers.balance_api_path")}>
-                              <Input
-                                value={textValue(balanceOption.apiPath) || "/credits"}
-                                onChange={(event) =>
-                                  patchDraft({ balanceOption: { ...balanceOptionOf(draft), apiPath: event.target.value } })
-                                }
-                              />
-                            </SettingsField>
-                            <SettingsField
-                              label={t("settings:providers.balance_result_path")}
-                              hint={
-                                resultPathValid ? undefined : (
-                                  <span className="text-destructive">
-                                    {t("settings:providers.balance_result_path_invalid")}
-                                  </span>
-                                )
-                              }
-                            >
-                              <Input
-                                value={textValue(balanceOption.resultPath)}
-                                onChange={(event) =>
-                                  patchDraft({ balanceOption: { ...balanceOptionOf(draft), resultPath: event.target.value } })
-                                }
-                                aria-invalid={!resultPathValid}
-                                className={cn(!resultPathValid && "border-destructive focus-visible:ring-destructive/30")}
-                              />
-                            </SettingsField>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void checkBalance()}
-                            disabled={checkingBalance}
-                          >
-                            {checkingBalance ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
-                            {t("settings:providers.query")}
-                          </Button>
-                          {balanceResult ? (
-                            <pre className="max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
-                              {balanceResult}
-                            </pre>
-                          ) : null}
-                        </div>
-                      ) : null}
-                  </SettingsSwitchRow>
-                </SettingsRows>
-              </SettingsGroup>
-            </SettingsAdvancedRegion>
 
             <SettingsGroup
               title={t("settings:providers.models_title")}
@@ -1834,6 +1743,146 @@ export function ProvidersSection({
                 </pre>
               ) : null}
             </SettingsGroup>
+
+            {/* 高级设置:页尾独立一节,默认收起。触发器就是这一节的标题行(常显),
+                内容收起时整段不渲染。 */}
+            <section>
+              <SettingsAdvancedToggle
+                open={advancedOpen}
+                onOpenChange={setAdvancedOpen}
+                controls={[advancedId]}
+                attention={advancedAttention}
+                className="-ml-2"
+              />
+              <SettingsAdvancedRegion id={advancedId} open={advancedOpen} className="pt-1">
+                <SettingsRows>
+                  {!isOauth && kind === "openai" ? (
+                    // 尾缀随所选协议绑定字段(对齐安卓 ProviderConfigure):Chat Completions→
+                    // chatCompletionsPath,Responses API→responsesPath。
+                    <div className="py-3">
+                      <SettingsField
+                        label={
+                          draft.useResponseApi === true
+                            ? t("settings:providers.responses_path_label")
+                            : t("settings:providers.chat_completions_path_label")
+                        }
+                      >
+                        <Input
+                          value={
+                            draft.useResponseApi === true
+                              ? textValue(draft.responsesPath) || "/responses"
+                              : textValue(draft.chatCompletionsPath) || defaultPathForKind(kind)
+                          }
+                          onChange={(event) =>
+                            patchDraft(
+                              draft.useResponseApi === true
+                                ? { responsesPath: event.target.value }
+                                : { chatCompletionsPath: event.target.value },
+                            )
+                          }
+                        />
+                      </SettingsField>
+                    </div>
+                  ) : null}
+                  {!isOauth && kind === "openai" ? (
+                    <SettingsSwitchRow
+                      label={t("settings:providers.history_reasoning_title")}
+                      description={t("settings:providers.history_reasoning_desc")}
+                      checked={draft.includeHistoryReasoning !== false}
+                      onCheckedChange={(includeHistoryReasoning) => patchDraft({ includeHistoryReasoning })}
+                    />
+                  ) : null}
+                  {!isOauth && kind === "openai" ? (
+                    <SettingsSwitchRow
+                      label={t("settings:providers.prompt_cache_key_title")}
+                      description={t("settings:providers.prompt_cache_key_desc")}
+                      checked={draft.promptCacheKey === true}
+                      onCheckedChange={(promptCacheKey) => patchDraft({ promptCacheKey })}
+                    />
+                  ) : null}
+                  {!isOauth && kind === "claude" ? (
+                    <SettingsSwitchRow
+                      label={t("settings:providers.prompt_cache_title")}
+                      description={t("settings:providers.prompt_cache_desc")}
+                      checked={draft.promptCaching === true}
+                      onCheckedChange={(promptCaching) => patchDraft({ promptCaching })}
+                    >
+                      {draft.promptCaching === true ? (
+                        <SettingsField label={t("settings:providers.cache_ttl")}>
+                          <Select
+                            value={textValue(draft.promptCacheTtl) || "5m"}
+                            onValueChange={(promptCacheTtl) => patchDraft({ promptCacheTtl: promptCacheTtl as "5m" | "1h" })}
+                          >
+                            <SelectTrigger className="w-full max-w-60" aria-label={t("settings:providers.cache_ttl")}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="5m">{t("settings:providers.cache_5m")}</SelectItem>
+                              <SelectItem value="1h">{t("settings:providers.cache_1h")}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </SettingsField>
+                      ) : null}
+                    </SettingsSwitchRow>
+                  ) : null}
+                  <SettingsSwitchRow
+                    label={t("settings:providers.balance_title")}
+                    description={t("settings:providers.balance_desc")}
+                    checked={balanceOption.enabled === true}
+                    onCheckedChange={(enabled) => patchDraft({ balanceOption: { ...balanceOptionOf(draft), enabled } })}
+                  >
+                    {balanceOption.enabled === true ? (
+                      <div className="space-y-3">
+                        <div className="grid gap-3 @xl:grid-cols-2">
+                          <SettingsField label={t("settings:providers.balance_api_path")}>
+                            <Input
+                              value={textValue(balanceOption.apiPath) || "/credits"}
+                              onChange={(event) =>
+                                patchDraft({ balanceOption: { ...balanceOptionOf(draft), apiPath: event.target.value } })
+                              }
+                            />
+                          </SettingsField>
+                          <SettingsField
+                            label={t("settings:providers.balance_result_path")}
+                            hint={
+                              resultPathValid ? undefined : (
+                                <span className="text-destructive">
+                                  {t("settings:providers.balance_result_path_invalid")}
+                                </span>
+                              )
+                            }
+                          >
+                            <Input
+                              value={textValue(balanceOption.resultPath)}
+                              onChange={(event) =>
+                                patchDraft({ balanceOption: { ...balanceOptionOf(draft), resultPath: event.target.value } })
+                              }
+                              aria-invalid={!resultPathValid}
+                              className={cn(!resultPathValid && "border-destructive focus-visible:ring-destructive/30")}
+                            />
+                          </SettingsField>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void checkBalance()}
+                          disabled={checkingBalance}
+                        >
+                          {checkingBalance ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
+                          {t("settings:providers.query")}
+                        </Button>
+                        {balanceResult ? (
+                          <pre className="max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
+                            {balanceResult}
+                          </pre>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </SettingsSwitchRow>
+                </SettingsRows>
+              </SettingsAdvancedRegion>
+            </section>
 
             <SettingsDetailFooter
               status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}

@@ -11,6 +11,12 @@ export interface SegmentedItem<T extends string> {
   value: T;
   label: React.ReactNode;
   disabled?: boolean;
+  /**
+   * 把该项的按钮包一层(仅 SegmentedControl 生效),典型用法是 `<DropdownMenuTrigger asChild>`,
+   * 让一个分段同时是下拉菜单的触发器。按钮的 ref/事件经 asChild 合并,滑块测量不受影响。
+   * 包裹后点击不再直接提交该项:提交交给包裹者(菜单里选定才算数,点开又关掉不改值)。
+   */
+  wrap?: (button: React.ReactElement) => React.ReactNode;
 }
 
 type SegmentedSize = "sm" | "default";
@@ -266,7 +272,7 @@ export function SegmentedControl<T extends string>({
     >
       {items.map((item, index) => {
         const selected = index === selectedIndex;
-        return (
+        const button = (
           <button
             key={item.value}
             ref={(element) => {
@@ -280,12 +286,13 @@ export function SegmentedControl<T extends string>({
             className={itemClassName(size, stretch, selected)}
             onFocus={() => setFocusIndex(index)}
             onClick={() => {
-              if (!selected) onChange(item.value);
+              if (!selected && !item.wrap) onChange(item.value);
             }}
           >
             {item.label}
           </button>
         );
+        return item.wrap ? <React.Fragment key={item.value}>{item.wrap(button)}</React.Fragment> : button;
       })}
     </SegmentedTrack>
   );
