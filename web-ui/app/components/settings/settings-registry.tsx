@@ -11,12 +11,10 @@ import { AboutSection, DonateSection } from "~/components/settings/about";
 import { AssistantsSection } from "~/components/settings/assistants";
 import { BackupSection, WebServiceSection } from "~/components/settings/data";
 import { DefaultModelsSection } from "~/components/settings/default-models";
-import {
-  McpSection,
-  PromptInjectionSection,
-  QuickMessagesSection,
-  SkillsSection,
-} from "~/components/settings/extensions";
+import { McpSection } from "~/components/settings/extensions/mcp";
+import { PromptInjectionSection } from "~/components/settings/extensions/injection";
+import { QuickMessagesSection } from "~/components/settings/extensions/quick-messages";
+import { SkillsSection } from "~/components/settings/extensions/skills";
 import { AppSection, AppearanceSection, ProfileSection, ShortcutsSection } from "~/components/settings/general";
 import { LogsSection, type RequestLog } from "~/components/settings/logs";
 import { PortRequestSection, ProxySection } from "~/components/settings/proxy";

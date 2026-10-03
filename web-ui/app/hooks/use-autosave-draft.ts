@@ -4,7 +4,7 @@
 // 了一份"dirtyRef + 防抖 effect"样板,且保存完成回调无条件 dirtyRef=false——键击若落在
 // "保存发起 → resolve"窗口内,其 dirty 标记被抹掉,下一轮防抖看到 dirty=false 直接跳过:
 // 字符显示在框里、提示"已自动保存",实际永不落盘,切页即丢(本机 RTT 小难复现,Docker/
-// 反代远程部署高频复现)。extensions.tsx 的 McpServerEditor 曾就地修复过一次(savingRef
+// 反代远程部署高频复现)。extensions/mcp.tsx 的 McpServerEditor 曾就地修复过一次(savingRef
 // 三件套),但其余分区未同步。本 hook 把三件套抽成唯一实现,所有分区换装。
 //
 // 语义(三件套):

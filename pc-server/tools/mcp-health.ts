@@ -2,7 +2,7 @@
 //
 // 单一事实源 = McpHealthDiagnosis。一份判定、两处渲染：
 //   渲染 A（模型）：format.ts 把它渲染成结构化诊断单条回灌 tool_result（决策④）。
-//   渲染 B（UI）  ：supervisor 状态经 /api/events 通道推给 extensions.tsx 状态灯（决策①）。
+//   渲染 B（UI）  ：supervisor 状态经 /api/events 通道推给 settings/extensions/mcp.tsx 状态灯（决策①）。
 //
 // 纪律：
 //   - 健康状态是【内存态运行时数据】，不落盘、不进 settings、不进备份——与 state.logs 同类
