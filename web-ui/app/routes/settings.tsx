@@ -20,7 +20,7 @@ import {
   SettingsPageHeader,
   useSettingsSnapshot,
 } from "~/components/settings/settings-panel";
-import { SETTINGS_PAGES } from "~/components/settings/settings-registry";
+import { SETTINGS_PAGES, SETTINGS_DOCKED_PAGES } from "~/components/settings/settings-registry";
 
 import { Button } from "~/components/ui/button";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -126,6 +126,8 @@ function SettingsPage({
 
   const pageKey = settingsPageKey(location.section, location.sub);
   const Page = SETTINGS_PAGES[pageKey];
+  // 停靠页(双栏独立滚动)判据与模态外壳同源(SETTINGS_DOCKED_PAGES)。
+  const docked = SETTINGS_DOCKED_PAGES.has(pageKey);
 
   return (
     <div className="flex h-svh overflow-hidden bg-background">
@@ -186,16 +188,31 @@ function SettingsPage({
             </Button>
           }
         />
-        <main className="min-h-0 flex-1">
-          <ScrollArea key={pageKey} className="h-full">
+        <main className="flex min-h-0 flex-1 flex-col">
+          {docked ? (
+            // 停靠页不走 Radix ScrollArea(其 display:table 内容层掐断栏内滚动的高度链),
+            // 定高 + overflow 收口的容器让 Split 栏内滚动接管。窄屏钻取式下 Split 堆叠成
+            // 单栏、栏内滚动类不生效(@2xl 以下),堆叠内容的滚动靠 min-h-0 撑出来的这根
+            // 容器滚动条——双栏宽时 Split 定高占满、容器本身无溢出,滚动条不出现。
             <div
+              key={pageKey}
               id={SETTINGS_PAGE_PANEL_ID}
               role={location.sub ? "tabpanel" : undefined}
-              className="mx-auto w-full max-w-5xl px-6 pt-1 pb-8"
+              className="mx-auto min-h-0 w-full max-w-5xl animate-in fade-in-0 overflow-y-auto px-6 pt-1 pb-8 duration-(--ds-duration-fast) ease-(--ds-ease-swift) motion-reduce:animate-none"
             >
               <Page settings={settings} onSettings={setSettings} />
             </div>
-          </ScrollArea>
+          ) : (
+            <ScrollArea key={pageKey} className="h-full">
+              <div
+                id={SETTINGS_PAGE_PANEL_ID}
+                role={location.sub ? "tabpanel" : undefined}
+                className="mx-auto w-full max-w-5xl px-6 pt-1 pb-8"
+              >
+                <Page settings={settings} onSettings={setSettings} />
+              </div>
+            </ScrollArea>
+          )}
         </main>
       </div>
     </div>

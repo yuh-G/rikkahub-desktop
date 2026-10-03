@@ -515,6 +515,7 @@ export function AsrSection({
 
   return (
     <SettingsSplit
+      scroll
       list={
         <div className="space-y-1">
           <SettingsListAddButton

@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 
 import { settingsPageKey } from "~/components/settings/settings-nav";
-import { SETTINGS_PAGES } from "~/components/settings/settings-registry";
+import { SETTINGS_DOCKED_PAGES, SETTINGS_PAGES } from "~/components/settings/settings-registry";
 import {
   SETTINGS_PAGE_PANEL_ID,
   SettingsNavList,
@@ -115,6 +115,7 @@ function SettingsDialogBody() {
   const { settings, setSettings } = useSettingsSnapshot();
   const pageKey = settingsPageKey(section, sub);
   const Page = SETTINGS_PAGES[pageKey];
+  const docked = SETTINGS_DOCKED_PAGES.has(pageKey);
 
   return (
     <>
@@ -156,15 +157,29 @@ function SettingsDialogBody() {
         />
         {settings ? (
           // key=页键:切一级或二级时滚动位置归零并重放淡入,"新页从顶部开始"。
-          <ScrollArea key={pageKey} className="min-h-0 flex-1">
+          // 停靠页(SETTINGS_DOCKED_PAGES,双栏各自内滚)不走 Radix ScrollArea:其内容
+          // 包裹层是 display:table(table 的子元素拿不到受约束高度,栏内滚动链必断),
+          // 改用普通定高容器,栏内滚动自己管;普通页维持 Radix 整页滚动。
+          docked ? (
             <div
+              key={pageKey}
               id={SETTINGS_PAGE_PANEL_ID}
               role={sub ? "tabpanel" : undefined}
-              className="animate-in fade-in-0 px-6 pt-1 pb-8 duration-(--ds-duration-fast) ease-(--ds-ease-swift) motion-reduce:animate-none"
+              className="flex min-h-0 flex-1 animate-in fade-in-0 flex-col overflow-hidden px-6 pt-1 pb-8 duration-(--ds-duration-fast) ease-(--ds-ease-swift) motion-reduce:animate-none"
             >
               <Page settings={settings} onSettings={setSettings} />
             </div>
-          </ScrollArea>
+          ) : (
+            <ScrollArea key={pageKey} className="min-h-0 flex-1">
+              <div
+                id={SETTINGS_PAGE_PANEL_ID}
+                role={sub ? "tabpanel" : undefined}
+                className="min-h-full px-6 pt-1 pb-8 animate-in fade-in-0 duration-(--ds-duration-fast) ease-(--ds-ease-swift) motion-reduce:animate-none"
+              >
+                <Page settings={settings} onSettings={setSettings} />
+              </div>
+            </ScrollArea>
+          )
         ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
             <Loader2 className="mr-2 size-4 animate-spin" />

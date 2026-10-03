@@ -71,7 +71,10 @@ export function PromptInjectionSection({ settings, onSettings }: SectionProps) {
   const assistant = useBindingAssistant(settings);
   if (!assistant) return <NoAssistantsState />;
   return (
-    <>
+    // flex 容器是宿主面板(SETTINGS_PAGE_PANEL_ID);本页多一层整行工具栏,工具栏固定高、
+    // 编辑器占余高。两个编辑器常驻挂载用 hidden 切换:hidden 时 display:none 不占布局,
+    // 可见的那个 flex-1 占满余高,EditorShell 内两栏的独立滚动高度链从这里接通。
+    <div className="flex min-h-full flex-col">
       <BindingAssistantToolbar
         settings={settings}
         assistant={assistant}
@@ -88,13 +91,13 @@ export function PromptInjectionSection({ settings, onSettings }: SectionProps) {
           />
         }
       />
-      <div hidden={panel !== "mode"}>
+      <div hidden={panel !== "mode"} className="flex min-h-0 flex-1 flex-col">
         <ModeInjectionEditor settings={settings} assistant={assistant} onSettings={onSettings} />
       </div>
-      <div hidden={panel !== "lorebook"}>
+      <div hidden={panel !== "lorebook"} className="flex min-h-0 flex-1 flex-col">
         <LorebookEditor settings={settings} assistant={assistant} onSettings={onSettings} />
       </div>
-    </>
+    </div>
   );
 }
 

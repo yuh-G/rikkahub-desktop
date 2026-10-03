@@ -284,7 +284,7 @@ export function AssistantsSection({
   );
 
   return (
-    <SettingsSplit list={list}>
+    <SettingsSplit scroll list={list}>
       {draft ? (
         <AssistantEditor
           draft={draft}

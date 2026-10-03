@@ -456,6 +456,7 @@ export function SearchSection({
   return (
     <>
       <SettingsSplit
+        scroll
         list={
           <div className="space-y-1">
           <SettingsListAddButton label={t("settings:search.add")} onClick={addService} />

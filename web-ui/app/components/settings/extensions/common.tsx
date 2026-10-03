@@ -206,7 +206,9 @@ export function EditorShell({
 }) {
   const { t } = useTranslation();
   return (
+    // scroll:左列表/右详情两栏各自独立滚动(窄容器堆叠时自动退回整页滚动,见 SettingsSplit)。
     <SettingsSplit
+      scroll
       list={
       <div>
         {createMenu ? (

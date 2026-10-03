@@ -1357,6 +1357,7 @@ export function ProvidersSection({
   return (
     <>
       <SettingsSplit
+        scroll
         list={
           <div className="space-y-1">
             <SettingsListAddButton label={t("settings:providers.add")} onClick={() => void addProvider()} />

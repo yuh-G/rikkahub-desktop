@@ -103,3 +103,21 @@ export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<Setting
   donate: DonateSectionHost,
   about: AboutSectionHost,
 };
+
+/**
+ * 「列表/详情双栏、两栏各自独立滚动」的页面(见 SettingsSplit 的 scroll 模式)。宿主面板
+ * (两套外壳:模态与窄屏整页)据此把内容容器从「随内容增长」(min-h-full)切成「定高占满
+ * 视口」(h-full)——栏内滚动的整条高度链从这里才闭环;不在此集合的页面维持整页滚动。
+ * 判据:页面主区被 SettingsSplit(scroll) 独占。语音朗读页不是——它还有整页级的
+ * 「朗读过滤」,两套滚轴会打架。
+ */
+export const SETTINGS_DOCKED_PAGES: ReadonlySet<SettingsPageKey> = new Set([
+  "assistants",
+  "models/providers",
+  "network/search",
+  "extensions/mcp",
+  "extensions/skills",
+  "extensions/injection",
+  "extensions/quick",
+  "speech/asr",
+]);

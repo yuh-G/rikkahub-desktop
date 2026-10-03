@@ -510,28 +510,54 @@ export function SettingsField({
  * 列表/详情双栏(助手、供应商、搜索、语音、拓展)。断点按**自身宽度**(容器查询)而非视口:
  * 同一页在模态里与整页里可用宽度不同,视口断点会在模态里过早或过晚换栏。
  * 两栏之间是一条竖分隔线,不再是两张并排的卡。
+ *
+ * `scroll`:双栏各自独立滚动——鼠标在哪栏就只滚哪栏(overscroll-contain:栏内滚到头
+ * 即止,不带动宿主)。前提:宿主是停靠页容器(settings-registry 的 SETTINGS_DOCKED_PAGES
+ * 声明,两套外壳都是「定高 flex 列」,height:100% 才解析得到确定值)。两处类放法有讲究:
+ * 根上用**普通** h-full(容器查询变体在 container 元素自己身上是死代码——@container 查询
+ * 的是祖先容器,本组件正是断点容器,祖先没有容器则变体永不激活);@2xl: 变体全部下沉到
+ * grid 层(grid 不是容器,查询容器=本组件根,断点语义与栏内类一致)。页面把 Split 包进
+ * fragment 也无妨(h-full 在每个流内子项上各自解析,Dialog 走 portal 不占位)。Split 外
+ * 还有整页级兄弟内容的页面(语音朗读页的「朗读过滤」)别开——兄弟内容与栏内滚动两套滚
+ * 轴打架。堆叠形态(@2xl 以下)自动退回宿主整页滚动:窄栏里再塞根栏内滚动条只会裁内容。
  */
 export function SettingsSplit({
   list,
   children,
   listClassName,
+  scroll = false,
 }: {
   list: React.ReactNode;
   children: React.ReactNode;
   listClassName?: string;
+  /** 见上方注释:仅当本组件独占页面主区时开启。 */
+  scroll?: boolean;
 }) {
   return (
-    <div className="@container">
-      <div className="grid gap-6 @2xl:grid-cols-[17.5rem_minmax(0,1fr)] @2xl:gap-0">
+    <div className={cn("@container", scroll && "min-h-0 h-full")}>
+      <div
+        className={cn(
+          "grid gap-6 @2xl:grid-cols-[17.5rem_minmax(0,1fr)] @2xl:gap-0",
+          scroll && "@2xl:min-h-0 @2xl:h-full",
+        )}
+      >
         <div
           className={cn(
             "min-w-0 @2xl:border-r @2xl:border-[var(--ds-divider)] @2xl:pr-3",
+            scroll && "@2xl:min-h-0 @2xl:overflow-y-auto @2xl:overscroll-contain",
             listClassName,
           )}
         >
           {list}
         </div>
-        <div className="min-w-0 @2xl:pl-6">{children}</div>
+        <div
+          className={cn(
+            "min-w-0 @2xl:pl-6",
+            scroll && "@2xl:min-h-0 @2xl:overflow-y-auto @2xl:overscroll-contain",
+          )}
+        >
+          {children}
+        </div>
       </div>
     </div>
   );
