@@ -597,9 +597,11 @@ function SidebarMenuAction({
         "peer-data-[size=lg]/menu-button:top-2.5",
         "group-data-[collapsible=icon]:hidden",
         showOnHover &&
-          // 桌面常态隐藏;悬停/聚焦/菜单打开/激活行时浮现。激活行常显——它必须有稳定的「⋯」入口,
+          // 桌面常态隐藏;悬停/键盘聚焦/菜单打开/激活行时浮现。激活行常显——它必须有稳定的「⋯」入口,
           // 否则鼠标移到别行时自己的「⋯」会消失(交互审查回归)。peer-data-active 从兄弟按钮读激活态。
-          "peer-data-[active=true]/menu-button:text-sidebar-accent-foreground group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-[state=open]:opacity-100 peer-data-[active=true]/menu-button:opacity-100 md:opacity-0",
+          // 聚焦态用 focus-visible-within(只认键盘焦点):鼠标点按「⋯」留下的 :focus 不该让「⋯」常显,
+          // 否则菜单关闭焦点还原后会滞留。
+          "peer-data-[active=true]/menu-button:text-sidebar-accent-foreground group-focus-visible-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-[state=open]:opacity-100 peer-data-[active=true]/menu-button:opacity-100 md:opacity-0",
         className
       )}
       {...props}

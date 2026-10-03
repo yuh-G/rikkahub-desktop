@@ -242,6 +242,7 @@ const ConversationListRow = React.memo(
   }: ConversationListRowProps) => {
     const { t } = useTranslation();
     const [menuOpen, setMenuOpen] = React.useState(false);
+    const actionRef = React.useRef<HTMLButtonElement>(null);
     const [pendingAction, setPendingAction] = React.useState<string | null>(null);
     const [renameOpen, setRenameOpen] = React.useState(false);
     // 域4-1(交互审查 2A):生成中绿点升级为双态——琥珀=有工具审批在等待用户裁决,
@@ -293,7 +294,17 @@ const ConversationListRow = React.memo(
     );
     return (
       <SidebarMenuItem>
-        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <DropdownMenu
+          open={menuOpen}
+          onOpenChange={(open) => {
+            setMenuOpen(open);
+            // 菜单关闭时 Radix 把焦点还给「⋯」钮:鼠标点按留下的 :focus 会让 focus-within
+            // 常显类滞留(菜单已关「⋯」仍常显)。收回鼠标焦点,键盘焦点(:focus-visible)不动。
+            if (!open && actionRef.current?.matches(":focus:not(:focus-visible)")) {
+              actionRef.current.blur();
+            }
+          }}
+        >
           <SidebarMenuButton
             isActive={isActive}
             onClick={() => {
@@ -336,6 +347,7 @@ const ConversationListRow = React.memo(
             <>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuAction
+                  ref={actionRef}
                   showOnHover
                   aria-label={t("conversation_sidebar.conversation_actions")}
                   title={t("conversation_sidebar.conversation_actions")}

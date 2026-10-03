@@ -663,6 +663,7 @@ export function SettingsListRow({
   const { t } = useTranslation();
   const [over, setOver] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
   const canMove = typeof onMove === "function";
   const canDelete = typeof onDelete === "function";
   const showTrigger = canDelete;
@@ -676,7 +677,18 @@ export function SettingsListRow({
   // 徽标↔「⋯」互换的显隐:菜单打开态靠行根的 data-menu 标志兜底——徽标与「⋯」各自包了
   // span、不是兄弟,跨元素 peer 够不着;状态挂在共同祖先上,菜单开着时「⋯」不缩回、徽标让位。
   return (
-    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+    <DropdownMenu
+      open={menuOpen}
+      onOpenChange={(open) => {
+        setMenuOpen(open);
+        // 菜单关闭时 Radix 把焦点还给「⋯」触发钮:若该焦点是鼠标点按留下的(:focus 而非
+        // :focus-visible),行根的 :focus-visible-within 命中会让「⋯」在菜单已关后仍滞留常显。
+        // 主动 blur 收回焦点——键盘用户(:focus-visible)不受影响,仍保有焦点可见性。
+        if (!open && triggerRef.current?.matches(":focus")) {
+          triggerRef.current.blur();
+        }
+      }}
+    >
       <div
         draggable={canMove}
         onDragStart={(event) => {
@@ -730,8 +742,8 @@ export function SettingsListRow({
               <span
                 className={cn(
                   "col-start-1 row-start-1 inline-flex items-center transition-opacity",
-                  // 有删除钮时:常态让位给「⋯」(悬停/聚焦),打开态靠行根的数据标志(见下)。
-                  showTrigger && "group-focus-within/settings-row:opacity-0 group-hover/settings-row:opacity-0 group-data-[menu=open]/settings-row:opacity-0",
+                  // 有删除钮时:常态让位给「⋯」(悬停/键盘聚焦),打开态靠行根的数据标志(见下)。
+                  showTrigger && "group-focus-visible-within/settings-row:opacity-0 group-hover/settings-row:opacity-0 group-data-[menu=open]/settings-row:opacity-0",
                 )}
               >
                 {badge}
@@ -740,15 +752,18 @@ export function SettingsListRow({
             {showTrigger ? (
               <DropdownMenuTrigger asChild>
                 <button
+                  ref={triggerRef}
                   type="button"
                   aria-label={t("settings:common.item_actions")}
                   title={t("settings:common.item_actions")}
                   onClick={(event) => event.stopPropagation()}
                   className={cn(
                     "col-start-1 row-start-1 inline-flex size-6 items-center justify-center rounded-[var(--ds-radius-sm)] text-[var(--ds-text-secondary)] outline-none transition-opacity hover:bg-[var(--ds-on-surface)] hover:text-[var(--ds-text-primary)] focus-visible:ring-2 focus-visible:ring-ring/50",
-                    // 悬停/聚焦/菜单打开时浮现。菜单打开走行根的 data-menu(标志在共同祖先上,
-                    // 不依赖跨元素 peer——徽标与「⋯」各自包了 span、非兄弟,peer 够不着)。
-                    "opacity-0 group-focus-within/settings-row:opacity-100 group-hover/settings-row:opacity-100 group-data-[menu=open]/settings-row:opacity-100",
+                    // 悬停/键盘聚焦/菜单打开时浮现。用 focus-visible-within(非 focus-within):只认键盘
+                    // 焦点——鼠标点按「⋯」留下的 :focus 不该让「⋯」常显,否则菜单关闭焦点还原后滞留。
+                    // 菜单打开走行根的 data-menu(标志在共同祖先上,不依赖跨元素 peer——徽标与「⋯」
+                    // 各自包了 span、非兄弟,peer 够不着)。
+                    "opacity-0 group-focus-visible-within/settings-row:opacity-100 group-hover/settings-row:opacity-100 group-data-[menu=open]/settings-row:opacity-100",
                   )}
                 >
                   <MoreHorizontal className="size-4" />

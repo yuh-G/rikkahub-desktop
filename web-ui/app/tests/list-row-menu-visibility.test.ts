@@ -45,8 +45,10 @@ describe("设置列表 SettingsListRow", () => {
     expect(triggerIdx).toBeGreaterThan(badgeIdx);
   });
 
-  test("「⋯」桌面常态隐藏、悬停/聚焦浮现", () => {
-    expect(SHARED).toContain("opacity-0 group-focus-within/settings-row:opacity-100 group-hover/settings-row:opacity-100");
+  test("「⋯」桌面常态隐藏、悬停/键盘聚焦浮现(焦点态用 focus-visible,鼠标点按不劫持)", () => {
+    expect(SHARED).toContain("opacity-0 group-focus-visible-within/settings-row:opacity-100 group-hover/settings-row:opacity-100");
+    // 鼠标点按留下的 :focus 不该让「⋯」常显(菜单关闭焦点还原滞留的根因),故禁用 focus-within 常显类。
+    expect(SHARED).not.toContain("group-focus-within/settings-row:opacity-100");
   });
 });
 
@@ -58,10 +60,11 @@ describe("会话列表 SidebarMenuAction", () => {
     expect(body).not.toContain("hover:bg-sidebar-accent");
   });
 
-  test("showOnHover:悬停/聚焦/菜单打开/激活行浮现,桌面常态隐藏", () => {
+  test("showOnHover:悬停/键盘聚焦/菜单打开/激活行浮现,桌面常态隐藏", () => {
     const showOnHover = menuActionBody().split("showOnHover &&")[1] ?? "";
     expect(showOnHover).toContain("group-hover/menu-item:opacity-100");
-    expect(showOnHover).toContain("group-focus-within/menu-item:opacity-100");
+    expect(showOnHover).toContain("group-focus-visible-within/menu-item:opacity-100");
+    expect(showOnHover).not.toContain("group-focus-within/menu-item:opacity-100"); // 鼠标焦点不劫持
     expect(showOnHover).toContain("data-[state=open]:opacity-100");
     expect(showOnHover).toContain("peer-data-[active=true]/menu-button:opacity-100"); // 激活行常显
     expect(showOnHover).toContain("md:opacity-0"); // 桌面常态隐藏(压轴)
