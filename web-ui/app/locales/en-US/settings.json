@@ -113,6 +113,7 @@
     "autosave_failed_named": "Failed to auto-save {{name}}",
     "autosave_failed_retry": "Save failed — click to retry",
     "delete": "Delete",
+    "item_actions": "More actions",
     "header_name": "Header name",
     "header_value": "Header value",
     "no_headers": "No custom headers",

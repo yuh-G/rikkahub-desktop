@@ -8,7 +8,7 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, Eye, EyeOff, GripVertical, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, GripVertical, MoreHorizontal, Plus, Trash2 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import {
   DropdownMenu,
@@ -624,5 +624,145 @@ export function SortableRow({
         {children}
       </button>
     </div>
+  );
+}
+
+/**
+ * 设置列表的一行(可排序 + 选择 + 右键/悬停「⋯」删除菜单)。
+ *
+ * 删除能力收口到行上,详情页不再放删除键——对齐主页会话列表的交互心智:
+ *   - 右键任意一行 → 打开该行的操作菜单;
+ *   - 悬停/聚焦某行 → 行尾浮现「⋯」钮,点开同一个菜单。
+ * 两者打开的是**同一个受控 DropdownMenu**(菜单项就是「删除」),材质沿用 ds-menu。
+ *
+ * `badge` 是行尾的常驻徽标(如供应商的「订阅」):常态显示徽标,悬停/聚焦/菜单打开时
+ * 让位给「⋯」钮——同位互换,不并排抢位。删除走 onDelete(按本行 id,而非详情草稿),
+ * 确认对话框与各页的防复活时序由调用方的 onDelete 实现;disabled 时整条不弹菜单。
+ */
+export function SettingsListRow({
+  id,
+  index,
+  active,
+  children,
+  onSelect,
+  onMove,
+  onDelete,
+  badge,
+}: {
+  id: string;
+  index: number;
+  active?: boolean;
+  children: React.ReactNode;
+  onSelect?: () => void;
+  onMove?: (from: number, to: number) => void;
+  /** 提供则启用删除菜单(右键 + 悬停「⋯」);onDelete 内部应自行确认与落库。 */
+  onDelete?: () => void | Promise<void>;
+  /** 行尾常驻徽标(与「⋯」同位互换);不供删除菜单时也可单独用作纯展示徽标。 */
+  badge?: React.ReactNode;
+}) {
+  const { t } = useTranslation();
+  const [over, setOver] = React.useState(false);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const canMove = typeof onMove === "function";
+  const canDelete = typeof onDelete === "function";
+  const showTrigger = canDelete;
+
+  const runDelete = React.useCallback(() => {
+    // 菜单先关,删除动作(通常自带确认对话框)再执行,避免菜单与对话框焦点叠压。
+    setMenuOpen(false);
+    void onDelete?.();
+  }, [onDelete]);
+
+  // 徽标↔「⋯」互换的显隐:className 里用 data-[state=open] 兜底菜单打开态——Radix 会
+  // 给打开中的 trigger 标 data-state="open",悬停移开后菜单仍开时「⋯」不缩回去。
+  return (
+    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+      <div
+        draggable={canMove}
+        onDragStart={(event) => {
+          if (!canMove) return;
+          event.dataTransfer.setData("text/plain", String(index));
+          event.dataTransfer.effectAllowed = "move";
+        }}
+        onDragOver={(event) => {
+          if (!canMove) return;
+          event.preventDefault();
+          setOver(true);
+        }}
+        onDragLeave={() => {
+          if (canMove) setOver(false);
+        }}
+        onDrop={(event) => {
+          if (!canMove) return;
+          event.preventDefault();
+          setOver(false);
+          const from = Number(event.dataTransfer.getData("text/plain"));
+          if (Number.isFinite(from)) onMove?.(from, index);
+        }}
+        onContextMenu={(event) => {
+          if (!canDelete) return;
+          event.preventDefault();
+          setMenuOpen(true);
+        }}
+        // group/settings-row:行尾的徽标↔「⋯」互换、悬停显隐都以它为作用域。
+        className={[
+          "group/settings-row flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition",
+          active ? "bg-[var(--ds-on-surface-active)]" : "hover:bg-[var(--ds-on-surface)]",
+          over ? "ring-2 ring-primary/40" : "",
+        ].join(" ")}
+        data-sort-id={id}
+      >
+        {canMove ? (
+          <GripVertical className="size-4 shrink-0 cursor-grab text-muted-foreground" />
+        ) : null}
+        <button type="button" className="min-w-0 flex-1" onClick={onSelect}>
+          {children}
+        </button>
+
+        {/* 行尾槽:常驻徽标与「⋯」触发钮同位(grid 叠放),悬停/聚焦/菜单打开时互换。 */}
+        {badge != null || showTrigger ? (
+          <span className="relative ml-auto grid shrink-0 place-items-center">
+            {badge != null ? (
+              <span
+                className={cn(
+                  "col-start-1 row-start-1 inline-flex items-center transition-opacity",
+                  // 有删除钮时:常态让位给「⋯」(悬停/聚焦),打开态由 trigger 的 peer 标出
+                  showTrigger &&
+                    "group-focus-within/settings-row:opacity-0 group-hover/settings-row:opacity-0 peer-data-[state=open]:opacity-0",
+                )}
+              >
+                {badge}
+              </span>
+            ) : null}
+            {showTrigger ? (
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={t("settings:common.item_actions")}
+                  title={t("settings:common.item_actions")}
+                  onClick={(event) => event.stopPropagation()}
+                  className={cn(
+                    "peer col-start-1 row-start-1 inline-flex size-6 items-center justify-center rounded-[var(--ds-radius-sm)] text-[var(--ds-text-secondary)] outline-none transition-opacity hover:bg-[var(--ds-on-surface)] hover:text-[var(--ds-text-primary)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50",
+                    // 悬停/聚焦/菜单打开(data-state=open)时浮现;无徽标时同规则(对齐会话列表 showOnHover)。
+                    "opacity-0 group-focus-within/settings-row:opacity-100 group-hover/settings-row:opacity-100 data-[state=open]:opacity-100",
+                  )}
+                >
+                  <MoreHorizontal className="size-4" />
+                </button>
+              </DropdownMenuTrigger>
+            ) : null}
+          </span>
+        ) : null}
+      </div>
+
+      {canDelete ? (
+        <DropdownMenuContent side="right" align="start" className="w-44">
+          <DropdownMenuItem variant="destructive" onSelect={runDelete}>
+            <Trash2 className="size-4" />
+            <span>{t("settings:common.delete")}</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      ) : null}
+    </DropdownMenu>
   );
 }

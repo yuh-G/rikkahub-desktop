@@ -113,6 +113,7 @@
     "autosave_failed_named": "自动保存{{name}}失败",
     "autosave_failed_retry": "保存失败,点击重试",
     "delete": "删除",
+    "item_actions": "更多操作",
     "header_name": "请求头名称",
     "header_value": "请求头值",
     "no_headers": "没有自定义请求头",
