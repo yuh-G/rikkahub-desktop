@@ -25,6 +25,7 @@ import { firstProviderModel } from "../../model-providers/index";
 import { loadModelsDev, modelsDevCache } from "../../inference-engine/providers";
 import { backfillModelDisplayNames } from "../../model-providers/display-names";
 import { syncMcpServerTools } from "../../tools/mcp";
+import { normalizeMcpHeaders } from "../../tools/mcp-headers";
 import { clearMcpOAuth, completeMcpOAuth, ensureFreshMcpToken, startMcpOAuth } from "../../tools/mcp-oauth";
 import { retryMcpServerNow } from "../../tools/mcp-health";
 import { listSkills } from "../../tools/skills";
@@ -405,7 +406,8 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
         commonOptions: {
           enable: willEnable,
           name: String(common.name ?? body.name ?? "MCP Server"),
-          headers: Array.isArray(common.headers) ? common.headers : [],
+          // 落盘统一成安卓 Pair 形状({first,second}),历史元组/键值写法在此收敛。
+          headers: normalizeMcpHeaders(common.headers) as unknown as JsonValue[],
           tools: Array.isArray(common.tools) ? common.tools : [],
           lastSyncAt: typeof common.lastSyncAt === "number" ? common.lastSyncAt : null,
           lastSyncError: String(common.lastSyncError ?? ""),

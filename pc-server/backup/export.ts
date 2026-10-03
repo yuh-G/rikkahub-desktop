@@ -26,6 +26,7 @@ import { createZipFromDirectory } from "./zip";
 import { adaptWorkspaceToolPartForAndroid } from "./workspace-android-export";
 import androidSchemaV24 from "./android-schema-v24.json";
 import { exportSkills } from "../tools";
+import { normalizeMcpHeaders } from "../tools/mcp-headers";
 
 export function copyDirRecursive(src: string, dest: string): number {
   let count = 0;
@@ -160,6 +161,15 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
       }
       return fixed;
     });
+  }
+  // MCP 请求头:安卓 McpCommonOptions.headers 是 List<Pair<String,String>>,只认 {first,second}。
+  // 旧版设置页落成的 [["k","v"]] 元组会让 APP 的 settings 解码整体失败,导出时一律归一。
+  if (stripPcOnly && Array.isArray(copy.mcpServers)) {
+    copy.mcpServers = copy.mcpServers.map((server: any) =>
+      isRecord(server) && isRecord(server.commonOptions)
+        ? { ...server, commonOptions: { ...server.commonOptions, headers: normalizeMcpHeaders(server.commonOptions.headers) } }
+        : server,
+    );
   }
   // modeInjections role: PC uses "USER", Android expects "user"
   if (stripPcOnly && Array.isArray(copy.modeInjections)) {

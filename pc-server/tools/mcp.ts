@@ -4,6 +4,7 @@
 
 import { id, isRecord } from "../foundation/utils";
 import { oauthStateOf } from "./mcp-oauth";
+import { readMcpHeaders } from "./mcp-headers";
 import { jsonBody, textBody } from "../model-providers";
 import type { Assistant, JsonValue, RequestLog } from "../foundation/types";
 import { getStringArray } from "../foundation/utils";
@@ -14,16 +15,9 @@ export type McpLogCallback = (log: RequestLog) => void;
 function headersFromMcpServer(server: Record<string, JsonValue>) {
   const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
   const common = isRecord(server.commonOptions) ? server.commonOptions : {};
-  const rawHeaders = Array.isArray(common.headers) ? common.headers : [];
-  for (const header of rawHeaders) {
-    if (Array.isArray(header)) {
-      const [key, value] = header;
-      if (key) headers[String(key)] = String(value ?? "");
-    } else if (isRecord(header)) {
-      const key = String(header.key ?? header.name ?? header.first ?? "").trim();
-      const value = String(header.value ?? header.second ?? "");
-      if (key) headers[key] = value;
-    }
+  for (const header of readMcpHeaders(common.headers)) {
+    const key = header.name.trim();
+    if (key) headers[key] = header.value;
   }
   // 专题9 MCP OAuth 2.1:已授权的服务器注入 Bearer 令牌(对齐安卓 transport requestBuilder)。
   // 用户手配的 Authorization 头优先——不覆盖显式配置。
