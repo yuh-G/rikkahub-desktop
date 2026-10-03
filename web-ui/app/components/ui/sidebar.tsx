@@ -587,7 +587,9 @@ function SidebarMenuAction({
       data-slot="sidebar-menu-action"
       data-sidebar="menu-action"
       className={cn(
-        "text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground peer-hover/menu-button:text-sidebar-accent-foreground absolute top-1.5 right-1 flex aspect-square w-5 items-center justify-center rounded-md p-0 outline-hidden transition-transform focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0",
+        // 悬停底色用主题无关的中性晕染 --ds-on-surface:有的主题(mx-brutalist)把
+        // --sidebar-accent 定义成不透明实色,这里若用 bg-sidebar-accent,「⋯」一悬停就成实心色块。
+        "text-sidebar-foreground ring-sidebar-ring hover:bg-[var(--ds-on-surface)] peer-hover/menu-button:text-sidebar-accent-foreground absolute top-1.5 right-1 flex aspect-square w-5 items-center justify-center rounded-md p-0 outline-hidden transition-[opacity,color,background-color] focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0",
         // Increases the hit area of the button on mobile.
         "after:absolute after:-inset-2 md:after:hidden",
         "peer-data-[size=sm]/menu-button:top-1",
@@ -595,7 +597,9 @@ function SidebarMenuAction({
         "peer-data-[size=lg]/menu-button:top-2.5",
         "group-data-[collapsible=icon]:hidden",
         showOnHover &&
-          "peer-data-[active=true]/menu-button:text-sidebar-accent-foreground group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-[state=open]:opacity-100 md:opacity-0",
+          // 桌面常态隐藏;悬停/聚焦/菜单打开/激活行时浮现。激活行常显——它必须有稳定的「⋯」入口,
+          // 否则鼠标移到别行时自己的「⋯」会消失(交互审查回归)。peer-data-active 从兄弟按钮读激活态。
+          "peer-data-[active=true]/menu-button:text-sidebar-accent-foreground group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-[state=open]:opacity-100 peer-data-[active=true]/menu-button:opacity-100 md:opacity-0",
         className
       )}
       {...props}

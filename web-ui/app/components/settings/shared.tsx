@@ -673,8 +673,8 @@ export function SettingsListRow({
     void onDelete?.();
   }, [onDelete]);
 
-  // 徽标↔「⋯」互换的显隐:className 里用 data-[state=open] 兜底菜单打开态——Radix 会
-  // 给打开中的 trigger 标 data-state="open",悬停移开后菜单仍开时「⋯」不缩回去。
+  // 徽标↔「⋯」互换的显隐:菜单打开态靠行根的 data-menu 标志兜底——徽标与「⋯」各自包了
+  // span、不是兄弟,跨元素 peer 够不着;状态挂在共同祖先上,菜单开着时「⋯」不缩回、徽标让位。
   return (
     <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
       <div
@@ -705,6 +705,9 @@ export function SettingsListRow({
           setMenuOpen(true);
         }}
         // group/settings-row:行尾的徽标↔「⋯」互换、悬停显隐都以它为作用域。
+        // data-menu:菜单打开态挂在这个共同祖先上,徽标与「⋯」都按它显隐——它俩不是兄弟
+        // (各包了 span),跨元素 peer 选择器够不着,菜单开着徽标不会隐、会重叠。
+        data-menu={menuOpen ? "open" : undefined}
         className={[
           "group/settings-row flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition",
           active ? "bg-[var(--ds-on-surface-active)]" : "hover:bg-[var(--ds-on-surface)]",
@@ -719,16 +722,16 @@ export function SettingsListRow({
           {children}
         </button>
 
-        {/* 行尾槽:常驻徽标与「⋯」触发钮同位(grid 叠放),悬停/聚焦/菜单打开时互换。 */}
+        {/* 行尾槽:常驻徽标与「⋯」触发钮同位(grid 叠放),悬停/聚焦/菜单打开时互换。
+            「⋯」后渲染,叠在上层(网格同位后出者压先出者),保证始终可点——不被徽标挡住。 */}
         {badge != null || showTrigger ? (
           <span className="relative ml-auto grid shrink-0 place-items-center">
             {badge != null ? (
               <span
                 className={cn(
                   "col-start-1 row-start-1 inline-flex items-center transition-opacity",
-                  // 有删除钮时:常态让位给「⋯」(悬停/聚焦),打开态由 trigger 的 peer 标出
-                  showTrigger &&
-                    "group-focus-within/settings-row:opacity-0 group-hover/settings-row:opacity-0 peer-data-[state=open]:opacity-0",
+                  // 有删除钮时:常态让位给「⋯」(悬停/聚焦),打开态靠行根的数据标志(见下)。
+                  showTrigger && "group-focus-within/settings-row:opacity-0 group-hover/settings-row:opacity-0 group-data-[menu=open]/settings-row:opacity-0",
                 )}
               >
                 {badge}
@@ -742,9 +745,10 @@ export function SettingsListRow({
                   title={t("settings:common.item_actions")}
                   onClick={(event) => event.stopPropagation()}
                   className={cn(
-                    "peer col-start-1 row-start-1 inline-flex size-6 items-center justify-center rounded-[var(--ds-radius-sm)] text-[var(--ds-text-secondary)] outline-none transition-opacity hover:bg-[var(--ds-on-surface)] hover:text-[var(--ds-text-primary)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50",
-                    // 悬停/聚焦/菜单打开(data-state=open)时浮现;无徽标时同规则(对齐会话列表 showOnHover)。
-                    "opacity-0 group-focus-within/settings-row:opacity-100 group-hover/settings-row:opacity-100 data-[state=open]:opacity-100",
+                    "col-start-1 row-start-1 inline-flex size-6 items-center justify-center rounded-[var(--ds-radius-sm)] text-[var(--ds-text-secondary)] outline-none transition-opacity hover:bg-[var(--ds-on-surface)] hover:text-[var(--ds-text-primary)] focus-visible:ring-2 focus-visible:ring-ring/50",
+                    // 悬停/聚焦/菜单打开时浮现。菜单打开走行根的 data-menu(标志在共同祖先上,
+                    // 不依赖跨元素 peer——徽标与「⋯」各自包了 span、非兄弟,peer 够不着)。
+                    "opacity-0 group-focus-within/settings-row:opacity-100 group-hover/settings-row:opacity-100 group-data-[menu=open]/settings-row:opacity-100",
                   )}
                 >
                   <MoreHorizontal className="size-4" />
