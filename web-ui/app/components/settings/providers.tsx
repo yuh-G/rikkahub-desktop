@@ -1344,14 +1344,6 @@ export function ProvidersSection({
             <SettingsGroup
               title={t("settings:providers.connection_title")}
               fields
-              action={
-                <SettingsAdvancedToggle
-                  open={advancedOpen}
-                  onOpenChange={setAdvancedOpen}
-                  controls={[advancedId]}
-                  attention={advancedAttention}
-                />
-              }
             >
               <SettingsField label={t("settings:providers.name")}>
                 <Input value={draft.name} onChange={(event) => patchDraft({ name: event.target.value })} />
@@ -1412,8 +1404,22 @@ export function ProvidersSection({
                   <PasswordInput value={textValue(draft.apiKey)} onChange={(apiKey) => patchDraft({ apiKey })} />
                 </SettingsField>
               )}
-              <SettingsAdvancedRegion id={advancedId} open={advancedOpen}>
-                <SettingsGroup title={t("settings:common.advanced")}>
+            </SettingsGroup>
+
+            {/* 「高级」触发器与展开内容同处一址:挂在展开区自己的组标题行上(页尾),
+                点开后内容恰在触发器正下方,不与页首的连接组耦合。 */}
+            <SettingsAdvancedRegion id={advancedId} open={advancedOpen}>
+              <SettingsGroup
+                title={t("settings:common.advanced")}
+                action={
+                  <SettingsAdvancedToggle
+                    open={advancedOpen}
+                    onOpenChange={setAdvancedOpen}
+                    controls={[advancedId]}
+                    attention={advancedAttention}
+                  />
+                }
+              >
                   <SettingsRows>
                     {!isOauth && kind === "openai" ? (
                       // 单输入框按开关切换绑定字段(对齐安卓 ProviderConfigure):关→chatCompletionsPath,
@@ -1543,11 +1549,10 @@ export function ProvidersSection({
                           ) : null}
                         </div>
                       ) : null}
-                    </SettingsSwitchRow>
-                  </SettingsRows>
-                </SettingsGroup>
-              </SettingsAdvancedRegion>
-            </SettingsGroup>
+                  </SettingsSwitchRow>
+                </SettingsRows>
+              </SettingsGroup>
+            </SettingsAdvancedRegion>
 
             <SettingsGroup
               title={t("settings:providers.models_title")}
