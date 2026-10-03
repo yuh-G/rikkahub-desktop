@@ -32,6 +32,7 @@ import {
   moveItem,
   numberText,
   PasswordInput,
+  SettingsAdvancedSection,
   SettingsDetailFooter,
   SettingsDetailHeader,
   SettingsListAddButton,
@@ -280,6 +281,8 @@ export function SearchSection({
     Array<{ key: string; status: "ok" | "fail"; failCode?: string; detail?: string }>
   >([]);
   const { t } = useTranslation();
+  // 「高级设置」展开态:切换服务不收起,离开本页(重挂载)复位为收起。
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
 
   // R8-2:防抖自动保存统一走共享三件套 hook(保存窗口内键击不丢,语义见 hook 文件头)。
   const autosave = useAutosaveDraft(
@@ -572,6 +575,9 @@ export function SearchSection({
                         }
                       : {}),
                   });
+                  // 切到 searxng 时请求地址是必填项且藏在折叠区里——自动展开,别让用户对着
+                  // 收起的「高级设置」找不到该填哪儿。
+                  if (type === "searxng") setAdvancedOpen(true);
                 }}
               >
                 <SelectTrigger className="w-full">
@@ -604,45 +610,6 @@ export function SearchSection({
                 <span className="text-xs text-muted-foreground">{t("settings:search.api_key_hint")}</span>
               </div>
             ) : null}
-            {(() => {
-              // 统一「请求地址」:凡登记了端点的服务皆可换址(searxng 必填、其余可选),落点
-              // 字段/placeholder/预览全部由端点注册表裁决——与请求时 resolveServiceEndpoint
-              // 同一单源,所见即所发。bing_local/custom_js 不登记,不显示。
-              const type = textValue(draft.type);
-              if (!hasServiceEndpoint(type)) return null;
-              const field = customUrlFieldOf(type);
-              const raw = textValue(draft[field]).trim();
-              const official = serviceEndpointBase(type);
-              const preview = raw ? resolveServiceEndpoint(draft as Record<string, unknown>) : "";
-              const badScheme = raw.length > 0 && !/^https?:\/\//i.test(raw);
-              return (
-                <label className="space-y-2 @xl:col-span-2">
-                  <span className="text-sm font-medium">
-                    {t("settings:search.request_url")}
-                    {type === "searxng" ? ` — ${t("settings:search.request_url_required")}` : ""}
-                  </span>
-                  <Input
-                    value={raw}
-                    onChange={(event) => patchDraft({ [field]: event.target.value })}
-                    placeholder={official || "https://search.example.com"}
-                  />
-                  <span
-                    className={cn(
-                      "block break-all text-xs",
-                      badScheme ? "text-destructive" : "text-muted-foreground",
-                    )}
-                  >
-                    {badScheme
-                      ? t("settings:search.request_url_bad_scheme")
-                      : preview
-                        ? t("settings:search.request_url_preview", { endpoint: preview })
-                        : official
-                          ? t("settings:search.request_url_hint", { official })
-                          : t("settings:search.request_url_hint_selfhost")}
-                  </span>
-                </label>
-              );
-            })()}
             {textValue(draft.type) === "doubao" ? (
               // 豆包(火山 Search-Infinity)两模:global=综合搜索(带图),custom=网页搜索。
               // 对齐 APP DoubaoOptions 的 Mode 分段选择器。
@@ -722,32 +689,115 @@ export function SearchSection({
                 </label>
               </>
             ) : null}
-            <label className="space-y-2">
-              <span className="text-sm font-medium">{t("settings:search.depth")}</span>
-              <Select
-                value={textValue(draft.depth) || "standard"}
-                onValueChange={(depth) => patchDraft({ depth })}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="basic">{t("settings:search.field.depth_basic")}</SelectItem>
-                  <SelectItem value="standard">{t("settings:search.field.depth_standard")}</SelectItem>
-                  <SelectItem value="advanced">{t("settings:search.field.depth_advanced")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
-            <label className="space-y-2">
-              <span className="text-sm font-medium">{t("settings:search.result_count")}</span>
-              <Input
-                value={numberText(
-                  draft.resultSize ?? settings.searchCommonOptions.resultSize,
-                )}
-                onChange={(event) => patchDraft({ resultSize: Number(event.target.value) || 10 })}
-              />
-            </label>
+            {textValue(draft.type) === "custom_js" ? (
+              // Custom JS 用户只可能是高级用户,深度/结果数量不折叠直示(该类型也没有请求地址框)。
+              <>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium">{t("settings:search.depth")}</span>
+                  <Select
+                    value={textValue(draft.depth) || "standard"}
+                    onValueChange={(depth) => patchDraft({ depth })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="basic">{t("settings:search.field.depth_basic")}</SelectItem>
+                      <SelectItem value="standard">{t("settings:search.field.depth_standard")}</SelectItem>
+                      <SelectItem value="advanced">{t("settings:search.field.depth_advanced")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium">{t("settings:search.result_count")}</span>
+                  <Input
+                    value={numberText(
+                      draft.resultSize ?? settings.searchCommonOptions.resultSize,
+                    )}
+                    onChange={(event) => patchDraft({ resultSize: Number(event.target.value) || 10 })}
+                  />
+                </label>
+              </>
+            ) : null}
           </div>
+          {textValue(draft.type) !== "custom_js" ? (
+            <SettingsAdvancedSection
+              open={advancedOpen}
+              onOpenChange={setAdvancedOpen}
+              attention={
+                // 折叠藏配置的两类风险都要亮点:配了中转(用户自己的定制)+ searxng 必填地址还空着。
+                hasCustomServiceEndpoint(draft) ||
+                (textValue(draft.type) === "searxng" && !textValue(draft[customUrlFieldOf("searxng")]).trim())
+              }
+            >
+              <div className="grid gap-4 pt-2 @xl:grid-cols-2">
+                {(() => {
+                  // 统一「请求地址」:凡登记了端点的服务皆可换址(searxng 必填、其余可选),落点
+                  // 字段/placeholder/预览全部由端点注册表裁决——与请求时 resolveServiceEndpoint
+                  // 同一单源,所见即所发。bing_local/custom_js 不登记,不显示。
+                  const type = textValue(draft.type);
+                  if (!hasServiceEndpoint(type)) return null;
+                  const field = customUrlFieldOf(type);
+                  const raw = textValue(draft[field]).trim();
+                  const official = serviceEndpointBase(type);
+                  const preview = raw ? resolveServiceEndpoint(draft as Record<string, unknown>) : "";
+                  const badScheme = raw.length > 0 && !/^https?:\/\//i.test(raw);
+                  return (
+                    <label className="space-y-2 @xl:col-span-2">
+                      <span className="text-sm font-medium">
+                        {t("settings:search.request_url")}
+                        {type === "searxng" ? ` — ${t("settings:search.request_url_required")}` : ""}
+                      </span>
+                      <Input
+                        value={raw}
+                        onChange={(event) => patchDraft({ [field]: event.target.value })}
+                        placeholder={official || "https://search.example.com"}
+                      />
+                      <span
+                        className={cn(
+                          "block break-all text-xs",
+                          badScheme ? "text-destructive" : "text-muted-foreground",
+                        )}
+                      >
+                        {badScheme
+                          ? t("settings:search.request_url_bad_scheme")
+                          : preview
+                            ? t("settings:search.request_url_preview", { endpoint: preview })
+                            : official
+                              ? t("settings:search.request_url_hint", { official })
+                              : t("settings:search.request_url_hint_selfhost")}
+                      </span>
+                    </label>
+                  );
+                })()}
+                <label className="space-y-2">
+                  <span className="text-sm font-medium">{t("settings:search.depth")}</span>
+                  <Select
+                    value={textValue(draft.depth) || "standard"}
+                    onValueChange={(depth) => patchDraft({ depth })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="basic">{t("settings:search.field.depth_basic")}</SelectItem>
+                      <SelectItem value="standard">{t("settings:search.field.depth_standard")}</SelectItem>
+                      <SelectItem value="advanced">{t("settings:search.field.depth_advanced")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium">{t("settings:search.result_count")}</span>
+                  <Input
+                    value={numberText(
+                      draft.resultSize ?? settings.searchCommonOptions.resultSize,
+                    )}
+                    onChange={(event) => patchDraft({ resultSize: Number(event.target.value) || 10 })}
+                  />
+                </label>
+              </div>
+            </SettingsAdvancedSection>
+          ) : null}
           {testResult ? (
             <pre className="mt-4 max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
               {testResult}
