@@ -1356,29 +1356,6 @@
   body:has([data-settings-overlay]) [data-app-titlebar] {
     pointer-events: auto;
   }
-  /* 遮罩模糊渐入(顶栏豁免的视觉面):顶缘由全透明渐满,顶栏清晰区与内容毛玻璃区之间是
-     一段浓度爬坡而非硬切线。light 主题压暗层仅 rgba(0,0,0,0.3),低浓度段(α<0.25)对近白
-     卡片只造成 ≤7% 变暗、肉眼不可见——故爬坡取陡:0.5×带宽即 25%、1×即 60%、约 2×即满,
-     4× 带宽(≈128px)铺开成可感知又无台阶的渐入。曲线两端斜率趋零(smoothstep 近似)保住
-     「找不到模糊起点」。mask 调制元素合成结果,压暗与 backdrop-blur 同步渐入;命中区域不变。 */
-  [data-settings-overlay] {
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      transparent 0,
-      rgba(0, 0, 0, 0.25) calc(var(--app-band-h) * 0.5),
-      rgba(0, 0, 0, 0.6) calc(var(--app-band-h) * 1),
-      rgba(0, 0, 0, 0.88) calc(var(--app-band-h) * 1.6),
-      #000 calc(var(--app-band-h) * 2.2)
-    );
-    mask-image: linear-gradient(
-      to bottom,
-      transparent 0,
-      rgba(0, 0, 0, 0.25) calc(var(--app-band-h) * 0.5),
-      rgba(0, 0, 0, 0.6) calc(var(--app-band-h) * 1),
-      rgba(0, 0, 0, 0.88) calc(var(--app-band-h) * 1.6),
-      #000 calc(var(--app-band-h) * 2.2)
-    );
-  }
   /* 界面字号缩放:改 <html> 根字号,所有 rem 单位(字号/间距/图标/圆角…)等比同步变化,
      比例守恒 → 不可能撑破任何布局。变量 --rikkahub-ui-scale 由 root.tsx 从 displaySetting
      写入,null/未设置时 fallback 为 1,默认根字号 16px 与浏览器默认一致,视觉零差异。

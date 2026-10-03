@@ -69,8 +69,7 @@ export function SettingsDialog() {
         // 语义(原生模态的客户区禁用但标题栏仍可最小化)。遮罩与面板都从窗控带下缘
         // (--app-band-h,三页同源单源)起算,顶栏保持完全清晰、可拖、窗控可点。
         // data-settings-overlay:app.css 里的 body:has() 规则据此给 [data-app-titlebar]
-        // 恢复 pointer-events(模态打开时 Radix 会锁整个 body);遮罩的模糊渐入 mask 也挂
-        // 在同一标记上,与本注释同源的机制集中在 app.css 一处。
+        // 恢复 pointer-events(模态打开时 Radix 会锁整个 body)。
         overlayProps={{
           "data-settings-overlay": true,
           style: { top: "var(--app-band-h)" },
