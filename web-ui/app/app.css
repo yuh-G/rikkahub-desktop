@@ -1357,25 +1357,26 @@
     pointer-events: auto;
   }
   /* 遮罩模糊渐入(顶栏豁免的视觉面):顶缘由全透明渐满,顶栏清晰区与内容毛玻璃区之间是
-     一段浓度爬坡而非硬切线。曲线近似 smoothstep——缝口与饱和端斜率趋零,中段承转换;
-     宽度 3× 带高:线性渐变低浓度段肉眼不可见(实测感知带≈几何一半),须取宽于直觉值。
-     mask 调制元素合成结果,压暗与 backdrop-blur 同步渐入;命中区域不变(遮罩仍只盖顶带以下)。 */
+     一段浓度爬坡而非硬切线。light 主题压暗层仅 rgba(0,0,0,0.3),低浓度段(α<0.25)对近白
+     卡片只造成 ≤7% 变暗、肉眼不可见——故爬坡取陡:0.5×带宽即 25%、1×即 60%、约 2×即满,
+     4× 带宽(≈128px)铺开成可感知又无台阶的渐入。曲线两端斜率趋零(smoothstep 近似)保住
+     「找不到模糊起点」。mask 调制元素合成结果,压暗与 backdrop-blur 同步渐入;命中区域不变。 */
   [data-settings-overlay] {
     -webkit-mask-image: linear-gradient(
       to bottom,
       transparent 0,
-      rgba(0, 0, 0, 0.156) calc(var(--app-band-h) * 0.75),
-      rgba(0, 0, 0, 0.5) calc(var(--app-band-h) * 1.5),
-      rgba(0, 0, 0, 0.844) calc(var(--app-band-h) * 2.25),
-      #000 calc(var(--app-band-h) * 3)
+      rgba(0, 0, 0, 0.25) calc(var(--app-band-h) * 0.5),
+      rgba(0, 0, 0, 0.6) calc(var(--app-band-h) * 1),
+      rgba(0, 0, 0, 0.88) calc(var(--app-band-h) * 1.6),
+      #000 calc(var(--app-band-h) * 2.2)
     );
     mask-image: linear-gradient(
       to bottom,
       transparent 0,
-      rgba(0, 0, 0, 0.156) calc(var(--app-band-h) * 0.75),
-      rgba(0, 0, 0, 0.5) calc(var(--app-band-h) * 1.5),
-      rgba(0, 0, 0, 0.844) calc(var(--app-band-h) * 2.25),
-      #000 calc(var(--app-band-h) * 3)
+      rgba(0, 0, 0, 0.25) calc(var(--app-band-h) * 0.5),
+      rgba(0, 0, 0, 0.6) calc(var(--app-band-h) * 1),
+      rgba(0, 0, 0, 0.88) calc(var(--app-band-h) * 1.6),
+      #000 calc(var(--app-band-h) * 2.2)
     );
   }
   /* 界面字号缩放:改 <html> 根字号,所有 rem 单位(字号/间距/图标/圆角…)等比同步变化,

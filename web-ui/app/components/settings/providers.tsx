@@ -1343,6 +1343,16 @@ export function ProvidersSection({
 
             <SettingsGroup
               title={t("settings:providers.connection_title")}
+              // 「高级」触发器挂在常显区(本组标题行):展开区收起时整段不渲染,触发器若放进
+              // 展开区会随之消失、无处可点。内容仍在下方原位,点开后恰在本组之下展开。
+              action={
+                <SettingsAdvancedToggle
+                  open={advancedOpen}
+                  onOpenChange={setAdvancedOpen}
+                  controls={[advancedId]}
+                  attention={advancedAttention}
+                />
+              }
               fields
             >
               <SettingsField label={t("settings:providers.name")}>
@@ -1406,20 +1416,10 @@ export function ProvidersSection({
               )}
             </SettingsGroup>
 
-            {/* 「高级」触发器与展开内容同处一址:挂在展开区自己的组标题行上(页尾),
-                点开后内容恰在触发器正下方,不与页首的连接组耦合。 */}
+            {/* 高级展开区:收起时整段不渲染(触发器在上方「连接」组标题行,常显)。
+                内容保持原位,不与其它分组重排。 */}
             <SettingsAdvancedRegion id={advancedId} open={advancedOpen}>
-              <SettingsGroup
-                title={t("settings:common.advanced")}
-                action={
-                  <SettingsAdvancedToggle
-                    open={advancedOpen}
-                    onOpenChange={setAdvancedOpen}
-                    controls={[advancedId]}
-                    attention={advancedAttention}
-                  />
-                }
-              >
+              <SettingsGroup title={t("settings:common.advanced")}>
                   <SettingsRows>
                     {!isOauth && kind === "openai" ? (
                       // 单输入框按开关切换绑定字段(对齐安卓 ProviderConfigure):关→chatCompletionsPath,
