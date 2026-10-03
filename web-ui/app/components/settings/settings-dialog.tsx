@@ -159,13 +159,15 @@ function SettingsDialogBody() {
           // key=页键:切一级或二级时滚动位置归零并重放淡入,"新页从顶部开始"。
           // 停靠页(SETTINGS_DOCKED_PAGES,双栏各自内滚)不走 Radix ScrollArea:其内容
           // 包裹层是 display:table(table 的子元素拿不到受约束高度,栏内滚动链必断),
-          // 改用普通定高容器,栏内滚动自己管;普通页维持 Radix 整页滚动。
+          // 改用普通定高容器,栏内滚动自己管;普通页维持 Radix 整页滚动。overflow-y-auto
+          // 双栏形态下无溢出(栏内精确占满),仅堆叠形态(面板主区 <42rem,Split 退单栏时)
+          // 接管滚动——与窄屏整页外壳的停靠分支同款,否则堆叠内容会被 hidden 裁死滚不动。
           docked ? (
             <div
               key={pageKey}
               id={SETTINGS_PAGE_PANEL_ID}
               role={sub ? "tabpanel" : undefined}
-              className="flex min-h-0 flex-1 animate-in fade-in-0 flex-col overflow-hidden px-6 pt-1 pb-8 duration-(--ds-duration-fast) ease-(--ds-ease-swift) motion-reduce:animate-none"
+              className="flex min-h-0 flex-1 animate-in fade-in-0 flex-col overflow-x-hidden overflow-y-auto px-6 pt-1 pb-8 duration-(--ds-duration-fast) ease-(--ds-ease-swift) motion-reduce:animate-none"
             >
               <Page settings={settings} onSettings={setSettings} />
             </div>
