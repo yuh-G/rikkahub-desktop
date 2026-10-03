@@ -113,6 +113,7 @@
     "autosave_failed_named": "Failed to auto-save {{name}}",
     "autosave_failed_retry": "Save failed — click to retry",
     "delete": "Delete",
+    "loading": "Loading…",
     "hide_key": "Hide API Key",
     "show_key": "Show API Key",
     "advanced": "Advanced settings",

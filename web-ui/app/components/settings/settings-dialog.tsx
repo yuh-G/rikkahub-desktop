@@ -168,7 +168,7 @@ function SettingsDialogBody() {
         ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
             <Loader2 className="mr-2 size-4 animate-spin" />
-            {t("settings:providers.loading")}
+            {t("settings:common.loading")}
           </div>
         )}
       </div>

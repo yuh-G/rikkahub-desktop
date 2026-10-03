@@ -788,7 +788,7 @@ export function SearchSection({
             status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
           >
             <Button
-              variant="outline"
+              variant="destructive"
               onClick={() => void remove()}
               disabled={!settings.searchServices.some((item) => String(item.id) === String(draft.id))}
             >

@@ -1833,7 +1833,7 @@ export function ProvidersSection({
             <SettingsDetailFooter
               status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
             >
-              <Button variant="outline" onClick={() => void deleteProvider()} disabled={settings.providers.length <= 1}>
+              <Button variant="destructive" onClick={() => void deleteProvider()} disabled={settings.providers.length <= 1}>
                 <Trash2 className="size-4" />
                 {t("settings:providers.delete")}
               </Button>

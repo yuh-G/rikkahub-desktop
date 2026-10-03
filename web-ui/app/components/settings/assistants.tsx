@@ -838,7 +838,7 @@ function AssistantEditor({
         <SettingsDetailFooter
           status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
         >
-          <Button variant="outline" onClick={() => void removeAssistant()} disabled={settings.assistants.length <= 1}>
+          <Button variant="destructive" onClick={() => void removeAssistant()} disabled={settings.assistants.length <= 1}>
             <Trash2 className="size-4" />
             {t("settings:assistants.delete")}
           </Button>

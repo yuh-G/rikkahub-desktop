@@ -27,6 +27,7 @@ import {
   clone,
   moveItem,
   PasswordInput,
+  SettingsDetailFooter,
   SettingsGroup,
   SettingsRows,
   SettingsSplit,
@@ -34,6 +35,7 @@ import {
   SettingsSwitchRow,
   SortableRow,
 } from "~/components/settings/shared";
+import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 
 
 // 设置页试听的播放键前缀;卸载时据此判断当前播放的是不是本页的试听。
@@ -655,7 +657,7 @@ export function TtsSection({
                   : t("settings:speech.set_current")}
               </Button>
               {draft.type !== "system" ? (
-                <Button variant="outline" onClick={() => void removeProvider()}>
+                <Button variant="destructive" onClick={() => void removeProvider()}>
                   <Trash2 className="size-4" />
                   {t("settings:common.delete")}
                 </Button>
@@ -1176,6 +1178,16 @@ export function TtsSection({
               </div>
             )}
           </div>
+          {/* 保存反馈(对齐其余所有分区):失败可重试,不再只有 toast。 */}
+          <SettingsDetailFooter
+            status={
+              <AutosaveStatusRow
+                status={autosave.status}
+                onRetry={() => void autosave.saveNow()}
+                className="px-0"
+              />
+            }
+          />
         </div>
       ) : (
         <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
@@ -1412,7 +1424,7 @@ export function AsrSection({
                     ? t("settings:speech.selected")
                     : t("settings:speech.set_current")}
                 </Button>
-                <Button variant="outline" onClick={() => void removeProvider()}>
+                <Button variant="destructive" onClick={() => void removeProvider()}>
                   <Trash2 className="size-4" />
                   {t("settings:common.delete")}
                 </Button>
@@ -1527,6 +1539,16 @@ export function AsrSection({
                   )
                 : null}
             </div>
+          {/* 保存反馈(对齐其余所有分区):失败可重试,不再只有 toast。 */}
+          <SettingsDetailFooter
+            status={
+              <AutosaveStatusRow
+                status={autosave.status}
+                onRetry={() => void autosave.saveNow()}
+                className="px-0"
+              />
+            }
+          />
           </div>
         ) : (
           <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
