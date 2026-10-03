@@ -135,14 +135,7 @@ export function KeybindingSettings({ leading }: { leading?: React.ReactNode }) {
     editingAction && conflictAction ? t(`settings:hotkeys.actions.${conflictAction}`) : null;
 
   return (
-    <SettingsGroup
-      action={
-        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void resetAll()}>
-          <RotateCcw className="size-3" />
-          {t("settings:hotkeys.reset_all")}
-        </Button>
-      }
-    >
+    <SettingsGroup>
       <SettingsRows>
         {leading}
         {KEYBINDING_ORDER.map((action) => {
@@ -220,6 +213,14 @@ export function KeybindingSettings({ leading }: { leading?: React.ReactNode }) {
           {t("settings:hotkeys.conflict_with", { name: conflictLabel })}
         </p>
       )}
+
+      {/* 尾部动作:整页扫完快捷键后才轮到「全部恢复默认」,放头部会抢在阅读流之前。 */}
+      <div className="flex justify-end pt-3">
+        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void resetAll()}>
+          <RotateCcw className="size-3" />
+          {t("settings:hotkeys.reset_all")}
+        </Button>
+      </div>
     </SettingsGroup>
   );
 }
