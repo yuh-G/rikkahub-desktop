@@ -121,9 +121,24 @@ export function LabeledSwitch({
 }
 
 /** 「对此助手启用」:绑定到当前「作用于助手」,与条目自身的「启用」区分开。 */
-export function BindingSwitch({ checked, onCheckedChange }: { checked: boolean; onCheckedChange: (checked: boolean) => void }) {
+export function BindingSwitch({
+  checked,
+  onCheckedChange,
+  disabled,
+}: {
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  disabled?: boolean;
+}) {
   const { t } = useTranslation();
-  return <LabeledSwitch label={t("settings:mcp.enable_for_assistant")} checked={checked} onCheckedChange={onCheckedChange} />;
+  return (
+    <LabeledSwitch
+      label={t("settings:mcp.enable_for_assistant")}
+      checked={checked}
+      disabled={disabled}
+      onCheckedChange={onCheckedChange}
+    />
+  );
 }
 
 export function prettyJson(value: unknown) {

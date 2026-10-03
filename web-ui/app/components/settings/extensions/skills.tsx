@@ -2,20 +2,37 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Download, Loader2, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { Download, FilePlus2, Github, Loader2, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
-import { Checkbox } from "~/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
+import { cn } from "~/lib/utils";
 import api, { appendWebAuthQuery } from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { AssistantProfile, Settings } from "~/types";
-import { textValue } from "~/components/settings/shared";
+import {
+  SettingsAdvancedSection,
+  SettingsDetailFooter,
+  SettingsDetailHeader,
+  SettingsField,
+  SettingsGroup,
+  SettingsStack,
+  textValue,
+} from "~/components/settings/shared";
 import {
   BindingAssistantSelect,
+  BindingSwitch,
   EditorShell,
   NoAssistantsState,
   pullSettings,
@@ -74,6 +91,9 @@ function SkillsEditor({
   const [githubUrl, setGithubUrl] = React.useState("");
   const [importing, setImporting] = React.useState(false);
   const [importingFile, setImportingFile] = React.useState(false);
+  const [githubOpen, setGithubOpen] = React.useState(false);
+  // 「高级设置」展开态:切换技能不收起,离开本页(重挂载)复位为收起。
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   // R8-2:防抖自动保存统一走共享三件套 hook(保存窗口内键击不丢,语义见 hook 文件头)。
   // 域7-1(3A):保存进行中 indicator 由 hook status 机驱动,不再手维护 saving state。
@@ -145,6 +165,7 @@ function SkillsEditor({
       setContent(result.skill.content ?? "");
       autosave.reset();
       setGithubUrl("");
+      setGithubOpen(false);
       toast.success(t("settings:mcp.skill_imported", { name: result.skill.name }));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("settings:mcp.import_failed"));
@@ -191,15 +212,29 @@ function SkillsEditor({
     if (!file) return;
     void importFromFile(file);
   };
+  const createBlank = () => {
+    const name = "new-skill";
+    setSelected(name);
+    setContent(
+      `---\nname: ${name}\ndescription: ${t("settings:mcp.skill_desc_default")}\n---\n\n${t("settings:mcp.skill_body_default")}\n`,
+    );
+    setFiles([]);
+    autosave.markDirty();
+  };
+  const enabledSkills = (assistant.enabledSkills as string[] | undefined) ?? [];
   const toggle = async (skillName: string, checked: boolean) => {
-    const ids = new Set(assistant.enabledSkills as string[] | undefined);
+    const ids = new Set(enabledSkills);
     if (checked) ids.add(skillName);
     else ids.delete(skillName);
-    await api.post("settings/assistant/skills", {
-      assistantId: assistant.id,
-      enabledSkills: [...ids],
-    });
-    await pullSettings(onSettings);
+    try {
+      await api.post("settings/assistant/skills", {
+        assistantId: assistant.id,
+        enabledSkills: [...ids],
+      });
+      await pullSettings(onSettings);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("settings:mcp.save_failed"));
+    }
   };
 
   return (
@@ -212,7 +247,7 @@ function SkillsEditor({
       listHeader={bindingSelect}
       renderItem={(item) => {
         const name = textValue(item.name);
-        const enabled = (assistant.enabledSkills as string[] | undefined)?.includes(name) ?? false;
+        const enabled = enabledSkills.includes(name);
         const issues = (item.issues as SkillProfile["issues"]) ?? [];
         const hasError = item.available === false || issues.some((issue) => issue.level === "error");
         return (
@@ -231,153 +266,146 @@ function SkillsEditor({
           </div>
         );
       }}
-      onCreate={() => {
-        const name = "new-skill";
-        setSelected(name);
-        setContent(
-          `---\nname: ${name}\ndescription: ${t("settings:mcp.skill_desc_default")}\n---\n\n${t("settings:mcp.skill_body_default")}\n`,
-        );
-        setFiles([]);
-        autosave.markDirty();
-      }}
+      createMenu={[
+        { key: "blank", label: t("settings:mcp.skill_create_blank"), icon: <FilePlus2 />, onSelect: createBlank },
+        { key: "github", label: t("settings:mcp.import_github_menu"), icon: <Github />, onSelect: () => setGithubOpen(true) },
+        {
+          key: "file",
+          label: t("settings:mcp.import_file_menu"),
+          icon: importingFile ? <Loader2 className="animate-spin" /> : <Upload />,
+          onSelect: () => fileInputRef.current?.click(),
+        },
+      ]}
     >
-      <div className="space-y-5">
-        <div>
-          <div className="mb-2 text-sm font-medium">{t("settings:mcp.import_github")}</div>
-          <div className="flex gap-2">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".md,.markdown,.zip,application/zip"
+        className="hidden"
+        onChange={handleFileInputChange}
+      />
+      {selected ? (
+        <div className="@container">
+          <SettingsStack>
+            <SettingsDetailHeader
+              title={selected}
+              description={selectedSkill?.description || t("settings:mcp.skill_page_desc")}
+              action={
+                // 新建技能落盘前服务端还不认识它(启用会被 400 拒绝),保存成功出现在列表后才可绑定。
+                <BindingSwitch
+                  checked={enabledSkills.includes(selected)}
+                  disabled={!selectedSkill}
+                  onCheckedChange={(checked) => void toggle(selected, checked)}
+                />
+              }
+            />
+
+            {selectedSkill?.issues?.length ? (
+              <div className="space-y-1.5 rounded-[var(--ds-radius-md)] border border-warning/40 bg-warning/5 p-3">
+                <div className="text-xs font-medium">{t("settings:mcp.skill_issues_title")}</div>
+                {selectedSkill.available === false ? (
+                  <div className="text-xs text-destructive">{t("settings:mcp.skill_unavailable_hint")}</div>
+                ) : null}
+                {selectedSkill.issues.map((issue) => (
+                  <div
+                    key={issue.message}
+                    className={`font-mono text-xs ${issue.level === "error" ? "text-destructive" : "text-warning"}`}
+                  >
+                    {issue.message}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            <SettingsGroup fields>
+              <SettingsField label="SKILL.md" description={t("settings:mcp.skill_md_desc")}>
+                <Textarea
+                  value={content}
+                  onChange={(event) => {
+                    autosave.markDirty();
+                    setContent(event.target.value);
+                  }}
+                  className="h-96 max-h-[32rem] font-mono text-xs leading-relaxed"
+                />
+              </SettingsField>
+            </SettingsGroup>
+
+            <SettingsAdvancedSection open={advancedOpen} onOpenChange={setAdvancedOpen}>
+              <div className="space-y-5 pt-2">
+                <SettingsField label={t("settings:mcp.file_list")} description={t("settings:mcp.file_list_desc")}>
+                  {files.length === 0 ? (
+                    <div className="rounded-[var(--ds-radius-md)] border border-dashed p-4 text-center text-sm text-[var(--ds-text-secondary)]">
+                      {t("settings:mcp.no_files")}
+                    </div>
+                  ) : (
+                    <div className="max-h-48 overflow-auto rounded-[var(--ds-radius-md)] border p-1">
+                      {files.map((file) => (
+                        <div
+                          key={file.path}
+                          className="flex items-center justify-between gap-3 rounded-[var(--ds-radius-sm)] px-2 py-1 text-xs hover:bg-[var(--ds-on-surface)]"
+                        >
+                          <span className={cn("truncate font-mono", file.type === "directory" && "font-medium")}>
+                            {file.path}
+                          </span>
+                          <span className="shrink-0 text-[var(--ds-text-secondary)]">
+                            {file.type === "directory" ? t("settings:mcp.directory") : `${file.size} B`}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </SettingsField>
+              </div>
+            </SettingsAdvancedSection>
+
+            <SettingsDetailFooter
+              status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+            >
+              <Button variant="destructive" onClick={() => void remove()}>
+                <Trash2 className="size-4" />
+                {t("settings:mcp.delete")}
+              </Button>
+            </SettingsDetailFooter>
+          </SettingsStack>
+        </div>
+      ) : (
+        <div className="rounded-[var(--ds-radius-md)] border border-dashed p-10 text-center text-sm text-[var(--ds-text-secondary)]">
+          {t("settings:mcp.skill_empty_detail")}
+        </div>
+      )}
+
+      <Dialog open={githubOpen} onOpenChange={(open) => !importing && setGithubOpen(open)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t("settings:mcp.import_github")}</DialogTitle>
+            <DialogDescription>{t("settings:mcp.import_github_desc")}</DialogDescription>
+          </DialogHeader>
+          <form
+            className="contents"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void importFromGitHub();
+            }}
+          >
             <Input
+              autoFocus
               value={githubUrl}
               onChange={(event) => setGithubUrl(event.target.value)}
               placeholder={t("settings:mcp.github_url_ph")}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void importFromGitHub();
-              }}
+              aria-label={t("settings:mcp.import_github")}
             />
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void importFromGitHub()}
-              disabled={importing || !githubUrl.trim()}
-            >
-              {importing ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Download className="size-4" />
-              )}
-              {t("settings:mcp.import_btn")}
-            </Button>
-          </div>
-        </div>
-        <div className="border-t border-[var(--ds-divider)] pt-5">
-          <div className="mb-2 text-sm font-medium">{t("settings:mcp.import_file")}</div>
-          <div
-            className="mb-2 text-xs text-muted-foreground"
-            dangerouslySetInnerHTML={{ __html: t("settings:mcp.import_file_desc") }}
-          />
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".md,.markdown,.zip,application/zip"
-            className="hidden"
-            onChange={handleFileInputChange}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={importingFile}
-          >
-            {importingFile ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Upload className="size-4" />
-            )}
-            {t("settings:mcp.select_file")}
-          </Button>
-        </div>
-        <div className="space-y-0.5 border-t border-[var(--ds-divider)] pt-4">
-          <div className="px-2 pb-1 text-xs font-semibold text-[var(--ds-text-secondary)]">
-            {t("settings:mcp.enable_for_assistant")}
-          </div>
-          {skills.map((skill) => (
-            <label
-              key={skill.name}
-              className="flex items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-[var(--ds-on-surface)]"
-            >
-              <Checkbox
-                className="mt-0.5"
-                checked={
-                  (assistant.enabledSkills as string[] | undefined)?.includes(skill.name) ?? false
-                }
-                onCheckedChange={(checked) => void toggle(skill.name, checked === true)}
-              />
-              <span className="min-w-0 flex-1 truncate font-medium">{skill.name}</span>
-            </label>
-          ))}
-        </div>
-        {selectedSkill?.description ? (
-          <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
-            {selectedSkill.description}
-          </div>
-        ) : null}
-        {selectedSkill?.issues?.length ? (
-          <div className="space-y-1.5 rounded-md border border-warning/40 bg-warning/5 p-3">
-            <div className="text-xs font-medium">{t("settings:mcp.skill_issues_title")}</div>
-            {selectedSkill.available === false ? (
-              <div className="text-xs text-destructive">{t("settings:mcp.skill_unavailable_hint")}</div>
-            ) : null}
-            {selectedSkill.issues.map((issue) => (
-              <div
-                key={issue.message}
-                className={`font-mono text-xs ${issue.level === "error" ? "text-destructive" : "text-warning"}`}
-              >
-                {issue.message}
-              </div>
-            ))}
-          </div>
-        ) : null}
-        <div className="rounded-md border">
-          <div className="border-b px-3 py-2 text-sm font-medium">{t("settings:mcp.file_list")}</div>
-          <div className="max-h-40 overflow-auto p-2">
-            {files.length === 0 ? (
-              <div className="p-2 text-sm text-muted-foreground">{t("settings:mcp.no_files")}</div>
-            ) : null}
-            {files.map((file) => (
-              <div
-                key={file.path}
-                className="flex items-center justify-between gap-3 rounded px-2 py-1 text-xs hover:bg-muted/40"
-              >
-                <span className={file.type === "directory" ? "font-medium" : ""}>{file.path}</span>
-                <span className="text-muted-foreground">
-                  {file.type === "directory" ? t("settings:mcp.directory") : `${file.size} B`}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <label className="block space-y-2">
-          <span className="text-sm font-medium">SKILL.md</span>
-          <Textarea
-            value={content}
-            onChange={(event) => {
-              autosave.markDirty();
-              setContent(event.target.value);
-            }}
-            className="h-80 max-h-80 font-mono text-xs"
-          />
-        </label>
-        <div className="flex justify-end gap-2">
-          <AutosaveStatusRow
-            className="mr-auto"
-            status={autosave.status}
-            onRetry={() => void autosave.saveNow()}
-          />
-          <Button variant="destructive" onClick={() => void remove()} disabled={!selected}>
-            <Trash2 className="size-4" />
-            {t("settings:mcp.delete")}
-          </Button>
-        </div>
-      </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" disabled={importing} onClick={() => setGithubOpen(false)}>
+                {t("common:confirm_dialog.cancel")}
+              </Button>
+              <Button type="submit" disabled={importing || !githubUrl.trim()}>
+                {importing ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                {t("settings:mcp.import_btn")}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </EditorShell>
   );
 }

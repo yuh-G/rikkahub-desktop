@@ -216,6 +216,9 @@ export function SettingsListAddButton({
   disabled?: boolean;
 }) {
   const leading = icon ?? <Plus className="size-4" />;
+  // 选中某项后焦点归该动作所有(打开对话框、弹文件选择框):菜单关闭动画结束时 Radix 默认把
+  // 焦点还给触发按钮,会把刚打开的对话框里的焦点抢走,故此时不归还。
+  const pickedRef = React.useRef(false);
   if (!items) {
     return (
       <Button className="mb-1 w-full justify-start" variant="outline" onClick={onClick} disabled={disabled}>
@@ -236,9 +239,19 @@ export function SettingsListAddButton({
       <DropdownMenuContent
         align="start"
         className="max-h-80 min-w-(--radix-dropdown-menu-trigger-width)"
+        onCloseAutoFocus={(event) => {
+          if (pickedRef.current) event.preventDefault();
+          pickedRef.current = false;
+        }}
       >
         {items.map((item) => (
-          <DropdownMenuItem key={item.key} onSelect={item.onSelect}>
+          <DropdownMenuItem
+            key={item.key}
+            onSelect={() => {
+              pickedRef.current = true;
+              item.onSelect();
+            }}
+          >
             {item.icon ?? null}
             <span className="min-w-0 flex-1 truncate">{item.label}</span>
           </DropdownMenuItem>
