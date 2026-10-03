@@ -2,9 +2,7 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
@@ -88,6 +86,22 @@ function QuickMessageEditor({
     autosave.markDirty();
     setDraft({ ...draft, ...patch });
   };
+  // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
+  const removeById = async (targetId: string) => {
+    const target = items.find((item) => String(item.id) === targetId);
+    if (!target) return;
+    if (!(await confirmDialog({ title: t("settings:mcp.quick.delete_confirm", { name: textValue(target.title) }), danger: true }))) return;
+    // 防复活:仅当删的是正在编辑的那条才 discard;删除后显式选中下一条(复审 F1/F2)
+    const removingActive = String(draft.id) === targetId;
+    if (removingActive) await autosave.discard();
+    const remaining = items.filter((item) => String(item.id) !== targetId);
+    await api.delete(`settings/quick-message/${targetId}`);
+    await pullSettings(onSettings);
+    if (removingActive) {
+      if (remaining.length) setSelectedId(String(remaining[0].id));
+      else setDraft({ id: createId(), title: "", content: "" });
+    }
+  };
   const bind = async (checked: boolean) => {
     const ids = new Set(assistant.quickMessageIds ?? []);
     if (checked) ids.add(String(draft.id));
@@ -106,6 +120,10 @@ function QuickMessageEditor({
       onSelect={setSelectedId}
       titleOf={(item) => textValue(item.title) || t("settings:mcp.tab.quick")}
       listHeader={bindingSelect}
+      rowMenuOf={(item) => {
+        const id = String(item.id ?? "");
+        return id ? { onDelete: () => removeById(id) } : undefined;
+      }}
       onMove={async (from, to) => {
         const next = moveItem(items, from, to);
         onSettings({ ...settings, quickMessages: next as unknown as Settings["quickMessages"] });
@@ -162,24 +180,7 @@ function QuickMessageEditor({
           </SettingsGroup>
           <SettingsDetailFooter
             status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
-          >
-            <Button
-              variant="destructive"
-              onClick={async () => {
-                if (!(await confirmDialog({ title: t("settings:mcp.quick.delete_confirm", { name: textValue(draft.title) }), danger: true }))) return;
-                // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1);同 Lorebook,删除后显式选中下一条(复审 F2)
-                const remaining = items.filter((item) => String(item.id) !== String(draft.id));
-                await autosave.discard();
-                await api.delete(`settings/quick-message/${draft.id}`);
-                await pullSettings(onSettings);
-                if (remaining.length) setSelectedId(String(remaining[0].id));
-                else setDraft({ id: createId(), title: "", content: "" });
-              }}
-            >
-              <Trash2 className="size-4" />
-              {t("settings:mcp.delete")}
-            </Button>
-          </SettingsDetailFooter>
+          />
         </SettingsStack>
       </div>
     </EditorShell>

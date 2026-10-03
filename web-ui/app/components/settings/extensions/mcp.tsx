@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -310,24 +310,28 @@ function McpServerEditor({
       toast.error(error instanceof Error ? error.message : String(error));
     }
   };
-  const remove = async () => {
-    if (!selected.id) return;
+  // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
+  const removeServerById = async (targetId: string) => {
+    if (!targetId) return;
     if (!(await confirmDialog({ title: t("settings:mcp.server.delete_confirm"), danger: true }))) return;
-    // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
-    const remaining = servers.filter((item) => String(item.id) !== String(selected.id));
-    await autosave.discard();
-    await api.delete(`settings/mcp-server/${encodeURIComponent(String(selected.id))}`);
+    // 防复活:仅当删的是正在编辑的那条才 discard(丢脏编辑+等在飞保存,DELETE 不与迟到 POST 乱序,复审 F1)
+    const removingActive = String(draft.id) === targetId;
+    if (removingActive) await autosave.discard();
+    const remaining = servers.filter((item) => String(item.id) !== targetId);
+    await api.delete(`settings/mcp-server/${encodeURIComponent(targetId)}`);
     // 先拉全量再选中下一条:此前 setSelectedId("") 先于 pullSettings,重对齐 effect 用
     // 旧列表兜底到 servers[0]——可能正是刚删的那条,草稿对回已删实体(复审 F2)。
     await pullSettings(onSettings);
-    if (remaining.length) {
-      setSelectedId(String(remaining[0].id));
-    } else {
-      // 删到空:复位为挂载空列表时同款的空白新草稿(重对齐 effect 无条目可载)
-      setSelectedId("");
-      setDraft(clone(createMcpServer()));
-      setHeaders([]);
-      setToolsText("[]");
+    if (removingActive) {
+      if (remaining.length) {
+        setSelectedId(String(remaining[0].id));
+      } else {
+        // 删到空:复位为挂载空列表时同款的空白新草稿(重对齐 effect 无条目可载)
+        setSelectedId("");
+        setDraft(clone(createMcpServer()));
+        setHeaders([]);
+        setToolsText("[]");
+      }
     }
     toast.success(t("settings:mcp.server.deleted"));
   };
@@ -346,6 +350,10 @@ function McpServerEditor({
       onSelect={setSelectedId}
       onMove={reorder}
       titleOf={(item) => mcpName(item, t("settings:mcp.server.default_name"))}
+      rowMenuOf={(item) => {
+        const id = String(item.id ?? "");
+        return id ? { onDelete: () => removeServerById(id) } : undefined;
+      }}
       renderItem={(item) => {
         const status = mcpStatusKey(item, mcpHealth[String(item.id ?? "")]);
         return (
@@ -639,12 +647,7 @@ function McpServerEditor({
 
           <SettingsDetailFooter
             status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
-          >
-            <Button variant="destructive" onClick={() => void remove()} disabled={!selected.id}>
-              <Trash2 className="size-4" />
-              {t("settings:mcp.delete")}
-            </Button>
-          </SettingsDetailFooter>
+          />
         </SettingsStack>
       </div>
     </EditorShell>

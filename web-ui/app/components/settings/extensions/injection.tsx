@@ -520,6 +520,22 @@ function LorebookEditor({
     });
     await pullSettings(onSettings);
   };
+  // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
+  const removeLorebookById = async (targetId: string) => {
+    const target = items.find((item) => String(item.id) === targetId);
+    if (!target) return;
+    if (!(await confirmDialog({ title: t("settings:mcp.lorebook.delete_confirm", { name: textValue(target.name) }), danger: true }))) return;
+    // 防复活:仅当删的是正在编辑的那条才 discard;删除后显式选中下一条(复审 F1/F2)
+    const removingActive = String(draft.id) === targetId;
+    if (removingActive) await autosave.discard();
+    const remaining = items.filter((item) => String(item.id) !== targetId);
+    await api.delete(`settings/lorebook/${targetId}`);
+    await pullSettings(onSettings);
+    if (removingActive) {
+      if (remaining.length) setSelectedId(String(remaining[0].id));
+      else setDraft(clone(createLorebook()));
+    }
+  };
   return (
     <EditorShell
       items={items}
@@ -527,6 +543,10 @@ function LorebookEditor({
       emptyLabel={t("settings:mcp.lorebook.empty")}
       onSelect={setSelectedId}
       titleOf={(item) => textValue(item.name) || t("settings:mcp.tab.lorebook")}
+      rowMenuOf={(item) => {
+        const id = String(item.id ?? "");
+        return id ? { onDelete: () => removeLorebookById(id) } : undefined;
+      }}
       onMove={async (from, to) => {
         const next = moveItem(items, from, to);
         onSettings({ ...settings, lorebooks: next as unknown as Settings["lorebooks"] });
@@ -633,26 +653,7 @@ function LorebookEditor({
 
           <SettingsDetailFooter
             status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
-          >
-            <Button
-              variant="destructive"
-              onClick={async () => {
-                if (!(await confirmDialog({ title: t("settings:mcp.lorebook.delete_confirm", { name: textValue(draft.name) }), danger: true }))) return;
-                // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
-                // 删除后显式选中下一条:重对齐 effect 只随 selectedId 触发,不选中会让草稿
-                // 停留在已删实体上,再编辑一笔就经自动保存复活它(复审 F2)。
-                const remaining = items.filter((item) => String(item.id) !== String(draft.id));
-                await autosave.discard();
-                await api.delete(`settings/lorebook/${draft.id}`);
-                await pullSettings(onSettings);
-                if (remaining.length) setSelectedId(String(remaining[0].id));
-                else setDraft(clone(createLorebook()));
-              }}
-            >
-              <Trash2 className="size-4" />
-              {t("settings:mcp.lorebook.delete")}
-            </Button>
-          </SettingsDetailFooter>
+          />
         </SettingsStack>
       </div>
     </EditorShell>
@@ -750,6 +751,22 @@ function PromptItemEditor({
     });
     await pullSettings(onSettings);
   };
+  // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
+  const removeInjectionById = async (targetId: string) => {
+    const target = items.find((item) => String(item.id) === targetId);
+    if (!target) return;
+    if (!(await confirmDialog({ title: t("settings:mcp.inject_delete_confirm", { name: textValue(target.name) }), danger: true }))) return;
+    // 防复活:仅当删的是正在编辑的那条才 discard;删除后显式选中下一条(复审 F1/F2)
+    const removingActive = String(draft.id) === targetId;
+    if (removingActive) await autosave.discard();
+    const remaining = items.filter((item) => String(item.id) !== targetId);
+    await api.delete(`${deletePath}/${targetId}`);
+    await pullSettings(onSettings);
+    if (removingActive) {
+      if (remaining.length) setSelectedId(String(remaining[0].id));
+      else setDraft(clone(createItem()));
+    }
+  };
   return (
     <EditorShell
       items={items}
@@ -757,6 +774,10 @@ function PromptItemEditor({
       emptyLabel={t("settings:mcp.empty_item", { title })}
       onSelect={setSelectedId}
       titleOf={(item) => textValue(item.name) || title}
+      rowMenuOf={(item) => {
+        const id = String(item.id ?? "");
+        return id ? { onDelete: () => removeInjectionById(id) } : undefined;
+      }}
       onMove={async (from, to) => {
         const next = moveItem(items, from, to);
         onSettings({ ...settings, modeInjections: next as unknown as Settings["modeInjections"] });
@@ -846,24 +867,7 @@ function PromptItemEditor({
 
           <SettingsDetailFooter
             status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
-          >
-            <Button
-              variant="destructive"
-              onClick={async () => {
-                if (!(await confirmDialog({ title: t("settings:mcp.inject_delete_confirm", { name: textValue(draft.name) }), danger: true }))) return;
-                // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1);同 Lorebook,删除后显式选中下一条(复审 F2)
-                const remaining = items.filter((item) => String(item.id) !== String(draft.id));
-                await autosave.discard();
-                await api.delete(`${deletePath}/${draft.id}`);
-                await pullSettings(onSettings);
-                if (remaining.length) setSelectedId(String(remaining[0].id));
-                else setDraft(clone(createItem()));
-              }}
-            >
-              <Trash2 className="size-4" />
-              {t("settings:mcp.delete")}
-            </Button>
-          </SettingsDetailFooter>
+          />
         </SettingsStack>
       </div>
     </EditorShell>

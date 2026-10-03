@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Download, FilePlus2, Github, Loader2, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { Download, FilePlus2, Github, Loader2, TriangleAlert, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import {
@@ -140,14 +140,18 @@ function SkillsEditor({
       .catch(() => setFiles([]));
   }, [selected, selectedSkill]);
 
-  const remove = async () => {
-    if (!selected) return;
+  // 删除收口到列表行(右键/悬停「⋯」):按目标行技能名删,不再依赖右侧选中项。
+  const removeSkill = async (skillName: string) => {
+    if (!skillName) return;
     if (!(await confirmDialog({ title: t("settings:mcp.delete_skill_confirm"), danger: true }))) return;
-    // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
-    await autosave.discard();
-    await api.delete(`skills/${encodeURIComponent(selected)}`);
-    setSelected("");
-    setContent("");
+    // 防复活:仅当删的是正在编辑的那条才 discard(丢脏编辑+等在飞保存,DELETE 不与迟到 POST 乱序,复审 F1)
+    const removingActive = selected === skillName;
+    if (removingActive) await autosave.discard();
+    await api.delete(`skills/${encodeURIComponent(skillName)}`);
+    if (removingActive) {
+      setSelected("");
+      setContent("");
+    }
     await load();
     await pullSettings(onSettings);
   };
@@ -245,6 +249,10 @@ function SkillsEditor({
       onSelect={setSelected}
       titleOf={(item) => textValue(item.name)}
       listHeader={bindingSelect}
+      rowMenuOf={(item) => {
+        const name = textValue(item.name);
+        return name ? { onDelete: () => removeSkill(name) } : undefined;
+      }}
       renderItem={(item) => {
         const name = textValue(item.name);
         const enabled = enabledSkills.includes(name);
@@ -360,12 +368,7 @@ function SkillsEditor({
 
             <SettingsDetailFooter
               status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
-            >
-              <Button variant="destructive" onClick={() => void remove()}>
-                <Trash2 className="size-4" />
-                {t("settings:mcp.delete")}
-              </Button>
-            </SettingsDetailFooter>
+            />
           </SettingsStack>
         </div>
       ) : (

@@ -13,8 +13,8 @@ import type { AssistantProfile, Settings } from "~/types";
 import {
   type SettingsAddMenuItem,
   SettingsListAddButton,
+  SettingsListRow,
   SettingsSplit,
-  SortableRow,
 } from "~/components/settings/shared";
 
 export type SectionProps = { settings: Settings; onSettings: (settings: Settings) => void };
@@ -184,6 +184,7 @@ export function EditorShell({
   onCreate,
   createMenu,
   listHeader,
+  rowMenuOf,
   children,
 }: {
   items: Array<Record<string, unknown>>;
@@ -199,6 +200,8 @@ export function EditorShell({
   createMenu?: readonly SettingsAddMenuItem[];
   /** 左栏列表头部(「新增」钮与列表之间):技能/快捷消息页的「作用于助手」选择器。 */
   listHeader?: React.ReactNode;
+  /** 提供则每行带右键/悬停「⋯」删除菜单;返回的回调按该行 id 删除(自带确认与落库)。 */
+  rowMenuOf?: (item: Record<string, unknown>) => { onDelete: () => void | Promise<void> } | undefined;
   children: React.ReactNode;
 }) {
   const { t } = useTranslation();
@@ -218,22 +221,26 @@ export function EditorShell({
               {emptyLabel}
             </div>
           ) : null}
-          {items.map((item, index) => (
-            <SortableRow
-              key={String(item.id ?? item.name)}
-              id={String(item.id ?? item.name)}
-              index={index}
-              active={String(item.id ?? item.name) === selectedId}
-              onSelect={() => onSelect(String(item.id ?? item.name))}
-              onMove={onMove ? (from, to) => void onMove(from, to) : undefined}
-            >
-              {renderItem ? (
-                renderItem(item)
-              ) : (
-                <div className="truncate text-left">{titleOf(item)}</div>
-              )}
-            </SortableRow>
-          ))}
+          {items.map((item, index) => {
+            const rowKey = String(item.id ?? item.name);
+            return (
+              <SettingsListRow
+                key={rowKey}
+                id={rowKey}
+                index={index}
+                active={rowKey === selectedId}
+                onSelect={() => onSelect(rowKey)}
+                onMove={onMove ? (from, to) => void onMove(from, to) : undefined}
+                onDelete={rowMenuOf?.(item)?.onDelete}
+              >
+                {renderItem ? (
+                  renderItem(item)
+                ) : (
+                  <div className="truncate text-left">{titleOf(item)}</div>
+                )}
+              </SettingsListRow>
+            );
+          })}
         </div>
       </div>
       }
