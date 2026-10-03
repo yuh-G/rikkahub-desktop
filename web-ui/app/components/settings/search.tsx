@@ -729,6 +729,7 @@ export function SearchSection({
                 hasCustomServiceEndpoint(draft) ||
                 (textValue(draft.type) === "searxng" && !textValue(draft[customUrlFieldOf("searxng")]).trim())
               }
+              className="mt-4"
             >
               <div className="grid gap-4 pt-2 @xl:grid-cols-2">
                 {(() => {

@@ -49,7 +49,7 @@ type ModelKey =
   | "compressModelId"
   | "promptOptimizeModelId";
 
-/** 兜底档:未设置时自动跟随会话模型(提示词优化/翻译/上下文压缩)。快速模型是静默档
+/** 兜底档:未设置时自动跟随会话当前模型(提示词优化/翻译/上下文压缩)。快速模型是静默档
  *  (未设置=标题用首条消息文本、建议不生成),OCR/图像生成是报错档(未设置=功能不可用)。 */
 const FALLBACK_MODEL_KEYS = new Set<ModelKey>([
   "promptOptimizeModelId",
@@ -271,11 +271,12 @@ export function DefaultModelsSection({
   const modelSelect = (key: ModelKey) => {
     const options = key === "imageGenerationModelId" ? imageModels : allModels;
     // 「未设置」的含义按功能分三档(与后端行为一一对应,勿随意增删档位):
-    //   兜底档(优化/翻译/压缩)→ 跟随会话模型;静默档(快速模型)→ 标题用首条消息文本、
+    //   兜底档(优化/翻译/压缩)→ 跟随主模型;静默档(快速模型)→ 标题用首条消息文本、
     //   建议不生成;报错档(OCR/图像生成)→ 功能不可用,用时提示去配置。
-    // 报错档触发器留白(未设置就是不工作,不占文案),但列表里首项仍带「未设置」字样,
-    // 否则下拉里出现一行空白选项没人知道点了是什么——功能后果已在各卡描述里写明。
-    const disabledScene = !FALLBACK_MODEL_KEYS.has(key) && key !== "fastModelId";
+    // 兜底档触发器明示跟随去向;静默/报错档触发器留白(未设置=无值可显,占「未设置」
+    // 反而像配置出了问题),但列表首项仍带字样,否则下拉里一行空白没人知道点了是什么
+    // ——功能后果已在各卡描述里写明。
+    const showEmptyInTrigger = FALLBACK_MODEL_KEYS.has(key);
     const emptyLabel = FALLBACK_MODEL_KEYS.has(key)
       ? t("settings:models.not_set_fallback")
       : key === "fastModelId"
@@ -297,7 +298,7 @@ export function DefaultModelsSection({
           <SelectValue>
             {/* 空字符串 children 拦住 Radix 把选中项文本门户搬进触发器:未设置=空白;
                 一旦选中真实模型改回 undefined,门户恢复、触发器正常显示模型名。 */}
-            {selected ? undefined : disabledScene ? "" : undefined}
+            {selected ? undefined : showEmptyInTrigger ? undefined : ""}
           </SelectValue>
         </SelectTrigger>
         <SelectContent>

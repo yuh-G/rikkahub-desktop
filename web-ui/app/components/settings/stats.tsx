@@ -162,7 +162,10 @@ export function StatsSection({ stats }: { stats: StatsPayload | null }) {
       </div>
       <SettingsGroup title={t("settings:stats.heatmap")}>
         <div className="pt-2 pb-1">
-          <div className="grid w-full grid-cols-[24px_minmax(0,1fr)] gap-x-2 pr-px">
+          {/* 左缘对齐:周标签列压到 16px(单汉字 12px 右对齐,左侧不再浪费)+ 窄间距,
+              格子区左缘向标题基线收 10px——此前 24px 列 + 8px 间距把格子顶出 32px,
+              右缘却贴死卡缘,整体观感偏右。 */}
+          <div className="grid w-full grid-cols-[16px_minmax(0,1fr)] gap-x-1.5 pr-px">
             <div />
             <div
               className="grid gap-[3px]"

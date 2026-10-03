@@ -167,16 +167,18 @@ export function SettingsAdvancedSection({
   open,
   onOpenChange,
   attention = false,
+  className,
   children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   attention?: boolean;
+  className?: string;
   children: React.ReactNode;
 }) {
   const id = React.useId();
   return (
-    <section>
+    <section className={className}>
       <SettingsAdvancedToggle
         open={open}
         onOpenChange={onOpenChange}
