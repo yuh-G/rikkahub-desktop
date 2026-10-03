@@ -8,8 +8,14 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, Eye, EyeOff, GripVertical } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, GripVertical, Plus, Trash2 } from "lucide-react";
 import { Button } from "~/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "~/components/ui/dropdown-menu";
 import { Input } from "~/components/ui/input";
 import { Switch } from "~/components/ui/switch";
 import { cn } from "~/lib/utils";
@@ -151,6 +157,176 @@ export function SettingsAdvancedRegion({
 /** 页面内容的纵向骨架:各 SettingsGroup 之间统一 2rem 节奏。 */
 export function SettingsStack({ children, className }: { children: React.ReactNode; className?: string }) {
   return <div className={cn("space-y-8", className)}>{children}</div>;
+}
+
+/**
+ * 页尾的「高级设置」一节:触发器就是这一节的标题行(常显),内容收起时整段不渲染。
+ * open/onOpenChange 由调用方持有——切换列表条目时不收起、离开页面(重挂载)才复位。
+ */
+export function SettingsAdvancedSection({
+  open,
+  onOpenChange,
+  attention = false,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  attention?: boolean;
+  children: React.ReactNode;
+}) {
+  const id = React.useId();
+  return (
+    <section>
+      <SettingsAdvancedToggle
+        open={open}
+        onOpenChange={onOpenChange}
+        controls={[id]}
+        attention={attention}
+        className="-ml-2"
+      />
+      <SettingsAdvancedRegion id={id} open={open} className="pt-1">
+        {children}
+      </SettingsAdvancedRegion>
+    </section>
+  );
+}
+
+export interface SettingsAddMenuItem {
+  key: string;
+  label: React.ReactNode;
+  icon?: React.ReactNode;
+  onSelect: () => void;
+}
+
+/**
+ * 列表/详情页左栏顶部的「新增」:整宽描边按钮。传 items 时点开是一个下拉菜单(选类型或
+ * 选来源),不传则直接触发 onClick。各页一律用它,不再各写一遍按钮 + Select。
+ */
+export function SettingsListAddButton({
+  label,
+  onClick,
+  items,
+  icon,
+  disabled,
+}: {
+  label: React.ReactNode;
+  onClick?: () => void;
+  items?: readonly SettingsAddMenuItem[];
+  icon?: React.ReactNode;
+  disabled?: boolean;
+}) {
+  const leading = icon ?? <Plus className="size-4" />;
+  if (!items) {
+    return (
+      <Button className="mb-1 w-full justify-start" variant="outline" onClick={onClick} disabled={disabled}>
+        {leading}
+        {label}
+      </Button>
+    );
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button className="mb-1 w-full justify-start" variant="outline" disabled={disabled}>
+          {leading}
+          <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+          <ChevronDown aria-hidden className="size-4 text-[var(--ds-icon)]" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="max-h-80 min-w-(--radix-dropdown-menu-trigger-width)"
+      >
+        {items.map((item) => (
+          <DropdownMenuItem key={item.key} onSelect={item.onSelect}>
+            {item.icon ?? null}
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** 键值对的一行。 */
+export interface SettingsKeyValue {
+  key: string;
+  value: string;
+}
+
+/**
+ * 可增删的键值列表(请求头等):一行一条「名称 | 值 | 删除」,标题行右侧「添加」。
+ * 只管形状为 {key,value} 的视图数据,持久化形状由调用方在读写边界换算。
+ */
+export function SettingsKeyValueList({
+  label,
+  description,
+  items,
+  onChange,
+  keyPlaceholder,
+  valuePlaceholder,
+  emptyText,
+  removeLabel,
+}: {
+  label: React.ReactNode;
+  description?: React.ReactNode;
+  items: readonly SettingsKeyValue[];
+  onChange: (items: SettingsKeyValue[]) => void;
+  keyPlaceholder: string;
+  valuePlaceholder: string;
+  emptyText: string;
+  removeLabel: string;
+}) {
+  const { t } = useTranslation();
+  const update = (index: number, patch: Partial<SettingsKeyValue>) =>
+    onChange(items.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  return (
+    <SettingsField
+      label={label}
+      description={description}
+      trailing={
+        <Button type="button" size="sm" variant="outline" onClick={() => onChange([...items, { key: "", value: "" }])}>
+          <Plus className="size-4" />
+          {t("settings:common.add")}
+        </Button>
+      }
+    >
+      {items.length === 0 ? (
+        <div className="rounded-[var(--ds-radius-md)] border border-dashed p-4 text-center text-sm text-[var(--ds-text-secondary)]">
+          {emptyText}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {items.map((item, index) => (
+            <div key={index} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] items-center gap-2">
+              <Input
+                value={item.key}
+                onChange={(event) => update(index, { key: event.target.value })}
+                placeholder={keyPlaceholder}
+                aria-label={keyPlaceholder}
+              />
+              <Input
+                value={item.value}
+                onChange={(event) => update(index, { value: event.target.value })}
+                placeholder={valuePlaceholder}
+                aria-label={valuePlaceholder}
+              />
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label={removeLabel}
+                title={removeLabel}
+                onClick={() => onChange(items.filter((_, i) => i !== index))}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </SettingsField>
+  );
 }
 
 /**

@@ -34,6 +34,7 @@ import {
   PasswordInput,
   SettingsDetailFooter,
   SettingsDetailHeader,
+  SettingsListAddButton,
   SettingsSplit,
   SettingsStack,
   SortableRow,
@@ -448,10 +449,7 @@ export function SearchSection({
       <SettingsSplit
         list={
           <div className="space-y-1">
-          <Button className="mb-1 w-full justify-start" variant="outline" onClick={addService}>
-            <Plus className="size-4" />
-            {t("settings:search.add")}
-          </Button>
+          <SettingsListAddButton label={t("settings:search.add")} onClick={addService} />
           {settings.searchServices.map((service, index) => (
             <SortableRow
               key={String(service.id ?? index)}

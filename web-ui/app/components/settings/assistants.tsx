@@ -31,6 +31,8 @@ import {
   SettingsField,
   SettingsGroup,
   SettingsRows,
+  SettingsKeyValueList,
+  SettingsListAddButton,
   SettingsSplit,
   SettingsStack,
   SettingsSwitchRow,
@@ -213,10 +215,11 @@ export function AssistantsSection({
 
   const list = (
     <div className="space-y-1">
-      <Button className="mb-1 w-full justify-start" variant="outline" onClick={() => void addAssistant()}>
-        <CopyPlus className="size-4" />
-        {t("settings:assistants.add")}
-      </Button>
+      <SettingsListAddButton
+        label={t("settings:assistants.add")}
+        icon={<CopyPlus className="size-4" />}
+        onClick={() => void addAssistant()}
+      />
       {settings.assistants.map((item, index) => (
         <SortableRow
           key={item.id}
@@ -358,7 +361,7 @@ function AssistantEditor({
   const customBodies = Array.isArray(draft.customBodies)
     ? (draft.customBodies as Array<Record<string, unknown>>)
     : [];
-  const updateAt = <K extends "presetMessages" | "regexes" | "customHeaders" | "customBodies">(
+  const updateAt = <K extends "presetMessages" | "regexes" | "customBodies">(
     key: K,
     items: Array<Record<string, unknown>>,
     index: number,
@@ -368,7 +371,7 @@ function AssistantEditor({
       [key]: items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)),
     } as Partial<AssistantProfile>);
   };
-  const removeAt = <K extends "presetMessages" | "regexes" | "customHeaders" | "customBodies">(
+  const removeAt = <K extends "presetMessages" | "regexes" | "customBodies">(
     key: K,
     items: Array<Record<string, unknown>>,
     index: number,
@@ -774,34 +777,21 @@ function AssistantEditor({
           </SettingsGroup>
 
           <SettingsGroup title={t("settings:assistants.custom_request_title")} fields>
-            <SettingsField
+            <SettingsKeyValueList
               label={t("settings:assistants.headers")}
               description={t("settings:assistants.headers_desc")}
-              trailing={addButton(() => patchDraft({ customHeaders: [...customHeaders, { name: "", value: "" }] }))}
-            >
-              <div className="space-y-2">
-                {customHeaders.length === 0 ? emptyHint(t("settings:assistants.no_header")) : null}
-                {customHeaders.map((header, index) => (
-                  <div key={index} className="grid gap-2 rounded-md border bg-muted/20 p-3 @xl:grid-cols-[1fr_1fr_auto]">
-                    <Input
-                      value={textValue(header.name ?? header.key)}
-                      onChange={(event) => updateAt("customHeaders", customHeaders, index, { name: event.target.value })}
-                      placeholder={t("settings:assistants.header_name_ph")}
-                      aria-label={t("settings:assistants.header_name_ph")}
-                    />
-                    <Input
-                      value={textValue(header.value)}
-                      onChange={(event) => updateAt("customHeaders", customHeaders, index, { value: event.target.value })}
-                      placeholder={t("settings:assistants.header_value_ph")}
-                      aria-label={t("settings:assistants.header_value_ph")}
-                    />
-                    {deleteButton(t("settings:assistants.delete_header"), () =>
-                      removeAt("customHeaders", customHeaders, index),
-                    )}
-                  </div>
-                ))}
-              </div>
-            </SettingsField>
+              items={customHeaders.map((header) => ({
+                key: textValue(header.name ?? header.key),
+                value: textValue(header.value),
+              }))}
+              onChange={(next) =>
+                patchDraft({ customHeaders: next.map((item) => ({ name: item.key, value: item.value })) })
+              }
+              keyPlaceholder={t("settings:assistants.header_name_ph")}
+              valuePlaceholder={t("settings:assistants.header_value_ph")}
+              emptyText={t("settings:assistants.no_header")}
+              removeLabel={t("settings:assistants.delete_header")}
+            />
             <SettingsField
               label={t("settings:assistants.bodies")}
               description={t("settings:assistants.bodies_desc")}
