@@ -68,7 +68,8 @@ export const SETTINGS_PAGE_PANEL_ID = "settings-page-panel";
 /**
  * 内容区固定头部:一级标题 + 二级标签栏(仅有二级时)。不随内容滚动。整个头部是窗口拖拽区
  * (含顶部留白,保证面板顶边可拖);标签项都是 <button>,拖拽放行选择器认得它们。
- * `leading` 放整页形态的返回键;模态的关闭钮是外壳的绝对定位兄弟节点,`reserveEnd` 给它让位。
+ * `leading` 放整页形态的返回键;`trailing` 放模态的关闭钮——都在标题行文档流内,标签栏
+ * 一行可用满整个宽度,横滚不会被绝对定位的浮动控件截住。
  * 外壳须以 key={section} 挂载本组件:切一级时重挂,滑块不会从上一个一级的位置滑过来。
  */
 export function SettingsPageHeader({
@@ -76,14 +77,14 @@ export function SettingsPageHeader({
   sub,
   onSub,
   leading,
-  reserveEnd = false,
+  trailing,
   className,
 }: {
   section: SettingsTabId;
   sub: string | null;
   onSub: (sub: string) => void;
   leading?: React.ReactNode;
-  reserveEnd?: boolean;
+  trailing?: React.ReactNode;
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -91,9 +92,10 @@ export function SettingsPageHeader({
   const subs = settingsSubItems(section);
   return (
     <div className={cn("shrink-0 select-none px-6 pt-4", className)} {...windowDragRegionProps()}>
-      <div className={cn("flex min-h-8 items-center gap-2 pb-3", reserveEnd && "pr-10")}>
+      <div className="flex min-h-8 items-center gap-2 pb-3">
         {leading}
         <h2 className="min-w-0 truncate text-lg font-semibold text-[var(--ds-text-primary)]">{title}</h2>
+        {trailing != null && <div className="ml-auto flex shrink-0 items-center">{trailing}</div>}
       </div>
       {subs.length > 0 && (
         // 窄屏下标签总宽可能超出:横向滚动而不换行(负边距让滚动区贴边、焦点环不被裁)。

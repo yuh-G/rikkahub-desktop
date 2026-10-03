@@ -113,18 +113,26 @@ function SettingsDialogBody() {
         </ScrollArea>
       </aside>
       <div className="relative flex min-w-0 flex-1 flex-col">
-        {/* 页头兼作窗口拖拽区:无边框窗口被遮罩盖住后,它与左栏标题行是仅有的拖拽把手。 */}
-        <SettingsPageHeader key={`header:${section}`} section={section} sub={sub} onSub={setSettingsDialogSub} reserveEnd />
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="absolute top-4 right-4 z-10 text-muted-foreground hover:text-foreground"
-          aria-label={t("settings:nav.close")}
-          title={t("settings:nav.close")}
-          onClick={closeSettingsDialog}
-        >
-          <X className="size-4" />
-        </Button>
+        {/* 页头兼作窗口拖拽区:无边框窗口被遮罩盖住后,它与左栏标题行是仅有的拖拽把手。
+            关闭钮在标题行文档流内(拖拽放行选择器认得 button,不会误触拖拽)。 */}
+        <SettingsPageHeader
+          key={`header:${section}`}
+          section={section}
+          sub={sub}
+          onSub={setSettingsDialogSub}
+          trailing={
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="-mr-2 text-muted-foreground hover:text-foreground"
+              aria-label={t("settings:nav.close")}
+              title={t("settings:nav.close")}
+              onClick={closeSettingsDialog}
+            >
+              <X className="size-4" />
+            </Button>
+          }
+        />
         {settings ? (
           // key=页键:切一级或二级时滚动位置归零并重放淡入,"新页从顶部开始"。
           <ScrollArea key={pageKey} className="min-h-0 flex-1">
