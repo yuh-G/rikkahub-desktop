@@ -2,13 +2,13 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
-import { SegmentedTabs } from "~/components/ui/segmented-tabs";
+import { SegmentedControl, SegmentedTabs } from "~/components/ui/segmented-tabs";
 import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
@@ -18,7 +18,20 @@ import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import { getSettingsParam } from "~/stores/settings-dialog-store";
 import type { AssistantProfile, Settings } from "~/types";
-import { clone, moveItem, numberText, SettingsSwitchRow, textValue } from "~/components/settings/shared";
+import {
+  clone,
+  moveItem,
+  numberText,
+  SettingsAdvancedSection,
+  SettingsDetailFooter,
+  SettingsDetailHeader,
+  SettingsField,
+  SettingsGroup,
+  SettingsRows,
+  SettingsStack,
+  SettingsSwitchRow,
+  textValue,
+} from "~/components/settings/shared";
 import {
   BindingAssistantToolbar,
   BindingSwitch,
@@ -31,6 +44,17 @@ import {
 } from "~/components/settings/extensions/common";
 
 type InjectionPanel = "mode" | "lorebook";
+
+const PROMPT_VARIABLES = [
+  "{{cur_datetime}}",
+  "{{date}}",
+  "{{time}}",
+  "{{locale}}",
+  "{{timezone}}",
+  "{{model_name}}",
+  "{{user}}",
+  "{{char}}",
+] as const;
 
 /**
  * 拓展 › 提示词注入:模式注入与世界书两个板块,页内分段切换,一次只显示一个。两个编辑器都
@@ -152,6 +176,91 @@ function createLorebookEntry(): Record<string, unknown> {
   };
 }
 
+const INJECTION_POSITIONS = [
+  ["before_system_prompt", "settings:mcp.pos.before"],
+  ["after_system_prompt", "settings:mcp.pos.after"],
+  ["top_of_chat", "settings:mcp.pos.top"],
+  ["bottom_of_chat", "settings:mcp.pos.bottom"],
+  ["at_depth", "settings:mcp.pos.depth"],
+] as const;
+
+/**
+ * 注入落点三件套(模式注入与世界书条目共用):注入位置;落在对话里(独立消息)时再选角色,
+ * 选「指定深度」时再填深度。与服务端 applyPromptInjectionsToMessages 同口径。
+ */
+function InjectionPlacementFields({
+  value,
+  onChange,
+}: {
+  value: Record<string, unknown>;
+  onChange: (patch: Record<string, unknown>) => void;
+}) {
+  const { t } = useTranslation();
+  const position = textValue(value.position) || "after_system_prompt";
+  const standalone = position === "top_of_chat" || position === "bottom_of_chat" || position === "at_depth";
+  return (
+    <>
+      <SettingsField label={t("settings:mcp.position")}>
+        <Select value={position} onValueChange={(next) => onChange({ position: next })}>
+          <SelectTrigger className="w-full" aria-label={t("settings:mcp.position")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {INJECTION_POSITIONS.map(([key, labelKey]) => (
+              <SelectItem key={key} value={key}>
+                {t(labelKey)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </SettingsField>
+      {standalone ? (
+        <div className="grid gap-5 @xl:grid-cols-2">
+          <SettingsField label={t("settings:mcp.role")}>
+            <SegmentedControl
+              stretch
+              aria-label={t("settings:mcp.role")}
+              items={[
+                { value: "USER", label: t("settings:assistants.role.user") },
+                { value: "ASSISTANT", label: t("settings:assistants.role.assistant") },
+              ]}
+              value={textValue(value.role).toUpperCase() === "ASSISTANT" ? "ASSISTANT" : "USER"}
+              onChange={(role) => onChange({ role })}
+            />
+          </SettingsField>
+          {position === "at_depth" ? (
+            <SettingsField label={t("settings:mcp.inject_depth")} hint={t("settings:mcp.inject_depth_hint")}>
+              <Input
+                type="number"
+                min={1}
+                className="w-32"
+                value={numberText(value.injectDepth ?? 4)}
+                onChange={(event) => onChange({ injectDepth: Math.max(1, Number(event.target.value) || 4) })}
+                placeholder="4"
+              />
+            </SettingsField>
+          ) : null}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function PriorityField({ value, onChange }: { value: unknown; onChange: (priority: number) => void }) {
+  const { t } = useTranslation();
+  return (
+    <SettingsField label={t("settings:mcp.priority")} hint={t("settings:mcp.priority_hint")}>
+      <Input
+        type="number"
+        className="w-32"
+        value={numberText(value)}
+        onChange={(event) => onChange(Number(event.target.value))}
+        placeholder="0"
+      />
+    </SettingsField>
+  );
+}
+
 function LorebookEntryRow({
   entry,
   index,
@@ -165,171 +274,120 @@ function LorebookEntryRow({
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = React.useState(false);
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const bodyId = React.useId();
   const patch = (next: Partial<Record<string, unknown>>) => onChange({ ...entry, ...next });
   const keywords = Array.isArray(entry.keywords) ? entry.keywords.map(String) : [];
-  const position = textValue(entry.position) || "after_system_prompt";
-  const usesStandaloneMessage =
-    position === "top_of_chat" || position === "bottom_of_chat" || position === "at_depth";
   const constantActive = entry.constantActive === true;
+  const enabled = entry.enabled !== false;
+  const title = textValue(entry.name) || t("settings:mcp.entry_n", { n: index + 1 });
   const triggerSummary = constantActive
     ? t("settings:mcp.constant_active")
     : keywords.length > 0
       ? t("settings:mcp.keywords_count", { count: keywords.length })
       : t("settings:mcp.no_trigger");
+  const advancedAttention =
+    Number(entry.scanDepth ?? 4) !== 4 ||
+    entry.useRegex === true ||
+    entry.caseSensitive === true ||
+    Number(entry.priority ?? 0) !== 0;
   return (
-    <div className="rounded-md border bg-background">
-      <button
-        type="button"
-        onClick={() => setExpanded((value) => !value)}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
-      >
-        <span className="flex min-w-0 flex-1 items-center gap-2">
+    <div className="rounded-[var(--ds-radius-md)] border">
+      <div className="flex items-center gap-3 px-3 py-2">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={bodyId}
+          onClick={() => setExpanded((value) => !value)}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+        >
           <span
-            className={cn(
-              "size-2 rounded-full",
-              entry.enabled === false ? "bg-muted-foreground/40" : "bg-success",
-            )}
+            aria-hidden
+            className={cn("size-2 shrink-0 rounded-full", enabled ? "bg-success" : "bg-muted-foreground/40")}
           />
-          <span className="truncate text-sm font-medium">
-            {textValue(entry.name) || t("settings:mcp.entry_n", { n: index + 1 })}
-          </span>
-          <span className="shrink-0 text-xs text-muted-foreground">· {triggerSummary}</span>
-        </span>
-        <ExpandChevron expanded={expanded} />
-      </button>
+          <span className="truncate text-sm font-medium">{title}</span>
+          <span className="shrink-0 text-xs text-[var(--ds-text-secondary)]">· {triggerSummary}</span>
+        </button>
+        <Switch
+          checked={enabled}
+          aria-label={t("settings:mcp.enable_entry")}
+          onCheckedChange={(checked) => patch({ enabled: checked })}
+        />
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          aria-expanded={expanded}
+          aria-controls={bodyId}
+          aria-label={expanded ? t("settings:mcp.server.collapse") : t("settings:mcp.server.expand")}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <ExpandChevron expanded={expanded} />
+        </Button>
+      </div>
       {expanded ? (
-        <div className="space-y-3 border-t px-3 py-3">
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.name")}</span>
-              <Input
-                value={textValue(entry.name)}
-                onChange={(event) => patch({ name: event.target.value })}
-                placeholder={t("settings:mcp.entry_name_ph")}
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.priority")}</span>
-              <Input
-                type="number"
-                value={numberText(entry.priority)}
-                onChange={(event) => patch({ priority: Number(event.target.value) })}
-                placeholder="0"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.position")}</span>
-              <Select value={position} onValueChange={(value) => patch({ position: value })}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="before_system_prompt">{t("settings:mcp.pos.before")}</SelectItem>
-                  <SelectItem value="after_system_prompt">{t("settings:mcp.pos.after")}</SelectItem>
-                  <SelectItem value="top_of_chat">{t("settings:mcp.pos.top")}</SelectItem>
-                  <SelectItem value="bottom_of_chat">{t("settings:mcp.pos.bottom")}</SelectItem>
-                  <SelectItem value="at_depth">{t("settings:mcp.pos.depth")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
-            {usesStandaloneMessage ? (
-              <label className="space-y-1">
-                <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.role")}</span>
-                <Select
-                  value={textValue(entry.role) || "USER"}
-                  onValueChange={(value) => patch({ role: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="USER">{t("settings:assistants.role.user")}</SelectItem>
-                    <SelectItem value="ASSISTANT">{t("settings:assistants.role.assistant")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </label>
-            ) : null}
-            {position === "at_depth" ? (
-              <label className="space-y-1">
-                <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.inject_depth")}</span>
-                <Input
-                  type="number"
-                  min={1}
-                  value={numberText(entry.injectDepth ?? 4)}
-                  onChange={(event) =>
-                    patch({ injectDepth: Math.max(1, Number(event.target.value) || 4) })
-                  }
-                  placeholder="4"
-                />
-              </label>
-            ) : null}
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                {t("settings:mcp.scan_depth")}
-              </span>
-              <Input
-                type="number"
-                min={1}
-                value={numberText(entry.scanDepth ?? 4)}
-                onChange={(event) =>
-                  patch({ scanDepth: Math.max(1, Number(event.target.value) || 4) })
-                }
-                placeholder="4"
-              />
-            </label>
-          </div>
-          <label className="space-y-1">
-            <span className="text-xs font-medium text-muted-foreground">
-              {t("settings:mcp.keywords_label")}
-            </span>
+        <div id={bodyId} className="space-y-5 border-t border-[var(--ds-divider)] px-3 py-4">
+          <SettingsField label={t("settings:mcp.name")}>
+            <Input
+              value={textValue(entry.name)}
+              onChange={(event) => patch({ name: event.target.value })}
+              placeholder={t("settings:mcp.entry_name_ph")}
+            />
+          </SettingsField>
+          <SettingsRows>
+            <SettingsSwitchRow
+              label={t("settings:mcp.constant_active")}
+              description={t("settings:mcp.constant_active_desc")}
+              checked={constantActive}
+              onCheckedChange={(checked) => patch({ constantActive: checked })}
+            />
+          </SettingsRows>
+          <SettingsField label={t("settings:mcp.keywords_label")} hint={t("settings:mcp.keywords_hint")}>
             <KeywordChipInput
               keywords={keywords}
               disabled={constantActive}
               onChange={(next) => patch({ keywords: next })}
             />
-          </label>
-          <div className="grid gap-2 md:grid-cols-3">
-            <label className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm">
-              <span>{t("settings:mcp.use_regex")}</span>
-              <Switch
-                checked={entry.useRegex === true}
-                onCheckedChange={(checked) => patch({ useRegex: checked })}
-                disabled={constantActive}
-              />
-            </label>
-            <label className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm">
-              <span>{t("settings:mcp.case_sensitive")}</span>
-              <Switch
-                checked={entry.caseSensitive === true}
-                onCheckedChange={(checked) => patch({ caseSensitive: checked })}
-                disabled={constantActive}
-              />
-            </label>
-            <label className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm">
-              <span>{t("settings:mcp.constant_active")}</span>
-              <Switch
-                checked={constantActive}
-                onCheckedChange={(checked) => patch({ constantActive: checked })}
-              />
-            </label>
-          </div>
-          <label className="space-y-1">
-            <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.inject_content")}</span>
+          </SettingsField>
+          <SettingsField label={t("settings:mcp.inject_content")}>
             <Textarea
               value={textValue(entry.content)}
               onChange={(event) => patch({ content: event.target.value })}
               className="min-h-32 font-mono text-xs leading-relaxed"
               placeholder={t("settings:mcp.inject_content_ph")}
             />
-          </label>
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-sm">
-              <Switch
-                checked={entry.enabled !== false}
-                onCheckedChange={(checked) => patch({ enabled: checked })}
-              />
-              <span>{t("settings:mcp.enable_entry")}</span>
-            </label>
+          </SettingsField>
+          <InjectionPlacementFields value={entry} onChange={patch} />
+          <SettingsAdvancedSection open={advancedOpen} onOpenChange={setAdvancedOpen} attention={advancedAttention}>
+            <div className="space-y-5 pt-2">
+              <SettingsField label={t("settings:mcp.scan_depth")} hint={t("settings:mcp.scan_depth_hint")}>
+                <Input
+                  type="number"
+                  min={1}
+                  className="w-32"
+                  value={numberText(entry.scanDepth ?? 4)}
+                  onChange={(event) => patch({ scanDepth: Math.max(1, Number(event.target.value) || 4) })}
+                  placeholder="4"
+                />
+              </SettingsField>
+              <SettingsRows>
+                <SettingsSwitchRow
+                  label={t("settings:mcp.use_regex")}
+                  checked={entry.useRegex === true}
+                  disabled={constantActive}
+                  onCheckedChange={(checked) => patch({ useRegex: checked })}
+                />
+                <SettingsSwitchRow
+                  label={t("settings:mcp.case_sensitive")}
+                  checked={entry.caseSensitive === true}
+                  disabled={constantActive}
+                  onCheckedChange={(checked) => patch({ caseSensitive: checked })}
+                />
+              </SettingsRows>
+              <PriorityField value={entry.priority} onChange={(priority) => patch({ priority })} />
+            </div>
+          </SettingsAdvancedSection>
+          <div className="flex justify-end">
             <Button type="button" variant="ghost" size="sm" onClick={onDelete}>
               <Trash2 className="size-4" />
               {t("settings:mcp.delete_entry")}
@@ -365,28 +423,29 @@ function KeywordChipInput({
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center gap-1 rounded-md border bg-background px-2 py-1.5",
+        "flex min-h-9 flex-wrap items-center gap-1 rounded-[var(--ds-radius-md)] bg-[var(--ds-surface-input)] px-2 py-1.5 shadow-[var(--ds-input-shadow)] transition-shadow focus-within:shadow-[var(--ds-input-shadow-focus)]",
         disabled && "opacity-50",
       )}
     >
       {keywords.map((keyword) => (
         <span
           key={keyword}
-          className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"
+          className="inline-flex items-center gap-0.5 rounded-full bg-[var(--ds-on-surface)] py-0.5 pr-1 pl-2 text-xs"
         >
           {keyword}
           <button
             type="button"
-            className="text-muted-foreground hover:text-foreground"
+            className="rounded-full p-0.5 text-[var(--ds-icon)] hover:text-[var(--ds-text-primary)]"
             disabled={disabled}
+            aria-label={t("settings:mcp.remove_keyword", { keyword })}
             onClick={() => onChange(keywords.filter((item) => item !== keyword))}
           >
-            ×
+            <X className="size-3" />
           </button>
         </span>
       ))}
       <input
-        className="min-w-32 flex-1 bg-transparent text-xs outline-none"
+        className="min-w-32 flex-1 bg-transparent text-xs text-[var(--ds-text-primary)] outline-none placeholder:text-[var(--ds-text-tertiary)]"
         placeholder={disabled ? t("settings:mcp.keywords_disabled_ph") : t("settings:mcp.keywords_ph")}
         value={value}
         disabled={disabled}
@@ -442,6 +501,7 @@ function LorebookEditor({
   const entries = Array.isArray(draft.entries)
     ? (draft.entries as Array<Record<string, unknown>>)
     : [];
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const patchDraft = (patch: Record<string, unknown>) => {
     autosave.markDirty();
     setDraft({ ...draft, ...patch });
@@ -492,103 +552,108 @@ function LorebookEditor({
         }
       }}
     >
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">{t("settings:mcp.lorebook.detail")}</div>
-          <BindingSwitch
-            checked={(assistant.lorebookIds ?? []).includes(String(draft.id))}
-            onCheckedChange={(checked) => void bind(checked)}
+      <div className="@container">
+        <SettingsStack>
+          <SettingsDetailHeader
+            title={textValue(draft.name) || t("settings:mcp.tab.lorebook")}
+            description={t("settings:mcp.lorebook.page_desc")}
+            action={
+              <BindingSwitch
+                checked={(assistant.lorebookIds ?? []).includes(String(draft.id))}
+                onCheckedChange={(checked) => void bind(checked)}
+              />
+            }
           />
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="space-y-1">
-            <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.name")}</span>
-            <Input
-              value={textValue(draft.name)}
-              onChange={(event) => patchDraft({ name: event.target.value })}
-              placeholder={t("settings:mcp.lorebook.name_ph")}
-            />
-          </label>
-          <label className="flex items-end gap-2">
-            <span className="flex-1 space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.lorebook.enable")}</span>
-              <div className="rounded-md border px-3 py-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span>{draft.enabled === false ? t("settings:mcp.disabled") : t("settings:mcp.enabled")}</span>
-                  <Switch
-                    checked={draft.enabled !== false}
-                    onCheckedChange={(checked) => patchDraft({ enabled: checked })}
-                  />
-                </div>
-              </div>
-            </span>
-          </label>
-        </div>
-        <label className="space-y-1">
-          <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.lorebook.desc")}</span>
-          <Input
-            value={textValue(draft.description)}
-            onChange={(event) => patchDraft({ description: event.target.value })}
-            placeholder={t("settings:mcp.lorebook.desc_ph")}
-          />
-        </label>
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-medium">{t("settings:mcp.entries_count", { count: entries.length })}</div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setEntries([...entries, createLorebookEntry()])}
-            >
-              <Plus className="size-4" />
-              {t("settings:mcp.add_entry")}
-            </Button>
-          </div>
-          <div className="space-y-2">
+
+          <SettingsGroup fields>
+            <SettingsField label={t("settings:mcp.name")}>
+              <Input
+                value={textValue(draft.name)}
+                onChange={(event) => patchDraft({ name: event.target.value })}
+                placeholder={t("settings:mcp.lorebook.name_ph")}
+              />
+            </SettingsField>
+            <SettingsField label={t("settings:mcp.lorebook.desc")}>
+              <Input
+                value={textValue(draft.description)}
+                onChange={(event) => patchDraft({ description: event.target.value })}
+                placeholder={t("settings:mcp.lorebook.desc_ph")}
+              />
+            </SettingsField>
+          </SettingsGroup>
+
+          <SettingsGroup
+            title={t("settings:mcp.entries_count", { count: entries.length })}
+            action={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setEntries([...entries, createLorebookEntry()])}
+              >
+                <Plus className="size-4" />
+                {t("settings:mcp.add_entry")}
+              </Button>
+            }
+            fields
+          >
             {entries.length === 0 ? (
-              <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
+              <div className="rounded-[var(--ds-radius-md)] border border-dashed px-3 py-8 text-center text-sm text-[var(--ds-text-secondary)]">
                 {t("settings:mcp.no_entries")}
               </div>
-            ) : null}
-            {entries.map((entry, index) => (
-              <LorebookEntryRow
-                key={String(entry.id ?? index)}
-                entry={entry}
-                index={index}
-                onChange={(next) =>
-                  setEntries(entries.map((item, idx) => (idx === index ? next : item)))
-                }
-                onDelete={() => setEntries(entries.filter((_, idx) => idx !== index))}
-              />
-            ))}
-          </div>
-        </div>
-        <div className="flex justify-end gap-2">
-          <AutosaveStatusRow
-            className="mr-auto"
-            status={autosave.status}
-            onRetry={() => void autosave.saveNow()}
-          />
-          <Button
-            variant="destructive"
-            onClick={async () => {
-              if (!(await confirmDialog({ title: t("settings:mcp.lorebook.delete_confirm", { name: textValue(draft.name) }), danger: true }))) return;
-              // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
-              // 删除后显式选中下一条:重对齐 effect 只随 selectedId 触发,不选中会让草稿
-              // 停留在已删实体上,再编辑一笔就经自动保存复活它(复审 F2)。
-              const remaining = items.filter((item) => String(item.id) !== String(draft.id));
-              await autosave.discard();
-              await api.delete(`settings/lorebook/${draft.id}`);
-              await pullSettings(onSettings);
-              if (remaining.length) setSelectedId(String(remaining[0].id));
-              else setDraft(clone(createLorebook()));
-            }}
+            ) : (
+              <div className="space-y-2">
+                {entries.map((entry, index) => (
+                  <LorebookEntryRow
+                    key={String(entry.id ?? index)}
+                    entry={entry}
+                    index={index}
+                    onChange={(next) => setEntries(entries.map((item, idx) => (idx === index ? next : item)))}
+                    onDelete={() => setEntries(entries.filter((_, idx) => idx !== index))}
+                  />
+                ))}
+              </div>
+            )}
+          </SettingsGroup>
+
+          <SettingsAdvancedSection
+            open={advancedOpen}
+            onOpenChange={setAdvancedOpen}
+            attention={draft.enabled === false}
           >
-            <Trash2 className="size-4" />
-            {t("settings:mcp.lorebook.delete")}
-          </Button>
-        </div>
+            <SettingsRows>
+              <SettingsSwitchRow
+                label={t("settings:mcp.lorebook.enable")}
+                description={t("settings:mcp.global_enable_desc")}
+                checked={draft.enabled !== false}
+                onCheckedChange={(checked) => patchDraft({ enabled: checked })}
+              />
+            </SettingsRows>
+          </SettingsAdvancedSection>
+
+          <SettingsDetailFooter
+            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+          >
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                if (!(await confirmDialog({ title: t("settings:mcp.lorebook.delete_confirm", { name: textValue(draft.name) }), danger: true }))) return;
+                // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)
+                // 删除后显式选中下一条:重对齐 effect 只随 selectedId 触发,不选中会让草稿
+                // 停留在已删实体上,再编辑一笔就经自动保存复活它(复审 F2)。
+                const remaining = items.filter((item) => String(item.id) !== String(draft.id));
+                await autosave.discard();
+                await api.delete(`settings/lorebook/${draft.id}`);
+                await pullSettings(onSettings);
+                if (remaining.length) setSelectedId(String(remaining[0].id));
+                else setDraft(clone(createLorebook()));
+              }}
+            >
+              <Trash2 className="size-4" />
+              {t("settings:mcp.lorebook.delete")}
+            </Button>
+          </SettingsDetailFooter>
+        </SettingsStack>
       </div>
     </EditorShell>
   );
@@ -659,19 +724,8 @@ function PromptItemEditor({
     },
     { errorLabel: title },
   );
-  const promptVariables = [
-    "{{cur_datetime}}",
-    "{{date}}",
-    "{{time}}",
-    "{{locale}}",
-    "{{timezone}}",
-    "{{model_name}}",
-    "{{user}}",
-    "{{char}}",
-  ];
-  const position = textValue(draft.position) || "after_system_prompt";
-  const usesStandaloneMessage =
-    position === "top_of_chat" || position === "bottom_of_chat" || position === "at_depth";
+  // 「高级设置」展开态:切换条目不收起,离开本页(重挂载)复位为收起。
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
   React.useEffect(() => {
     // 只在切换条目时复位;items 不能作依赖——autosave → pullSettings 回环会把保存窗口内
     // 的编辑冲掉(R8-2 病根,同 McpServerEditor 的 serversRef 说明)。
@@ -732,128 +786,85 @@ function PromptItemEditor({
         }
       }}
     >
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">{t("settings:mcp.item_detail", { title })}</div>
-          <BindingSwitch
-            checked={(assistant[bindKey] ?? []).includes(String(draft.id))}
-            onCheckedChange={(checked) => void bind(checked)}
-          />
-        </div>
-        <Input
-          value={textValue(draft.name)}
-          onChange={(event) => patchDraft({ name: event.target.value })}
-          placeholder={t("settings:mcp.name_ph")}
-        />
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="space-y-1">
-            <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.priority")}</span>
-            <Input
-              type="number"
-              value={numberText(draft.priority)}
-              onChange={(event) => patchDraft({ priority: Number(event.target.value) })}
-              placeholder="0"
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.position")}</span>
-            <Select value={position} onValueChange={(value) => patchDraft({ position: value })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="before_system_prompt">{t("settings:mcp.pos.before")}</SelectItem>
-                <SelectItem value="after_system_prompt">{t("settings:mcp.pos.after")}</SelectItem>
-                <SelectItem value="top_of_chat">{t("settings:mcp.pos.top")}</SelectItem>
-                <SelectItem value="bottom_of_chat">{t("settings:mcp.pos.bottom")}</SelectItem>
-                <SelectItem value="at_depth">{t("settings:mcp.pos.depth")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </label>
-          {usesStandaloneMessage ? (
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.role")}</span>
-              <Select
-                value={textValue(draft.role) || "USER"}
-                onValueChange={(value) => patchDraft({ role: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="USER">{t("settings:assistants.role.user")}</SelectItem>
-                  <SelectItem value="ASSISTANT">{t("settings:assistants.role.assistant")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
-          ) : null}
-          {position === "at_depth" ? (
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                {t("settings:mcp.inject_depth_msg")}
-              </span>
-              <Input
-                type="number"
-                min={1}
-                value={numberText(draft.injectDepth ?? 4)}
-                onChange={(event) =>
-                  patchDraft({ injectDepth: Math.max(1, Number(event.target.value) || 4) })
-                }
-                placeholder="4"
+      <div className="@container">
+        <SettingsStack>
+          <SettingsDetailHeader
+            title={textValue(draft.name) || title}
+            description={t("settings:mcp.mode_page_desc")}
+            action={
+              <BindingSwitch
+                checked={(assistant[bindKey] ?? []).includes(String(draft.id))}
+                onCheckedChange={(checked) => void bind(checked)}
               />
-            </label>
-          ) : null}
-        </div>
-        <SettingsSwitchRow
-          label={t("settings:mcp.enabled")}
-          checked={draft.enabled !== false}
-          onCheckedChange={(checked) => patchDraft({ enabled: checked })}
-        />
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">{t("settings:mcp.template_vars")}</span>
-            {promptVariables.map((variable) => (
-              <Button
-                key={variable}
-                type="button"
-                size="xs"
-                variant="outline"
-                onClick={() => appendVariable(variable)}
-              >
-                {variable}
-              </Button>
-            ))}
-          </div>
-          <Textarea
-            value={textValue(draft.content)}
-            onChange={(event) => patchDraft({ content: event.target.value })}
-            className="min-h-64 font-mono text-xs leading-relaxed"
-            placeholder={t("settings:mcp.inject_content_template_ph", { cur_datetime: "{{cur_datetime}}" })}
+            }
           />
-        </div>
-        <div className="flex justify-end gap-2">
-          <AutosaveStatusRow
-            className="mr-auto"
-            status={autosave.status}
-            onRetry={() => void autosave.saveNow()}
-          />
-          <Button
-            variant="destructive"
-            onClick={async () => {
-              if (!(await confirmDialog({ title: t("settings:mcp.inject_delete_confirm", { name: textValue(draft.name) }), danger: true }))) return;
-              // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1);同 Lorebook,删除后显式选中下一条(复审 F2)
-              const remaining = items.filter((item) => String(item.id) !== String(draft.id));
-              await autosave.discard();
-              await api.delete(`${deletePath}/${draft.id}`);
-              await pullSettings(onSettings);
-              if (remaining.length) setSelectedId(String(remaining[0].id));
-              else setDraft(clone(createItem()));
-            }}
+
+          <SettingsGroup fields>
+            <SettingsField label={t("settings:mcp.name")}>
+              <Input
+                value={textValue(draft.name)}
+                onChange={(event) => patchDraft({ name: event.target.value })}
+                placeholder={title}
+              />
+            </SettingsField>
+            <SettingsField label={t("settings:mcp.inject_content")}>
+              <Textarea
+                value={textValue(draft.content)}
+                onChange={(event) => patchDraft({ content: event.target.value })}
+                className="min-h-48 font-mono text-xs leading-relaxed"
+                placeholder={t("settings:mcp.inject_content_template_ph", { cur_datetime: "{{cur_datetime}}" })}
+              />
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-[var(--ds-text-secondary)]">{t("settings:mcp.template_vars")}</span>
+                {PROMPT_VARIABLES.map((variable) => (
+                  <Button key={variable} type="button" size="xs" variant="outline" onClick={() => appendVariable(variable)}>
+                    {variable}
+                  </Button>
+                ))}
+              </div>
+            </SettingsField>
+            <InjectionPlacementFields value={draft} onChange={patchDraft} />
+          </SettingsGroup>
+
+          <SettingsAdvancedSection
+            open={advancedOpen}
+            onOpenChange={setAdvancedOpen}
+            attention={draft.enabled === false || Number(draft.priority ?? 0) !== 0}
           >
-            <Trash2 className="size-4" />
-            {t("settings:mcp.delete")}
-          </Button>
-        </div>
+            <div className="space-y-5 pt-2">
+              <PriorityField value={draft.priority} onChange={(priority) => patchDraft({ priority })} />
+              <SettingsRows>
+                <SettingsSwitchRow
+                  label={t("settings:mcp.enabled")}
+                  description={t("settings:mcp.global_enable_desc")}
+                  checked={draft.enabled !== false}
+                  onCheckedChange={(checked) => patchDraft({ enabled: checked })}
+                />
+              </SettingsRows>
+            </div>
+          </SettingsAdvancedSection>
+
+          <SettingsDetailFooter
+            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+          >
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                if (!(await confirmDialog({ title: t("settings:mcp.inject_delete_confirm", { name: textValue(draft.name) }), danger: true }))) return;
+                // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1);同 Lorebook,删除后显式选中下一条(复审 F2)
+                const remaining = items.filter((item) => String(item.id) !== String(draft.id));
+                await autosave.discard();
+                await api.delete(`${deletePath}/${draft.id}`);
+                await pullSettings(onSettings);
+                if (remaining.length) setSelectedId(String(remaining[0].id));
+                else setDraft(clone(createItem()));
+              }}
+            >
+              <Trash2 className="size-4" />
+              {t("settings:mcp.delete")}
+            </Button>
+          </SettingsDetailFooter>
+        </SettingsStack>
       </div>
     </EditorShell>
   );

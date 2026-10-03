@@ -13,7 +13,16 @@ import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { AssistantProfile, Settings } from "~/types";
-import { clone, moveItem, textValue } from "~/components/settings/shared";
+import {
+  clone,
+  moveItem,
+  SettingsDetailFooter,
+  SettingsDetailHeader,
+  SettingsField,
+  SettingsGroup,
+  SettingsStack,
+  textValue,
+} from "~/components/settings/shared";
 import {
   BindingAssistantSelect,
   BindingSwitch,
@@ -123,48 +132,55 @@ function QuickMessageEditor({
         }
       }}
     >
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">{t("settings:mcp.quick.detail")}</div>
-          <BindingSwitch
-            checked={(assistant.quickMessageIds ?? []).includes(String(draft.id))}
-            onCheckedChange={(checked) => void bind(checked)}
+      <div className="@container">
+        <SettingsStack>
+          <SettingsDetailHeader
+            title={textValue(draft.title) || t("settings:mcp.tab.quick")}
+            description={t("settings:mcp.quick.page_desc")}
+            action={
+              <BindingSwitch
+                checked={(assistant.quickMessageIds ?? []).includes(String(draft.id))}
+                onCheckedChange={(checked) => void bind(checked)}
+              />
+            }
           />
-        </div>
-        <Input
-          value={textValue(draft.title)}
-          onChange={(event) => patchDraft({ title: event.target.value })}
-          placeholder={t("settings:mcp.quick.title")}
-        />
-        <Textarea
-          value={textValue(draft.content)}
-          onChange={(event) => patchDraft({ content: event.target.value })}
-          className="min-h-52"
-          placeholder={t("settings:mcp.quick.content")}
-        />
-        <div className="flex justify-end gap-2">
-          <AutosaveStatusRow
-            className="mr-auto"
-            status={autosave.status}
-            onRetry={() => void autosave.saveNow()}
-          />
-          <Button
-            variant="destructive"
-            onClick={async () => {
-              if (!(await confirmDialog({ title: t("settings:mcp.quick.delete_confirm", { name: textValue(draft.title) }), danger: true }))) return;
-              // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1);同 Lorebook,删除后显式选中下一条(复审 F2)
-              const remaining = items.filter((item) => String(item.id) !== String(draft.id));
-              await autosave.discard();
-              await api.delete(`settings/quick-message/${draft.id}`);
-              await pullSettings(onSettings);
-              if (remaining.length) setSelectedId(String(remaining[0].id));
-              else setDraft({ id: createId(), title: "", content: "" });
-            }}
+          <SettingsGroup fields>
+            <SettingsField label={t("settings:mcp.quick.title")} hint={t("settings:mcp.quick.title_hint")}>
+              <Input
+                value={textValue(draft.title)}
+                onChange={(event) => patchDraft({ title: event.target.value })}
+                placeholder={t("settings:mcp.tab.quick")}
+              />
+            </SettingsField>
+            <SettingsField label={t("settings:mcp.quick.content")} hint={t("settings:mcp.quick.content_hint")}>
+              <Textarea
+                value={textValue(draft.content)}
+                onChange={(event) => patchDraft({ content: event.target.value })}
+                className="min-h-52"
+              />
+            </SettingsField>
+          </SettingsGroup>
+          <SettingsDetailFooter
+            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
           >
-            <Trash2 className="size-4" />
-            {t("settings:mcp.delete")}
-          </Button>
-        </div>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                if (!(await confirmDialog({ title: t("settings:mcp.quick.delete_confirm", { name: textValue(draft.title) }), danger: true }))) return;
+                // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1);同 Lorebook,删除后显式选中下一条(复审 F2)
+                const remaining = items.filter((item) => String(item.id) !== String(draft.id));
+                await autosave.discard();
+                await api.delete(`settings/quick-message/${draft.id}`);
+                await pullSettings(onSettings);
+                if (remaining.length) setSelectedId(String(remaining[0].id));
+                else setDraft({ id: createId(), title: "", content: "" });
+              }}
+            >
+              <Trash2 className="size-4" />
+              {t("settings:mcp.delete")}
+            </Button>
+          </SettingsDetailFooter>
+        </SettingsStack>
       </div>
     </EditorShell>
   );
