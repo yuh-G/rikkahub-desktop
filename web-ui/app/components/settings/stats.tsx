@@ -162,11 +162,11 @@ export function StatsSection({ stats }: { stats: StatsPayload | null }) {
       </div>
       <SettingsGroup title={t("settings:stats.heatmap")}>
         <div className="pt-2 pb-1">
-          <div className="grid w-full grid-cols-[24px_minmax(0,1fr)] gap-x-2 overflow-hidden pr-px">
+          <div className="grid w-full grid-cols-[24px_minmax(0,1fr)] gap-x-2 pr-px">
             <div />
             <div
-              className="grid justify-between gap-[3px]"
-              style={{ gridTemplateColumns: "repeat(53, minmax(10px, 14px))" }}
+              className="grid gap-[3px]"
+              style={{ gridTemplateColumns: "repeat(53, minmax(0, 1fr))" }}
             >
               {monthLabels.map((label, index) => (
                 <div
@@ -179,7 +179,7 @@ export function StatsSection({ stats }: { stats: StatsPayload | null }) {
             </div>
             <div
               className="grid gap-[3px] pt-[2px]"
-              style={{ gridTemplateRows: "repeat(7, auto)" }}
+              style={{ gridTemplateRows: "repeat(7, minmax(0, 1fr))" }}
             >
               {[
                 "",
@@ -192,15 +192,15 @@ export function StatsSection({ stats }: { stats: StatsPayload | null }) {
               ].map((label, index) => (
                 <div
                   key={`${label}-${index}`}
-                  className="flex h-3.5 items-center justify-end text-mini text-muted-foreground sm:h-4"
+                  className="flex items-center justify-end text-mini leading-none text-muted-foreground"
                 >
                   {label}
                 </div>
               ))}
             </div>
             <div
-              className="grid justify-between gap-[3px] pt-[2px]"
-              style={{ gridTemplateColumns: "repeat(53, minmax(10px, 14px))" }}
+              className="grid gap-[3px] pt-[2px]"
+              style={{ gridTemplateColumns: "repeat(53, minmax(0, 1fr))" }}
             >
               {heatmapWeeks.map((week, weekIndex) => (
                 <div
@@ -212,7 +212,7 @@ export function StatsSection({ stats }: { stats: StatsPayload | null }) {
                     <div
                       key={day.key}
                       title={t("settings:stats.day_count", { date: day.key, count: day.count })}
-                      className={`size-3.5 rounded-[3px] sm:size-4 ${heatmapClass(day.level)}`}
+                      className={`aspect-square w-full rounded-[3px] ${heatmapClass(day.level)}`}
                     />
                   ))}
                 </div>
