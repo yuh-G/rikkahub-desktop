@@ -3,15 +3,19 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
-import { Button } from "~/components/ui/button";
+import { ChevronDown } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
 import { cn } from "~/lib/utils";
 import api from "~/services/api";
 import { setBindingAssistant, useExtensionBindingStore } from "~/stores/extension-binding-store";
 import type { AssistantProfile, Settings } from "~/types";
-import { SettingsSplit, SortableRow } from "~/components/settings/shared";
+import {
+  type SettingsAddMenuItem,
+  SettingsListAddButton,
+  SettingsSplit,
+  SortableRow,
+} from "~/components/settings/shared";
 
 export type SectionProps = { settings: Settings; onSettings: (settings: Settings) => void };
 
@@ -93,18 +97,33 @@ export function NoAssistantsState() {
   );
 }
 
-/** 详情标题旁的「对此助手启用」开关:带可见标签,与条目自身的「启用」区分开。 */
-export function BindingSwitch({ checked, onCheckedChange }: { checked: boolean; onCheckedChange: (checked: boolean) => void }) {
-  const { t } = useTranslation();
+/** 详情页头右侧的带标签开关(条目「启用」、「对此助手启用」):标签可点击切换。 */
+export function LabeledSwitch({
+  label,
+  checked,
+  onCheckedChange,
+  disabled,
+}: {
+  label: React.ReactNode;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  disabled?: boolean;
+}) {
   const id = React.useId();
   return (
     <div className="flex items-center gap-2">
-      <label htmlFor={id} className="text-xs text-[var(--ds-text-secondary)]">
-        {t("settings:mcp.enable_for_assistant")}
+      <label htmlFor={id} className="text-sm text-[var(--ds-text-secondary)]">
+        {label}
       </label>
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
+      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
     </div>
   );
+}
+
+/** 「对此助手启用」:绑定到当前「作用于助手」,与条目自身的「启用」区分开。 */
+export function BindingSwitch({ checked, onCheckedChange }: { checked: boolean; onCheckedChange: (checked: boolean) => void }) {
+  const { t } = useTranslation();
+  return <LabeledSwitch label={t("settings:mcp.enable_for_assistant")} checked={checked} onCheckedChange={onCheckedChange} />;
 }
 
 export function prettyJson(value: unknown) {
@@ -126,14 +145,16 @@ export async function pullSettings(onSettings: (settings: Settings) => void) {
   return next;
 }
 
-export function ChevronDownChip({ expanded }: { expanded: boolean }) {
+/** 卡片展开/收起指示。 */
+export function ExpandChevron({ expanded }: { expanded: boolean }) {
   return (
-    <span
+    <ChevronDown
       aria-hidden
-      className={cn("text-muted-foreground transition", expanded ? "rotate-180" : "rotate-0")}
-    >
-      ▾
-    </span>
+      className={cn(
+        "size-4 text-[var(--ds-icon)] transition-transform duration-(--ds-duration-fast) ease-(--ds-ease-swift) motion-reduce:transition-none",
+        expanded && "rotate-180",
+      )}
+    />
   );
 }
 
@@ -146,6 +167,7 @@ export function EditorShell({
   titleOf,
   renderItem,
   onCreate,
+  createMenu,
   listHeader,
   children,
 }: {
@@ -156,8 +178,11 @@ export function EditorShell({
   onMove?: (from: number, to: number) => void | Promise<void>;
   titleOf: (item: Record<string, unknown>) => string;
   renderItem?: (item: Record<string, unknown>) => React.ReactNode;
-  onCreate: () => void | Promise<void>;
-  /** 左栏列表头部(「添加」钮与列表之间):技能/快捷消息页的「作用于助手」选择器。 */
+  /** 单一新增动作;与 createMenu 二选一。 */
+  onCreate?: () => void | Promise<void>;
+  /** 新增有多个来源/类型时:点开为下拉菜单。 */
+  createMenu?: readonly SettingsAddMenuItem[];
+  /** 左栏列表头部(「新增」钮与列表之间):技能/快捷消息页的「作用于助手」选择器。 */
   listHeader?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -166,14 +191,15 @@ export function EditorShell({
     <SettingsSplit
       list={
       <div>
-        <Button className="mb-2 w-full justify-start" variant="outline" onClick={() => void onCreate()}>
-          <Plus className="size-4" />
-          {t("settings:mcp.add_new")}
-        </Button>
+        {createMenu ? (
+          <SettingsListAddButton label={t("settings:mcp.add_new")} items={createMenu} />
+        ) : (
+          <SettingsListAddButton label={t("settings:mcp.add_new")} onClick={() => void onCreate?.()} />
+        )}
         {listHeader}
         <div className="space-y-1">
           {items.length === 0 ? (
-            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+            <div className="rounded-[var(--ds-radius-md)] border border-dashed p-6 text-center text-sm text-[var(--ds-text-secondary)]">
               {emptyLabel}
             </div>
           ) : null}

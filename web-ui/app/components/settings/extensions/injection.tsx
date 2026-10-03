@@ -22,8 +22,8 @@ import { clone, moveItem, numberText, SettingsSwitchRow, textValue } from "~/com
 import {
   BindingAssistantToolbar,
   BindingSwitch,
-  ChevronDownChip,
   EditorShell,
+  ExpandChevron,
   NoAssistantsState,
   pullSettings,
   type SectionProps,
@@ -195,7 +195,7 @@ function LorebookEntryRow({
           </span>
           <span className="shrink-0 text-xs text-muted-foreground">· {triggerSummary}</span>
         </span>
-        <ChevronDownChip expanded={expanded} />
+        <ExpandChevron expanded={expanded} />
       </button>
       {expanded ? (
         <div className="space-y-3 border-t px-3 py-3">

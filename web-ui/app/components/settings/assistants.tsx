@@ -787,10 +787,10 @@ function AssistantEditor({
               onChange={(next) =>
                 patchDraft({ customHeaders: next.map((item) => ({ name: item.key, value: item.value })) })
               }
-              keyPlaceholder={t("settings:assistants.header_name_ph")}
-              valuePlaceholder={t("settings:assistants.header_value_ph")}
-              emptyText={t("settings:assistants.no_header")}
-              removeLabel={t("settings:assistants.delete_header")}
+              keyPlaceholder={t("settings:common.header_name")}
+              valuePlaceholder={t("settings:common.header_value")}
+              emptyText={t("settings:common.no_headers")}
+              removeLabel={t("settings:common.delete_header")}
             />
             <SettingsField
               label={t("settings:assistants.bodies")}

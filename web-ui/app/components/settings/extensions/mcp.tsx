@@ -6,7 +6,7 @@ import { Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import { SegmentedControl } from "~/components/ui/segmented-tabs";
 import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import Markdown from "~/components/markdown/markdown";
@@ -19,10 +19,24 @@ import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import { useMcpHealthStore } from "~/stores";
 import type { McpHealthEntryDto, Settings } from "~/types";
-import { clone, moveItem, textValue } from "~/components/settings/shared";
+import { readMcpHeaders, toMcpHeaderPairs } from "@server/tools/mcp-headers";
 import {
-  ChevronDownChip,
+  clone,
+  moveItem,
+  SettingsAdvancedSection,
+  SettingsDetailFooter,
+  SettingsDetailHeader,
+  SettingsField,
+  SettingsGroup,
+  type SettingsKeyValue,
+  SettingsKeyValueList,
+  SettingsStack,
+  textValue,
+} from "~/components/settings/shared";
+import {
   EditorShell,
+  ExpandChevron,
+  LabeledSwitch,
   parseJson,
   prettyJson,
   pullSettings,
@@ -32,6 +46,39 @@ import {
 /** 拓展 › MCP。MCP 服务器是全局配置(哪个助手用它在输入框 MCP 选择器里决定),无需选助手。 */
 export function McpSection({ settings, onSettings }: SectionProps) {
   return <McpServerEditor settings={settings} onSettings={onSettings} />;
+}
+
+const MCP_TRANSPORTS = [
+  { value: "streamable_http", label: "Streamable HTTP" },
+  { value: "sse", label: "SSE" },
+] as const;
+
+function headersOf(commonOptions: unknown): SettingsKeyValue[] {
+  const common = commonOptions && typeof commonOptions === "object" ? (commonOptions as Record<string, unknown>) : {};
+  return readMcpHeaders(common.headers).map((header) => ({ key: header.name, value: header.value }));
+}
+
+/** 工具行内的紧凑开关:标签与开关同排,标签可点击。 */
+function ToolSwitch({
+  label,
+  checked,
+  disabled,
+  onCheckedChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  const id = React.useId();
+  return (
+    <div className="flex shrink-0 items-center gap-1.5">
+      <label htmlFor={id} className="text-xs text-[var(--ds-text-secondary)]">
+        {label}
+      </label>
+      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+    </div>
+  );
 }
 
 function mcpName(server: Record<string, unknown>, fallback: string) {
@@ -77,20 +124,21 @@ function McpServerEditor({
   const selected =
     servers.find((item) => String(item.id) === selectedId) ?? servers[0] ?? createMcpServer();
   const [draft, setDraft] = React.useState<Record<string, unknown>>(clone(selected));
-  const [headersText, setHeadersText] = React.useState(
-    prettyJson((selected.commonOptions as Record<string, unknown> | undefined)?.headers ?? []),
+  // 请求头以结构化列表编辑(视图形状 {key,value});持久化形状由 @server/tools/mcp-headers 单源换算。
+  const [headers, setHeaders] = React.useState<SettingsKeyValue[]>(() =>
+    headersOf(selected.commonOptions),
   );
   const [toolsText, setToolsText] = React.useState(
     prettyJson((selected.commonOptions as Record<string, unknown> | undefined)?.tools ?? []),
   );
   // R8-2:三件套竞态防护("URL input eats characters" 的修复)抽成共享 hook,本编辑器是
   // 原始出处——语义与病史见 hooks/use-autosave-draft.ts 文件头。
-  // draft/headersText/toolsText 走 ref 取最新值:persist 既被防抖调用(渲染早已提交),
+  // draft/headers/toolsText 走 ref 取最新值:persist 既被防抖调用(渲染早已提交),
   // 也被 patchCommon 同步立即调用(setState 尚未提交,由 patch 同步写 ref 保证新鲜)。
   const draftRef = React.useRef(draft);
   draftRef.current = draft;
-  const headersTextRef = React.useRef(headersText);
-  headersTextRef.current = headersText;
+  const headersRef = React.useRef(headers);
+  headersRef.current = headers;
   const toolsTextRef = React.useRef(toolsText);
   toolsTextRef.current = toolsText;
   // 域7-1(3A):保存进行中 indicator 由 hook status 机驱动,删掉手维护 busy;
@@ -106,7 +154,7 @@ function McpServerEditor({
         ...currentDraft,
         commonOptions: {
           ...currentCommon,
-          headers: parseJson<unknown[]>(headersTextRef.current, [], t("settings:mcp.json_invalid")),
+          headers: toMcpHeaderPairs(headersRef.current.map((item) => ({ name: item.key, value: item.value }))),
           tools: parseJson<unknown[]>(toolsTextRef.current, [], t("settings:mcp.json_invalid")),
         },
       };
@@ -137,9 +185,7 @@ function McpServerEditor({
     if (!next) return;
     if (String(next.id) !== selectedId) setSelectedId(String(next.id));
     setDraft(clone(next));
-    setHeadersText(
-      prettyJson((next.commonOptions as Record<string, unknown> | undefined)?.headers ?? []),
-    );
+    setHeaders(headersOf(next.commonOptions));
     setToolsText(
       prettyJson((next.commonOptions as Record<string, unknown> | undefined)?.tools ?? []),
     );
@@ -158,6 +204,8 @@ function McpServerEditor({
   // Inline expand state — matches Android McpToolCard (SettingMcpPage.kt:801 `var expanded`).
   // Tracked by tool name (server-unique) so re-renders don't lose the open card.
   const [expandedToolName, setExpandedToolName] = React.useState<string | null>(null);
+  // 「高级设置」展开态:切换服务器不收起,离开本页(重挂载)复位为收起。
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const patchDraft = (nextDraft: Record<string, unknown>) => {
     markDirty();
     setDraft(nextDraft);
@@ -173,7 +221,7 @@ function McpServerEditor({
   };
   // Merge the server's authoritative fields (fetched tools, sync status, Transition 1/2
   // enable flips) into the current draft WITHOUT touching user-edited fields (url / name /
-  // headers text). Functional setState reads the freshest draft, so keystrokes that landed
+  // headers). Functional setState reads the freshest draft, so keystrokes that landed
   // during the save's network round-trip survive the merge.
   const applyServerResult = (serverData: Record<string, unknown>) => {
     const serverCommon =
@@ -278,7 +326,7 @@ function McpServerEditor({
       // 删到空:复位为挂载空列表时同款的空白新草稿(重对齐 effect 无条目可载)
       setSelectedId("");
       setDraft(clone(createMcpServer()));
-      setHeadersText("[]");
+      setHeaders([]);
       setToolsText("[]");
     }
     toast.success(t("settings:mcp.server.deleted"));
@@ -333,7 +381,7 @@ function McpServerEditor({
           await pullSettings(onSettings);
           setSelectedId(String(next.id));
           setDraft(clone(next));
-          setHeadersText("[]");
+          setHeaders([]);
           setToolsText("[]");
           autosave.reset();
         } catch (error) {
@@ -341,289 +389,263 @@ function McpServerEditor({
         }
       }}
     >
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium">{t("settings:mcp.server.detail")}</div>
-            <div className="text-xs text-muted-foreground">
-              {t("settings:mcp.server.detail_desc")}
-            </div>
-          </div>
-        </div>
-        <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-          <label className="space-y-1">
-            <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.name")}</span>
-            <Input
-              value={textValue(common.name)}
-              onChange={(event) =>
-                patchDraft({ ...draft, commonOptions: { ...common, name: event.target.value } })
-              }
-              placeholder={t("settings:mcp.name_ph")}
-            />
-          </label>
-          <label className="flex items-end gap-2 pb-1">
-            <span className="pb-2 text-sm text-muted-foreground">{t("settings:mcp.enabled")}</span>
-            <Switch
-              checked={common.enable !== false}
-              onCheckedChange={(checked) => patchCommon({ enable: checked })}
-            />
-          </label>
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="space-y-1">
-          <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.transport")}</span>
-          <Select
-            value={textValue(draft.type) || "streamable_http"}
-            onValueChange={(value) => patchDraft({ ...draft, type: value })}
-          >
-            <SelectTrigger className="w-full" aria-label={t("settings:mcp.transport")}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="streamable_http">Streamable HTTP</SelectItem>
-              <SelectItem value="sse">SSE</SelectItem>
-            </SelectContent>
-          </Select>
-          </label>
-        </div>
-        <label className="space-y-1">
-          <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.server.url")}</span>
-          <Input
-            value={textValue(draft.url)}
-            onChange={(event) => patchDraft({ ...draft, url: event.target.value })}
-            placeholder="https://example.com/mcp"
+      <div className="@container">
+        <SettingsStack>
+          <SettingsDetailHeader
+            title={textValue(common.name) || t("settings:mcp.server.default_name")}
+            description={t("settings:mcp.server.detail_desc")}
+            action={
+              <LabeledSwitch
+                label={t("settings:mcp.enabled")}
+                checked={serverEnabled}
+                onCheckedChange={(checked) => patchCommon({ enable: checked })}
+              />
+            }
           />
-          <span className="block text-xs text-muted-foreground">
-            {t("settings:mcp.server.url_desc")}
-          </span>
-        </label>
-        {/* 决策①③:实时健康状态行——只在"已启用"时显示;故障给人话原因 + 立即重连/重新授权。 */}
-        {common.enable !== false && liveHealth ? (
-          <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
-            <div className="flex min-w-0 items-center gap-2">
+
+          <SettingsGroup title={t("settings:mcp.connection_title")} fields>
+            <SettingsField label={t("settings:mcp.name")}>
+              <Input
+                value={textValue(common.name)}
+                onChange={(event) =>
+                  patchDraft({ ...draft, commonOptions: { ...common, name: event.target.value } })
+                }
+                placeholder={t("settings:mcp.server.default_name")}
+              />
+            </SettingsField>
+            <SettingsField label={t("settings:mcp.transport")}>
+              <SegmentedControl
+                stretch
+                aria-label={t("settings:mcp.transport")}
+                items={MCP_TRANSPORTS}
+                value={textValue(draft.type) === "sse" ? "sse" : "streamable_http"}
+                onChange={(type) => patchDraft({ ...draft, type })}
+              />
+            </SettingsField>
+            <SettingsField label={t("settings:mcp.server.url")} hint={t("settings:mcp.server.url_desc")}>
+              <Input
+                value={textValue(draft.url)}
+                onChange={(event) => patchDraft({ ...draft, url: event.target.value })}
+                placeholder="https://example.com/mcp"
+              />
+            </SettingsField>
+            {/* 决策①③:实时健康状态行——只在"已启用"时显示;故障给人话原因 + 立即重连/重新授权。 */}
+            {serverEnabled && liveHealth ? (
+              <div className="flex items-center justify-between gap-3 rounded-[var(--ds-radius-md)] border px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    className={cn(
+                      "size-2 shrink-0 rounded-full",
+                      liveHealth.status === "ready"
+                        ? "bg-success"
+                        : liveHealth.status === "reconnecting"
+                          ? "animate-pulse bg-amber-500"
+                          : "bg-destructive",
+                    )}
+                  />
+                  <span className="truncate text-xs text-[var(--ds-text-secondary)]">
+                    {liveHealth.status === "ready"
+                      ? t("settings:mcp.health.ready")
+                      : liveHealth.status === "reconnecting"
+                        ? t("settings:mcp.health.reconnecting", { attempt: liveHealth.attempt, max: liveHealth.maxAttempts })
+                        : t(`settings:mcp.health.kind_${liveHealth.kind}`, { defaultValue: liveHealth.message })}
+                  </span>
+                </div>
+                {liveHealth.status === "failed" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={reconnectBusy}
+                    onClick={() => void reconnectNow()}
+                  >
+                    {reconnectBusy ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                    {liveHealth.kind === "auth_expired" ? t("settings:mcp.oauth.reauthorize") : t("settings:mcp.health.reconnect_now")}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </SettingsGroup>
+
+          <SettingsGroup
+            title={t("settings:mcp.oauth.title")}
+            description={t("settings:mcp.oauth.desc")}
+            action={
               <span
                 className={cn(
-                  "size-2 shrink-0 rounded-full",
-                  liveHealth.status === "ready"
-                    ? "bg-success"
-                    : liveHealth.status === "reconnecting"
-                      ? "animate-pulse bg-amber-500"
-                      : "bg-destructive",
+                  "rounded-full px-2 py-0.5 text-xs",
+                  oauthAuthorized
+                    ? "bg-success/10 text-success"
+                    : "bg-[var(--ds-on-surface)] text-[var(--ds-text-secondary)]",
                 )}
-              />
-              <span className="truncate text-xs text-muted-foreground">
-                {liveHealth.status === "ready"
-                  ? t("settings:mcp.health.ready")
-                  : liveHealth.status === "reconnecting"
-                    ? t("settings:mcp.health.reconnecting", { attempt: liveHealth.attempt, max: liveHealth.maxAttempts })
-                    : t(`settings:mcp.health.kind_${liveHealth.kind}`, { defaultValue: liveHealth.message })}
+              >
+                {oauthAuthorized ? t("settings:mcp.oauth.authorized") : t("settings:mcp.oauth.not_authorized")}
               </span>
-            </div>
-            {liveHealth.status === "failed" ? (
+            }
+            fields
+          >
+            <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={reconnectBusy}
-                onClick={() => void reconnectNow()}
+                disabled={oauthBusy || !textValue(draft.url)}
+                onClick={() => void startOAuth()}
               >
-                {reconnectBusy ? <Loader2 className="size-3.5 animate-spin" /> : null}
-                {liveHealth.kind === "auth_expired" ? t("settings:mcp.oauth.reauthorize") : t("settings:mcp.health.reconnect_now")}
+                {oauthBusy ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                {oauthAuthorized ? t("settings:mcp.oauth.reauthorize") : t("settings:mcp.oauth.authorize")}
               </Button>
-            ) : null}
-          </div>
-        ) : null}
-        <label className="space-y-1">
-          <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.server.headers_json")}</span>
-          <Textarea
-            value={headersText}
-            onChange={(event) => {
-              markDirty();
-              setHeadersText(event.target.value);
-            }}
-            className="min-h-24 font-mono text-xs"
-            placeholder='[["Authorization","Bearer ..."]]'
-          />
-          <span className="block text-xs text-muted-foreground">
-            {t("settings:mcp.server.headers_desc")}
-          </span>
-        </label>
-        <div className="space-y-2 rounded-md border p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-medium">{t("settings:mcp.oauth.title")}</div>
-              <div className="text-xs text-muted-foreground">{t("settings:mcp.oauth.desc")}</div>
-            </div>
-            <span
-              className={cn(
-                "shrink-0 rounded-full px-2 py-0.5 text-xs",
-                oauthAuthorized ? "bg-success/10 text-success" : "bg-muted text-muted-foreground",
-              )}
-            >
-              {oauthAuthorized
-                ? t("settings:mcp.oauth.authorized")
-                : t("settings:mcp.oauth.not_authorized")}
-            </span>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={oauthBusy || !textValue(draft.url)}
-              onClick={() => void startOAuth()}
-            >
-              {oauthBusy ? (
-                <Loader2 className="size-3.5 animate-spin" />
+              {liveOauth ? (
+                <Button type="button" size="sm" variant="ghost" disabled={oauthBusy} onClick={() => void clearOAuth()}>
+                  {t("settings:mcp.oauth.clear")}
+                </Button>
               ) : null}
-              {oauthAuthorized
-                ? t("settings:mcp.oauth.reauthorize")
-                : t("settings:mcp.oauth.authorize")}
-            </Button>
-            {liveOauth ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={oauthBusy}
-                onClick={() => void clearOAuth()}
-              >
-                {t("settings:mcp.oauth.clear")}
-              </Button>
-            ) : null}
-          </div>
-        </div>
-        <label className="space-y-1">
-          <span className="text-xs font-medium text-muted-foreground">{t("settings:mcp.server.tools_json")}</span>
-          <Textarea
-            value={toolsText}
-            onChange={(event) => {
-              markDirty();
-              setToolsText(event.target.value);
-            }}
-            className="h-44 max-h-44 font-mono text-xs"
-            placeholder={t("settings:mcp.server.tools_ph")}
-          />
-          <span className="block text-xs text-muted-foreground">
-            {t("settings:mcp.server.tools_desc")}
-            {textValue(common.lastSyncError) ? t("settings:mcp.server.last_error", { error: textValue(common.lastSyncError) }) : ""}
-          </span>
-        </label>
-        <div className="rounded-md border">
-          <div className="border-b px-3 py-2 text-sm font-medium">{t("settings:mcp.server.tools_title")}</div>
-          <div className="max-h-[28rem] overflow-auto p-2">
+            </div>
+          </SettingsGroup>
+
+          <SettingsGroup
+            title={t("settings:mcp.server.tools_title")}
+            description={
+              textValue(common.lastSyncError) ? (
+                <span className="text-destructive">
+                  {t("settings:mcp.server.last_error", { error: textValue(common.lastSyncError) })}
+                </span>
+              ) : tools.length > 0 ? (
+                t("settings:mcp.server.tools_count", { count: tools.length })
+              ) : undefined
+            }
+            fields
+          >
             {tools.length === 0 ? (
-              <div className="p-3 text-sm text-muted-foreground">{t("settings:mcp.server.tools_empty")}</div>
-            ) : null}
-            {/* McpToolCard mirror — first row: name + needs-approval switch + enable switch +
-                expand chevron. Expanded body: markdown description + JSON-schema property tags.
-                Matches Android SettingMcpPage.kt:795-902 (no Dialog, all inline).
-                Master/child semantics: when the MCP server's commonOptions.enable is false,
-                the per-tool switches are read-only and greyed out — but they STILL show the
-                user's last preference, which the master-on transition will revive. */}
-            {tools.map((tool, index) => {
-              const name = textValue(tool.name) || t("settings:mcp.unnamed_tool");
-              const description = textValue(tool.description);
-              const enabled = tool.enable !== false;
-              const needsApproval = tool.needsApproval === true;
-              const expanded = expandedToolName === name;
-              const schema =
-                tool.inputSchema && typeof tool.inputSchema === "object"
-                  ? (tool.inputSchema as Record<string, unknown>)
-                  : null;
-              const properties =
-                schema && schema.properties && typeof schema.properties === "object"
-                  ? (schema.properties as Record<string, Record<string, unknown>>)
-                  : {};
-              const required = Array.isArray(schema?.required)
-                ? (schema!.required as unknown[]).map(String)
-                : [];
-              const propertyEntries = Object.entries(properties);
-              return (
-                <div
-                  key={`${name}_${index}`}
-                  className={cn(
-                    "rounded-md border bg-muted/20 px-3 py-2 mb-2 last:mb-0",
-                    !serverEnabled && "opacity-60",
-                  )}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="flex-1 truncate text-sm font-medium" title={name}>
-                      {name}
-                    </span>
-                    <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <span>{t("settings:mcp.server.needs_approval")}</span>
-                      <Switch
-                        checked={needsApproval}
-                        disabled={!serverEnabled}
-                        onCheckedChange={(checked) =>
-                          updateToolAt(index, { needsApproval: checked })
-                        }
-                      />
-                    </label>
-                    <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <span>{t("settings:mcp.enabled")}</span>
-                      <Switch
-                        checked={enabled}
-                        disabled={!serverEnabled}
-                        onCheckedChange={(checked) => updateToolAt(index, { enable: checked })}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setExpandedToolName(expanded ? null : name)}
-                      className="text-muted-foreground hover:text-foreground"
-                      aria-label={expanded ? t("settings:mcp.server.collapse") : t("settings:mcp.server.expand")}
-                    >
-                      <ChevronDownChip expanded={expanded} />
-                    </button>
-                  </div>
-                  {expanded ? (
-                    <div className="mt-2 space-y-2">
-                      {description ? (
-                        <div className="text-xs text-muted-foreground">
-                          <Markdown content={description} className="message-markdown" />
-                        </div>
-                      ) : null}
-                      {propertyEntries.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {propertyEntries.map(([propName]) => {
-                            const isRequired = required.includes(propName);
-                            return (
-                              <span
-                                key={propName}
-                                className={cn(
-                                  "rounded-md px-2 py-0.5 font-mono text-mini",
-                                  isRequired
-                                    ? "bg-blue-500/10 text-blue-700 dark:text-blue-300"
-                                    : "bg-background text-muted-foreground border",
-                                )}
-                                title={isRequired ? `${propName} ${t("settings:mcp.param_required")}` : propName}
-                              >
-                                {propName}
-                              </span>
-                            );
-                          })}
+              <div className="rounded-[var(--ds-radius-md)] border border-dashed p-4 text-center text-sm text-[var(--ds-text-secondary)]">
+                {t("settings:mcp.server.tools_empty")}
+              </div>
+            ) : (
+              // McpToolCard 镜像:行首 名称 + 需要审核 + 启用 + 展开;展开后是 markdown 描述与
+              // 参数标签(对齐安卓 SettingMcpPage.kt:795-902,全部内联)。服务器总开关关闭时
+              // 子开关只读置灰,但仍显示上次偏好——重新开启后照此恢复。
+              <div className="max-h-[28rem] divide-y divide-[var(--ds-divider)] overflow-auto rounded-[var(--ds-radius-md)] border">
+                {tools.map((tool, index) => {
+                  const name = textValue(tool.name) || t("settings:mcp.unnamed_tool");
+                  const description = textValue(tool.description);
+                  const expanded = expandedToolName === name;
+                  const schema =
+                    tool.inputSchema && typeof tool.inputSchema === "object"
+                      ? (tool.inputSchema as Record<string, unknown>)
+                      : null;
+                  const properties =
+                    schema && schema.properties && typeof schema.properties === "object"
+                      ? (schema.properties as Record<string, Record<string, unknown>>)
+                      : {};
+                  const required = Array.isArray(schema?.required)
+                    ? (schema!.required as unknown[]).map(String)
+                    : [];
+                  const propertyEntries = Object.entries(properties);
+                  return (
+                    <div key={`${name}_${index}`} className={cn("px-3 py-2", !serverEnabled && "opacity-60")}>
+                      <div className="flex items-center gap-3">
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium" title={name}>
+                          {name}
+                        </span>
+                        <ToolSwitch
+                          label={t("settings:mcp.server.needs_approval")}
+                          checked={tool.needsApproval === true}
+                          disabled={!serverEnabled}
+                          onCheckedChange={(checked) => updateToolAt(index, { needsApproval: checked })}
+                        />
+                        <ToolSwitch
+                          label={t("settings:mcp.enabled")}
+                          checked={tool.enable !== false}
+                          disabled={!serverEnabled}
+                          onCheckedChange={(checked) => updateToolAt(index, { enable: checked })}
+                        />
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost"
+                          aria-expanded={expanded}
+                          aria-label={expanded ? t("settings:mcp.server.collapse") : t("settings:mcp.server.expand")}
+                          onClick={() => setExpandedToolName(expanded ? null : name)}
+                        >
+                          <ExpandChevron expanded={expanded} />
+                        </Button>
+                      </div>
+                      {expanded ? (
+                        <div className="mt-2 space-y-2">
+                          {description ? (
+                            <div className="text-xs text-[var(--ds-text-secondary)]">
+                              <Markdown content={description} className="message-markdown" />
+                            </div>
+                          ) : null}
+                          {propertyEntries.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {propertyEntries.map(([propName]) => {
+                                const isRequired = required.includes(propName);
+                                return (
+                                  <span
+                                    key={propName}
+                                    className={cn(
+                                      "rounded-md px-2 py-0.5 font-mono text-mini",
+                                      isRequired
+                                        ? "bg-blue-500/10 text-blue-700 dark:text-blue-300"
+                                        : "border bg-background text-muted-foreground",
+                                    )}
+                                    title={isRequired ? `${propName} ${t("settings:mcp.param_required")}` : propName}
+                                  >
+                                    {propName}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <div className="flex justify-end gap-2">
-          <AutosaveStatusRow
-            className="mr-auto"
-            status={autosave.status}
-            onRetry={() => void autosave.saveNow()}
-          />
-          <Button variant="destructive" onClick={() => void remove()} disabled={!selected.id}>
-            <Trash2 className="size-4" />
-            {t("settings:mcp.delete")}
-          </Button>
-        </div>
+                  );
+                })}
+              </div>
+            )}
+          </SettingsGroup>
+
+          {/* 请求头里通常是鉴权凭据:配置过就亮圆点,默认折叠也不会把它藏起来。 */}
+          <SettingsAdvancedSection open={advancedOpen} onOpenChange={setAdvancedOpen} attention={headers.length > 0}>
+            <div className="space-y-5 pt-2">
+              <SettingsKeyValueList
+                label={t("settings:mcp.server.headers")}
+                description={t("settings:mcp.server.headers_desc")}
+                items={headers}
+                onChange={(next) => {
+                  markDirty();
+                  setHeaders(next);
+                }}
+                keyPlaceholder={t("settings:common.header_name")}
+                valuePlaceholder={t("settings:common.header_value")}
+                emptyText={t("settings:common.no_headers")}
+                removeLabel={t("settings:common.delete_header")}
+              />
+              <SettingsField label={t("settings:mcp.server.tools_json")} hint={t("settings:mcp.server.tools_desc")}>
+                <Textarea
+                  value={toolsText}
+                  onChange={(event) => {
+                    markDirty();
+                    setToolsText(event.target.value);
+                  }}
+                  className="h-44 max-h-44 font-mono text-xs"
+                  placeholder={t("settings:mcp.server.tools_ph")}
+                />
+              </SettingsField>
+            </div>
+          </SettingsAdvancedSection>
+
+          <SettingsDetailFooter
+            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+          >
+            <Button variant="destructive" onClick={() => void remove()} disabled={!selected.id}>
+              <Trash2 className="size-4" />
+              {t("settings:mcp.delete")}
+            </Button>
+          </SettingsDetailFooter>
+        </SettingsStack>
       </div>
     </EditorShell>
   );
