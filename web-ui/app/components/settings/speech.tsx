@@ -1,4 +1,5 @@
-// components/settings/speech.tsx — 语音 › 文字转语音 / 语音识别两页(服务配置与试听)
+// components/settings/speech.tsx — 语音 › 文字转语音 / 语音识别两页(服务配置与试听)。
+// 每个服务的配置字段由 speech-catalog 声明、speech-fields 渲染,本文件只管列表/选择/保存/试听。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -6,29 +7,21 @@ import { Check, Square, Trash2, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
-import { Slider } from "~/components/ui/slider";
-import { Switch } from "~/components/ui/switch";
-import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { getAudioPlaybackKey, playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
-import { createId } from "~/lib/id";
 import { patchDisplay } from "~/lib/settings-patch";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
-import type {
-  AsrProviderProfile,
-  AsrProviderType,
-  Settings,
-  TtsProviderProfile,
-  TtsProviderType,
-} from "~/types";
+import type { AsrProviderProfile, AsrProviderType, Settings, TtsProviderProfile, TtsProviderType } from "~/types";
 import {
   clone,
   moveItem,
-  PasswordInput,
+  SettingsAdvancedSection,
   SettingsDetailFooter,
+  SettingsDetailHeader,
+  SettingsField,
   SettingsGroup,
+  SettingsListAddButton,
   SettingsRows,
   SettingsSplit,
   SettingsStack,
@@ -36,295 +29,72 @@ import {
   SortableRow,
 } from "~/components/settings/shared";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
-
+import {
+  ASR_TYPES,
+  asrFields,
+  asrSpec,
+  createAsrProvider,
+  createTtsProvider,
+  hasCustomizedAdvanced,
+  TTS_TYPES,
+  ttsFields,
+  ttsSpec,
+} from "~/components/settings/speech-catalog";
+import { SpeechFields } from "~/components/settings/speech-fields";
 
 // 设置页试听的播放键前缀;卸载时据此判断当前播放的是不是本页的试听。
 const TTS_TEST_KEY_PREFIX = "__tts-test__";
 
-function createAsrProvider(type: AsrProviderType = "openai_realtime"): AsrProviderProfile {
-  const base = {
-    id: createId(),
-    type,
-    apiKey: "",
-    language: "",
-  } as AsrProviderProfile;
-  if (type === "dashscope") {
-    return {
-      ...base,
-      name: "DashScope ASR",
-      websocketUrl: "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
-      model: "qwen3-asr-flash-realtime",
-      sampleRate: 16000,
-      vadThreshold: 0.2,
-      silenceDurationMs: 800,
-    };
-  }
-  if (type === "volcengine") {
-    return {
-      ...base,
-      name: "Volcengine ASR",
-      websocketUrl: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
-      resourceId: "volc.seedasr.sauc.duration",
-    };
-  }
-  return {
-    ...base,
-    name: "OpenAI Realtime ASR",
-    websocketUrl: "wss://api.openai.com/v1/realtime?intent=transcription",
-    model: "gpt-4o-transcribe",
-    prompt: "",
-    sampleRate: 24000,
-    vadThreshold: 0.5,
-    prefixPaddingMs: 300,
-    silenceDurationMs: 500,
+type Draft = Record<string, unknown>;
+
+function useTtsTypeLabel() {
+  const { t } = useTranslation();
+  return (type: string) => {
+    const spec = ttsSpec(type);
+    return spec?.labelKey ? t(spec.labelKey) : (spec?.label ?? type);
   };
 }
 
-function createTtsProvider(type: TtsProviderType = "system"): TtsProviderProfile {
-  const base = {
-    id: createId(),
-    type,
-    apiKey: "",
-    baseUrl: "",
-  } as TtsProviderProfile;
-  if (type === "openai")
-    return {
-      ...base,
-      name: "OpenAI TTS",
-      baseUrl: "https://api.openai.com/v1",
-      model: "gpt-4o-mini-tts",
-      voice: "alloy",
-    };
-  if (type === "gemini")
-    return {
-      ...base,
-      name: "Gemini TTS",
-      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-      model: "gemini-2.5-flash-preview-tts",
-      voiceName: "Kore",
-    };
-  if (type === "minimax")
-    return {
-      ...base,
-      name: "MiniMax TTS",
-      baseUrl: "https://api.minimaxi.com/v1",
-      model: "speech-2.6-turbo",
-      voiceId: "female-shaonv",
-      emotion: "calm",
-      speed: 1,
-    };
-  if (type === "qwen")
-    return {
-      ...base,
-      name: "Qwen TTS",
-      // qwen-audio-3.0(§4.5):baseUrl 含 {WorkspaceId} 占位符,用户须替换为阿里云百炼业务空间 ID。
-      baseUrl: "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1",
-      model: "qwen-audio-3.0-tts-flash",
-      voice: "longanhuan_v3.6",
-      format: "wav",
-      sampleRate: 24000,
-    };
-  if (type === "groq")
-    return {
-      ...base,
-      name: "Groq TTS",
-      baseUrl: "https://api.groq.com/openai/v1",
-      model: "canopylabs/orpheus-v1-english",
-      voice: "austin",
-    };
-  if (type === "xai")
-    return {
-      ...base,
-      name: "xAI TTS",
-      baseUrl: "https://api.x.ai/v1",
-      voiceId: "eve",
-      language: "auto",
-    };
-  if (type === "mimo")
-    return {
-      ...base,
-      name: "MiMo TTS",
-      baseUrl: "https://api.xiaomimimo.com/v1",
-      model: "mimo-v2.5-tts",
-      voice: "mimo_default",
-    };
-  if (type === "elevenlabs")
-    return {
-      ...base,
-      name: "ElevenLabs TTS",
-      baseUrl: "https://api.elevenlabs.io",
-      model: "eleven_multilingual_v2",
-      voiceId: "JBFqnCBsd6RMkjVDRZzb",
-      stability: 0.5,
-      similarityBoost: 0.75,
-    };
-  if (type === "step")
-    return {
-      ...base,
-      name: "Step TTS",
-      baseUrl: "https://api.stepfun.com",
-      model: "step-tts-mini",
-      voice: "elegantgentle-female",
-      responseFormat: "mp3",
-      speed: 1,
-      volume: 1,
-      sampleRate: 24000,
-      instruction: "",
-    };
-  if (type === "fish-audio")
-    return {
-      ...base,
-      name: "Fish Audio TTS",
-      baseUrl: "https://api.fish.audio",
-      model: "s2.1-pro",
-      referenceId: "",
-      temperature: 0.7,
-      speed: 1,
-      format: "mp3",
-      topP: 0.7,
-      chunkLength: 300,
-      normalize: true,
-      latency: "normal",
-    };
-  if (type === "volcengine")
-    return {
-      ...base,
-      name: "Volcengine TTS",
-      baseUrl: "https://openspeech.bytedance.com",
-      resourceId: "seed-tts-2.0",
-      speaker: "zh_female_vv_uranus_bigtts",
-      speechRate: 0,
-    };
-  return {
-    ...base,
-    id: "026a01a2-c3a0-4fd5-8075-80e03bdef200",
-    name: "System TTS",
-    speechRate: 1,
-    pitch: 1,
-  };
+function asrTypeLabel(type: string) {
+  return asrSpec(type)?.label ?? type;
 }
 
-// Voice option lists per provider type. These mirror the curated dropdowns in Android's
-// `TTSProviderConfigure.kt` — using `<Select>` (vs free-text `<Input>`) prevents typos
-// that would otherwise cause silent 400/422 from the provider with no UI feedback.
-// Lists are taken verbatim from the Android source as of v2.2.5.
-const TTS_VOICES_OPENAI = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"] as const;
-const TTS_VOICES_GROQ = ["austin", "natalie", "kailin"] as const;
-const TTS_VOICES_XAI = ["eve", "ara", "rex", "sal", "leo"] as const;
-const TTS_VOICES_MINIMAX = [
-  "male-qn-qingse",
-  "male-qn-jingying",
-  "male-qn-badao",
-  "male-qn-daxuesheng",
-  "female-shaonv",
-  "female-yujie",
-  "female-chengshu",
-  "female-tianmei",
-  "audiobook_male_1",
-  "audiobook_female_1",
-  "cartoon_pig",
-] as const;
-const TTS_EMOTIONS_MINIMAX = [
-  "calm",
-  "happy",
-  "sad",
-  "angry",
-  "fearful",
-  "disgusted",
-  "surprised",
-] as const;
-// qwen-audio-3.0(§4.5):音色按 model 分两组,对齐安卓 TTSProviderConfigure.kt:591 的 when 分支。
-const TTS_VOICES_QWEN_BY_MODEL: Record<string, readonly string[]> = {
-  "qwen-audio-3.0-tts-plus": ["longanlingxin", "longanlufeng"],
-  "qwen-audio-3.0-tts-flash": [
-    "longanfengyue",
-    "longanyuanfei",
-    "longanlingxi",
-    "longanxiaoxin",
-    "longanhuan_v3.6",
-    "longjielidou_v3.6",
-    "longpaopao_v3.6",
-    "longhuohuo_v3.6",
-    "longchuanshu_v3.6",
-    "loongmary",
-    "loongeva_v3.6",
-    "loongjohn",
-  ],
-};
-const TTS_FORMATS_QWEN = ["wav", "mp3", "pcm", "opus"] as const;
-const TTS_SAMPLE_RATES_QWEN = [8000, 16000, 22050, 24000, 44100, 48000] as const;
-const TTS_VOICES_MIMO = [
-  "mimo_default",
-  "冰糖",
-  "茉莉",
-  "苏打",
-  "白桦",
-  "Mia",
-  "Chloe",
-  "Milo",
-  "Dean",
-] as const;
-// step(阶跃)31 个音色,中文标签 + voice-id,对齐安卓 TTSProviderConfigure.kt:1108。
-const TTS_VOICES_STEP: { value: string; label: string }[] = [
-  { value: "elegantgentle-female", label: "气质温婉 (elegantgentle-female)" },
-  { value: "livelybreezy-female", label: "活力轻快 (livelybreezy-female)" },
-  { value: "energeticconfident-female", label: "活力自信 (energeticconfident-female)" },
-  { value: "jingdiannvsheng", label: "经典女声 (jingdiannvsheng)" },
-  { value: "wenroushunv", label: "温柔熟女 (wenroushunv)" },
-  { value: "tianmeinvsheng", label: "甜美女声 (tianmeinvsheng)" },
-  { value: "qingchunshaonv", label: "清纯少女 (qingchunshaonv)" },
-  { value: "wenrounvsheng", label: "温柔女声 (wenrounvsheng)" },
-  { value: "ruanmengnvsheng", label: "软萌女生 (ruanmengnvsheng)" },
-  { value: "youyanvsheng", label: "优雅女生 (youyanvsheng)" },
-  { value: "lengyanyujie", label: "冷艳御姐 (lengyanyujie)" },
-  { value: "shuangkuaijiejie", label: "爽快姐姐 (shuangkuaijiejie)" },
-  { value: "wenjingxuejie", label: "文静学姐 (wenjingxuejie)" },
-  { value: "linjiajiejie", label: "邻家姐姐 (linjiajiejie)" },
-  { value: "linjiameimei", label: "邻家妹妹 (linjiameimei)" },
-  { value: "zhixingjiejie", label: "知性姐姐 (zhixingjiejie)" },
-  { value: "cixingnansheng", label: "磁性男声 (cixingnansheng)" },
-  { value: "wenrounansheng", label: "温柔男声 (wenrounansheng)" },
-  { value: "yuanqinansheng", label: "元气男声 (yuanqinansheng)" },
-  { value: "zhengpaiqingnian", label: "正派青年 (zhengpaiqingnian)" },
-  { value: "ruyananshi", label: "儒雅男士 (ruyananshi)" },
-  { value: "boyinnansheng", label: "播音男声 (boyinnansheng)" },
-  { value: "shenchennanyin", label: "深沉男音 (shenchennanyin)" },
-  { value: "shuangkuainansheng", label: "爽快男声 (shuangkuainansheng)" },
-  { value: "ganliannvsheng", label: "干练女声 (ganliannvsheng)" },
-  { value: "qinhenvsheng", label: "亲切女声 (qinhenvsheng)" },
-  { value: "huolinvsheng", label: "活力女声 (huolinvsheng)" },
-  { value: "jilingshaonv", label: "机灵少女 (jilingshaonv)" },
-  { value: "yuanqishaonv", label: "元气少女 (yuanqishaonv)" },
-  { value: "wenrougongzi", label: "温柔公子 (wenrougongzi)" },
-  { value: "qingniandaxuesheng", label: "青年大学生 (qingniandaxuesheng)" },
-];
-const TTS_FORMATS_STEP = ["mp3", "wav", "pcm", "opus", "flac"] as const;
-const TTS_SAMPLE_RATES_STEP = [8000, 16000, 22050, 24000] as const;
-const TTS_FORMATS_FISH_AUDIO = ["mp3", "wav", "pcm", "opus"] as const;
-const TTS_LATENCY_FISH_AUDIO = ["normal", "balanced"] as const;
-const TTS_LANGUAGES_XAI: { value: string; label: string }[] = [
-  { value: "auto", label: "Auto-detect" },
-  { value: "en", label: "English" },
-  { value: "zh", label: "Chinese (Simplified)" },
-  { value: "ja", label: "Japanese" },
-  { value: "ko", label: "Korean" },
-  { value: "fr", label: "French" },
-  { value: "de", label: "German" },
-  { value: "es-ES", label: "Spanish (Spain)" },
-  { value: "es-MX", label: "Spanish (Mexico)" },
-  { value: "pt-BR", label: "Portuguese (Brazil)" },
-  { value: "pt-PT", label: "Portuguese (Portugal)" },
-  { value: "it", label: "Italian" },
-  { value: "ru", label: "Russian" },
-  { value: "ar-EG", label: "Arabic (Egypt)" },
-  { value: "hi", label: "Hindi" },
-  { value: "tr", label: "Turkish" },
-  { value: "vi", label: "Vietnamese" },
-  { value: "id", label: "Indonesian" },
-  { value: "bn", label: "Bengali" },
-];
+/** 服务列表的一行:名称 + 类型,当前使用中的打勾。 */
+function ProviderListItem({ name, typeLabel, current }: { name: string; typeLabel: string; current: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <span className="flex min-w-0 items-center justify-between gap-3 text-left">
+      <span className="min-w-0">
+        <span className="block truncate font-medium">{name}</span>
+        <span className="block truncate text-xs text-[var(--ds-text-secondary)]">{typeLabel}</span>
+      </span>
+      {current ? (
+        <Check className="size-4 shrink-0 text-primary" aria-label={t("settings:speech.selected")} />
+      ) : null}
+    </span>
+  );
+}
 
-/** 语音 › 文字转语音:朗读过滤 + 语音合成服务列表/详情。 */
+/** 「设为当前」与「已选择」:当前项给中性已选态(不可再点),其余给描边按钮。 */
+function SetCurrentButton({ current, onSelect }: { current: boolean; onSelect: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <Button size="sm" variant={current ? "secondary" : "outline"} disabled={current} onClick={onSelect}>
+      {current ? <Check className="size-4" /> : null}
+      {current ? t("settings:speech.selected") : t("settings:speech.set_current")}
+    </Button>
+  );
+}
+
+function EmptyDetail({ text }: { text: string }) {
+  return (
+    <div className="rounded-[var(--ds-radius-md)] border border-dashed p-10 text-center text-sm text-[var(--ds-text-secondary)]">
+      {text}
+    </div>
+  );
+}
+
+/** 语音 › 文字转语音:语音合成服务列表/详情 + 朗读过滤。 */
 export function TtsSection({
   settings,
   onSettings,
@@ -505,55 +275,106 @@ export function TtsSection({
     }
   }, [draft, isTestPlaying, testPlaybackKey, t]);
 
-  const numericInput = (
-    key: keyof TtsProviderProfile,
-    label: string,
-    description: string,
-    min: number,
-    max: number,
-    step = 0.05,
-  ) => {
-    if (!draft) return null;
-    const value = Number(draft[key] ?? 1);
-    return (
-      <div className="space-y-2">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-sm font-medium">{label}</div>
-            <div className="text-xs text-muted-foreground">{description}</div>
-          </div>
-          <Input
-            className="w-24"
-            value={Number.isFinite(value) ? String(value) : ""}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              if (Number.isFinite(next))
-                patchDraft({
-                  [key]: Math.min(max, Math.max(min, next)),
-                } as Partial<TtsProviderProfile>);
-            }}
-          />
-        </div>
-        <Slider
-          min={min}
-          max={max}
-          step={step}
-          value={[Number.isFinite(value) ? value : 1]}
-          onValueChange={([next]) =>
-            patchDraft({ [key]: next ?? 1 } as Partial<TtsProviderProfile>)
-          }
-        />
-      </div>
-    );
-  };
+  const typeLabel = useTtsTypeLabel();
+  // 「高级设置」展开态:切换服务不收起,离开本页(重挂载)复位为收起。
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const fields = draft ? ttsFields(draft.type) : [];
+  const patchFields = (patch: Draft) => patchDraft(patch as Partial<TtsProviderProfile>);
 
   return (
     <SettingsStack>
-      {/* 朗读过滤(台账 §4.1):朗读前对文本做正则预处理,角色扮演只念台词/跳过注释。 */}
-      <SettingsGroup
-        title={t("settings:speech.read_filter_title")}
-        description={t("settings:speech.read_filter_desc")}
+      <SettingsSplit
+        list={
+          <div className="space-y-1">
+            <SettingsListAddButton
+              label={t("settings:speech.add_tts")}
+              items={TTS_TYPES.map((type) => ({
+                key: type,
+                label: typeLabel(type),
+                onSelect: () => void addProvider(type),
+              }))}
+            />
+            {providers.map((provider, index) => (
+              <SortableRow
+                key={provider.id}
+                id={provider.id}
+                index={index}
+                active={provider.id === selectedId}
+                onSelect={() => setSelectedId(provider.id)}
+                onMove={reorderProviders}
+              >
+                <ProviderListItem
+                  name={provider.name}
+                  typeLabel={typeLabel(provider.type)}
+                  current={provider.id === settings.selectedTTSProviderId}
+                />
+              </SortableRow>
+            ))}
+            {providers.length === 0 ? (
+              <div className="p-6 text-center text-sm text-[var(--ds-text-secondary)]">{t("settings:speech.tts_empty")}</div>
+            ) : null}
+          </div>
+        }
       >
+        {draft ? (
+          <div className="@container">
+            <SettingsStack>
+              <SettingsDetailHeader
+                title={draft.name || typeLabel(draft.type)}
+                description={t("settings:speech.tts_detail_desc", { type: typeLabel(draft.type) })}
+                action={
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => void handleTest()} title={t("settings:speech.test_title")}>
+                      {isTestPlaying ? <Square className="size-4" /> : <Volume2 className="size-4" />}
+                      {isTestPlaying ? t("settings:speech.stop") : t("settings:speech.test")}
+                    </Button>
+                    <SetCurrentButton
+                      current={draft.id === settings.selectedTTSProviderId}
+                      onSelect={() => void selectProvider(draft.id)}
+                    />
+                  </>
+                }
+              />
+
+              <SettingsGroup fields>
+                <SettingsField label={t("settings:speech.name")}>
+                  <Input value={draft.name} onChange={(event) => patchDraft({ name: event.target.value })} />
+                </SettingsField>
+                <SpeechFields fields={fields} section="basic" draft={draft} onPatch={patchFields} />
+              </SettingsGroup>
+
+              {fields.some((field) => field.section === "advanced") ? (
+                <SettingsAdvancedSection
+                  open={advancedOpen}
+                  onOpenChange={setAdvancedOpen}
+                  attention={hasCustomizedAdvanced(draft, fields, ttsSpec(draft.type)?.template())}
+                >
+                  <div className="space-y-5 pt-2">
+                    <SpeechFields fields={fields} section="advanced" draft={draft} onPatch={patchFields} />
+                  </div>
+                </SettingsAdvancedSection>
+              ) : null}
+
+              <SettingsDetailFooter
+                status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+              >
+                {/* 系统语音是内置兜底,不可删除。 */}
+                {draft.type !== "system" ? (
+                  <Button variant="destructive" onClick={() => void removeProvider()}>
+                    <Trash2 className="size-4" />
+                    {t("settings:common.delete")}
+                  </Button>
+                ) : null}
+              </SettingsDetailFooter>
+            </SettingsStack>
+          </div>
+        ) : (
+          <EmptyDetail text={t("settings:speech.select_tts")} />
+        )}
+      </SettingsSplit>
+
+      {/* 朗读过滤对所有服务生效,是朗读偏好而非某个服务的配置,放在服务配置之后。 */}
+      <SettingsGroup title={t("settings:speech.read_filter_title")} description={t("settings:speech.read_filter_desc")}>
         <SettingsRows>
           <SettingsSwitchRow
             label={t("settings:speech.only_read_quoted")}
@@ -569,632 +390,6 @@ export function TtsSection({
           />
         </SettingsRows>
       </SettingsGroup>
-
-      <SettingsSplit
-        list={
-      <div>
-        <div className="mb-1 flex items-start justify-between gap-3 py-1">
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:speech.tts_services")}</div>
-            <div className="text-xs text-[var(--ds-text-tertiary)]">{t("settings:speech.tts_list_desc")}</div>
-          </div>
-          <Select onValueChange={(value) => void addProvider(value as TtsProviderType)}>
-            <SelectTrigger className="h-8 w-28">
-              <SelectValue placeholder={t("settings:speech.add")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="system">System</SelectItem>
-              <SelectItem value="openai">OpenAI</SelectItem>
-              <SelectItem value="gemini">Gemini</SelectItem>
-              <SelectItem value="minimax">MiniMax</SelectItem>
-              <SelectItem value="qwen">Qwen</SelectItem>
-              <SelectItem value="groq">Groq</SelectItem>
-              <SelectItem value="xai">xAI</SelectItem>
-              <SelectItem value="mimo">MiMo</SelectItem>
-              <SelectItem value="elevenlabs">ElevenLabs</SelectItem>
-              <SelectItem value="step">Step</SelectItem>
-              <SelectItem value="fish-audio">Fish Audio</SelectItem>
-              <SelectItem value="volcengine">Volcengine</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          {providers.map((provider, index) => (
-            <SortableRow
-              key={provider.id}
-              id={provider.id}
-              index={index}
-              active={provider.id === selectedId}
-              onSelect={() => setSelectedId(provider.id)}
-              onMove={reorderProviders}
-            >
-              <span className="flex min-w-0 items-center justify-between gap-3">
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">{provider.name}</span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {provider.type}
-                  </span>
-                </span>
-                {provider.id === settings.selectedTTSProviderId ? (
-                  <Check className="size-4 shrink-0 text-primary" />
-                ) : null}
-              </span>
-            </SortableRow>
-          ))}
-          {providers.length === 0 ? (
-            <div className="p-6 text-center text-sm text-muted-foreground">
-              {t("settings:speech.tts_empty")}
-            </div>
-          ) : null}
-        </div>
-      </div>
-        }
-      >
-      {draft ? (
-        <div className="space-y-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="text-lg font-semibold">{draft.name}</div>
-              <div className="text-sm text-muted-foreground">
-                {t("settings:speech.tts_card_desc")}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                onClick={() => void handleTest()}
-                title={t("settings:speech.test_title")}
-              >
-                {isTestPlaying ? <Square className="size-4" /> : <Volume2 className="size-4" />}
-                {isTestPlaying ? t("settings:speech.stop") : t("settings:speech.test")}
-              </Button>
-              <Button
-                variant={draft.id === settings.selectedTTSProviderId ? "secondary" : "outline"}
-                onClick={() => void selectProvider(draft.id)}
-              >
-                {draft.id === settings.selectedTTSProviderId
-                  ? t("settings:speech.selected")
-                  : t("settings:speech.set_current")}
-              </Button>
-              {draft.type !== "system" ? (
-                <Button variant="destructive" onClick={() => void removeProvider()}>
-                  <Trash2 className="size-4" />
-                  {t("settings:common.delete")}
-                </Button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <div className="text-sm font-medium">{t("settings:speech.name")}</div>
-              <Input
-                value={draft.name}
-                onChange={(event) => patchDraft({ name: event.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <div className="text-sm font-medium">{t("settings:speech.type")}</div>
-              <Input value={draft.type} readOnly />
-            </div>
-            {draft.type !== "system" ? (
-              <>
-                <div className="space-y-2 md:col-span-2">
-                  <div className="text-sm font-medium">{t("settings:speech.api_key")}</div>
-                  <PasswordInput
-                    value={draft.apiKey ?? ""}
-                    onChange={(apiKey) => patchDraft({ apiKey })}
-                  />
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <div className="text-sm font-medium">{t("settings:speech.base_url")}</div>
-                  <Input
-                    value={draft.baseUrl ?? ""}
-                    onChange={(event) => patchDraft({ baseUrl: event.target.value })}
-                  />
-                </div>
-                {draft.type !== "xai" ? (
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">{t("settings:speech.model")}</div>
-                    <Input
-                      value={draft.model ?? ""}
-                      onChange={(event) => patchDraft({ model: event.target.value })}
-                    />
-                  </div>
-                ) : null}
-                {draft.type === "gemini" ? (
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">{t("settings:speech.field.voice_name")}</div>
-                    <Input
-                      value={draft.voiceName ?? ""}
-                      onChange={(event) => patchDraft({ voiceName: event.target.value })}
-                    />
-                  </div>
-                ) : null}
-                {draft.type === "minimax"
-                  ? (() => {
-                      const voiceId = draft.voiceId ?? "";
-                      const isPreset = (TTS_VOICES_MINIMAX as readonly string[]).includes(voiceId);
-                      // Dropdown value: shows the matched preset, or our `__custom__` sentinel
-                      // when voiceId is empty / a custom-trained value not in the preset list.
-                      // The sentinel is needed because Radix Select reserves "" — we can't use
-                      // the empty string as an option value directly.
-                      const dropdownValue = isPreset ? voiceId : "__custom__";
-                      return (
-                        <div className="space-y-2">
-                          <div className="text-sm font-medium">{t("settings:speech.field.voice_id")}</div>
-                          {/* Preset-first combobox: dropdown is the primary control on the left;
-                          a free-text Input appears on the right ONLY when the user picks
-                          "自定义". MiniMax's voice cloning produces opaque voice IDs that
-                          aren't in our preset list, so users need to be able to paste them.
-                          Matches Android's `ExposedDropdownMenuBox` UX
-                          (`TTSProviderConfigure.kt:382-431`) where the editable text field
-                          appears once a custom voice is in use. */}
-                          <div className="flex gap-2">
-                            <Select
-                              value={dropdownValue}
-                              onValueChange={(value) => {
-                                if (value === "__custom__") {
-                                  // Switching from a preset to "custom" — wipe the voiceId so
-                                  // the input starts empty and the user is prompted to fill it.
-                                  // If we're already in custom mode (just re-selected "自定义"),
-                                  // leave the existing custom voiceId alone.
-                                  if (isPreset) patchDraft({ voiceId: "" });
-                                } else {
-                                  patchDraft({ voiceId: value });
-                                }
-                              }}
-                            >
-                              <SelectTrigger className="flex-1">
-                                <SelectValue placeholder={t("settings:speech.select_voice")} />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {TTS_VOICES_MINIMAX.map((voice) => (
-                                  <SelectItem key={voice} value={voice}>
-                                    {voice}
-                                  </SelectItem>
-                                ))}
-                                <SelectItem value="__custom__">
-                                  {t("settings:speech.custom_voice")}
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
-                            {dropdownValue === "__custom__" ? (
-                              <Input
-                                className="flex-1"
-                                value={voiceId}
-                                onChange={(event) => patchDraft({ voiceId: event.target.value })}
-                                placeholder={t("settings:speech.custom_voice_ph")}
-                              />
-                            ) : null}
-                          </div>
-                        </div>
-                      );
-                    })()
-                  : null}
-                {draft.type === "xai" ? (
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">{t("settings:speech.field.voice_id")}</div>
-                    <Select
-                      value={draft.voiceId ?? ""}
-                      onValueChange={(value) => patchDraft({ voiceId: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={t("settings:speech.select_voice")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TTS_VOICES_XAI.map((voice) => (
-                          <SelectItem key={voice} value={voice}>
-                            {voice}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : null}
-                {draft.type === "openai" || draft.type === "groq" ? (
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">{t("settings:speech.field.voice")}</div>
-                    <Select
-                      value={draft.voice ?? ""}
-                      onValueChange={(value) => patchDraft({ voice: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={t("settings:speech.select_voice")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(draft.type === "openai" ? TTS_VOICES_OPENAI : TTS_VOICES_GROQ).map((voice) => (
-                          <SelectItem key={voice} value={voice}>
-                            {voice}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : null}
-                {draft.type === "qwen" ? (
-                  // qwen-audio-3.0(§4.5):音色按 model 分两组,旧 language_type 字段已废(改 format/sample_rate)。
-                  <>
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.voice")}</div>
-                      <Select
-                        value={draft.voice ?? ""}
-                        onValueChange={(value) => patchDraft({ voice: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={t("settings:speech.select_voice")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {(TTS_VOICES_QWEN_BY_MODEL[draft.model ?? ""] ?? TTS_VOICES_QWEN_BY_MODEL["qwen-audio-3.0-tts-flash"]).map((voice) => (
-                            <SelectItem key={voice} value={voice}>
-                              {voice}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.audio_format")}</div>
-                      <Select
-                        value={draft.format ?? "wav"}
-                        onValueChange={(value) => patchDraft({ format: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={t("settings:speech.field.format")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TTS_FORMATS_QWEN.map((format) => (
-                            <SelectItem key={format} value={format}>
-                              {format}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.sample_rate")}</div>
-                      <Select
-                        value={String(draft.sampleRate ?? 24000)}
-                        onValueChange={(value) => patchDraft({ sampleRate: Number(value) })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Hz" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TTS_SAMPLE_RATES_QWEN.map((rate) => (
-                            <SelectItem key={rate} value={String(rate)}>
-                              {rate} Hz
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
-                ) : null}
-                {draft.type === "mimo" ? (
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">{t("settings:speech.field.voice")}</div>
-                    <Select
-                      value={draft.voice ?? ""}
-                      onValueChange={(value) => patchDraft({ voice: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={t("settings:speech.select_voice")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TTS_VOICES_MIMO.map((voice) => (
-                          <SelectItem key={voice} value={voice}>
-                            {voice}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : null}
-                {draft.type === "xai" ? (
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">{t("settings:speech.field.language")}</div>
-                    <Select
-                      value={draft.language ?? "auto"}
-                      onValueChange={(value) => patchDraft({ language: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={t("settings:speech.select_language")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TTS_LANGUAGES_XAI.map((lang) => (
-                          <SelectItem key={lang.value} value={lang.value}>
-                            {lang.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : null}
-                {draft.type === "minimax" ? (
-                  <>
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.emotion")}</div>
-                      {/* "自动" maps to empty string in the persisted state, which the server
-                          uses as a signal to drop the `emotion` field entirely from the
-                          MiniMax request (letting MiniMax pick based on text). We can't
-                          actually USE `""` as a Radix `<SelectItem value>` — Radix reserves
-                          empty string — so we route it through a `__auto__` sentinel and
-                          convert at the boundary. The stored data stays clean (empty string),
-                          only the UI uses the sentinel. */}
-                      <Select
-                        value={(draft.emotion ?? "") === "" ? "__auto__" : draft.emotion}
-                        onValueChange={(value) =>
-                          patchDraft({ emotion: value === "__auto__" ? "" : value })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={t("settings:speech.select_emotion")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__auto__">
-                            {t("settings:speech.emotion_auto")}
-                          </SelectItem>
-                          {TTS_EMOTIONS_MINIMAX.map((emotion) => (
-                            <SelectItem key={emotion} value={emotion}>
-                              {emotion}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="md:col-span-2">
-                      {numericInput(
-                        "speed",
-                        t("settings:speech.field.speed"),
-                        t("settings:speech.minimax_speed_desc"),
-                        0.5,
-                        2,
-                        0.05,
-                      )}
-                    </div>
-                  </>
-                ) : null}
-                {draft.type === "elevenlabs" ? (
-                  <>
-                    <div className="space-y-2 md:col-span-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.voice_id")}</div>
-                      <Input
-                        value={draft.voiceId ?? ""}
-                        onChange={(event) => patchDraft({ voiceId: event.target.value })}
-                        placeholder="JBFqnCBsd6RMkjVDRZzb"
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      {numericInput("stability", t("settings:speech.field.stability"), t("settings:speech.elevenlabs_stability_desc"), 0, 1)}
-                    </div>
-                    <div className="md:col-span-2">
-                      {numericInput("similarityBoost", t("settings:speech.field.similarity_boost"), t("settings:speech.elevenlabs_similarity_desc"), 0, 1)}
-                    </div>
-                  </>
-                ) : null}
-                {draft.type === "step" ? (
-                  <>
-                    <div className="space-y-2 md:col-span-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.voice")}</div>
-                      <Select
-                        value={draft.voice ?? ""}
-                        onValueChange={(value) => patchDraft({ voice: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={t("settings:speech.select_voice")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TTS_VOICES_STEP.map((voice) => (
-                            <SelectItem key={voice.value} value={voice.value}>
-                              {voice.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.format")}</div>
-                      <Select
-                        value={draft.responseFormat ?? "mp3"}
-                        onValueChange={(value) => patchDraft({ responseFormat: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={t("settings:speech.field.format")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TTS_FORMATS_STEP.map((format) => (
-                            <SelectItem key={format} value={format}>
-                              {format}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.sample_rate")}</div>
-                      <Select
-                        value={String(draft.sampleRate ?? 24000)}
-                        onValueChange={(value) => patchDraft({ sampleRate: Number(value) })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Hz" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TTS_SAMPLE_RATES_STEP.map((rate) => (
-                            <SelectItem key={rate} value={String(rate)}>
-                              {rate} Hz
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="md:col-span-2">
-                      {numericInput("speed", t("settings:speech.field.speed"), t("settings:speech.step_speed_desc"), 0.5, 2)}
-                    </div>
-                    <div className="md:col-span-2">
-                      {numericInput("volume", t("settings:speech.field.volume"), t("settings:speech.step_volume_desc"), 0.1, 2)}
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.instruction")}</div>
-                      <Textarea
-                        value={draft.instruction ?? ""}
-                        onChange={(event) => patchDraft({ instruction: event.target.value })}
-                        placeholder={t("settings:speech.step_instruction_ph")}
-                      />
-                      <div className="text-xs text-muted-foreground">
-                        {t("settings:speech.step_instruction_desc")}
-                      </div>
-                    </div>
-                  </>
-                ) : null}
-                {draft.type === "fish-audio" ? (
-                  <>
-                    <div className="space-y-2 md:col-span-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.reference_id")}</div>
-                      <Input
-                        value={draft.referenceId ?? ""}
-                        onChange={(event) => patchDraft({ referenceId: event.target.value })}
-                        placeholder="802e3bc2b27e49c2995d23ef70e6ac89"
-                      />
-                      <div className="text-xs text-muted-foreground">
-                        {t("settings:speech.fish_reference_desc")}
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.format")}</div>
-                      <Select
-                        value={draft.format ?? "mp3"}
-                        onValueChange={(value) => patchDraft({ format: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={t("settings:speech.field.format")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TTS_FORMATS_FISH_AUDIO.map((format) => (
-                            <SelectItem key={format} value={format}>
-                              {format}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.latency")}</div>
-                      <Select
-                        value={draft.latency ?? "normal"}
-                        onValueChange={(value) => patchDraft({ latency: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={t("settings:speech.field.latency")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TTS_LATENCY_FISH_AUDIO.map((latency) => (
-                            <SelectItem key={latency} value={latency}>
-                              {latency}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="md:col-span-2">
-                      {numericInput("temperature", t("settings:speech.field.temperature"), t("settings:speech.fish_temperature_desc"), 0, 1)}
-                    </div>
-                    <div className="md:col-span-2">
-                      {numericInput("topP", t("settings:speech.field.top_p"), t("settings:speech.fish_topp_desc"), 0, 1)}
-                    </div>
-                    <div className="md:col-span-2">
-                      {numericInput("speed", t("settings:speech.field.speed"), t("settings:speech.fish_speed_desc"), 0.5, 2)}
-                    </div>
-                    <div className="flex items-center justify-between gap-4 md:col-span-2">
-                      <div>
-                        <div className="text-sm font-medium">{t("settings:speech.field.normalize")}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {t("settings:speech.fish_normalize_desc")}
-                        </div>
-                      </div>
-                      <Switch
-                        checked={draft.normalize ?? true}
-                        onCheckedChange={(checked) => patchDraft({ normalize: checked })}
-                      />
-                    </div>
-                  </>
-                ) : null}
-                {draft.type === "volcengine" ? (
-                  <>
-                    <div className="space-y-2 md:col-span-2">
-                      <div className="text-sm font-medium">{t("settings:speech.field.resource_id")}</div>
-                      <Input
-                        value={draft.resourceId ?? ""}
-                        onChange={(event) => patchDraft({ resourceId: event.target.value })}
-                        placeholder="seed-tts-2.0"
-                      />
-                      <div className="text-xs text-muted-foreground">
-                        {t("settings:speech.volc_resource_desc")}
-                      </div>
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <div className="text-sm font-medium">{t("settings:speech.volc_speaker_label")}</div>
-                      <Input
-                        value={draft.speaker ?? ""}
-                        onChange={(event) => patchDraft({ speaker: event.target.value })}
-                        placeholder="zh_female_vv_uranus_bigtts"
-                      />
-                      <div className="text-xs text-muted-foreground">
-                        {t("settings:speech.volc_speaker_desc")}
-                      </div>
-                    </div>
-                    <div className="md:col-span-2">
-                      {numericInput(
-                        "speechRate",
-                        t("settings:speech.volc_rate_label"),
-                        t("settings:speech.volc_rate_desc"),
-                        -50,
-                        100,
-                        1,
-                      )}
-                    </div>
-                  </>
-                ) : null}
-              </>
-            ) : (
-              <div className="space-y-5 md:col-span-2">
-                {numericInput(
-                  "speechRate",
-                  t("settings:speech.field.speech_rate"),
-                  t("settings:speech.system_rate_desc"),
-                  0.2,
-                  3,
-                  0.05,
-                )}
-                {numericInput(
-                  "pitch",
-                  t("settings:speech.field.pitch"),
-                  t("settings:speech.system_pitch_desc"),
-                  0.2,
-                  3,
-                  0.05,
-                )}
-              </div>
-            )}
-          </div>
-          {/* 保存反馈(对齐其余所有分区):失败可重试,不再只有 toast。 */}
-          <SettingsDetailFooter
-            status={
-              <AutosaveStatusRow
-                status={autosave.status}
-                onRetry={() => void autosave.saveNow()}
-                className="px-0"
-              />
-            }
-          />
-        </div>
-      ) : (
-        <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-          {t("settings:speech.select_tts")}
-        </div>
-      )}
-      </SettingsSplit>
     </SettingsStack>
   );
 }
@@ -1311,251 +506,90 @@ export function AsrSection({
     setSelectedId(asrProviders[0]?.id ?? "");
   }, [draft, onSettings, providers, settings, t]);
 
-  const numericInput = (
-    key: keyof AsrProviderProfile,
-    label: string,
-    description: string,
-    min: number,
-    max: number,
-    step = 1,
-  ) => {
-    if (!draft) return null;
-    const value = Number(draft[key] ?? min);
-    return (
-      <div className="space-y-2">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-sm font-medium">{label}</div>
-            <div className="text-xs text-muted-foreground">{description}</div>
-          </div>
-          <Input
-            className="w-24"
-            value={Number.isFinite(value) ? String(value) : ""}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              if (Number.isFinite(next))
-                patchDraft({
-                  [key]: Math.min(max, Math.max(min, next)),
-                } as Partial<AsrProviderProfile>);
-            }}
-          />
-        </div>
-        <Slider
-          min={min}
-          max={max}
-          step={step}
-          value={[Number.isFinite(value) ? value : min]}
-          onValueChange={([next]) =>
-            patchDraft({ [key]: next ?? min } as Partial<AsrProviderProfile>)
-          }
-        />
-      </div>
-    );
-  };
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const fields = draft ? asrFields(draft.type) : [];
+  const patchFields = (patch: Draft) => patchDraft(patch as Partial<AsrProviderProfile>);
 
   return (
-    <SettingsStack>
-      <SettingsSplit
-        list={
-        <div>
-          <div className="mb-1 flex items-start justify-between gap-3 py-1">
-            <div className="min-w-0">
-              <div className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:speech.asr_services")}</div>
-              <div className="text-xs text-[var(--ds-text-tertiary)]">{t("settings:speech.asr_list_desc")}</div>
-            </div>
-            <Select onValueChange={(value) => void addProvider(value as AsrProviderType)}>
-              <SelectTrigger className="h-8 w-28">
-                <SelectValue placeholder={t("settings:speech.add")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="openai_realtime">OpenAI</SelectItem>
-                <SelectItem value="dashscope">DashScope</SelectItem>
-                <SelectItem value="volcengine">Volcengine</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            {providers.map((provider, index) => (
-              <SortableRow
-                key={provider.id}
-                id={provider.id}
-                index={index}
-                active={provider.id === selectedId}
-                onSelect={() => setSelectedId(provider.id)}
-                onMove={reorderProviders}
-              >
-                <span className="flex min-w-0 items-center justify-between gap-3">
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium">{provider.name}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {provider.type}
-                    </span>
-                  </span>
-                  {provider.id === settings.selectedASRProviderId ? (
-                    <Check className="size-4 shrink-0 text-primary" />
-                  ) : null}
-                </span>
-              </SortableRow>
-            ))}
-            {providers.length === 0 ? (
-              <div className="p-6 text-center text-sm text-muted-foreground">
-                {t("settings:speech.asr_empty")}
-              </div>
-            ) : null}
-          </div>
-        </div>
-        }
-      >
-        {draft ? (
-          <div className="space-y-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-lg font-semibold">{draft.name}</div>
-                <div className="text-sm text-muted-foreground">
-                  {t("settings:speech.asr_card_desc")}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant={draft.id === settings.selectedASRProviderId ? "secondary" : "outline"}
-                  onClick={() => void selectProvider(draft.id)}
-                >
-                  {draft.id === settings.selectedASRProviderId
-                    ? t("settings:speech.selected")
-                    : t("settings:speech.set_current")}
-                </Button>
-                <Button variant="destructive" onClick={() => void removeProvider()}>
-                  <Trash2 className="size-4" />
-                  {t("settings:common.delete")}
-                </Button>
-              </div>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <div className="text-sm font-medium">{t("settings:speech.name")}</div>
-                <Input
-                  value={draft.name}
-                  onChange={(event) => patchDraft({ name: event.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <div className="text-sm font-medium">{t("settings:speech.type")}</div>
-                <Input value={draft.type} readOnly />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <div className="text-sm font-medium">{t("settings:speech.api_key")}</div>
-                <PasswordInput
-                  value={draft.apiKey ?? ""}
-                  onChange={(apiKey) => patchDraft({ apiKey })}
-                />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <div className="text-sm font-medium">{t("settings:speech.ws_url")}</div>
-                <Input
-                  value={draft.websocketUrl ?? ""}
-                  onChange={(event) => patchDraft({ websocketUrl: event.target.value })}
-                />
-              </div>
-              {draft.type !== "volcengine" ? (
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">{t("settings:speech.model")}</div>
-                  <Input
-                    value={draft.model ?? ""}
-                    onChange={(event) => patchDraft({ model: event.target.value })}
-                    placeholder={
-                      draft.type === "dashscope" ? "qwen3-asr-flash-realtime" : "gpt-4o-transcribe"
-                    }
-                  />
-                </div>
-              ) : null}
-              {draft.type === "volcengine" ? (
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">{t("settings:speech.field.resource_id")}</div>
-                  <Input
-                    value={draft.resourceId ?? ""}
-                    onChange={(event) => patchDraft({ resourceId: event.target.value })}
-                    placeholder="volc.seedasr.sauc.duration"
-                  />
-                </div>
-              ) : null}
-              <div className="space-y-2">
-                <div className="text-sm font-medium">{t("settings:speech.language")}</div>
-                <Input
-                  value={draft.language ?? ""}
-                  onChange={(event) => patchDraft({ language: event.target.value })}
-                  placeholder={draft.type === "dashscope" ? "zh" : "auto"}
-                />
-              </div>
-              {draft.type === "openai_realtime" ? (
-                <div className="space-y-2 md:col-span-2">
-                  <div className="text-sm font-medium">{t("settings:speech.prompt")}</div>
-                  <Textarea
-                    value={draft.prompt ?? ""}
-                    onChange={(event) => patchDraft({ prompt: event.target.value })}
-                    placeholder={t("settings:speech.field.optional")}
-                  />
-                </div>
-              ) : null}
-            </div>
-            <div className="space-y-5">
-              {draft.type !== "volcengine"
-                ? numericInput(
-                    "sampleRate",
-                    t("settings:speech.sample_rate"),
-                    t("settings:speech.sample_rate_desc"),
-                    8000,
-                    48000,
-                    1000,
-                  )
-                : null}
-              {draft.type !== "volcengine"
-                ? numericInput(
-                    "vadThreshold",
-                    t("settings:speech.vad_threshold"),
-                    t("settings:speech.vad_threshold_desc"),
-                    0,
-                    1,
-                    0.05,
-                  )
-                : null}
-              {draft.type === "openai_realtime"
-                ? numericInput(
-                    "prefixPaddingMs",
-                    t("settings:speech.prefix_padding"),
-                    t("settings:speech.prefix_padding_desc"),
-                    0,
-                    2000,
-                    50,
-                  )
-                : null}
-              {draft.type !== "volcengine"
-                ? numericInput(
-                    "silenceDurationMs",
-                    t("settings:speech.silence_duration"),
-                    t("settings:speech.silence_duration_desc"),
-                    100,
-                    5000,
-                    100,
-                  )
-                : null}
-            </div>
-          {/* 保存反馈(对齐其余所有分区):失败可重试,不再只有 toast。 */}
-          <SettingsDetailFooter
-            status={
-              <AutosaveStatusRow
-                status={autosave.status}
-                onRetry={() => void autosave.saveNow()}
-                className="px-0"
-              />
-            }
+    <SettingsSplit
+      list={
+        <div className="space-y-1">
+          <SettingsListAddButton
+            label={t("settings:speech.add_asr")}
+            items={ASR_TYPES.map((type) => ({
+              key: type,
+              label: asrTypeLabel(type),
+              onSelect: () => void addProvider(type),
+            }))}
           />
-          </div>
-        ) : (
-          <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-            {t("settings:speech.select_asr")}
-          </div>
-        )}
-      </SettingsSplit>
-    </SettingsStack>
+          {providers.map((provider, index) => (
+            <SortableRow
+              key={provider.id}
+              id={provider.id}
+              index={index}
+              active={provider.id === selectedId}
+              onSelect={() => setSelectedId(provider.id)}
+              onMove={reorderProviders}
+            >
+              <ProviderListItem
+                name={provider.name}
+                typeLabel={asrTypeLabel(provider.type)}
+                current={provider.id === settings.selectedASRProviderId}
+              />
+            </SortableRow>
+          ))}
+          {providers.length === 0 ? (
+            <div className="p-6 text-center text-sm text-[var(--ds-text-secondary)]">{t("settings:speech.asr_empty")}</div>
+          ) : null}
+        </div>
+      }
+    >
+      {draft ? (
+        <div className="@container">
+          <SettingsStack>
+            <SettingsDetailHeader
+              title={draft.name || asrTypeLabel(draft.type)}
+              description={t("settings:speech.asr_detail_desc", { type: asrTypeLabel(draft.type) })}
+              action={
+                <SetCurrentButton
+                  current={draft.id === settings.selectedASRProviderId}
+                  onSelect={() => void selectProvider(draft.id)}
+                />
+              }
+            />
+
+            <SettingsGroup fields>
+              <SettingsField label={t("settings:speech.name")}>
+                <Input value={draft.name} onChange={(event) => patchDraft({ name: event.target.value })} />
+              </SettingsField>
+              <SpeechFields fields={fields} section="basic" draft={draft} onPatch={patchFields} />
+            </SettingsGroup>
+
+            {fields.some((field) => field.section === "advanced") ? (
+              <SettingsAdvancedSection
+                open={advancedOpen}
+                onOpenChange={setAdvancedOpen}
+                attention={hasCustomizedAdvanced(draft, fields, asrSpec(draft.type)?.template())}
+              >
+                <div className="space-y-5 pt-2">
+                  <SpeechFields fields={fields} section="advanced" draft={draft} onPatch={patchFields} />
+                </div>
+              </SettingsAdvancedSection>
+            ) : null}
+
+            <SettingsDetailFooter
+              status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+            >
+              <Button variant="destructive" onClick={() => void removeProvider()}>
+                <Trash2 className="size-4" />
+                {t("settings:common.delete")}
+              </Button>
+            </SettingsDetailFooter>
+          </SettingsStack>
+        </div>
+      ) : (
+        <EmptyDetail text={t("settings:speech.select_asr")} />
+      )}
+    </SettingsSplit>
   );
 }
