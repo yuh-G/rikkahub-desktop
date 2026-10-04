@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "~/lib/utils";
 
-// 空态时段问候(前端重构A3,复刻 NewMax 首页):按本地时间选问候词,与固定后半句
+// 空态时段问候(前端重构A3,参考首页形态):按本地时间选问候词,与固定后半句
 // 组成大标题。渲染时取当前时刻即可——空态停留期间跨时段不值得起定时器实时刷新。
 
 type Period = "morning" | "noon" | "afternoon" | "evening" | "night";

@@ -12,7 +12,7 @@ import { useWorkspaceStore } from "~/stores/workspace-store";
 import { extractErrorMessage } from "~/lib/error";
 import type { WorkspaceDto } from "~/types";
 
-// 工作区容器首屏空态(M3-6;前端重构A3 复刻 NewMax 首页):顶部工作区上下文胶囊 +
+// 工作区容器首屏空态(M3-6;前端重构A3 复刻参考项目首页):顶部工作区上下文胶囊 +
 // 时段问候大标题 + 示例提示词 chip(点击即填入输入框)。
 // folder 型的信任门已在创建流完成首次引导,这里不再二次打扰。
 //
@@ -119,7 +119,7 @@ export function WorkspaceEmptyState({
   return (
     <div className="mb-6 text-center">
       {/* 工作区上下文胶囊:名称 + 类型说明(folder 型 hover 展示真实路径),
-          对应 NewMax 首页大标题上方的提示胶囊位。 */}
+          对应参考项目首页大标题上方的提示胶囊位。 */}
       <div className="mb-4 flex justify-center">
         <span
           className="inline-flex max-w-md items-center gap-1.5 rounded-full bg-secondary px-3 py-1.5 text-xs text-muted-foreground"

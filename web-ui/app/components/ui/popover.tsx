@@ -28,7 +28,7 @@ function PopoverContent({
         align={align}
         sideOffset={sideOffset}
         className={cn(
-          // NewMax DsPopover+DsMenu 材质:18px 圆角、menu-bg、层叠投影,入场 scale 0.96
+          // 参考项目 DsPopover+DsMenu 材质:18px 圆角、menu-bg、层叠投影,入场 scale 0.96
           "ds-menu text-[var(--ds-text-primary)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-[0.96] data-[state=open]:zoom-in-[0.96] z-50 w-72 origin-(--radix-popover-content-transform-origin) p-4 outline-hidden duration-120 ease-out",
           className
         )}

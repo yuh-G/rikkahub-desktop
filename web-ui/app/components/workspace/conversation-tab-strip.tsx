@@ -27,11 +27,11 @@ import { useConversationStore } from "~/stores/conversation-store";
 import { useTabDragStore } from "~/stores/tab-drag-store";
 import type { ConversationListDto } from "~/types";
 
-// 二层会话标签(工作区 M2-1;前端重构A1 复刻 NewMax):白色内容面板的顶缘胶囊行,
+// 二层会话标签(工作区 M2-1;前端重构A1 复刻参考项目):白色内容面板的顶缘胶囊行,
 // 激活项奶油底胶囊,非激活幽灵态。标签题目用会话自动标题;"＋"回到本列的"新对话"态。
 // trailing 是行尾动作位(如会话级自定义提示词入口)。状态在 container-tabs-store,
 // 路由 /c/:id 是权威,这里只发导航,由路由同步效应回写状态。
-// G4:右键菜单五项(重命名/关闭/关闭其他/关闭右侧/关闭全部,NewMax 对位);
+// G4:右键菜单五项(重命名/关闭/关闭其他/关闭右侧/关闭全部,参考项目对位);
 // G5:悬停用自定义 Tooltip 展示完整标题(替代原生 title)。
 // L 轮分区模型:一级分栏后同屏有多个容器的标签行,容器归属由 props 显式传入,
 // 不读全局 activeTab —— 非聚焦列的标签行也要能正确寻址自己的窗格。

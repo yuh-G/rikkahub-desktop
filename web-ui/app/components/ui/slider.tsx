@@ -3,7 +3,7 @@ import { Slider as SliderPrimitive } from "radix-ui"
 
 import { cn } from "~/lib/utils"
 
-// NewMax DsSlider 形态:16px 高胶囊轨道,22×12 白色拇指嵌在轨道内(四周留 2px)。
+// 参考项目 DsSlider 形态:16px 高胶囊轨道,22×12 白色拇指嵌在轨道内(四周留 2px)。
 // 实现:根节点即轨道(overflow-hidden 裁切);拇指命中盒取 26×16 透明盒——Radix 按拇指实测
 // 宽度做 in-bounds 偏移,盒边贴轨道边,after 伪元素画内缩 2px 的白胶囊;已选段由拇指
 // before 伪元素向左无限延伸、被轨道裁切而成,因此填充恒盖到拇指右缘(两端都不露底色)。

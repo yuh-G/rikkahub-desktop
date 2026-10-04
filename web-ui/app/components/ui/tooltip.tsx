@@ -42,7 +42,7 @@ function TooltipContent({
         data-slot="tooltip-content"
         sideOffset={sideOffset}
         className={cn(
-          // NewMax Tooltip 材质:浅色 surface-100 卡片 + elevation-200,弹性入场,无箭头
+          // 参考项目 Tooltip 材质:浅色 surface-100 卡片 + elevation-200,弹性入场,无箭头
           "animate-in fade-in-0 zoom-in-[0.96] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-[0.96] z-50 w-fit max-w-xs origin-(--radix-tooltip-content-transform-origin) rounded-[10px] bg-[var(--ds-surface-100)] px-3 py-2 text-xs font-medium text-balance text-[var(--ds-text-primary)] shadow-[var(--ds-elevation-200)] duration-200",
           className
         )}

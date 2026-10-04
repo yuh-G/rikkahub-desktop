@@ -3,7 +3,7 @@ import { Switch as SwitchPrimitive } from "radix-ui"
 
 import { cn } from "~/lib/utils"
 
-// NewMax DsSwitch 规格:default 34×20 / 拇指 14 / 内边距 3 / 行程 14;sm 28×16 / 12 / 2 / 12。
+// 参考项目 DsSwitch 规格:default 34×20 / 拇指 14 / 内边距 3 / 行程 14;sm 28×16 / 12 / 2 / 12。
 // 按下时拇指横向拉伸(default 4px、sm 3px),开态同时左移等量让右缘不动——"按住"的手感。
 // issue8:所有尺寸必须是整数像素。非整数高度让圆角边缘落在半像素上,且拇指垂直居中余量
 // 无法均分,在 125%/150% DPI 下轨道与拇指各自取整方向不同 → 可见错位。改尺寸先算整数;

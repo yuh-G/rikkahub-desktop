@@ -25,10 +25,10 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
 
-// 模型选择(前端重构R2,复刻 NewMax ModelSelector):推翻 A2 的大弹层(供应商 chips+
+// 模型选择(前端重构R2,复刻参考项目 ModelSelector):推翻 A2 的大弹层(供应商 chips+
 // 模型卡列表+滑杆,会被推理区撑出窗口),改为紧凑级联菜单——供应商为父项、模型列表
 // 是子菜单,末尾分割线+思考强度子菜单。Radix DropdownMenuSub 原生做碰撞翻转与
-// 高度收敛,弹层溢出 bug 就此消除。收藏组置顶(NewMax 无此功能,保留我们的)。
+// 高度收敛,弹层溢出 bug 就此消除。收藏组置顶(参考项目无此功能,保留我们的)。
 
 export interface ModelListProps {
   disabled?: boolean;
@@ -42,7 +42,7 @@ interface ModelSection {
   models: ProviderModel[];
 }
 
-/** ds-menu-item 的左侧勾选槽(NewMax DsMenuItem 的 active 形态,18px 定宽)。 */
+/** ds-menu-item 的左侧勾选槽(参考项目 DsMenuItem 的 active 形态,18px 定宽)。 */
 function CheckSlot({ active }: { active: boolean }) {
   return (
     <span className="flex w-[18px] shrink-0 items-center justify-center">
@@ -113,7 +113,7 @@ function ModelMenuItem({
 export function ModelListImpl({ disabled = false, className, onChanged }: ModelListProps) {
   const { t } = useTranslation("input");
   const { settings, currentAssistant } = useCurrentAssistant();
-  // 模型胶囊尾缀展示当前思考强度(NewMax 形态);菜单末尾是思考强度子菜单。
+  // 模型胶囊尾缀展示当前思考强度(参考项目形态);菜单末尾是思考强度子菜单。
   const reasoningLabel = useCurrentReasoningLabel();
 
   const [updatingModelId, setUpdatingModelId] = React.useState<string | null>(null);

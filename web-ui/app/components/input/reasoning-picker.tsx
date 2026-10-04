@@ -28,7 +28,7 @@ import {
   DropdownMenuSubTrigger,
 } from "~/components/ui/dropdown-menu";
 
-// 思考强度(前端重构R2,复刻 NewMax):不再是弹层底部的滑杆折叠区,而是模型级联
+// 思考强度(前端重构R2,对齐参考项目):不再是弹层底部的滑杆折叠区,而是模型级联
 // 菜单里的一个子菜单项(ReasoningSubmenu)——父行显示"思考强度 · 当前档",子菜单
 // 是单选列表。Radix DropdownMenuSub 原生处理子菜单定位与碰撞翻转,彻底规避了
 // 旧方案滑杆撑高弹层导致超出窗口顶部的 bug。模型胶囊经 useCurrentReasoningLabel
@@ -107,7 +107,7 @@ export interface ReasoningSubmenuProps {
   disabled?: boolean;
 }
 
-/** 模型级联菜单里的思考强度子菜单(NewMax ModelSelector 的 thinkingMenuItem 形态)。 */
+/** 模型级联菜单里的思考强度子菜单(参考项目 ModelSelector 的 thinkingMenuItem 形态)。 */
 export function ReasoningSubmenu({ disabled = false }: ReasoningSubmenuProps) {
   const { t } = useTranslation("input");
   const { currentAssistant } = useCurrentAssistant();

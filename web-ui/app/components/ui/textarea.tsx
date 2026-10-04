@@ -2,7 +2,7 @@ import * as React from "react"
 
 import { cn } from "~/lib/utils"
 
-// 前端重构R4:与 Input 同套 NewMax 材质(surface-input 底 + 描边阴影三态)。
+// 前端重构R4:与 Input 同套参考项目材质(surface-input 底 + 描边阴影三态)。
 function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
   return (
     <textarea

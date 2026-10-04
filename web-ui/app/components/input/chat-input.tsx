@@ -1081,7 +1081,7 @@ function ChatInputInner({
                 </Button>
               ) : null}
               <ModelList disabled={!canSwitchModel} />
-              {/* NewMax cpd-action-btn:语音/发送合一——空文本=麦克风(常驻底色),有文本=
+              {/* cpd-action-btn:语音/发送合一——空文本=麦克风(常驻底色),有文本=
                   品牌色上箭头,录音=红底声纹条,生成中=红底停止。状态切换带宽度/配色过渡。
                   消息发送队列:生成中且有文本 → 上箭头=「发送并排队」(不打断当前流);仅空文本才落红停止。 */}
               <Button
@@ -1144,7 +1144,7 @@ function ChatInputInner({
             </div>
           </div>
         </div>
-        {/* 建议问题 chips:置于输入卡下方(NewMax 形态),pill-bg 胶囊 + 品牌色 */}
+        {/* 建议问题 chips:置于输入卡下方,pill-bg 胶囊 + 品牌色 */}
         {suggestions.length > 0 ? (
           <div className="flex gap-1.5 overflow-x-auto px-1 pt-2">
             {suggestions.map((suggestion, index) => (

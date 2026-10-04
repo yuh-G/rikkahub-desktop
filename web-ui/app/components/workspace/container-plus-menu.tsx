@@ -276,7 +276,7 @@ export function ContainerPlusMenu() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* G3 编辑工作区(NewMax 对位):名称可编辑,路径只读可点选(资源管理器中显示) */}
+      {/* G3 编辑工作区:名称可编辑,路径只读可点选(资源管理器中显示) */}
       <Dialog
         open={renameTarget !== null}
         onOpenChange={(open) => {

@@ -5,7 +5,7 @@ import { Slot } from "radix-ui"
 import { cn } from "~/lib/utils"
 import { Tooltip, TooltipContent, TooltipTrigger } from "~/components/ui/tooltip"
 
-// 前端重构R4:通用按钮换 NewMax DsButton 交互语言——胶囊圆角、transition-all、
+// 前端重构R4:通用按钮对齐参考项目 DsButton 交互语言——胶囊圆角、transition-all、
 // 按压 opacity-70(替代 scale 缩放)、实底钮 hover opacity-80、ghost hover 走
 // on-surface 底色。花色主题下由 ds 令牌派生自动跟随。
 const buttonVariants = cva(
@@ -76,7 +76,7 @@ function Button({
     />
   )
 
-  // G7:title 统一升级为 DS Tooltip(替代 Windows 原生黄条,对齐 NewMax)。
+  // G7:title 统一升级为 DS Tooltip(替代 Windows 原生黄条,对齐参考项目)。
   // disabled 按钮收不到 hover 事件,保留原生 title 兜底。
   // 注意:被 XxxTrigger asChild 包裹的 Button 不能带 title(Slot 属性会合并到
   //   Tooltip 根组件上而丢失)——此类调用点一律只留 aria-label。

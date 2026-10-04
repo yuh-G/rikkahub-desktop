@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "~/lib/utils";
 
-// I1(无边框窗口回归,按 NewMax 框架结构):顶部与侧边栏同色的窗控条,文档流内布局
+// I1(无边框窗口回归,按参考项目框架结构):顶部与侧边栏同色的窗控条,文档流内布局
 // (不是 fixed 覆盖层——G 轮教训:fixed 拖拽层 + isolate 层叠上下文会盖住标签行)。
 // 浏览器开发预览下整条不渲染,布局退回原状。
 

@@ -268,7 +268,7 @@ interface NerdStatItem {
 }
 
 // Context window 占用单独返回(渲染时推到行尾右对齐),与 token / 速度 / 时长那组左对齐分开。
-// H6:改为结构化数据,由 ContextGauge 渲染成进度环 + 悬停详情卡(NewMax 对位)。
+// H6:改为结构化数据,由 ContextGauge 渲染成进度环 + 悬停详情卡(参考项目对位)。
 interface NerdStats {
   items: NerdStatItem[];
   context: { usedTokens: number; limitTokens: number | null } | null;
@@ -349,7 +349,7 @@ function getNerdStats(
   return { items, context };
 }
 
-/** token 数简写:36k / 1M(NewMax 悬停卡口径,整数位去掉 .0)。 */
+/** token 数简写:36k / 1M(参考项目悬停卡口径,整数位去掉 .0)。 */
 function formatTokenCount(value: number): string {
   const trim = (s: string) => s.replace(/\.0$/, "");
   if (value >= 1_000_000) return `${trim((value / 1_000_000).toFixed(1))}M`;
@@ -357,7 +357,7 @@ function formatTokenCount(value: number): string {
   return String(value);
 }
 
-/** 上下文占用进度环(H6,NewMax 对位):环体填充 used/limit,悬停出详情卡;
+/** 上下文占用进度环(H6,参考项目对位):环体填充 used/limit,悬停出详情卡;
     模型上限未知时无法算百分比,退回 Gauge 图标 + 数字文本。 */
 function ContextGauge({ usedTokens, limitTokens }: { usedTokens: number; limitTokens: number | null }) {
   const { t } = useTranslation("message");

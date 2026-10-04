@@ -40,7 +40,7 @@ function DropdownMenuContent({
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
         className={cn(
-          // NewMax DsMenu 材质(ds-menu:18px 圆角/p-1.5/menu-bg/层叠投影+白内衬)
+          // 参考项目 DsMenu 材质(ds-menu:18px 圆角/p-1.5/menu-bg/层叠投影+白内衬)
           "ds-menu text-[var(--ds-text-primary)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-[0.96] data-[state=open]:zoom-in-[0.96] z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto duration-120 ease-out",
           className
         )}
@@ -73,7 +73,7 @@ function DropdownMenuItem({
       data-inset={inset}
       data-variant={variant}
       className={cn(
-        // NewMax DsMenuItem:32px 高/12px 圆角/13px 字号,hover 背景由 ds-menu-item 类给出
+        // 参考项目 DsMenuItem:32px 高/12px 圆角/13px 字号,hover 背景由 ds-menu-item 类给出
         "ds-menu-item relative outline-hidden select-none data-[disabled]:pointer-events-none data-[inset]:pl-8 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         props.disabled && "cursor-not-allowed",
         variant === "destructive" && "ds-menu-item-danger",
@@ -219,7 +219,7 @@ function DropdownMenuSubTrigger({
       {...props}
     >
       {children}
-      {/* NewMax 子菜单箭头:14px、60% 透明度,由组件统一渲染 */}
+      {/* 子菜单箭头:14px、60% 透明度,由组件统一渲染 */}
       <ChevronRightIcon className="ml-auto size-3.5 shrink-0 opacity-60" />
     </DropdownMenuPrimitive.SubTrigger>
   )

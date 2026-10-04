@@ -264,9 +264,9 @@ function AppContent() {
     ).trim();
     const uiCjk = String(displaySetting?.uiFontFamilyCjkCss ?? "").trim();
     const chatCjk = String(displaySetting?.chatFontFamilyCjkCss ?? "").trim();
-    // 默认(跟随系统)= var(--font-sans):即 NewMax 默认链(Inter Variable 起链,
+    // 默认(跟随系统)= var(--font-sans):即参考项目默认链(Inter Variable 起链,
     // 中文由链内 Noto Sans SC Variable 兜底)。曾把 Noto Sans SC/微软雅黑 排链首,
-    // 拉丁字形永远命中中文字体、轮不到 Inter,英文观感与 NewMax 不符(G10)。
+    // 拉丁字形永远命中中文字体、轮不到 Inter,英文观感与设计不符(G10)。
     const uiFont = composeFontChain(
       uiEn || "var(--font-sans)",
       UI_CJK_OVERRIDE_FAMILY,

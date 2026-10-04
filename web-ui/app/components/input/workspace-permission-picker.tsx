@@ -70,7 +70,7 @@ export function WorkspacePermissionPicker({ className }: { className?: string })
           type="button"
           variant="ghost"
           size="sm"
-          // NewMax 权限模式胶囊:pill-bg 底 + 品牌色文字(skill-pill 类提供 hover 加深)。
+          // 权限模式胶囊:pill-bg 底 + 品牌色文字(skill-pill 类提供 hover 加深)。
           // 窄容器(分栏)下收起文字与箭头,只留盾牌图标——档位靠图形区分(ShieldAlert/
           // Shield/ShieldCheck),信息不丢;文字标签在窄栏里会把工具条挤到元素重叠。
           className={cn(

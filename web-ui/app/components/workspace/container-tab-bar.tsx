@@ -48,7 +48,7 @@ import { useTabDragStore } from "~/stores/tab-drag-store";
 import { useWorkspaceStore } from "~/stores/workspace-store";
 import type { WorkspaceDto } from "~/types";
 
-// 一层容器标签栏(工作区 M2-1;前端重构A1 复刻 NewMax 浏览器式页签):
+// 一层容器标签栏(工作区 M2-1;前端重构A1 复刻参考项目浏览器式页签):
 // 本组焦点标签白底上圆角、与下方组内容面板连成一体;非焦点标签是画布上的 hover 胶囊。
 // 中键/×关闭(仅收起);拖拽排序;Ctrl+Tab 循环;溢出横滚。
 // L 轮分区模型:每个组分栏各挂一条本组件(group = 本组的标签列表),标签栏只渲染
@@ -57,14 +57,14 @@ import type { WorkspaceDto } from "~/types";
 // 拖拽:悬停标签 = 组内重排/跨组插入(方向感知);落进组的空白处 = 并入该组尾部;
 // 落到组内容区边缘 = 拆出新组(落点区在 conversations.tsx)。
 
-// 焦点标签与下方面板连体用的反圆角半径(NewMax 同值):左右各溢出标签 13px,靠 radial-gradient
+// 焦点标签与下方面板连体用的反圆角半径(参考项目同值):左右各溢出标签 13px,靠 radial-gradient
 // 画出"面板顶边向标签收束"的那道曲线。两处几何都由它推导,故提到模块级共用。
 const TAB_CORNER_R = 13;
 
 // 首标签左位:左侧反圆角是在"面板顶边继续向左延伸"的前提下画的,必须落在面板的直边段上才贴合。
 // 面板 rounded-t-[16px] 的圆角吃掉最左 16px,若首标签只右挪 13px(= 反圆角左端顶到面板 x=0),
 // 曲线就压在面板自己的圆角上,两条弧之间夹出一道画布色薄片(用户报的"没自然贴合")。
-// 右挪到距组左缘 26px 后反圆角左端落在 x=13,那里面板顶边距平直只差 0.3px —— 与 NewMax
+  // 右挪到距组左缘 26px 后反圆角左端落在 x=13,那里面板顶边距平直只差 0.3px —— 与参考
 // workspaceHeaderLeftPadding(26)同量。行外层已有 px-1(4px),故本值 = 26 - 4。
 const FIRST_TAB_INSET = 22;
 
@@ -270,13 +270,13 @@ export function ContainerTabBar({
     [navigate],
   );
 
-  // NewMax getTabWidthCalc:页签宽度随数量在 58~172px 间按容器宽均分(容器查询 cqw),
+  // 参考项目 getTabWidthCalc:页签宽度随数量在 58~172px 间按容器宽均分(容器查询 cqw),
   // 预留 64px 给 "+" 钮与边距、外加首标签左位——多开标签时像浏览器一样逐渐收窄。
   // 幽灵标签不占本组宽度预算(它是过客),只按本组成员数均分,免得把标签无谓拉宽。
   const tabWidthCalc = `clamp(58px, calc((100cqw - ${64 + FIRST_TAB_INSET + Math.max(0, group.length - 1) * 3}px) / ${Math.max(1, group.length)}), 172px)`;
 
   // 标签渲染只看 active 一个配色入参:本组焦点标签连体白底,其余(同组非焦点与画布
-  // 幽灵)一律画布色 hover——与旧版/NewMax 一致,不再造"组内胶囊"这条第三视觉态。
+  // 幽灵)一律画布色 hover——与旧版一致,不再造"组内胶囊"这条第三视觉态。
   // 右键菜单的"移出分栏/分栏到左右"由 splitable/unsplitable 决定,与配色无关。
   const renderTab = (key: ContainerKey, opts: { indexInRow: number }) => (
     <ContainerTab
@@ -375,7 +375,7 @@ export function ContainerTabBar({
 
       {headerTrailing}
 
-      {/* G3 编辑工作区(NewMax 对位):名称可编辑,路径只读可点选(资源管理器中显示) */}
+      {/* G3 编辑工作区:名称可编辑,路径只读可点选(资源管理器中显示) */}
       <Dialog
         open={renameTarget !== null}
         onOpenChange={(open) => {
@@ -533,9 +533,9 @@ function ContainerTab({
     ? t("workspace.tabs.chat")
     : (workspace?.name ?? t("workspace.tabs.missing"));
   const Icon = isChat ? MessageSquare : workspace?.type === "folder" ? FolderOpen : Folder;
-  // NewMax WorkspaceTab 原样移植:28px 高页签,焦点标签与下方组面板(surface-200)连体——
+  // 参考项目 WorkspaceTab 原样移植:28px 高页签,焦点标签与下方组面板(surface-200)连体——
   // 底部 3px 连接条 + 两侧 radial-gradient 反圆角(TAB_CORNER_R),白色顶内衬制造受光面。
-  // 非焦点一律画布色 hover(与旧版/NewMax 一致),不再造"组内胶囊"第三视觉态。
+  // 非焦点一律画布色 hover(与旧版一致),不再造"组内胶囊"第三视觉态。
   // 反圆角左右各溢 13px,不论左邻是谁都照画:非焦点标签本身是透明的(只有 hover 才着色),
   // 溢出盖住的是画布而非邻居内容——这就是"面板边缘收束进标签"的那道曲线,少了就成直角台阶。
   const cornerClip = active ? "inset(-2px -15px -2px -15px)" : undefined;

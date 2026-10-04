@@ -66,7 +66,7 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          // NewMax DsDialog 材质:popover 底 + elevation-300 层叠投影,无边框,入场 0.96 缩放
+          // 参考项目 DsDialog 材质:popover 底 + elevation-300 层叠投影,无边框,入场 0.96 缩放
           "bg-[var(--ds-popover)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-[0.96] data-[state=open]:zoom-in-[0.96] fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-[var(--ds-radius-lg)] p-6 shadow-[var(--ds-elevation-300)] duration-200 outline-none sm:max-w-lg",
           className
         )}

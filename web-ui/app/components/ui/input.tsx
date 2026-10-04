@@ -2,7 +2,7 @@ import * as React from "react"
 
 import { cn } from "~/lib/utils"
 
-// 前端重构R4:NewMax DsInput 材质——无边框,surface-input 底,细描边阴影三态
+// 前端重构R4:参考项目 DsInput 材质——无边框,surface-input 底,细描边阴影三态
 // (base/hover/focus 由 --ds-input-shadow* 令牌驱动,花色主题自动派生)。
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (

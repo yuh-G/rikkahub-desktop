@@ -3,7 +3,7 @@ import { Search, X } from "lucide-react"
 
 import { cn } from "~/lib/utils"
 
-// 搜索框(NewMax DsInput flat 形态):未聚焦是 on-surface 浅底、无描边,聚焦恢复输入框的
+// 搜索框(参考项目 DsInput flat 形态):未聚焦是 on-surface 浅底、无描边,聚焦恢复输入框的
 // 聚焦阴影;左放大镜,有内容时右侧圆形清除钮。onClear 缺省时清除即 onValueChange("")。
 function SearchInput({
   className,
