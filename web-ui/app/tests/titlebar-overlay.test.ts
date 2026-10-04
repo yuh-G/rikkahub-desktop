@@ -14,6 +14,7 @@ import { describe, expect, test } from "bun:test";
 
 const ROOT = join(import.meta.dir, ".."); // app/
 const OVERLAY = readFileSync(join(ROOT, "components", "titlebar-overlay.tsx"), "utf8");
+const SIDEBAR_BRAND = readFileSync(join(ROOT, "components", "sidebar-brand.tsx"), "utf8");
 const DIALOG = readFileSync(join(ROOT, "components", "settings", "settings-dialog.tsx"), "utf8");
 const WINDOW_CONTROLS = readFileSync(join(ROOT, "components", "window-controls.tsx"), "utf8");
 const ROOT_TSX = readFileSync(join(ROOT, "root.tsx"), "utf8");
@@ -63,6 +64,16 @@ describe("设置模态顶带替身", () => {
     expect(OVERLAY).toContain("invisible");
   });
 
+  test("替身只点亮品牌内容行,不点亮整块拖拽区壳(避免透出模糊背景)", () => {
+    // 品牌行的内容行打 data-titlebar-brand-content 标记,替身只点亮这一条
+    // (Logo+品牌名);若点亮整个 [data-tauri-drag-region] 壳,壳会透出遮罩的
+    // 模糊/压暗,裹出一圈暗影。替身拖拽区壳必须保持命中透明、不透出背景。
+    expect(SIDEBAR_BRAND).toContain("data-titlebar-brand-content");
+    expect(CSS).toContain("[data-titlebar-overlay] [data-titlebar-brand-content]");
+    // 禁把整个拖拽区壳点 visible(那是「暗影」的根因)。
+    expect(CSS).not.toContain("[data-titlebar-overlay] [data-tauri-drag-region]");
+  });
+
   test("替身坐标与主界面顶带逐字对齐(三页同源,不出现第二份魔法数)", () => {
     // 与 conversations.tsx 的顶带坐标同源:品牌行 ml-4 mt-1(左 16px / 距顶 4px),
     // 窗控 ml-auto mt-1.5 mr-2(右 8px)。替身与真实顶带共用组件,坐标也复刻同一组
@@ -81,9 +92,9 @@ describe("设置模态顶带替身", () => {
     expect(WINDOW_CONTROLS).toContain("...windowDragRegionProps()");
   });
 
-  test("CSS 给替身内的拖拽区与按钮可见命中(替身壳自身命中透明)", () => {
+  test("CSS 给替身内的品牌内容行与按钮可见命中(替身壳自身命中透明)", () => {
     // 替身内交互元素恢复 visibility(替身壳是 invisible,此处把命中的子元素点亮)。
-    expect(CSS).toContain("[data-titlebar-overlay] [data-tauri-drag-region]");
+    expect(CSS).toContain("[data-titlebar-overlay] [data-titlebar-brand-content]");
     expect(CSS).toContain('[data-titlebar-overlay] :is(button, a, [role="button"])');
     // 旧的「body:has() 顶栏豁免」规则必须移除(替身方案不再需要恢复真实顶带的命中)。
     expect(CSS).not.toContain("body:has([data-settings-overlay]) [data-app-titlebar]");
