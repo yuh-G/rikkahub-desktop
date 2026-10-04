@@ -535,6 +535,36 @@ export function groupAssistantPartsByToolBoundary(parts: MessagePart[]): Array<
 }
 
 
+/** role:"tool" 结果消息（内部 ApiMessage 形态）。`name` 是给协议转换层（Google
+ *  functionResponse 经 `(item as any).name` 取用）留的路标，`_rikkahub_tool_output_parts`
+ *  携带完整输出 parts 供 Claude 侧富媒体投影（claudeToolResultBlock）——两者都**不是
+ *  chat-completions 线上字段**：name 是部分严格网关 400 的来源（安卓 6e98691c 同步移除），
+ *  内部 parts 更会原样进 JSON.stringify 泄漏到第三方请求体。出线上前必须经
+ *  chatCompletionsWireMessages 投影剥除。 */
+export function toolResultApiMessage(part: JsonValue): ApiMessage {
+  return {
+    role: "tool",
+    name: String(part.toolName ?? ""),
+    tool_call_id: String(part.toolCallId ?? ""),
+    content: toolResultTextForApi(part),
+    _rikkahub_tool_output_parts: Array.isArray(part.output) ? part.output : [],
+  };
+}
+
+/** chat-completions 出线投影：剥掉 role:"tool" 消息上仅供协议转换层消费的内部字段。
+ *  Anthropic 路（claudeMessagesFromApiMessages 重建对象）与 Google 路
+ *  （googleContentsFromApiMessages 重建对象）天然洗掉这些字段，唯独 chat-completions
+ *  路把 messagesForApi 直接 JSON.stringify——收敛在这里投影一次，三个出线口共享
+ *  同一份 messagesForApi 而互不侵蚀。新引擎接入时同理：转换层想吃什么内部字段都行，
+ *  只要出线前过一遍本投影（或自建消息对象）。 */
+export function chatCompletionsWireMessages(messages: ApiMessage[]): ApiMessage[] {
+  return messages.map((item) => {
+    if (item?.role !== "tool") return item;
+    const { name: _name, _rikkahub_tool_output_parts: _parts, ...wire } = item as Record<string, unknown>;
+    return wire as ApiMessage;
+  });
+}
+
 export function appendAssistantApiMessages(items: ApiMessage[], message: Message, includeReasoning: boolean) {
   const groups = groupAssistantPartsByToolBoundary(message.parts);
   const contentBuffer: string[] = [];
@@ -598,13 +628,7 @@ export function appendAssistantApiMessages(items: ApiMessage[], message: Message
     flushAssistant(group.tools);
     for (const part of group.tools) {
       if (!isRecord(part)) continue;
-      items.push({
-        role: "tool",
-        name: String(part.toolName ?? ""),
-        tool_call_id: String(part.toolCallId ?? ""),
-        content: toolResultTextForApi(part),
-        _rikkahub_tool_output_parts: Array.isArray(part.output) ? part.output : [],
-      });
+      items.push(toolResultApiMessage(part));
     }
   }
   flushAssistant();

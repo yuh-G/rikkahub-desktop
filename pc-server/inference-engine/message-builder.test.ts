@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import {
   apiContentFromParts,
   appendAssistantApiMessages,
+  chatCompletionsWireMessages,
   claudeBlocksFromUiParts,
   claudeContentFromApiContent,
   dataUrlForMessageUrl,
@@ -19,6 +20,7 @@ import {
   responseApiMessagesFromUiMessages,
   shouldUseExternalWebSearch,
   supportsInputModality,
+  toolResultApiMessage,
 } from "./message-builder";
 import type { MessagePart, Model, Provider } from "../foundation/types";
 
@@ -465,6 +467,63 @@ describe("responseApiMessagesFromUiMessages — 历史 reasoning 项方言（202
     const assistantTurn = items.find((item) => Array.isArray(item.tool_calls))!;
     const toolCalls = assistantTurn.tool_calls as Array<{ function: { arguments: string } }>;
     expect(toolCalls[0]!.function.arguments).toBe("{}");
+  });
+});
+
+// tool 消息内部字段不上网线(安卓 6e98691c 同步移除 name;PC 追加剥 _rikkahub_tool_output_parts):
+// name 是部分严格网关 400 的来源,内部 parts 会随 JSON.stringify 原样泄漏到第三方请求体。
+// 内部形态保留 name/完整 parts 供协议转换层消费(Google functionResponse / Claude 富媒体投影),
+// 出线投影只剥字段、不动其他消息——两条纪律分立锁定。
+describe("chatCompletionsWireMessages — tool 消息内部字段出线剥离", () => {
+  const internalToolMessage = {
+    role: "tool",
+    name: "search_web",
+    tool_call_id: "call_1",
+    content: "result text",
+    _rikkahub_tool_output_parts: [{ type: "image", url: "data:image/png;base64,AAAA" }],
+  };
+
+  test("role:tool 消息剥 name 与 _rikkahub_tool_output_parts,其余字段原样保留", () => {
+    const wire = chatCompletionsWireMessages([internalToolMessage as never]);
+    expect(wire).toHaveLength(1);
+    expect(wire[0]).toEqual({ role: "tool", tool_call_id: "call_1", content: "result text" });
+    const serialized = JSON.stringify(wire[0]);
+    expect(serialized).not.toContain("search_web");
+    expect(serialized).not.toContain("_rikkahub");
+    expect(serialized).not.toContain("base64");
+  });
+
+  test("非 tool 消息(user/assistant/system)逐字透传,不受投影影响", () => {
+    const untouched = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "ok", tool_calls: [{ id: "call_1", type: "function", function: { name: "search_web", arguments: "{}" } }] },
+    ];
+    expect(chatCompletionsWireMessages(untouched as never)).toEqual(untouched);
+  });
+
+  test("原始内部数组不被就地修改(三条出线共享同一份 messagesForApi)", () => {
+    const messages = [internalToolMessage as never];
+    chatCompletionsWireMessages(messages);
+    expect((messages[0] as Record<string, unknown>).name).toBe("search_web");
+    expect(Array.isArray((messages[0] as Record<string, unknown>)._rikkahub_tool_output_parts)).toBe(true);
+  });
+
+  test("内部形态完整闭环:toolResultApiMessage 携带 name 与完整 parts 供转换层消费", () => {
+    const msg = toolResultApiMessage({
+      type: "tool",
+      toolCallId: "call_2",
+      toolName: "mcp__fetch",
+      input: "{}",
+      output: [{ type: "text", text: "done" }],
+    } as never);
+    expect(msg).toEqual({
+      role: "tool",
+      name: "mcp__fetch",
+      tool_call_id: "call_2",
+      content: "done",
+      _rikkahub_tool_output_parts: [{ type: "text", text: "done" }],
+    });
   });
 });
 

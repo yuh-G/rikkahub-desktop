@@ -20,6 +20,7 @@ import {
   claudeSystemContent,
   claudeThinkingPayload,
   claudeToolsFromOpenAiTools,
+  chatCompletionsWireMessages,
   hostOfProvider,
   isModelAllowTemperature,
   openAiChatCompletionsModalities,
@@ -278,7 +279,8 @@ export async function callProvider(
   const tools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant, picked.model) : [];
   body = {
     model: selectedModel,
-    messages: messagesForApi,
+    // chat-completions 出线前剥 tool 消息的内部字段（name/_rikkahub_tool_output_parts）。
+    messages: chatCompletionsWireMessages(messagesForApi),
     temperature: isModelAllowTemperature(picked.model) ? assistant.temperature ?? undefined : undefined,
     top_p: isModelAllowTemperature(picked.model) ? assistant.topP ?? undefined : undefined,
     // 上限字段名走统一请求方言（model-providers/request-dialect）：官方 OpenAI 口
@@ -394,7 +396,8 @@ export async function callProviderStreaming(
   }
   const body = applyCustomBody(shaped({
     model: selectedModel,
-    messages: messagesForApi,
+    // 同非流式路径：出线前剥 tool 消息的内部字段。
+    messages: chatCompletionsWireMessages(messagesForApi),
     temperature: isModelAllowTemperature(picked.model) ? assistant.temperature ?? undefined : undefined,
     top_p: isModelAllowTemperature(picked.model) ? assistant.topP ?? undefined : undefined,
     // 上限字段名走统一请求方言（与非流式路径同一行注释所指）。
