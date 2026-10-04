@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { CheckCircle2, Database, Link2, Loader2, Plus, Search, X, XCircle } from "lucide-react";
+import { CheckCircle2, Database, Link2, Loader2, Plus, X, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { AIIcon } from "~/components/ui/ai-icon";
 import { Button } from "~/components/ui/button";

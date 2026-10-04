@@ -66,7 +66,6 @@ export function SkillsSection({ settings, onSettings }: SectionProps) {
   if (!assistant) return <NoAssistantsState />;
   return (
     <SkillsEditor
-      settings={settings}
       assistant={assistant}
       onSettings={onSettings}
       bindingSelect={<BindingAssistantSelect settings={settings} assistant={assistant} stretch className="mb-1" />}
@@ -75,12 +74,10 @@ export function SkillsSection({ settings, onSettings }: SectionProps) {
 }
 
 function SkillsEditor({
-  settings,
   assistant,
   onSettings,
   bindingSelect,
 }: {
-  settings: Settings;
   assistant: AssistantProfile;
   onSettings: (settings: Settings) => void;
   bindingSelect: React.ReactNode;
@@ -346,11 +343,11 @@ function SkillsEditor({
                       {t("settings:mcp.no_files")}
                     </SettingsEmpty>
                   ) : (
-                    <div className="max-h-48 overflow-auto rounded-[var(--ds-radius-md)] border p-1">
+                    <div className="max-h-48 overflow-auto rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-1">
                       {files.map((file) => (
                         <div
                           key={file.path}
-                          className="flex items-center justify-between gap-3 rounded-[var(--ds-radius-sm)] px-2 py-1 text-xs hover:bg-[var(--ds-on-surface)]"
+                          className="flex items-center justify-between gap-3 rounded-[var(--ds-radius-sm)] px-2 py-1 text-xs hover:bg-[var(--ds-on-surface-active)]"
                         >
                           <span className={cn("truncate font-mono", file.type === "directory" && "font-medium")}>
                             {file.path}

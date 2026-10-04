@@ -7,7 +7,6 @@ import { Check, Square, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { StatusBadge } from "~/components/ui/status-badge";
-import { Input } from "~/components/ui/input";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { getAudioPlaybackKey, playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
 import { patchDisplay } from "~/lib/settings-patch";
@@ -21,7 +20,6 @@ import {
   SettingsDetailFooter,
   SettingsDetailHeader,
   SettingsEmpty,
-  SettingsField,
   SettingsGroup,
   SettingsListAddButton,
   SettingsListRow,

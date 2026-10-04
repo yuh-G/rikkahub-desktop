@@ -666,12 +666,10 @@ export function SettingsField({
 export function SettingsSplit({
   list,
   children,
-  listClassName,
   scroll = false,
 }: {
   list: React.ReactNode;
   children: React.ReactNode;
-  listClassName?: string;
   /** 见上方注释:仅当本组件独占页面主区时开启。 */
   scroll?: boolean;
 }) {
@@ -688,7 +686,6 @@ export function SettingsSplit({
             "min-w-0 @2xl:border-r @2xl:border-[var(--ds-divider)] @2xl:pr-3",
             scroll &&
               "@2xl:min-h-0 @2xl:overflow-y-auto @2xl:overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-            listClassName,
           )}
         >
           {list}
@@ -768,65 +765,6 @@ export function SettingsDetailHeader({
         </div>
       </div>
       {action != null ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
-    </div>
-  );
-}
-
-export function SortableRow({
-  id,
-  index,
-  active,
-  children,
-  onSelect,
-  onMove,
-}: {
-  id: string;
-  index: number;
-  active?: boolean;
-  children: React.ReactNode;
-  onSelect?: () => void;
-  onMove?: (from: number, to: number) => void;
-}) {
-  const [over, setOver] = React.useState(false);
-  const canMove = typeof onMove === "function";
-  return (
-    <div
-      draggable={canMove}
-      onDragStart={(event) => {
-        if (!canMove) return;
-        event.dataTransfer.setData("text/plain", String(index));
-        event.dataTransfer.effectAllowed = "move";
-      }}
-      onDragOver={(event) => {
-        if (!canMove) return;
-        event.preventDefault();
-        setOver(true);
-      }}
-      onDragLeave={() => {
-        if (canMove) setOver(false);
-      }}
-      onDrop={(event) => {
-        if (!canMove) return;
-        event.preventDefault();
-        setOver(false);
-        const from = Number(event.dataTransfer.getData("text/plain"));
-        if (Number.isFinite(from)) onMove?.(from, index);
-      }}
-      className={[
-        "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition",
-        // 选中行别用 bg-accent 实填:部分主题把 accent 登记成满饱和点缀色
-        // (mx-brutalist 的橙),整行橙块砸在列表里;中性晕染任何主题都成立。
-        active ? "bg-[var(--ds-on-surface-active)]" : "hover:bg-[var(--ds-on-surface)]",
-        over ? "ring-2 ring-primary/40" : "",
-      ].join(" ")}
-      data-sort-id={id}
-    >
-      {canMove ? (
-        <GripVertical className="size-4 shrink-0 cursor-grab text-muted-foreground" />
-      ) : null}
-      <button type="button" className="min-w-0 flex-1" onClick={onSelect}>
-        {children}
-      </button>
     </div>
   );
 }

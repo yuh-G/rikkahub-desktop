@@ -10,7 +10,6 @@ import {
   Loader2,
   Plus,
   RefreshCw,
-  Trash2,
   TriangleAlert,
   XCircle,
 } from "lucide-react";
