@@ -160,6 +160,106 @@ export function SettingsAdvancedRegion({
   );
 }
 
+/**
+ * 行内可编辑文字(昵称、详情页标题):平时是文字 + 旁边一颗低调的「修改」,点文字或「修改」原位
+ * 换成输入框;Enter / 失焦提交,Esc 撤销。显式提交(而非逐键自动保存)——编辑中的值是本地状态,
+ * 不会被设置回环覆盖。提交空串时由 allowEmpty 决定是否接受(不接受则撤销)。
+ */
+export function InlineEditText({
+  value,
+  onCommit,
+  placeholder,
+  ariaLabel,
+  allowEmpty = false,
+  className,
+  inputClassName,
+}: {
+  value: string;
+  onCommit: (next: string) => void | Promise<void>;
+  /** 值为空时显示的文字(如类型默认名),也作为输入框 placeholder。 */
+  placeholder?: string;
+  ariaLabel: string;
+  allowEmpty?: boolean;
+  /** 文字的字号/字重(详情标题 text-base font-semibold,行内值 text-sm)。 */
+  className?: string;
+  /** 输入框宽度(默认 w-60)。 */
+  inputClassName?: string;
+}) {
+  const { t } = useTranslation();
+  const [editing, setEditing] = React.useState(false);
+  const [text, setText] = React.useState(value);
+  // Esc 撤销后输入框随即卸载会触发 blur;用 ref 标记让这次 blur 不提交。
+  const cancelledRef = React.useRef(false);
+
+  const start = () => {
+    cancelledRef.current = false;
+    setText(value);
+    setEditing(true);
+  };
+  const finish = () => {
+    if (cancelledRef.current) return;
+    setEditing(false);
+    const next = text.trim();
+    if (next === value.trim() || (!next && !allowEmpty)) return;
+    void onCommit(next);
+  };
+
+  if (editing) {
+    return (
+      <Input
+        autoFocus
+        value={text}
+        aria-label={ariaLabel}
+        placeholder={placeholder}
+        className={cn("w-60 max-w-full", inputClassName)}
+        onFocus={(event) => event.currentTarget.select()}
+        onChange={(event) => setText(event.target.value)}
+        onBlur={finish}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
+          if (event.key === "Enter") {
+            event.preventDefault();
+            finish();
+          } else if (event.key === "Escape") {
+            // 只撤销编辑,不让 Esc 冒泡关掉整个设置模态。
+            event.preventDefault();
+            event.stopPropagation();
+            cancelledRef.current = true;
+            setEditing(false);
+          }
+        }}
+      />
+    );
+  }
+
+  const display = value.trim() || placeholder || "";
+  return (
+    <span className="inline-flex min-h-8 min-w-0 max-w-full items-center gap-1.5">
+      <button
+        type="button"
+        onClick={start}
+        aria-label={`${t("settings:common.edit")} ${ariaLabel}`}
+        className={cn(
+          "min-w-0 truncate rounded-[var(--ds-radius-sm)] text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+          value.trim() ? "text-[var(--ds-text-primary)]" : "text-[var(--ds-text-tertiary)]",
+          className,
+        )}
+      >
+        {display}
+      </button>
+      <button
+        type="button"
+        onClick={start}
+        tabIndex={-1}
+        aria-hidden
+        className="inline-flex h-6 shrink-0 items-center rounded-[var(--ds-radius-pill)] px-2 text-xs font-medium text-[var(--ds-text-tertiary)] outline-none transition-colors duration-(--ds-duration-fast) ease-(--ds-ease-swift) hover:bg-[var(--ds-on-surface)] hover:text-[var(--ds-brand-primary)]"
+      >
+        {t("settings:common.edit")}
+      </button>
+    </span>
+  );
+}
+
 /** 页面内容的纵向骨架:各 SettingsGroup 之间统一 2rem 节奏。 */
 export function SettingsStack({ children, className }: { children: React.ReactNode; className?: string }) {
   return <div className={cn("space-y-8", className)}>{children}</div>;

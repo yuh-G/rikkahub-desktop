@@ -263,13 +263,11 @@
     "dismiss": "Dismiss for now"
   },
   "avatar_cropper": {
-    "upload": "Upload & crop",
-    "use_default": "Use default avatar",
+    "click_to_change": "Click to change avatar",
+    "reset": "Reset",
     "title": "Crop avatar",
-    "description": "Drag the image to reposition it, then zoom or rotate and save it as your avatar.",
+    "description": "Drag to reposition, scroll or use the slider to zoom, rotate if needed, then save.",
     "zoom": "Zoom",
-    "offset_x": "Horizontal offset",
-    "offset_y": "Vertical offset",
     "rotate_left": "Rotate left",
     "rotate_right": "Rotate right",
     "cancel": "Cancel",

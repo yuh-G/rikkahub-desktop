@@ -263,13 +263,11 @@
     "dismiss": "暂时关闭"
   },
   "avatar_cropper": {
-    "upload": "上传并裁剪",
-    "use_default": "使用默认头像",
+    "click_to_change": "点击更换头像",
+    "reset": "恢复默认",
     "title": "裁剪头像",
-    "description": "拖动图片调整位置，使用缩放和旋转后保存为本地头像。",
+    "description": "拖动调整位置，滚轮或滑块缩放，可旋转后保存。",
     "zoom": "缩放",
-    "offset_x": "水平移动",
-    "offset_y": "垂直移动",
     "rotate_left": "左转",
     "rotate_right": "右转",
     "cancel": "取消",

@@ -910,7 +910,7 @@ export const ConversationSidebar = React.memo(
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <AvatarCropper
-                    size="default"
+                    hint={false}
                     fallbackName={profileName || userName}
                     value={profileAvatar}
                     onChange={async (avatar) => {

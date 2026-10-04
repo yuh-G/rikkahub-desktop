@@ -112,6 +112,7 @@
     "autosave_failed": "Auto-save failed",
     "autosave_failed_named": "Failed to auto-save {{name}}",
     "autosave_failed_retry": "Save failed — click to retry",
+    "edit": "Edit",
     "delete": "Delete",
     "item_actions": "More actions",
     "header_name": "Header name",
@@ -128,6 +129,7 @@
   },
   "general": {
     "nickname": "Nickname",
+    "nickname_unset": "Not set",
     "ui_font": "UI font",
     "chat_font": "Chat font",
     "ui_font_size": "UI font size",

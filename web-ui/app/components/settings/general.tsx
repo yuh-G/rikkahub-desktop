@@ -7,8 +7,6 @@ import { toast } from "sonner";
 import { AvatarCropper } from "~/components/avatar-cropper";
 import { FontPickerPair } from "~/components/font-picker";
 import { CHAT_CJK_OVERRIDE_FAMILY, UI_CJK_OVERRIDE_FAMILY } from "~/lib/font-chain";
-import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
-import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { KeybindingSettings } from "~/components/keybinding-settings";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -17,8 +15,10 @@ import { patchDisplay, patchSettingsLocal, saveDisplayPatch } from "~/lib/settin
 import api from "~/services/api";
 import type { AssistantAvatar, Settings } from "~/types";
 import {
+  InlineEditText,
   SettingsField,
   SettingsGroup,
+  SettingsRow,
   SettingsRows,
   SettingsStack,
   SettingsSwitchRow,
@@ -45,52 +45,46 @@ const DISPLAY_TOGGLES = [
 
 const FONT_PREVIEW_FALLBACK = '"Noto Sans SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif';
 
-/** 通用 › 个人资料:头像 + 昵称。 */
+/** 通用 › 个人资料:头像 + 昵称。头像点按即换,昵称行内编辑(显式提交,不走防抖自动保存)。 */
 export function ProfileSection({ settings }: PageProps) {
   const { t } = useTranslation();
-  const nicknameId = React.useId();
   const display = settings.displaySetting;
-  const [name, setName] = React.useState(textValue(display.userNickname));
-  // R8-2:防抖自动保存统一走共享三件套 hook(保存窗口内键击不丢,语义见 hook 文件头)。
-  const autosave = useAutosaveDraft(
-    async () => {
-      await saveDisplayPatch({ userNickname: name.trim() });
-    },
-    { delayMs: 600, errorLabel: t("settings:subnav.general.profile") },
-  );
-
-  React.useEffect(() => {
-    // 编辑中(含保存窗口内的键击)不让 settings 回环覆盖输入(R8-2 病根)。
-    if (autosave.isDirty()) return;
-    setName(textValue(display.userNickname));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [display.userNickname]);
+  const nickname = textValue(display.userNickname);
+  const saveNickname = async (userNickname: string) => {
+    try {
+      await saveDisplayPatch({ userNickname });
+    } catch (error) {
+      toast.error(extractErrorMessage(error, t("settings:common.save_failed")));
+    }
+  };
 
   return (
-    <SettingsGroup fields>
-      <SettingsField label={t("settings:general.avatar")}>
-        <AvatarCropper
-          value={display.userAvatar ?? { type: "dummy" }}
-          fallbackName={name || t("settings:general.nickname")}
-          onChange={(avatar: AssistantAvatar) => saveDisplayPatch({ userAvatar: avatar })}
+    <SettingsGroup>
+      <SettingsRows>
+        <SettingsRow
+          label={t("settings:general.avatar")}
+          control={
+            <AvatarCropper
+              value={display.userAvatar ?? { type: "dummy" }}
+              fallbackName={nickname || t("settings:general.nickname")}
+              onChange={(avatar: AssistantAvatar) => saveDisplayPatch({ userAvatar: avatar })}
+            />
+          }
         />
-      </SettingsField>
-      <SettingsField
-        label={t("settings:general.nickname")}
-        htmlFor={nicknameId}
-        trailing={
-          <AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />
-        }
-      >
-        <Input
-          id={nicknameId}
-          value={name}
-          onChange={(event) => {
-            autosave.markDirty();
-            setName(event.target.value);
-          }}
+        <SettingsRow
+          label={t("settings:general.nickname")}
+          control={
+            <InlineEditText
+              value={nickname}
+              placeholder={t("settings:general.nickname_unset")}
+              ariaLabel={t("settings:general.nickname")}
+              allowEmpty
+              className="text-sm"
+              onCommit={saveNickname}
+            />
+          }
         />
-      </SettingsField>
+      </SettingsRows>
     </SettingsGroup>
   );
 }
