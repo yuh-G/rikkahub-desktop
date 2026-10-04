@@ -169,7 +169,7 @@ function AppErrorDetailDialog({ entry, onClose }: { entry: AppErrorDto | null; o
               {entry.count > 1 ? <span>{t("settings:app_errors.merged_count", { count: entry.count })}</span> : null}
             </div>
             {entry.detail ? (
-              <pre className="max-h-[400px] overflow-auto rounded-lg border bg-muted/30 p-2 whitespace-pre-wrap">{entry.detail}</pre>
+              <pre className="max-h-[400px] overflow-auto rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-2 whitespace-pre-wrap">{entry.detail}</pre>
             ) : (
               <div className="text-muted-foreground">{t("settings:app_errors.no_detail")}</div>
             )}
@@ -272,7 +272,7 @@ function HeaderList({ title, headers, reveal }: { title: string; headers?: Recor
   return (
     <div>
       <div className="mb-1 text-xs font-medium text-muted-foreground">{title}</div>
-      <div className="divide-y rounded-lg border bg-muted/30">
+      <div className="divide-y divide-[var(--ds-divider)] rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)]">
         {Object.entries(headers).map(([key, value]) => {
           const sensitive = isSensitiveHeader(key);
           const display = sensitive && !reveal ? maskHeaderValue(value) : value;
@@ -307,7 +307,7 @@ function BodySection({
       <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
         <span>{title}</span>
         {text ? (
-          <button type="button" className="rounded px-1.5 py-0.5 hover:bg-muted" onClick={() => void onCopy(text)}>
+          <button type="button" className="rounded px-1.5 py-0.5 hover:bg-[var(--ds-on-surface-active)]" onClick={() => void onCopy(text)}>
             {t("settings:logs.copy")}
           </button>
         ) : null}
@@ -315,9 +315,9 @@ function BodySection({
       {!text ? (
         <div className="text-xs text-muted-foreground">{emptyText}</div>
       ) : json !== undefined ? (
-        <JsonTree data={json} className="rounded-lg border bg-muted/30 p-2" zoomTitle={title} />
+        <JsonTree data={json} className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-2" zoomTitle={title} />
       ) : (
-        <pre className="max-h-[400px] overflow-auto rounded-lg border bg-muted/30 p-2 text-xs whitespace-pre-wrap">
+        <pre className="max-h-[400px] overflow-auto rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-2 text-xs whitespace-pre-wrap">
           {text}
         </pre>
       )}
