@@ -234,6 +234,8 @@
     "prompt_cache_desc": "开启后会给系统提示词和倒数第二条用户消息添加 cache_control，复用 Anthropic 的提示缓存。",
     "prompt_cache_key_title": "提示缓存路由",
     "prompt_cache_key_desc": "请求附带 prompt_cache_key 会话标识，官方 OpenAI 端点据此把同一会话路由到同一缓存分片，提高缓存命中率。部分第三方端点不识别该字段会报错，请按需开启。",
+    "interactions_title": "Interactions API",
+    "interactions_desc": "对话请求改走 Google 的 Interactions 接口（新一代协议，支持思考摘要、函数调用签名保真与图片输出）。默认关闭时使用标准 generateContent 接口；仅官方 Gemini 端点支持。",
     "cache_ttl": "缓存时长",
     "cache_5m": "5 分钟",
     "cache_1h": "1 小时",

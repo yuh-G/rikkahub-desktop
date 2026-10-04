@@ -159,8 +159,27 @@ export function conversationMessagesForApi(
   return items;
 }
 
-export function conversationResponseApiInput(conversation: Conversation, assistant: Assistant) {
-  const { messages: transformedMessages, picked } = conversationTransformedMessages(conversation, assistant);
+/** Interactions 路的历史 assistant parts:与 messagesForApi 的 assistant 消息按下标
+ *  对齐(两者都出自 conversationTransformedMessages 的同一次富化,顺序天然一致)。
+ *  供应商签名(interactions_signature)只活在落库 parts 的 metadata 里——chat-completions
+ *  形态的 messagesForApi 带不上它,Interactions 的无状态回传必须回源头取。 */
+export function conversationAssistantHistoryParts(
+  conversation: Conversation,
+  assistant: Assistant,
+  messagesForApi: ApiMessage[],
+): Array<Record<string, unknown>[]> {
+  const expected = messagesForApi.filter((item) => item?.role === "assistant").length;
+  const { messages: transformedMessages } = conversationTransformedMessages(conversation, assistant);
+  const parts: Array<Record<string, unknown>[]> = [];
+  for (const selected of transformedMessages) {
+    if (selected.role !== "ASSISTANT") continue;
+    parts.push(selected.parts as unknown as Array<Record<string, unknown>>);
+    if (parts.length >= expected) break;
+  }
+  return parts;
+}
+
+export function conversationResponseApiInput(conversation: Conversation, assistant: Assistant) {  const { messages: transformedMessages, picked } = conversationTransformedMessages(conversation, assistant);
   // 历史思考项回传方言：仅官方 OpenAI 主机（第三方 Responses 端点形态各异，火山
   // 直接 400，见 responsesHistoryReasoningAllowed 头注）；另尊重 provider 级
   // includeHistoryReasoning 开关（与 chat-completions 路径 e63d017 同语义——

@@ -68,6 +68,10 @@ export function createGenerationEventApplier(target: GenerationApplyTarget): Gen
               ...part,
               ...(event.input ? { input: event.input } : {}),
               ...(current === "auto" || current === "pending" ? { approvalState: event.approvalState } : {}),
+              // 签名类载荷(Interactions step 签名)随终局建卡补挂——只合并不删。
+              ...(event.metadata && Object.keys(event.metadata).length > 0
+                ? { metadata: { ...(isRecord(part.metadata) ? part.metadata : {}), ...event.metadata } }
+                : {}),
             };
           });
         } else {
@@ -82,7 +86,10 @@ export function createGenerationEventApplier(target: GenerationApplyTarget): Gen
             // 工具完成后秒数随整条消息的流式墙钟继续涨("加载技能用时X秒一直增加")。
             // 按契约纪律挂 metadata(不新增顶层字段,安卓端安全)。幂等重建(流内建卡
             // 后终局再发建卡事件)不改写起点——首个时间戳即真实建卡时刻。
-            metadata: { toolStartedAt: new Date().toISOString() },
+            metadata: {
+              toolStartedAt: new Date().toISOString(),
+              ...(event.metadata ?? {}),
+            },
           });
         }
         touchStream(streamHooks as StreamHooksWithSink);

@@ -144,6 +144,8 @@ export function normalizeKindPatch(provider: ProviderProfile, kind: ProviderKind
     type: kind,
     baseUrl: baseUrlForKindSwitch(provider.id, textValue(provider.baseUrl), kind),
     useResponseApi: kind === "openai" ? provider.useResponseApi === true : false,
+    // Interactions 是 google 型专属开关,切走 google 即归位关闭(避免残留 true 影响其它协议)。
+    useInteractionsApi: kind === "google" ? provider.useInteractionsApi === true : false,
     // chatCompletionsPath 只承载 Chat Completions 尾缀;Responses 尾缀在 responsesPath,两者不混写。
     chatCompletionsPath: defaultPathForKind(kind),
     // kind 切换时把 responsesPath 一并归位默认,避免切到 openai+ResponseAPI 时残留旧自定义路径。

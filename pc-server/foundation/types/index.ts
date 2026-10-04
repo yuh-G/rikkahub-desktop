@@ -60,6 +60,10 @@ export interface Provider {
   baseUrl: string;
   chatCompletionsPath?: string;
   useResponseApi?: boolean;
+  // 对齐安卓 ProviderSetting.Google.useInteractionsApi(APP 2.5.6 2cd62ad2):google 型
+  // 供应商走 Interactions API(POST /interactions,GA 2026-06)的开关,默认关(缺省/
+  // false 走 generateContent)。跨端共享字段:APP 同名 boolean 默认 false,形状无超界。
+  useInteractionsApi?: boolean;
   // 对齐安卓 ProviderSetting.responsesPath(commit §2.3):Responses API 的请求路径,
   // 默认 /responses,仅 useResponseApi 开启时生效。Azure/自建网关把 Responses 挂在
   // 非标准路径时由用户改这里;留空回落 /responses。与 chatCompletionsPath 同语义、

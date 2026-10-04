@@ -268,6 +268,7 @@ export function ProvidersSection({
       kind === "openai" &&
       (hasCustomEndpointPath(draft) || draft.includeHistoryReasoning === false || draft.promptCacheKey === true)) ||
     (!isOauth && kind === "claude" && draft.promptCaching === true) ||
+    (!isOauth && kind === "google" && draft.useInteractionsApi === true) ||
     balanceOption.enabled === true;
   const getKeyUrl = providerGetKeyUrl(textValue(draft.baseUrl));
   const resultPathValid = isBalanceResultPathValid(textValue(balanceOption.resultPath));
@@ -534,6 +535,14 @@ export function ProvidersSection({
                   description={t("settings:providers.prompt_cache_key_desc")}
                   checked={draft.promptCacheKey === true}
                   onCheckedChange={(promptCacheKey) => patchDraft({ promptCacheKey })}
+                />
+              ) : null}
+              {!isOauth && kind === "google" ? (
+                <SettingsSwitchRow
+                  label={t("settings:providers.interactions_title")}
+                  description={t("settings:providers.interactions_desc")}
+                  checked={draft.useInteractionsApi === true}
+                  onCheckedChange={(useInteractionsApi) => patchDraft({ useInteractionsApi })}
                 />
               ) : null}
               {!isOauth && kind === "claude" ? (

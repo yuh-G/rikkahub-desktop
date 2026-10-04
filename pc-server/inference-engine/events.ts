@@ -24,6 +24,9 @@ export type GenerationEvent =
       toolName: string;
       input: string;
       approvalState: ToolApprovalState;
+      /** 供应商签名类载荷(Google Interactions 的 function_call step 签名)。落工具卡
+       *  metadata,跨对话轮历史回放时原样回传;幂等重建时合并(只增不删)。 */
+      metadata?: Record<string, JsonValue>;
     }
   | { kind: "tool_input_delta"; toolCallId: string; input: string }
   // 审批态上调同步:流内建卡(参数未到)给的是无参数下界,批内预扫描参数齐备后

@@ -33,6 +33,7 @@ import {
 } from "../inference-engine/message-builder";
 import {
   buildGoogleRequestBody,
+  conversationAssistantHistoryParts,
   conversationMessagesForApi,
   conversationResponseApiInput,
   conversationResponseApiInstructions,
@@ -46,6 +47,7 @@ import {
   streamClaudeChatWithTools,
   streamGoogleChatWithTools,
 } from "../inference-engine/providers";
+import { buildInteractionsRequestBody, streamInteractionsChatWithTools } from "../inference-engine/interactions";
 import { contextWindowFor, requiredOutputCap } from "../model-providers/model-limits";
 import {
   finishReasoningParts,
@@ -184,6 +186,22 @@ export async function callProvider(
     // 订阅供应商:google 暂无 oauth 形态,apiKey 恒空时 credentialHeaders 已含解析头。
     if (providerItem.authMode !== "oauth") headers["x-goog-api-key"] = providerItem.apiKey;
     const baseUrl = providerItem.baseUrl;
+    // Interactions API 开关(APP 2.5.6 2cd62ad2,GA 2026-06):google 型供应商级开关,
+    // 默认关走 generateContent。历史 assistant 轮签名保真需要落库 parts(messagesForApi
+    // 的 chat-completions 形态不带签名),经 conversationAssistantHistoryParts 取。
+    if (providerItem.useInteractionsApi === true && hooks?.message != null) {
+      const functionTools = supportsAbility(picked.model, "TOOL")
+        ? conversationFunctionTools(assistant, picked.model)
+        : [];
+      body = buildInteractionsRequestBody(
+        messagesForApi,
+        conversationAssistantHistoryParts(conversation, assistant, messagesForApi),
+        picked.model,
+        assistant,
+        functionTools,
+      );
+      return streamInteractionsChatWithTools(baseUrl, headers, selectedModel, applyCustomBody(shaped(body), assistant, picked.model), providerItem, assistant, signal, hooks);
+    }
     body = buildGoogleRequestBody(messagesForApi, picked.model, assistant);
     const finalBody = applyCustomBody(shaped(body), assistant, picked.model);
     // 有 hooks（来自会话）时走 SSE 流式 + 工具循环；辅助调用无 hooks 时退回非流式。

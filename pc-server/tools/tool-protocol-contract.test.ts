@@ -121,6 +121,9 @@ const REGISTERED_PROTOCOL_FILES: ReadonlySet<string> = new Set([
   // 三家 provider 的消息编码器:tool_calls.arguments 经 toolArgumentsJson,
   // 结果项经 toolResultTextForApi / claudeBlocksFromUiParts(内部同一占位常量)。
   "inference-engine/message-builder.ts",
+  // Gemini Interactions 路的 step 构造:function_call.arguments 从 toolArgumentsJson/
+  // JSON.parse 收口、function_result 经 toolResultTextForApi(空输出占位同常量)。
+  "inference-engine/interactions.ts",
   // 流式工具循环的 provider 适配层(含续传投影 responseApiToolCallItems /
   // chatToolCallsFromNormalized 与三家 encodeNextTurn)。
   "inference-engine/providers.ts",
