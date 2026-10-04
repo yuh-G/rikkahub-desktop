@@ -179,7 +179,7 @@ function QuickMessageEditor({
             </SettingsField>
           </SettingsGroup>
           <SettingsDetailFooter
-            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
           />
         </SettingsStack>
       </div>

@@ -1010,6 +1010,7 @@
     "web_password_desc": "Required when the app is accessed over the network (Web service / Docker / reverse proxy). Always set one before exposing the service.",
     "s3": {
       "path_style": "Path-style",
+      "path_style_desc": "Address buckets as endpoint/bucket (usually required for self-hosted services like MinIO); off uses bucket.endpoint virtual-host addressing.",
       "region": "Region",
       "bucket": "Bucket",
       "access_key_id": "Access Key ID",

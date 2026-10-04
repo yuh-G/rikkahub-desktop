@@ -8,6 +8,7 @@ import type { ProxyConfig, ProxyMode, Settings } from "~/types";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { Notice } from "~/components/ui/notice";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { patchSettingsLocal } from "~/lib/settings-patch";
@@ -286,16 +287,12 @@ export function ProxySection({ settings }: { settings: Settings; onSettings: (se
             {draft.mode === "env" && t("settings:proxy.mode_env_desc")}
           </div>
           {draft.mode === "env" && status?.containerMode === false && (
-            <div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
-              {t("settings:proxy.env_desktop_hint")}
-            </div>
+            <Notice tone="warning">{t("settings:proxy.env_desktop_hint")}</Notice>
           )}
         </div>
 
         {status?.containerMode && (
-          <div className="rounded-md border border-blue-500/30 bg-blue-500/5 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
-            {t("settings:proxy.container_mode_desc")}
-          </div>
+          <Notice>{t("settings:proxy.container_mode_desc")}</Notice>
         )}
 
         {draft.mode === "manual" && (
@@ -562,22 +559,19 @@ export function PortRequestSection({ settings }: { settings: Settings; onSetting
         {status?.containerMode ? (
           <div className="text-xs text-muted-foreground">{t("settings:proxy.port_container_locked")}</div>
         ) : status ? (
-          <div className="flex items-center justify-between gap-3 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
-            <span>{t("settings:proxy.port_restart_note")}</span>
-            {isTauri && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={() => void restartApp()}
-                disabled={restarting}
-              >
-                {restarting ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
-                {t("settings:proxy.restart_now")}
-              </Button>
-            )}
-          </div>
+          <Notice
+            tone="warning"
+            action={
+              isTauri ? (
+                <Button type="button" variant="tertiary" size="compact" onClick={() => void restartApp()} disabled={restarting}>
+                  {restarting ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+                  {t("settings:proxy.restart_now")}
+                </Button>
+              ) : undefined
+            }
+          >
+            {t("settings:proxy.port_restart_note")}
+          </Notice>
         ) : null}
         {status?.runningPort != null && (
           <div className="text-xs text-muted-foreground">

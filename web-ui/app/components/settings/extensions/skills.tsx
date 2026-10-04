@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
+import { Notice } from "~/components/ui/notice";
 import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
@@ -25,6 +26,7 @@ import {
   SettingsAdvancedSection,
   SettingsDetailFooter,
   SettingsDetailHeader,
+  SettingsEmpty,
   SettingsField,
   SettingsGroup,
   SettingsStack,
@@ -309,20 +311,18 @@ function SkillsEditor({
             />
 
             {selectedSkill?.issues?.length ? (
-              <div className="space-y-1.5 rounded-[var(--ds-radius-md)] border border-warning/40 bg-warning/5 p-3">
-                <div className="text-xs font-medium">{t("settings:mcp.skill_issues_title")}</div>
-                {selectedSkill.available === false ? (
-                  <div className="text-xs text-destructive">{t("settings:mcp.skill_unavailable_hint")}</div>
-                ) : null}
+              <Notice tone={selectedSkill.available === false ? "danger" : "warning"} className="block space-y-1">
+                <div className="font-medium">{t("settings:mcp.skill_issues_title")}</div>
+                {selectedSkill.available === false ? <div>{t("settings:mcp.skill_unavailable_hint")}</div> : null}
                 {selectedSkill.issues.map((issue) => (
                   <div
                     key={issue.message}
-                    className={`font-mono text-xs ${issue.level === "error" ? "text-destructive" : "text-warning"}`}
+                    className={cn("font-mono", issue.level === "error" ? "text-[var(--ds-danger)]" : "text-[var(--ds-warning)]")}
                   >
                     {issue.message}
                   </div>
                 ))}
-              </div>
+              </Notice>
             ) : null}
 
             <SettingsGroup fields>
@@ -342,9 +342,9 @@ function SkillsEditor({
               <div className="space-y-5 pt-2">
                 <SettingsField label={t("settings:mcp.file_list")} description={t("settings:mcp.file_list_desc")}>
                   {files.length === 0 ? (
-                    <div className="rounded-[var(--ds-radius-md)] border border-dashed p-4 text-center text-sm text-[var(--ds-text-secondary)]">
+                    <SettingsEmpty>
                       {t("settings:mcp.no_files")}
-                    </div>
+                    </SettingsEmpty>
                   ) : (
                     <div className="max-h-48 overflow-auto rounded-[var(--ds-radius-md)] border p-1">
                       {files.map((file) => (
@@ -367,14 +367,14 @@ function SkillsEditor({
             </SettingsAdvancedSection>
 
             <SettingsDetailFooter
-              status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+              status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
             />
           </SettingsStack>
         </div>
       ) : (
-        <div className="rounded-[var(--ds-radius-md)] border border-dashed p-10 text-center text-sm text-[var(--ds-text-secondary)]">
+        <SettingsEmpty size="md">
           {t("settings:mcp.skill_empty_detail")}
-        </div>
+        </SettingsEmpty>
       )}
 
       <Dialog open={githubOpen} onOpenChange={(open) => !importing && setGithubOpen(open)}>

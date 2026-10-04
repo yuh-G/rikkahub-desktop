@@ -6,6 +6,8 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { Notice } from "~/components/ui/notice";
+import { StatusBadge } from "~/components/ui/status-badge";
 import { SegmentedControl } from "~/components/ui/segmented-tabs";
 import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
@@ -26,6 +28,7 @@ import {
   SettingsAdvancedSection,
   SettingsDetailFooter,
   SettingsDetailHeader,
+  SettingsEmpty,
   SettingsField,
   SettingsGroup,
   type SettingsKeyValue,
@@ -362,7 +365,7 @@ function McpServerEditor({
               className={cn(
                 "size-2 shrink-0 rounded-full",
                 status.key === "reconnecting"
-                  ? "animate-pulse bg-amber-500"
+                  ? "animate-pulse bg-warning"
                   : status.ok
                     ? "bg-success"
                     : status.key === "off"
@@ -439,39 +442,37 @@ function McpServerEditor({
             </SettingsField>
             {/* 决策①③:实时健康状态行——只在"已启用"时显示;故障给人话原因 + 立即重连/重新授权。 */}
             {serverEnabled && liveHealth ? (
-              <div className="flex items-center justify-between gap-3 rounded-[var(--ds-radius-md)] border px-3 py-2">
-                <div className="flex min-w-0 items-center gap-2">
+              <Notice
+                tone={liveHealth.status === "ready" ? "success" : liveHealth.status === "reconnecting" ? "warning" : "danger"}
+                icon={
                   <span
                     className={cn(
-                      "size-2 shrink-0 rounded-full",
-                      liveHealth.status === "ready"
-                        ? "bg-success"
-                        : liveHealth.status === "reconnecting"
-                          ? "animate-pulse bg-amber-500"
-                          : "bg-destructive",
+                      "mt-[5px] size-1.5 shrink-0 rounded-full bg-current",
+                      liveHealth.status === "reconnecting" && "animate-pulse",
                     )}
                   />
-                  <span className="truncate text-xs text-[var(--ds-text-secondary)]">
-                    {liveHealth.status === "ready"
-                      ? t("settings:mcp.health.ready")
-                      : liveHealth.status === "reconnecting"
-                        ? t("settings:mcp.health.reconnecting", { attempt: liveHealth.attempt, max: liveHealth.maxAttempts })
-                        : t(`settings:mcp.health.kind_${liveHealth.kind}`, { defaultValue: liveHealth.message })}
-                  </span>
-                </div>
-                {liveHealth.status === "failed" ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={reconnectBusy}
-                    onClick={() => void reconnectNow()}
-                  >
-                    {reconnectBusy ? <Loader2 className="size-3.5 animate-spin" /> : null}
-                    {liveHealth.kind === "auth_expired" ? t("settings:mcp.oauth.reauthorize") : t("settings:mcp.health.reconnect_now")}
-                  </Button>
-                ) : null}
-              </div>
+                }
+                action={
+                  liveHealth.status === "failed" ? (
+                    <Button
+                      type="button"
+                      size="compact"
+                      variant="tertiary"
+                      disabled={reconnectBusy}
+                      onClick={() => void reconnectNow()}
+                    >
+                      {reconnectBusy ? <Loader2 className="animate-spin" /> : null}
+                      {liveHealth.kind === "auth_expired" ? t("settings:mcp.oauth.reauthorize") : t("settings:mcp.health.reconnect_now")}
+                    </Button>
+                  ) : undefined
+                }
+              >
+                {liveHealth.status === "ready"
+                  ? t("settings:mcp.health.ready")
+                  : liveHealth.status === "reconnecting"
+                    ? t("settings:mcp.health.reconnecting", { attempt: liveHealth.attempt, max: liveHealth.maxAttempts })
+                    : t(`settings:mcp.health.kind_${liveHealth.kind}`, { defaultValue: liveHealth.message })}
+              </Notice>
             ) : null}
           </SettingsGroup>
 
@@ -479,16 +480,9 @@ function McpServerEditor({
             title={t("settings:mcp.oauth.title")}
             description={t("settings:mcp.oauth.desc")}
             action={
-              <span
-                className={cn(
-                  "rounded-full px-2 py-0.5 text-xs",
-                  oauthAuthorized
-                    ? "bg-success/10 text-success"
-                    : "bg-[var(--ds-on-surface)] text-[var(--ds-text-secondary)]",
-                )}
-              >
+              <StatusBadge tone={oauthAuthorized ? "success" : "neutral"}>
                 {oauthAuthorized ? t("settings:mcp.oauth.authorized") : t("settings:mcp.oauth.not_authorized")}
-              </span>
+              </StatusBadge>
             }
             fields
           >
@@ -525,9 +519,9 @@ function McpServerEditor({
             fields
           >
             {tools.length === 0 ? (
-              <div className="rounded-[var(--ds-radius-md)] border border-dashed p-4 text-center text-sm text-[var(--ds-text-secondary)]">
+              <SettingsEmpty>
                 {t("settings:mcp.server.tools_empty")}
-              </div>
+              </SettingsEmpty>
             ) : (
               // McpToolCard 镜像:行首 名称 + 需要审核 + 启用 + 展开;展开后是 markdown 描述与
               // 参数标签(对齐安卓 SettingMcpPage.kt:795-902,全部内联)。服务器总开关关闭时
@@ -590,18 +584,14 @@ function McpServerEditor({
                               {propertyEntries.map(([propName]) => {
                                 const isRequired = required.includes(propName);
                                 return (
-                                  <span
+                                  <StatusBadge
                                     key={propName}
-                                    className={cn(
-                                      "rounded-md px-2 py-0.5 font-mono text-mini",
-                                      isRequired
-                                        ? "bg-blue-500/10 text-blue-700 dark:text-blue-300"
-                                        : "border bg-background text-muted-foreground",
-                                    )}
+                                    tone={isRequired ? "brand" : "neutral"}
+                                    className="font-mono font-normal"
                                     title={isRequired ? `${propName} ${t("settings:mcp.param_required")}` : propName}
                                   >
                                     {propName}
-                                  </span>
+                                  </StatusBadge>
                                 );
                               })}
                             </div>
@@ -646,7 +636,7 @@ function McpServerEditor({
           </SettingsAdvancedSection>
 
           <SettingsDetailFooter
-            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
           />
         </SettingsStack>
       </div>

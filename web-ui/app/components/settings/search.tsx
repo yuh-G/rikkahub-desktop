@@ -842,7 +842,7 @@ export function SearchSection({
           ) : null}
           </section>
           <SettingsDetailFooter
-            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
           />
         </SettingsStack>
         </div>

@@ -42,26 +42,32 @@ export function numberText(value: unknown): string {
 }
 
 export function PasswordInput({
+  id,
   value,
   onChange,
   onBlur,
   placeholder,
+  "aria-label": ariaLabel,
 }: {
+  id?: string;
   value: string;
   onChange: (value: string) => void;
   onBlur?: () => void;
   placeholder?: string;
+  "aria-label"?: string;
 }) {
   const { t } = useTranslation();
   const [visible, setVisible] = React.useState(false);
   return (
     <div className="relative">
       <Input
+        id={id}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onBlur={onBlur}
         type={visible ? "text" : "password"}
         placeholder={placeholder}
+        aria-label={ariaLabel}
         className="pr-10"
       />
       <Button
@@ -157,6 +163,35 @@ export function SettingsAdvancedRegion({
 /** 页面内容的纵向骨架:各 SettingsGroup 之间统一 2rem 节奏。 */
 export function SettingsStack({ children, className }: { children: React.ReactNode; className?: string }) {
   return <div className={cn("space-y-8", className)}>{children}</div>;
+}
+
+/**
+ * 空状态:虚线框 + 居中灰字。sm 用于字段内的小列表(预设消息、请求头…),md 用于整栏/整页。
+ * 各页不再各写一份 `border-dashed p-?`。
+ */
+export function SettingsEmpty({
+  size = "sm",
+  icon,
+  children,
+  className,
+}: {
+  size?: "sm" | "md";
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center gap-2 rounded-[var(--ds-radius-md)] border border-dashed border-[var(--ds-divider)] text-center text-sm text-[var(--ds-text-secondary)]",
+        size === "sm" ? "p-4" : "p-8",
+        className,
+      )}
+    >
+      {icon != null ? <span className="text-[var(--ds-icon)] opacity-60 [&>svg]:size-8">{icon}</span> : null}
+      {children}
+    </div>
+  );
 }
 
 /**
@@ -307,9 +342,9 @@ export function SettingsKeyValueList({
       }
     >
       {items.length === 0 ? (
-        <div className="rounded-[var(--ds-radius-md)] border border-dashed p-4 text-center text-sm text-[var(--ds-text-secondary)]">
+        <SettingsEmpty>
           {emptyText}
-        </div>
+        </SettingsEmpty>
       ) : (
         <div className="space-y-2">
           {items.map((item, index) => (

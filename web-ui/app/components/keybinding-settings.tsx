@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { SettingsGroup, SettingsRows } from "~/components/settings/shared";
 import { confirmDialog } from "~/stores/confirm-store";
 import { Button } from "~/components/ui/button";
+import { Kbd } from "~/components/ui/kbd";
 import { Switch } from "~/components/ui/switch";
 import { setHotkeysPaused } from "~/lib/hotkey-events";
 import {
@@ -30,14 +31,6 @@ import { cn } from "~/lib/utils";
 import api from "~/services/api";
 import { useSettingsStore } from "~/stores";
 import type { KeybindingAction, KeybindingEntry } from "~/types/settings";
-
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd className="rounded border border-border bg-muted px-1.5 font-mono text-mini">
-      {children}
-    </kbd>
-  );
-}
 
 /** leading:排在快捷键表之前、同属一张行列表的行(快捷键页的 Enter 发送)。 */
 export function KeybindingSettings({ leading }: { leading?: React.ReactNode }) {
@@ -152,22 +145,25 @@ export function KeybindingSettings({ leading }: { leading?: React.ReactNode }) {
                 !entry.enabled && "opacity-60",
               )}
             >
-              <span className="text-sm">{t(`settings:hotkeys.actions.${action}`)}</span>
+              <span className="text-sm font-medium">{t(`settings:hotkeys.actions.${action}`)}</span>
               <div className="flex items-center gap-2">
+                {/* 录制钮两态与输入框同语言:静止是 ghost 胶囊,录制中亮起聚焦阴影。 */}
                 {isEditing ? (
                   <button
                     autoFocus
                     onKeyDown={(e) => handleKeyDown(e, action)}
                     onBlur={exitEditing}
                     className={cn(
-                      "flex h-7 min-w-28 items-center gap-1 rounded-md border px-2 text-xs",
-                      conflictAction ? "border-destructive text-destructive" : "border-input",
+                      "flex h-7 min-w-28 items-center justify-end gap-1 rounded-[var(--ds-radius-pill)] bg-[var(--ds-surface-input)] px-2.5 text-xs outline-none",
+                      conflictAction
+                        ? "text-[var(--ds-danger)] shadow-[0_0_0_1px_var(--ds-danger)]"
+                        : "shadow-[var(--ds-input-shadow-focus)]",
                     )}
                   >
                     {pendingKeys.length > 0 ? (
                       normalizeTokens(pendingKeys).map((k) => <Kbd key={k}>{formatToken(k)}</Kbd>)
                     ) : (
-                      <span className="text-muted-foreground">{t("settings:hotkeys.press_keys")}</span>
+                      <span className="text-[var(--ds-text-tertiary)]">{t("settings:hotkeys.press_keys")}</span>
                     )}
                   </button>
                 ) : (
@@ -176,10 +172,10 @@ export function KeybindingSettings({ leading }: { leading?: React.ReactNode }) {
                     disabled={isZoom}
                     onClick={() => startEditing(action)}
                     className={cn(
-                      "flex h-7 min-w-28 items-center justify-end gap-1 rounded-md border border-transparent px-2 text-xs",
+                      "flex h-7 min-w-28 items-center justify-end gap-1 rounded-[var(--ds-radius-pill)] px-2.5 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
                       isZoom
-                        ? "cursor-not-allowed text-muted-foreground"
-                        : "hover:border-input hover:bg-muted/40",
+                        ? "cursor-not-allowed text-[var(--ds-text-tertiary)]"
+                        : "hover:bg-[var(--ds-on-surface)]",
                     )}
                   >
                     {isZoom ? (
@@ -187,21 +183,28 @@ export function KeybindingSettings({ leading }: { leading?: React.ReactNode }) {
                     ) : entry.keys && entry.keys.length > 0 ? (
                       normalizeTokens(entry.keys).map((k) => <Kbd key={k}>{formatToken(k)}</Kbd>)
                     ) : (
-                      <span className="text-muted-foreground">{t("settings:hotkeys.click_to_set")}</span>
+                      <span className="text-[var(--ds-text-tertiary)]">{t("settings:hotkeys.click_to_set")}</span>
                     )}
                   </button>
                 )}
                 {isModified && !isEditing && (
-                  <button
+                  <Button
                     type="button"
-                    className="text-muted-foreground transition-colors hover:text-foreground"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="text-[var(--ds-icon)]"
+                    aria-label={t("settings:hotkeys.reset")}
                     title={t("settings:hotkeys.reset")}
                     onClick={() => resetOne(action)}
                   >
                     <RotateCcw className="size-3.5" />
-                  </button>
+                  </Button>
                 )}
-                <Switch checked={entry.enabled} onCheckedChange={(v) => setEnabled(action, v)} />
+                <Switch
+                  checked={entry.enabled}
+                  aria-label={t(`settings:hotkeys.actions.${action}`)}
+                  onCheckedChange={(v) => setEnabled(action, v)}
+                />
               </div>
             </div>
           );
@@ -209,15 +212,15 @@ export function KeybindingSettings({ leading }: { leading?: React.ReactNode }) {
       </SettingsRows>
 
       {editingAction && conflictLabel && (
-        <p className="text-destructive text-xs">
+        <p className="text-xs text-[var(--ds-danger)]">
           {t("settings:hotkeys.conflict_with", { name: conflictLabel })}
         </p>
       )}
 
       {/* 尾部动作:整页扫完快捷键后才轮到「全部恢复默认」,放头部会抢在阅读流之前。 */}
       <div className="flex justify-end pt-3">
-        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void resetAll()}>
-          <RotateCcw className="size-3" />
+        <Button variant="ghost" size="compact" onClick={() => void resetAll()}>
+          <RotateCcw />
           {t("settings:hotkeys.reset_all")}
         </Button>
       </div>

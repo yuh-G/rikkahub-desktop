@@ -79,7 +79,7 @@ export function ProfileSection({ settings }: PageProps) {
         label={t("settings:general.nickname")}
         htmlFor={nicknameId}
         trailing={
-          <AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />
+          <AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />
         }
       >
         <Input

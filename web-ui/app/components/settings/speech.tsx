@@ -19,6 +19,7 @@ import {
   SettingsAdvancedSection,
   SettingsDetailFooter,
   SettingsDetailHeader,
+  SettingsEmpty,
   SettingsField,
   SettingsGroup,
   SettingsListAddButton,
@@ -88,9 +89,9 @@ function SetCurrentButton({ current, onSelect }: { current: boolean; onSelect: (
 
 function EmptyDetail({ text }: { text: string }) {
   return (
-    <div className="rounded-[var(--ds-radius-md)] border border-dashed p-10 text-center text-sm text-[var(--ds-text-secondary)]">
+    <SettingsEmpty size="md">
       {text}
-    </div>
+    </SettingsEmpty>
   );
 }
 
@@ -363,7 +364,7 @@ export function TtsSection({
               ) : null}
 
               <SettingsDetailFooter
-                status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+                status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
               />
             </SettingsStack>
           </div>
@@ -583,7 +584,7 @@ export function AsrSection({
             ) : null}
 
             <SettingsDetailFooter
-              status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+              status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
             />
           </SettingsStack>
         </div>

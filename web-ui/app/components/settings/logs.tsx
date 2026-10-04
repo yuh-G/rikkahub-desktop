@@ -5,11 +5,12 @@ import { useTranslation } from "react-i18next";
 import { Eye, EyeOff, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
+import { StatusBadge, type StatusBadgeTone } from "~/components/ui/status-badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "~/components/ui/dialog";
 import { JsonTree, tryParseJson } from "~/components/ui/json-tree";
 import { cn } from "~/lib/utils";
 import { copyTextToClipboard } from "~/lib/clipboard";
-import { SettingsRows } from "~/components/settings/shared";
+import { SettingsEmpty, SettingsRows } from "~/components/settings/shared";
 import { SegmentedTabs } from "~/components/ui/segmented-tabs";
 import { appErrorText, useAppErrorsStore } from "~/stores";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -61,21 +62,17 @@ export function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: ()
           onChange={setFilter}
         />
         {feed.length > 0 ? (
-          <button
-            type="button"
-            onClick={() => void clearVisible()}
-            className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-destructive transition hover:bg-destructive/10"
-          >
-            <Trash2 className="size-3.5" />
+          <Button type="button" variant="danger" size="compact" onClick={() => void clearVisible()}>
+            <Trash2 />
             {t("settings:logs.clear")}
-          </button>
+          </Button>
         ) : null}
       </div>
       <p className="mb-3 text-xs text-[var(--ds-text-tertiary)]">{t("settings:logs.subtitle")}</p>
       {feed.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+        <SettingsEmpty size="md">
           {t("settings:logs.empty")}
-        </div>
+        </SettingsEmpty>
       ) : null}
       <SettingsRows>
         {feed.map((item) =>
@@ -123,10 +120,10 @@ function RequestLogRow({ log, onClick }: { log: RequestLog; onClick: () => void 
   );
 }
 
-const SEVERITY_STYLE: Record<AppErrorDto["severity"], string> = {
-  error: "bg-destructive/10 text-destructive",
-  warn: "bg-warning/10 text-warning",
-  info: "bg-muted text-muted-foreground",
+const SEVERITY_TONE: Record<AppErrorDto["severity"], StatusBadgeTone> = {
+  error: "danger",
+  warn: "warning",
+  info: "neutral",
 };
 
 function AppErrorRow({ entry, onClick }: { entry: AppErrorDto; onClick: () => void }) {
@@ -138,10 +135,10 @@ function AppErrorRow({ entry, onClick }: { entry: AppErrorDto; onClick: () => vo
       className={FEED_ROW}
     >
       <div className="flex items-center gap-2">
-        <span className={cn("rounded px-1.5 py-0.5 text-xs font-medium", SEVERITY_STYLE[entry.severity])}>
+        <StatusBadge tone={SEVERITY_TONE[entry.severity]}>
           {t(`settings:app_errors.severity_${entry.severity}`)}
-        </span>
-        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{entry.domain}</span>
+        </StatusBadge>
+        <StatusBadge className="font-mono font-normal">{entry.domain}</StatusBadge>
         {entry.count > 1 ? <span className="text-xs text-muted-foreground">×{entry.count}</span> : null}
         <span className="ml-auto shrink-0 text-xs text-muted-foreground">{new Date(entry.at).toLocaleString()}</span>
       </div>

@@ -16,6 +16,7 @@ import {
 } from "~/components/settings/settings-panel";
 import { Button } from "~/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "~/components/ui/dialog";
+import { Kbd } from "~/components/ui/kbd";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { measureAppBandHeight, windowDragRegionProps } from "~/components/window-controls";
 import { useIsDesktop } from "~/hooks/use-mobile";
@@ -201,12 +202,7 @@ function OpenSettingsShortcut() {
   return (
     <span className="flex items-center gap-0.5" aria-hidden="true">
       {normalizeTokens(binding.keys).map((token) => (
-        <kbd
-          key={token}
-          className="rounded-[4px] border border-border bg-[var(--ds-surface-100)] px-1 font-mono text-mini leading-4 text-muted-foreground"
-        >
-          {formatToken(token)}
-        </kbd>
+        <Kbd key={token}>{formatToken(token)}</Kbd>
       ))}
     </span>
   );

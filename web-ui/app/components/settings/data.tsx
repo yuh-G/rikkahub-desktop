@@ -6,8 +6,6 @@ import {
   Check,
   CheckCircle2,
   Download,
-  Eye,
-  EyeOff,
   Loader2,
   RefreshCw,
   Trash2,
@@ -17,10 +15,10 @@ import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
-import { Separator } from "~/components/ui/separator";
-import { Switch } from "~/components/ui/switch";
+import { Notice } from "~/components/ui/notice";
+import { Progress } from "~/components/ui/progress";
+import { StatusBadge } from "~/components/ui/status-badge";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
-import { cn } from "~/lib/utils";
 import api, { appendWebAuthQuery, clearWebAuthToken, fetchWebAuthStatus, requestWebAuthToken, setWebPassword, type WebAuthStatus } from "~/services/api";
 import { isTauriEnvironment } from "~/lib/system-info";
 import { patchSettingsLocal } from "~/lib/settings-patch";
@@ -30,8 +28,13 @@ import { confirmDialog } from "~/stores/confirm-store";
 import type { S3Config, Settings, WebDavConfig } from "~/types";
 import {
   PasswordInput,
+  SettingsEmpty,
+  SettingsField,
   SettingsGroup,
+  SettingsRow,
+  SettingsRows,
   SettingsStack,
+  SettingsSwitchRow,
 } from "~/components/settings/shared";
 
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
@@ -91,7 +94,7 @@ export function BackupSection({
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
-  const s3PathStyleId = React.useId();
+  const fieldId = React.useId();
   const importInputRef = React.useRef<HTMLInputElement>(null);
   const schemaInputRef = React.useRef<HTMLInputElement>(null);
   // 长任务状态在模块级 store(见 backup-task-store):切到别的页再回来,进度与禁用态仍在。
@@ -117,7 +120,6 @@ export function BackupSection({
   // webDavConfig/s3Config 由服务端 normalizeState 保证在场且默认值同源,类型单源后无需兜底。
   const defaultWebDav = settings.webDavConfig;
   const [webDavDraft, setWebDavDraft] = React.useState<WebDavConfig>(defaultWebDav);
-  const [showWebDavPassword, setShowWebDavPassword] = React.useState(false);
   // R8-2:防抖自动保存统一走共享三件套 hook(保存窗口内键击不丢,语义见 hook 文件头)。
   const webDavAutosave = useAutosaveDraft(
     async () => {
@@ -129,7 +131,6 @@ export function BackupSection({
 
   const defaultS3 = settings.s3Config;
   const [s3Draft, setS3Draft] = React.useState<S3Config>(defaultS3);
-  const [showS3Secret, setShowS3Secret] = React.useState(false);
 
   const s3Autosave = useAutosaveDraft(
     async () => {
@@ -707,13 +708,9 @@ export function BackupSection({
           {/* 未知态(schemaStatus null)不渲染任何徽章:不再把"还没查到"画成"未注册" */}
           {schemaStatus &&
             (schemaStatus.hasAndroidSchema ? (
-              <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700 dark:bg-green-900 dark:text-green-300">
-                {t("settings:data.ready")}
-              </span>
+              <StatusBadge tone="success">{t("settings:data.ready")}</StatusBadge>
             ) : (
-              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                {t("settings:data.unregistered")}
-              </span>
+              <StatusBadge tone="warning">{t("settings:data.unregistered")}</StatusBadge>
             ))}
           {schemaStatus?.hasAndroidSchema && (
             <span className="ml-auto text-xs text-muted-foreground">
@@ -745,32 +742,28 @@ export function BackupSection({
                 })}
               </div>
             )}
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950">
-              <div className="text-xs font-medium">
+            <Notice tone="warning" className="block">
+              <div className="font-medium">
                 {schemaStatus?.hasAndroidSchema
                   ? t("settings:data.update_format")
                   : t("settings:data.how_to_register")}
               </div>
-              <ol className="mt-1.5 list-inside list-decimal space-y-1 text-xs text-muted-foreground">
+              <ol className="mt-1.5 list-inside list-decimal space-y-1 text-[var(--ds-text-secondary)]">
                 <li>{t("settings:data.step1")}</li>
                 <li>{t("settings:data.step2")}</li>
                 <li>{t("settings:data.step3")}</li>
               </ol>
-              <div className="mt-2 text-xs font-bold text-amber-700 dark:text-amber-300">
+              <div className="mt-2 font-semibold">
                 {t("settings:data.register_note")}
               </div>
               <Button
-                variant="outline"
-                size="sm"
+                variant="tertiary"
+                size="compact"
                 className="mt-3"
                 onClick={() => schemaInputRef.current?.click()}
                 disabled={registeringSchema}
               >
-                {registeringSchema ? (
-                  <Loader2 className="mr-1 size-3 animate-spin" />
-                ) : (
-                  <Upload className="mr-1 size-3" />
-                )}
+                {registeringSchema ? <Loader2 className="animate-spin" /> : <Upload />}
                 {t("settings:data.upload_phone_backup")}
               </Button>
               <input
@@ -780,7 +773,7 @@ export function BackupSection({
                 accept="application/zip,.zip"
                 onChange={(e) => void handleRegisterSchema(e)}
               />
-            </div>
+            </Notice>
           </div>
         )}
       </div>
@@ -792,27 +785,21 @@ export function BackupSection({
         >
           <div className="mt-3 flex flex-wrap gap-2">
             <Button
-              variant="outline"
+              variant="tertiary"
+              size="compact"
               onClick={() => void handleExportClick()}
               disabled={exporting || importing}
             >
-              {exporting ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Download className="size-4" />
-              )}
+              {exporting ? <Loader2 className="animate-spin" /> : <Download />}
               {t("settings:data.export_backup")}
             </Button>
             <Button
-              variant="outline"
+              variant="tertiary"
+              size="compact"
               onClick={() => importInputRef.current?.click()}
               disabled={importing || exporting}
             >
-              {importing ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Upload className="size-4" />
-              )}
+              {importing ? <Loader2 className="animate-spin" /> : <Upload />}
               {t("settings:data.import_backup")}
             </Button>
             <input
@@ -824,64 +811,34 @@ export function BackupSection({
             />
           </div>
           {exporting ? (
-            <div className="mt-3 space-y-1.5">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>
-                  {exportTotalBytes > 0
-                    ? t("settings:data.downloading")
-                    : t("settings:data.preparing_file")}
-                </span>
-                {exportTotalBytes > 0 ? (
-                  <span>
-                    {t("settings:data.progress_mb", {
+            <BackupProgress
+              label={exportTotalBytes > 0 ? t("settings:data.downloading") : t("settings:data.preparing_file")}
+              detail={
+                exportTotalBytes > 0
+                  ? t("settings:data.progress_mb", {
                       loaded: (exportedBytes / (1024 * 1024)).toFixed(1),
                       total: (exportTotalBytes / (1024 * 1024)).toFixed(1),
                       percent: exportProgress,
-                    })}
-                  </span>
-                ) : null}
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn(
-                    "h-full bg-primary transition-all",
-                    exportTotalBytes === 0 && "animate-pulse w-full",
-                  )}
-                  style={exportTotalBytes > 0 ? { width: `${exportProgress}%` } : undefined}
-                />
-              </div>
-              {exportTotalBytes === 0 ? (
-                <div className="text-mini text-muted-foreground">
-                  {t("settings:data.pack_slow")}
-                </div>
-              ) : null}
-            </div>
+                    })
+                  : undefined
+              }
+              percent={exportTotalBytes > 0 ? exportProgress : null}
+              hint={exportTotalBytes === 0 ? t("settings:data.pack_slow") : undefined}
+            />
           ) : null}
           {importing ? (
-            <div className="mt-3 space-y-1.5">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>
-                  {importPhase === "uploading" && t("settings:data.uploading")}
-                  {importPhase === "processing" && t("settings:data.extracting")}
-                  {importPhase === "idle" && t("settings:data.preparing")}
-                </span>
-                {importPhase === "uploading" ? <span>{t("settings:data.progress_percent", { percent: importProgress })}</span> : null}
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn(
-                    "h-full bg-primary transition-all",
-                    importPhase === "processing" && "animate-pulse w-full",
-                  )}
-                  style={importPhase === "uploading" ? { width: `${importProgress}%` } : undefined}
-                />
-              </div>
-              {importPhase === "processing" ? (
-                <div className="text-mini text-muted-foreground">
-                  {t("settings:data.extract_slow")}
-                </div>
-              ) : null}
-            </div>
+            <BackupProgress
+              label={
+                importPhase === "uploading"
+                  ? t("settings:data.uploading")
+                  : importPhase === "processing"
+                    ? t("settings:data.extracting")
+                    : t("settings:data.preparing")
+              }
+              detail={importPhase === "uploading" ? t("settings:data.progress_percent", { percent: importProgress }) : undefined}
+              percent={importPhase === "uploading" ? importProgress : null}
+              hint={importPhase === "processing" ? t("settings:data.extract_slow") : undefined}
+            />
           ) : null}
         </SettingsGroup>
         <RestoreReport report={settings.lastRestoreReport} />
@@ -890,72 +847,44 @@ export function BackupSection({
             <span className="flex items-center gap-2">
               {t("settings:data.webdav_title")}
               {ANDROID_COMPAT_CARD_ENABLED && schemaStatus && !schemaStatus.hasAndroidSchema && (
-                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-micro leading-normal text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                  {t("settings:data.chat_unsyncable")}
-                </span>
+                <StatusBadge tone="warning">{t("settings:data.chat_unsyncable")}</StatusBadge>
               )}
             </span>
           }
           description={t("settings:data.webdav_desc")}
-          action={
-            <AutosaveStatusRow
-              status={webDavAutosave.status}
-              onRetry={() => void webDavAutosave.saveNow()}
-              className="px-0"
-            />
-          }
+          action={<AutosaveStatusRow status={webDavAutosave.status} onRetry={() => void webDavAutosave.saveNow()} />}
         >
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                {t("settings:data.server_url")}
-              </span>
+          <div className="mt-3 grid gap-4 md:grid-cols-2">
+            <SettingsField label={t("settings:data.server_url")} htmlFor={`${fieldId}-dav-url`}>
               <Input
+                id={`${fieldId}-dav-url`}
                 value={webDavDraft.url}
                 onChange={(event) => patchWebDav({ url: event.target.value })}
                 placeholder="https://example.com/dav"
               />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                {t("settings:data.backup_path")}
-              </span>
+            </SettingsField>
+            <SettingsField label={t("settings:data.backup_path")} htmlFor={`${fieldId}-dav-path`}>
               <Input
+                id={`${fieldId}-dav-path`}
                 value={webDavDraft.path}
                 onChange={(event) => patchWebDav({ path: event.target.value })}
                 placeholder="rikkahub_backups"
               />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                {t("settings:data.username")}
-              </span>
+            </SettingsField>
+            <SettingsField label={t("settings:data.username")} htmlFor={`${fieldId}-dav-user`}>
               <Input
+                id={`${fieldId}-dav-user`}
                 value={webDavDraft.username}
                 onChange={(event) => patchWebDav({ username: event.target.value })}
               />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                {t("settings:data.password")}
-              </span>
-              <div className="flex gap-2">
-                <Input
-                  type={showWebDavPassword ? "text" : "password"}
-                  value={webDavDraft.password}
-                  onChange={(event) => patchWebDav({ password: event.target.value })}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={() => setShowWebDavPassword((value) => !value)}
-                  aria-label={showWebDavPassword ? t("settings:proxy.hide_password") : t("settings:proxy.show_password")}
-                >
-                  {showWebDavPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </Button>
-              </div>
-            </label>
+            </SettingsField>
+            <SettingsField label={t("settings:data.password")} htmlFor={`${fieldId}-dav-pw`}>
+              <PasswordInput
+                id={`${fieldId}-dav-pw`}
+                value={webDavDraft.password}
+                onChange={(password) => patchWebDav({ password })}
+              />
+            </SettingsField>
           </div>
           {WEBDAV_ITEMS_SELECTION_ENABLED ? (
           <div className="mt-3 flex flex-wrap gap-2">
@@ -982,315 +911,252 @@ export function BackupSection({
           ) : null}
           <div className="mt-4 flex flex-wrap gap-2">
             <Button
-              variant="outline"
+              variant="tertiary"
+              size="compact"
               onClick={() => void testWebDav()}
               disabled={Boolean(webDavBusy) || !webDavDraft.url.trim()}
             >
-              {webDavBusy === "test" ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Check className="size-4" />
-              )}
+              {webDavBusy === "test" ? <Loader2 className="animate-spin" /> : <Check />}
               {t("settings:data.test_conn")}
             </Button>
             <Button
-              variant="outline"
+              variant="tertiary"
+              size="compact"
               onClick={() => void refreshWebDavList()}
               disabled={Boolean(webDavBusy) || !webDavDraft.url.trim()}
             >
-              {webDavBusy === "list" ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <RefreshCw className="size-4" />
-              )}
+              {webDavBusy === "list" ? <Loader2 className="animate-spin" /> : <RefreshCw />}
               {t("settings:data.refresh_backups")}
             </Button>
             <Button
+              size="compact"
               onClick={() => void backupWebDav()}
               disabled={Boolean(webDavBusy) || !webDavDraft.url.trim()}
             >
-              {webDavBusy === "backup" && !webDavBackupProgress ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Upload className="size-4" />
-              )}
+              {webDavBusy === "backup" && !webDavBackupProgress ? <Loader2 className="animate-spin" /> : <Upload />}
               {t("settings:data.backup_now")}
             </Button>
           </div>
-          {(webDavBusy === "backup" || webDavBusy.startsWith("restore:")) &&
-          webDavBackupProgress ? (
-            <div className="mt-3 space-y-1.5">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{webDavBackupProgress.message}</span>
-                {webDavBackupProgress.percent > 0 ? (
-                  <span>{t("settings:data.progress_percent", { percent: webDavBackupProgress.percent })}</span>
-                ) : null}
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn(
-                    "h-full bg-primary transition-all",
-                    webDavBackupProgress.percent === 0 && "animate-pulse w-full",
-                  )}
-                  style={
-                    webDavBackupProgress.percent > 0
-                      ? { width: `${webDavBackupProgress.percent}%` }
-                      : undefined
-                  }
-                />
-              </div>
-            </div>
+          {(webDavBusy === "backup" || webDavBusy.startsWith("restore:")) && webDavBackupProgress ? (
+            <BackupProgress
+              label={webDavBackupProgress.message}
+              detail={
+                webDavBackupProgress.percent > 0
+                  ? t("settings:data.progress_percent", { percent: webDavBackupProgress.percent })
+                  : undefined
+              }
+              percent={webDavBackupProgress.percent > 0 ? webDavBackupProgress.percent : null}
+            />
           ) : null}
-          <div className="mt-4 rounded-md border">
-            {webDavItems.length === 0 ? (
-              <div className="p-4 text-sm text-muted-foreground">
-                {t("settings:data.no_remote_backups")}
-              </div>
-            ) : null}
-            {webDavItems.map((item, index) => (
-              <React.Fragment key={item.displayName}>
-                {index > 0 ? <Separator /> : null}
-                <div className="flex items-center justify-between gap-3 p-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{item.displayName}</div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">
-                      {new Date(item.lastModified || 0).toLocaleString()} ·{" "}
-                      {Math.round((item.size || 0) / 1024)} KB
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void restoreWebDav(item)}
-                      disabled={Boolean(webDavBusy)}
-                    >
-                      {webDavBusy === `restore:${item.displayName}` ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Download className="size-4" />
-                      )}
-                      {t("settings:data.restore")}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => void deleteWebDav(item)}
-                      disabled={Boolean(webDavBusy)}
-                      aria-label={t("settings:data.delete_backup")}
-                      title={t("settings:data.delete_backup")}
-                    >
-                      {webDavBusy === `delete:${item.displayName}` ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-4" />
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              </React.Fragment>
-            ))}
-          </div>
+          <RemoteBackupList
+            items={webDavItems}
+            busy={webDavBusy}
+            emptyText={t("settings:data.no_remote_backups")}
+            onRestore={(item) => void restoreWebDav(item)}
+            onDelete={(item) => void deleteWebDav(item)}
+          />
         </SettingsGroup>
         <SettingsGroup
           title={
             <span className="flex items-center gap-2">
               {t("settings:data.s3_title")}
               {ANDROID_COMPAT_CARD_ENABLED && schemaStatus && !schemaStatus.hasAndroidSchema && (
-                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-micro leading-normal text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                  {t("settings:data.chat_unsyncable")}
-                </span>
+                <StatusBadge tone="warning">{t("settings:data.chat_unsyncable")}</StatusBadge>
               )}
             </span>
           }
           description={t("settings:data.s3_desc")}
-          action={
-            <>
-              <AutosaveStatusRow
-                status={s3Autosave.status}
-                onRetry={() => void s3Autosave.saveNow()}
-                className="px-0"
-              />
-              <label htmlFor={s3PathStyleId} className="ml-2 text-xs text-[var(--ds-text-secondary)]">
-                {t("settings:data.s3.path_style")}
-              </label>
-              <Switch
-                id={s3PathStyleId}
-                checked={s3Draft.pathStyle}
-                onCheckedChange={(pathStyle) => patchS3({ pathStyle })}
-              />
-            </>
-          }
+          action={<AutosaveStatusRow status={s3Autosave.status} onRetry={() => void s3Autosave.saveNow()} />}
         >
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                {t("settings:data.endpoint_label")}
-              </span>
+          <div className="mt-3 grid gap-4 md:grid-cols-2">
+            <SettingsField label={t("settings:data.endpoint_label")} htmlFor={`${fieldId}-s3-endpoint`}>
               <Input
+                id={`${fieldId}-s3-endpoint`}
                 value={s3Draft.endpoint}
                 onChange={(event) => patchS3({ endpoint: event.target.value })}
                 placeholder="https://s3.example.com"
               />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">{t("settings:data.s3.region")}</span>
+            </SettingsField>
+            <SettingsField label={t("settings:data.s3.region")} htmlFor={`${fieldId}-s3-region`}>
               <Input
+                id={`${fieldId}-s3-region`}
                 value={s3Draft.region}
                 onChange={(event) => patchS3({ region: event.target.value })}
                 placeholder="auto"
               />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">{t("settings:data.s3.bucket")}</span>
+            </SettingsField>
+            <SettingsField label={t("settings:data.s3.bucket")} htmlFor={`${fieldId}-s3-bucket`}>
               <Input
+                id={`${fieldId}-s3-bucket`}
                 value={s3Draft.bucket}
                 onChange={(event) => patchS3({ bucket: event.target.value })}
                 placeholder="my-rikkahub-bucket"
               />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">{t("settings:data.s3.access_key_id")}</span>
+            </SettingsField>
+            <SettingsField label={t("settings:data.s3.access_key_id")} htmlFor={`${fieldId}-s3-akid`}>
               <Input
+                id={`${fieldId}-s3-akid`}
                 value={s3Draft.accessKeyId}
                 onChange={(event) => patchS3({ accessKeyId: event.target.value })}
               />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">{t("settings:data.s3.secret_access_key")}</span>
-              <div className="flex gap-2">
-                <Input
-                  type={showS3Secret ? "text" : "password"}
-                  value={s3Draft.secretAccessKey}
-                  onChange={(event) => patchS3({ secretAccessKey: event.target.value })}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={() => setShowS3Secret((value) => !value)}
-                  aria-label={showS3Secret ? t("settings:proxy.hide_password") : t("settings:proxy.show_password")}
-                >
-                  {showS3Secret ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </Button>
-              </div>
-            </label>
+            </SettingsField>
+            <SettingsField label={t("settings:data.s3.secret_access_key")} htmlFor={`${fieldId}-s3-secret`}>
+              <PasswordInput
+                id={`${fieldId}-s3-secret`}
+                value={s3Draft.secretAccessKey}
+                onChange={(secretAccessKey) => patchS3({ secretAccessKey })}
+              />
+            </SettingsField>
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">
+          {/* 配置项放正文:标题行 action 槽只留状态,开关挤在那里难发现。 */}
+          <SettingsRows className="mt-2">
+            <SettingsSwitchRow
+              label={t("settings:data.s3.path_style")}
+              description={t("settings:data.s3.path_style_desc")}
+              checked={s3Draft.pathStyle}
+              onCheckedChange={(pathStyle) => patchS3({ pathStyle })}
+            />
+          </SettingsRows>
+          <div className="mt-2 flex flex-wrap gap-2">
             <Button
-              variant="outline"
+              variant="tertiary"
+              size="compact"
               onClick={() => void testS3()}
               disabled={Boolean(s3Busy) || !s3Draft.bucket.trim() || !s3Draft.accessKeyId.trim()}
             >
-              {s3Busy === "test" ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <CheckCircle2 className="size-4" />
-              )}
+              {s3Busy === "test" ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
               {t("settings:data.test_conn")}
             </Button>
             <Button
-              variant="outline"
+              variant="tertiary"
+              size="compact"
               onClick={() => void refreshS3List()}
               disabled={Boolean(s3Busy) || !s3Draft.bucket.trim()}
             >
-              {s3Busy === "list" ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <RefreshCw className="size-4" />
-              )}
+              {s3Busy === "list" ? <Loader2 className="animate-spin" /> : <RefreshCw />}
               {t("settings:data.refresh_backups")}
             </Button>
             <Button
+              size="compact"
               onClick={() => void backupS3()}
               disabled={Boolean(s3Busy) || !s3Draft.bucket.trim() || !s3Draft.accessKeyId.trim()}
             >
-              {s3Busy === "backup" && !s3BackupProgress ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Upload className="size-4" />
-              )}
+              {s3Busy === "backup" && !s3BackupProgress ? <Loader2 className="animate-spin" /> : <Upload />}
               {t("settings:data.backup_now")}
             </Button>
           </div>
           {(s3Busy === "backup" || s3Busy.startsWith("restore:")) && s3BackupProgress ? (
-            <div className="mt-3 space-y-1.5">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{s3BackupProgress.message}</span>
-                {s3BackupProgress.percent > 0 ? <span>{t("settings:data.progress_percent", { percent: s3BackupProgress.percent })}</span> : null}
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn(
-                    "h-full bg-primary transition-all",
-                    s3BackupProgress.percent === 0 && "animate-pulse w-full",
-                  )}
-                  style={
-                    s3BackupProgress.percent > 0
-                      ? { width: `${s3BackupProgress.percent}%` }
-                      : undefined
-                  }
-                />
-              </div>
-            </div>
+            <BackupProgress
+              label={s3BackupProgress.message}
+              detail={
+                s3BackupProgress.percent > 0
+                  ? t("settings:data.progress_percent", { percent: s3BackupProgress.percent })
+                  : undefined
+              }
+              percent={s3BackupProgress.percent > 0 ? s3BackupProgress.percent : null}
+            />
           ) : null}
-          <div className="mt-3 overflow-hidden rounded-md border">
-            {s3Items.length === 0 ? (
-              <div className="p-4 text-sm text-muted-foreground">
-                {t("settings:data.no_remote_backups_s3")}
-              </div>
-            ) : null}
-            {s3Items.map((item, index) => (
-              <React.Fragment key={item.displayName}>
-                {index > 0 ? <Separator /> : null}
-                <div className="flex items-center justify-between gap-3 p-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{item.displayName}</div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">
-                      {new Date(item.lastModified || 0).toLocaleString()} ·{" "}
-                      {Math.round((item.size || 0) / 1024)} KB
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void restoreS3(item)}
-                      disabled={Boolean(s3Busy)}
-                    >
-                      {s3Busy === `restore:${item.displayName}` ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Download className="size-4" />
-                      )}
-                      {t("settings:data.restore")}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => void deleteS3(item)}
-                      disabled={Boolean(s3Busy)}
-                      aria-label={t("settings:data.delete_backup")}
-                      title={t("settings:data.delete_backup")}
-                    >
-                      {s3Busy === `delete:${item.displayName}` ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-4" />
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              </React.Fragment>
-            ))}
-          </div>
+          <RemoteBackupList
+            items={s3Items}
+            busy={s3Busy}
+            emptyText={t("settings:data.no_remote_backups_s3")}
+            onRestore={(item) => void restoreS3(item)}
+            onDelete={(item) => void deleteS3(item)}
+          />
         </SettingsGroup>
       </SettingsStack>
     </>
+  );
+}
+
+/** 长任务进度:标题行(阶段文案 + 读数)+ 细进度条;percent 为 null 时为不确定态。 */
+function BackupProgress({
+  label,
+  detail,
+  percent,
+  hint,
+}: {
+  label: React.ReactNode;
+  detail?: React.ReactNode;
+  percent: number | null;
+  hint?: React.ReactNode;
+}) {
+  return (
+    <div className="mt-3 space-y-1.5">
+      <div className="flex items-center justify-between gap-3 text-xs text-[var(--ds-text-secondary)]">
+        <span className="min-w-0 truncate">{label}</span>
+        {detail != null ? <span className="shrink-0 tabular-nums">{detail}</span> : null}
+      </div>
+      <Progress value={percent} />
+      {hint != null ? <div className="text-mini text-[var(--ds-text-tertiary)]">{hint}</div> : null}
+    </div>
+  );
+}
+
+/** WebDAV / S3 共用的远端备份列表:行式无边框,右侧「恢复」与删除图标。 */
+function RemoteBackupList({
+  items,
+  busy,
+  emptyText,
+  onRestore,
+  onDelete,
+}: {
+  items: RemoteBackupItem[];
+  busy: string;
+  emptyText: string;
+  onRestore: (item: RemoteBackupItem) => void;
+  onDelete: (item: RemoteBackupItem) => void;
+}) {
+  const { t } = useTranslation();
+  if (items.length === 0) {
+    return (
+      <SettingsEmpty className="mt-4">{emptyText}</SettingsEmpty>
+    );
+  }
+  return (
+    <SettingsRows className="mt-3">
+      {items.map((item) => (
+        <SettingsRow
+          key={item.displayName}
+          label={<span className="block truncate">{item.displayName}</span>}
+          description={
+            <span className="tabular-nums">
+              {new Date(item.lastModified || 0).toLocaleString()} · {Math.round((item.size || 0) / 1024)} KB
+            </span>
+          }
+          control={
+            <>
+              <Button
+                type="button"
+                size="compact"
+                variant="tertiary"
+                onClick={() => onRestore(item)}
+                disabled={Boolean(busy)}
+              >
+                {busy === `restore:${item.displayName}` ? <Loader2 className="animate-spin" /> : <Download />}
+                {t("settings:data.restore")}
+              </Button>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                className="text-[var(--ds-icon)] hover:text-[var(--ds-danger)]"
+                onClick={() => onDelete(item)}
+                disabled={Boolean(busy)}
+                aria-label={t("settings:data.delete_backup")}
+                title={t("settings:data.delete_backup")}
+              >
+                {busy === `delete:${item.displayName}` ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Trash2 className="size-4" />
+                )}
+              </Button>
+            </>
+          }
+        />
+      ))}
+    </SettingsRows>
   );
 }
 
@@ -1346,17 +1212,15 @@ export function WebServiceSection({ settings }: { settings: Settings; onSettings
         title={t("settings:data.web_password_title")}
         description={t("settings:data.web_password_desc")}
         action={
-          <span className="text-xs text-[var(--ds-text-secondary)]">
+          <StatusBadge tone={webAuthConfigured ? "success" : "neutral"}>
             {webAuthConfigured ? t("settings:data.enabled") : t("settings:data.disabled")}
-          </span>
+          </StatusBadge>
         }
       >
         {/* 访问密码(P1):对外暴露(Docker/反代)时必备。部署者锁定(argv/env)时只读提示;
             否则就地设/改/清。密码存派生哈希,这里只见布尔状态。 */}
         {webAuthStatus?.lockedByDeployment ? (
-          <div className="mt-3 text-xs text-muted-foreground">
-            {t("settings:data.web_password_locked")}
-          </div>
+          <Notice className="mt-3">{t("settings:data.web_password_locked")}</Notice>
         ) : (
           <div className="mt-3 max-w-md space-y-2">
             {webAuthConfigured ? (
@@ -1364,6 +1228,7 @@ export function WebServiceSection({ settings }: { settings: Settings; onSettings
                 value={webPwCurrent}
                 onChange={setWebPwCurrent}
                 placeholder={t("settings:data.web_password_current")}
+                aria-label={t("settings:data.web_password_current")}
               />
             ) : null}
             <PasswordInput
@@ -1374,10 +1239,15 @@ export function WebServiceSection({ settings }: { settings: Settings; onSettings
                   ? t("settings:data.web_password_new")
                   : t("settings:data.web_password_set")
               }
+              aria-label={
+                webAuthConfigured
+                  ? t("settings:data.web_password_new")
+                  : t("settings:data.web_password_set")
+              }
             />
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 pt-1">
               <Button
-                size="sm"
+                size="compact"
                 disabled={webPwBusy || (webAuthConfigured ? !webPwCurrent || !webPwNew : !webPwNew)}
                 onClick={() => void submitWebPassword(false)}
               >
@@ -1387,8 +1257,8 @@ export function WebServiceSection({ settings }: { settings: Settings; onSettings
               </Button>
               {webAuthConfigured ? (
                 <Button
-                  size="sm"
-                  variant="outline"
+                  size="compact"
+                  variant="danger"
                   disabled={webPwBusy || !webPwCurrent}
                   onClick={() => void submitWebPassword(true)}
                 >
@@ -1423,30 +1293,30 @@ function RestoreReport({ report }: { report: Settings["lastRestoreReport"] }) {
     }
   };
   return (
-    <div className="flex items-start justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs dark:border-amber-800 dark:bg-amber-950">
-      <div className="min-w-0">
-        <div className="font-medium">
-          {t("settings:data.restore_report_title")} · {new Date(report.finishedAt).toLocaleString()}
-        </div>
-        <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-muted-foreground">
-          {report.dbReadError ? (
-            <li className="text-amber-700 dark:text-amber-300">
-              {t("settings:data.restore_report_db_error", { error: report.dbReadError })}
-            </li>
-          ) : null}
-          {report.messageNodesUnreadable > 0 ? (
-            <li className="text-amber-700 dark:text-amber-300">
-              {t("settings:data.restore_report_nodes_skipped", { count: report.messageNodesUnreadable })}
-            </li>
-          ) : null}
-          {report.filesDeduped > 0 ? (
-            <li>{t("settings:data.restore_report_files_deduped", { count: report.filesDeduped })}</li>
-          ) : null}
-        </ul>
+    <Notice
+      tone="warning"
+      action={
+        <Button size="compact" variant="tertiary" disabled={dismissing} onClick={() => void dismiss()}>
+          {t("settings:data.restore_report_dismiss")}
+        </Button>
+      }
+    >
+      <div className="font-medium">
+        {t("settings:data.restore_report_title")} · {new Date(report.finishedAt).toLocaleString()}
       </div>
-      <Button size="sm" variant="outline" className="shrink-0" disabled={dismissing} onClick={() => void dismiss()}>
-        {t("settings:data.restore_report_dismiss")}
-      </Button>
-    </div>
+      <ul className="mt-1.5 list-inside list-disc space-y-0.5">
+        {report.dbReadError ? (
+          <li>{t("settings:data.restore_report_db_error", { error: report.dbReadError })}</li>
+        ) : null}
+        {report.messageNodesUnreadable > 0 ? (
+          <li>{t("settings:data.restore_report_nodes_skipped", { count: report.messageNodesUnreadable })}</li>
+        ) : null}
+        {report.filesDeduped > 0 ? (
+          <li className="text-[var(--ds-text-secondary)]">
+            {t("settings:data.restore_report_files_deduped", { count: report.filesDeduped })}
+          </li>
+        ) : null}
+      </ul>
+    </Notice>
   );
 }

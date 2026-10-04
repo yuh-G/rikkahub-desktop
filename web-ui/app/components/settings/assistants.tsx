@@ -8,6 +8,7 @@ import { AvatarCropper } from "~/components/avatar-cropper";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
+import { Notice } from "~/components/ui/notice";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { Slider } from "~/components/ui/slider";
 import { Switch } from "~/components/ui/switch";
@@ -28,12 +29,13 @@ import {
   SettingsAdvancedRegion,
   SettingsAdvancedToggle,
   SettingsDetailFooter,
+  SettingsEmpty,
   SettingsField,
   SettingsGroup,
-  SettingsRows,
   SettingsKeyValueList,
   SettingsListAddButton,
   SettingsListRow,
+  SettingsRows,
   SettingsSplit,
   SettingsStack,
   SettingsSwitchRow,
@@ -296,9 +298,9 @@ export function AssistantsSection({
           onAdvancedOpenChange={setAdvancedOpen}
         />
       ) : (
-        <div className="rounded-[var(--ds-radius-md)] border border-dashed p-8 text-center text-sm text-[var(--ds-text-secondary)]">
+        <SettingsEmpty size="md">
           {t("settings:assistants.empty")}
-        </div>
+        </SettingsEmpty>
       )}
     </SettingsSplit>
   );
@@ -434,9 +436,9 @@ function AssistantEditor({
   };
 
   const emptyHint = (text: string) => (
-    <div className="rounded-[var(--ds-radius-md)] border border-dashed p-4 text-center text-sm text-[var(--ds-text-secondary)]">
+    <SettingsEmpty>
       {text}
-    </div>
+    </SettingsEmpty>
   );
   const addButton = (onClick: () => void) => (
     <Button type="button" size="sm" variant="outline" onClick={onClick}>
@@ -615,9 +617,9 @@ function AssistantEditor({
                 onChange={(event) => patchDraft({ messageTemplate: event.target.value })}
               />
               {messageTemplateMissingMessage ? (
-                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                <Notice tone="danger">
                   {t("settings:assistants.template_missing_warn", { token: DEFAULT_MESSAGE_TEMPLATE })}
-                </div>
+                </Notice>
               ) : null}
               <div className="rounded-md border bg-muted/30 p-3">
                 <div className="mb-2 text-sm font-medium">{t("settings:assistants.template_preview")}</div>
@@ -830,7 +832,7 @@ function AssistantEditor({
         </SettingsAdvancedRegion>
 
         <SettingsDetailFooter
-          status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+          status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
         />
       </SettingsStack>
     </div>

@@ -10,10 +10,8 @@ import {
   Loader2,
   Plus,
   RefreshCw,
-  Search,
   Trash2,
   TriangleAlert,
-  X,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -27,7 +25,10 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
 import { Input } from "~/components/ui/input";
+import { Notice } from "~/components/ui/notice";
+import { SearchInput } from "~/components/ui/search-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import { StatusBadge, StatusBadgeButton } from "~/components/ui/status-badge";
 import { Switch } from "~/components/ui/switch";
 import { ModelEditDialog } from "~/components/model-edit-dialog";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
@@ -53,6 +54,7 @@ import {
   SettingsAdvancedSection,
   SettingsDetailFooter,
   SettingsDetailHeader,
+  SettingsEmpty,
   SettingsField,
   SettingsGroup,
   SettingsRows,
@@ -310,43 +312,40 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
   // 凭据复用 Claude Code 客户端身份有 ToS 风险,且此订阅不进对话模式,选择器里不可见。
   const workspaceOnlyWarning =
     provider.oauthStatus?.chatCapable === false ? (
-      <div className="rounded-md border border-amber-300 bg-amber-50/60 px-3 py-2.5 dark:border-amber-900 dark:bg-amber-950/30">
-        <div className="flex items-start gap-2 text-sm font-medium text-amber-700 dark:text-amber-400">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-          {t("settings:providers.oauth.workspace_only_title")}
-        </div>
-        <p className="mt-1 pl-6 text-xs leading-relaxed text-amber-800/90 dark:text-amber-300/90">
-          {t("settings:providers.oauth.workspace_only_note")}
-        </p>
+      <Notice tone="warning" icon={<TriangleAlert />}>
+        <div className="text-sm font-medium">{t("settings:providers.oauth.workspace_only_title")}</div>
+        <p className="mt-1 text-[var(--ds-text-secondary)]">{t("settings:providers.oauth.workspace_only_note")}</p>
         <a
           href="https://code.claude.com/docs/en/legal-and-compliance"
           target="_blank"
           rel="noreferrer"
-          className="mt-1.5 inline-flex items-center gap-1 pl-6 text-xs font-medium text-amber-700 underline underline-offset-2 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300"
+          className="mt-1.5 inline-flex items-center gap-1 font-medium underline underline-offset-2 hover:opacity-80"
         >
           {t("settings:providers.oauth.legal_link")}
           <ExternalLink className="size-3" />
         </a>
-      </div>
+      </Notice>
     ) : null;
 
   if (signedIn) {
     return (
       <>
         {workspaceOnlyWarning}
-        <div className="rounded-md border border-emerald-200 bg-emerald-50/50 px-3 py-3 dark:border-emerald-900 dark:bg-emerald-950/30">
-          <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
-            <CheckCircle2 className="size-4" />
-            {t("settings:providers.oauth.signed_in")}
-          </div>
-          <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+        <Notice
+          tone="success"
+          icon={<CheckCircle2 />}
+          action={
+            <Button variant="tertiary" size="compact" onClick={() => void logout()}>
+              {t("settings:providers.oauth.logout")}
+            </Button>
+          }
+        >
+          <div className="text-sm font-medium">{t("settings:providers.oauth.signed_in")}</div>
+          <div className="mt-0.5 space-y-0.5 text-[var(--ds-text-secondary)]">
             {provider.oauthStatus?.accountId ? <div>{t("settings:providers.oauth.account", { id: provider.oauthStatus.accountId })}</div> : null}
             {provider.oauthStatus?.signedInAt ? <div>{t("settings:providers.oauth.signed_in_at", { time: new Date(provider.oauthStatus.signedInAt).toLocaleString() })}</div> : null}
           </div>
-          <Button variant="outline" size="sm" className="mt-3" onClick={() => void logout()}>
-            {t("settings:providers.oauth.logout")}
-          </Button>
-        </div>
+        </Notice>
       </>
     );
   }
@@ -1372,9 +1371,7 @@ export function ProvidersSection({
                 onDelete={() => deleteProviderById(provider.id)}
                 badge={
                   provider.authMode === "oauth" ? (
-                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                      {t("settings:providers.oauth.badge")}
-                    </span>
+                    <StatusBadge tone="brand">{t("settings:providers.oauth.badge")}</StatusBadge>
                   ) : null
                 }
               >
@@ -1489,37 +1486,24 @@ export function ProvidersSection({
               {/* 搜索 + 全选工具条:列表为空(未拉取、无手动模型)时不显示。 */}
               {(fetchedModels.length > 0 || (draft.models ?? []).length > 0) && (
                 <div className="flex items-center gap-2">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      value={modelFilter}
-                      onChange={(event) => setModelFilter(event.target.value)}
-                      placeholder={t("settings:providers.models_search_placeholder")}
-                      aria-label={t("settings:providers.models_search_placeholder")}
-                      className="h-8 pl-9 pr-8"
-                    />
-                    {modelFilter ? (
-                      <button
-                        type="button"
-                        onClick={() => setModelFilter("")}
-                        aria-label={t("settings:providers.clear_search")}
-                        title={t("settings:providers.clear_search")}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        <X className="size-4" />
-                      </button>
-                    ) : null}
-                  </div>
+                  <SearchInput
+                    className="flex-1"
+                    value={modelFilter}
+                    onValueChange={setModelFilter}
+                    placeholder={t("settings:providers.models_search_placeholder")}
+                    aria-label={t("settings:providers.models_search_placeholder")}
+                    clearLabel={t("settings:providers.clear_search")}
+                  />
                   {/* 已启用/总数:当前过滤后还剩多少一目了然。 */}
-                  <span className="shrink-0 text-xs text-muted-foreground">
+                  <span className="shrink-0 text-xs tabular-nums text-[var(--ds-text-secondary)]">
                     {t("settings:providers.models_selection_count", {
                       enabled: draft.models?.length ?? 0,
                       total: displayModels.length,
                     })}
                   </span>
                   <Button
-                    variant="outline"
-                    size="sm"
+                    variant="ghost"
+                    size="compact"
                     onClick={() => setModelsEnabled(visibleModels, !allFilteredEnabled)}
                     disabled={visibleModels.length === 0}
                     title={selectAllLabel}
@@ -1582,53 +1566,39 @@ export function ProvidersSection({
                         </span>
                         {enabled && currentType === "CHAT" ? (
                           <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
+                            <StatusBadgeButton
+                              tone="warning"
+                              pressed={hasTool}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 event.preventDefault();
                                 toggleModelAbility(model.modelId, "TOOL", !hasTool);
                               }}
-                              className={cn(
-                                "h-7 rounded-md border px-2 text-xs transition",
-                                hasTool
-                                  ? "border-warning/50 bg-warning/10 text-warning"
-                                  : "border-border text-muted-foreground hover:bg-muted",
-                              )}
                               title={hasTool ? t("settings:providers.tool_enabled") : t("settings:providers.tool_disabled")}
                             >
                               {t("settings:providers.tool_short")}
-                            </button>
-                            <button
-                              type="button"
+                            </StatusBadgeButton>
+                            <StatusBadgeButton
+                              tone="brand"
+                              pressed={hasReasoning}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 event.preventDefault();
                                 toggleModelAbility(model.modelId, "REASONING", !hasReasoning);
                               }}
-                              className={cn(
-                                "h-7 rounded-md border px-2 text-xs transition",
-                                hasReasoning
-                                  ? "border-sky-500/50 bg-sky-500/10 text-sky-700 dark:text-sky-300"
-                                  : "border-border text-muted-foreground hover:bg-muted",
-                              )}
                               title={hasReasoning ? t("settings:providers.reasoning_enabled") : t("settings:providers.reasoning_disabled")}
                             >
                               {t("settings:providers.reasoning_short")}
-                            </button>
+                            </StatusBadgeButton>
                           </div>
                         ) : null}
                       </div>
                     );
                   })}
                   {displayModels.length === 0 ? (
-                    <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                      {t("settings:providers.no_models")}
-                    </div>
+                    <SettingsEmpty>{t("settings:providers.no_models")}</SettingsEmpty>
                   ) : visibleModels.length === 0 ? (
-                    <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                      {t("settings:providers.models_no_match")}
-                    </div>
+                    <SettingsEmpty>{t("settings:providers.models_no_match")}</SettingsEmpty>
                   ) : null}
               </div>
             </SettingsGroup>
@@ -1660,10 +1630,10 @@ export function ProvidersSection({
               {(testing || testChecks.length > 0 || testInfo) &&
               !isImageTestMode &&
               !imageTestResult ? (
-                <div className="rounded-md border bg-muted/40 p-3">
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="text-sm font-medium">{t("settings:providers.test_summary")}</div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="text-xs text-[var(--ds-text-secondary)]">
                       {testInfo?.testModelId
                         ? t("settings:providers.test_summary_model", { model: testInfo.testModelId })
                         : testing
@@ -1676,27 +1646,23 @@ export function ProvidersSection({
                       const check = testChecks.find((item) => item.mode === mode);
                       const pending = testing && !check;
                       return (
-                        <div
+                        <Notice
                           key={mode}
-                          className={cn(
-                            "rounded-md border bg-background px-3 py-2",
-                            check?.ok === true && "border-success/30 bg-success/5",
-                            check?.ok === false && "border-destructive/30 bg-destructive/5",
-                          )}
-                        >
-                          <div className="flex items-center gap-2 text-sm font-medium">
-                            {pending ? (
-                              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                          tone={check?.ok === true ? "success" : check?.ok === false ? "danger" : "info"}
+                          icon={
+                            pending ? (
+                              <Loader2 className="animate-spin" />
                             ) : check?.ok ? (
-                              <CheckCircle2 className="size-4 text-success" />
+                              <CheckCircle2 />
                             ) : check ? (
-                              <XCircle className="size-4 text-destructive" />
+                              <XCircle />
                             ) : (
-                              <span className="size-2 rounded-full bg-muted-foreground/40" />
-                            )}
-                            <span>{testModeLabels[mode]}</span>
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground">
+                              <span className="mt-[5px] size-1.5 shrink-0 rounded-full bg-current opacity-40" />
+                            )
+                          }
+                        >
+                          <div className="text-sm font-medium">{testModeLabels[mode]}</div>
+                          <div className="mt-0.5 text-[var(--ds-text-secondary)]">
                             {check
                               ? check.ok
                                 ? t("settings:providers.check_ok", { status: check.status })
@@ -1705,26 +1671,25 @@ export function ProvidersSection({
                                 ? t("settings:providers.in_progress")
                                 : t("settings:providers.not_tested")}
                           </div>
-                        </div>
+                        </Notice>
                       );
                     })}
                   </div>
                 </div>
               ) : null}
               {isImageTestMode && testing && !imageTestResult ? (
-                <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
-                  <Loader2 className="mr-2 inline size-4 animate-spin align-middle" />
-                  {t("settings:providers.img_test_generating_pre")}<span className="font-medium text-foreground">
+                <Notice icon={<Loader2 className="animate-spin" />}>
+                  {t("settings:providers.img_test_generating_pre")}<span className="font-medium text-[var(--ds-text-primary)]">
                     {effectiveTestModelId}
                   </span>{" "}
                   {t("settings:providers.img_test_generating_post")}
-                </div>
+                </Notice>
               ) : null}
               {imageTestResult ? (
-                <div className="rounded-md border bg-muted/40 p-3">
+                <div className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3">
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <div className="text-sm font-medium">{t("settings:providers.img_test_result")}</div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="text-xs text-[var(--ds-text-secondary)]">
                       {t("settings:providers.img_test_model", { model: imageTestResult.modelId, duration: (imageTestResult.durationMs / 1000).toFixed(2) })}
                     </div>
                   </div>
@@ -1733,18 +1698,18 @@ export function ProvidersSection({
                       <img
                         src={appendWebAuthQuery(imageTestResult.url)}
                         alt={t("settings:providers.img_alt")}
-                        className="h-40 w-40 rounded-md border object-cover"
+                        className="h-40 w-40 rounded-[var(--ds-radius-sm)] object-cover"
                       />
                     ) : null}
-                    <div className="min-w-0 flex-1 text-xs text-muted-foreground">
-                      <div className="mb-1 font-medium text-foreground">{t("settings:providers.prompt_label")}</div>
+                    <div className="min-w-0 flex-1 text-xs text-[var(--ds-text-secondary)]">
+                      <div className="mb-1 font-medium text-[var(--ds-text-primary)]">{t("settings:providers.prompt_label")}</div>
                       <div className="whitespace-pre-wrap">{imageTestResult.prompt}</div>
                     </div>
                   </div>
                 </div>
               ) : null}
               {testResult ? (
-                <pre className="max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
+                <pre className="max-h-56 overflow-auto rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3 text-xs whitespace-pre-wrap">
                   {testResult}
                 </pre>
               ) : null}
@@ -1854,22 +1819,21 @@ export function ProvidersSection({
                               patchDraft({ balanceOption: { ...balanceOptionOf(draft), resultPath: event.target.value } })
                             }
                             aria-invalid={!resultPathValid}
-                            className={cn(!resultPathValid && "border-destructive focus-visible:ring-destructive/30")}
                           />
                         </SettingsField>
                       </div>
                       <Button
                         type="button"
-                        variant="outline"
-                        size="sm"
+                        variant="tertiary"
+                        size="compact"
                         onClick={() => void checkBalance()}
                         disabled={checkingBalance}
                       >
-                        {checkingBalance ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
+                        {checkingBalance ? <Loader2 className="animate-spin" /> : <Database />}
                         {t("settings:providers.query")}
                       </Button>
                       {balanceResult ? (
-                        <pre className="max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
+                        <pre className="max-h-56 overflow-auto rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3 text-xs whitespace-pre-wrap">
                           {balanceResult}
                         </pre>
                       ) : null}
@@ -1880,7 +1844,7 @@ export function ProvidersSection({
             </SettingsAdvancedSection>
 
             <SettingsDetailFooter
-              status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+              status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
             />
           </SettingsStack>
         </div>

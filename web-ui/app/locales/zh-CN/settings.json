@@ -1010,6 +1010,7 @@
     "web_password_desc": "通过网络（Web 服务 / Docker / 反向代理）访问时需要输入的密码。对外暴露服务时务必设置。",
     "s3": {
       "path_style": "路径风格（Path-style）",
+      "path_style_desc": "以 endpoint/bucket 路径寻址（MinIO 等自建服务通常需要开启）；关闭则用 bucket.endpoint 虚拟主机寻址。",
       "region": "区域（Region）",
       "bucket": "存储桶（Bucket）",
       "access_key_id": "Access Key ID",

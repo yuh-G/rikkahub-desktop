@@ -411,7 +411,7 @@ export function DefaultModelsSection({
     <>
       <SettingsGroup
         description={t("settings:models.note")}
-        action={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+        action={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
       >
         <SettingsRows className="mt-2">
           {features.map((feature) => {

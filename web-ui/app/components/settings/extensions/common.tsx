@@ -12,6 +12,7 @@ import { setBindingAssistant, useExtensionBindingStore } from "~/stores/extensio
 import type { AssistantProfile, Settings } from "~/types";
 import {
   type SettingsAddMenuItem,
+  SettingsEmpty,
   SettingsListAddButton,
   SettingsListRow,
   SettingsSplit,
@@ -91,9 +92,9 @@ export function BindingAssistantToolbar({
 export function NoAssistantsState() {
   const { t } = useTranslation();
   return (
-    <div className="rounded-[var(--ds-radius-md)] border border-dashed p-8 text-center text-sm text-[var(--ds-text-secondary)]">
+    <SettingsEmpty size="md">
       {t("settings:mcp.no_assistants")}
-    </div>
+    </SettingsEmpty>
   );
 }
 
@@ -219,9 +220,9 @@ export function EditorShell({
         {listHeader}
         <div className="space-y-1">
           {items.length === 0 ? (
-            <div className="rounded-[var(--ds-radius-md)] border border-dashed p-6 text-center text-sm text-[var(--ds-text-secondary)]">
+            <SettingsEmpty size="md">
               {emptyLabel}
-            </div>
+            </SettingsEmpty>
           ) : null}
           {items.map((item, index) => {
             const rowKey = String(item.id ?? item.name);

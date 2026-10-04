@@ -25,6 +25,7 @@ import {
   SettingsAdvancedSection,
   SettingsDetailFooter,
   SettingsDetailHeader,
+  SettingsEmpty,
   SettingsField,
   SettingsGroup,
   SettingsRows,
@@ -621,9 +622,9 @@ function LorebookEditor({
             fields
           >
             {entries.length === 0 ? (
-              <div className="rounded-[var(--ds-radius-md)] border border-dashed px-3 py-8 text-center text-sm text-[var(--ds-text-secondary)]">
+              <SettingsEmpty size="md">
                 {t("settings:mcp.no_entries")}
-              </div>
+              </SettingsEmpty>
             ) : (
               <div className="space-y-2">
                 {entries.map((entry, index) => (
@@ -655,7 +656,7 @@ function LorebookEditor({
           </SettingsAdvancedSection>
 
           <SettingsDetailFooter
-            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
           />
         </SettingsStack>
       </div>
@@ -869,7 +870,7 @@ function PromptItemEditor({
           </SettingsAdvancedSection>
 
           <SettingsDetailFooter
-            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} className="px-0" />}
+            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
           />
         </SettingsStack>
       </div>
