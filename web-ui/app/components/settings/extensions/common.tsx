@@ -1,5 +1,5 @@
 // components/settings/extensions/common.tsx — 拓展四页共用件:列表/详情外壳、「作用于助手」
-// 绑定(选择器 + 开关)、JSON 与 settings 拉取小工具。
+// 绑定(选择器 + 开关)、settings 拉取小工具。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -140,19 +140,6 @@ export function BindingSwitch({
       onCheckedChange={onCheckedChange}
     />
   );
-}
-
-export function prettyJson(value: unknown) {
-  return JSON.stringify(value ?? [], null, 2);
-}
-
-export function parseJson<T>(value: string, fallback: T, errorMsg = "Invalid JSON"): T {
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    void fallback;
-    throw new Error(errorMsg);
-  }
 }
 
 export async function pullSettings(onSettings: (settings: Settings) => void) {

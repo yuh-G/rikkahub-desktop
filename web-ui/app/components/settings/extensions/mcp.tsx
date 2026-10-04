@@ -10,7 +10,6 @@ import { Notice } from "~/components/ui/notice";
 import { StatusBadge } from "~/components/ui/status-badge";
 import { SegmentedControl } from "~/components/ui/segmented-tabs";
 import { Switch } from "~/components/ui/switch";
-import { Textarea } from "~/components/ui/textarea";
 import Markdown from "~/components/markdown/markdown";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
@@ -40,8 +39,6 @@ import {
   EditorShell,
   ExpandChevron,
   LabeledSwitch,
-  parseJson,
-  prettyJson,
   pullSettings,
   type SectionProps,
 } from "~/components/settings/extensions/common";
@@ -131,19 +128,14 @@ function McpServerEditor({
   const [headers, setHeaders] = React.useState<SettingsKeyValue[]>(() =>
     headersOf(selected.commonOptions),
   );
-  const [toolsText, setToolsText] = React.useState(
-    prettyJson((selected.commonOptions as Record<string, unknown> | undefined)?.tools ?? []),
-  );
   // R8-2:三件套竞态防护("URL input eats characters" 的修复)抽成共享 hook,本编辑器是
   // 原始出处——语义与病史见 hooks/use-autosave-draft.ts 文件头。
-  // draft/headers/toolsText 走 ref 取最新值:persist 既被防抖调用(渲染早已提交),
+  // draft/headers 走 ref 取最新值:persist 既被防抖调用(渲染早已提交),
   // 也被 patchCommon 同步立即调用(setState 尚未提交,由 patch 同步写 ref 保证新鲜)。
   const draftRef = React.useRef(draft);
   draftRef.current = draft;
   const headersRef = React.useRef(headers);
   headersRef.current = headers;
-  const toolsTextRef = React.useRef(toolsText);
-  toolsTextRef.current = toolsText;
   // 域7-1(3A):保存进行中 indicator 由 hook status 机驱动,删掉手维护 busy;
   // save 体内的 POST 失败仍沿 return 路径抛给 hook → status=failed + 缺省 toast。
   const autosave = useAutosaveDraft(
@@ -158,7 +150,6 @@ function McpServerEditor({
         commonOptions: {
           ...currentCommon,
           headers: toMcpHeaderPairs(headersRef.current.map((item) => ({ name: item.key, value: item.value }))),
-          tools: parseJson<unknown[]>(toolsTextRef.current, [], t("settings:mcp.json_invalid")),
         },
       };
       const result = await api.post<{ server: Record<string, unknown> }>(
@@ -189,9 +180,6 @@ function McpServerEditor({
     if (String(next.id) !== selectedId) setSelectedId(String(next.id));
     setDraft(clone(next));
     setHeaders(headersOf(next.commonOptions));
-    setToolsText(
-      prettyJson((next.commonOptions as Record<string, unknown> | undefined)?.tools ?? []),
-    );
     autosave.reset();
   }, [selectedId]);
 
@@ -213,14 +201,11 @@ function McpServerEditor({
     markDirty();
     setDraft(nextDraft);
   };
-  // Update one tool's fields (enable / needsApproval) without losing other tools' edits.
-  // We mutate both the in-memory tools array (drives the UI) and toolsText (the canonical
-  // persistence source consumed by save()) so the debounced auto-save writes the toggle.
+  // 工具列表由服务器同步(tools/list),保存时服务端只保留每个工具的 enable/needsApproval
+  // 偏好、其余字段一律以同步结果覆盖——所以这里只改这两个偏好,不提供原始 JSON 编辑。
   const updateToolAt = (index: number, patch: Partial<Record<string, unknown>>) => {
     const nextTools = tools.map((tool, i) => (i === index ? { ...tool, ...patch } : tool));
-    const nextCommon = { ...common, tools: nextTools };
-    patchDraft({ ...draft, commonOptions: nextCommon });
-    setToolsText(prettyJson(nextTools));
+    patchDraft({ ...draft, commonOptions: { ...common, tools: nextTools } });
   };
   // Merge the server's authoritative fields (fetched tools, sync status, Transition 1/2
   // enable flips) into the current draft WITHOUT touching user-edited fields (url / name /
@@ -249,7 +234,6 @@ function McpServerEditor({
         },
       };
     });
-    setToolsText(prettyJson(serverCommon.tools ?? []));
   };
   // 开关类修改:同步写 ref 后立即落盘(不等防抖),失败 toast。
   const patchCommon = (patch: Record<string, unknown>) => {
@@ -333,7 +317,6 @@ function McpServerEditor({
         setSelectedId("");
         setDraft(clone(createMcpServer()));
         setHeaders([]);
-        setToolsText("[]");
       }
     }
     toast.success(t("settings:mcp.server.deleted"));
@@ -393,7 +376,6 @@ function McpServerEditor({
           setSelectedId(String(next.id));
           setDraft(clone(next));
           setHeaders([]);
-          setToolsText("[]");
           autosave.reset();
         } catch (error) {
           toast.error(error instanceof Error ? error.message : t("settings:mcp.server.create_failed"));
@@ -621,17 +603,6 @@ function McpServerEditor({
                 emptyText={t("settings:common.no_headers")}
                 removeLabel={t("settings:common.delete_header")}
               />
-              <SettingsField label={t("settings:mcp.server.tools_json")} hint={t("settings:mcp.server.tools_desc")}>
-                <Textarea
-                  value={toolsText}
-                  onChange={(event) => {
-                    markDirty();
-                    setToolsText(event.target.value);
-                  }}
-                  className="h-44 max-h-44 font-mono text-xs"
-                  placeholder={t("settings:mcp.server.tools_ph")}
-                />
-              </SettingsField>
             </div>
           </SettingsAdvancedSection>
 

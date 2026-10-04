@@ -1368,7 +1368,8 @@ export function ProvidersSection({
                 active={provider.id === draft.id}
                 onSelect={() => setSelectedId(provider.id)}
                 onMove={moveProvider}
-                onDelete={() => deleteProviderById(provider.id)}
+                // 至少保留一个供应商:只剩一个时不给删除菜单(否则菜单在、点了却没有反应)。
+                onDelete={settings.providers.length > 1 ? () => deleteProviderById(provider.id) : undefined}
                 badge={
                   provider.authMode === "oauth" ? (
                     <StatusBadge tone="brand">{t("settings:providers.oauth.badge")}</StatusBadge>

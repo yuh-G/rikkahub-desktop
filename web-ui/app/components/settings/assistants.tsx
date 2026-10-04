@@ -18,6 +18,7 @@ import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { createId } from "~/lib/id";
 import { getModelDisplayName } from "~/lib/display";
 import { patchSettingsLocal, upsertById } from "~/lib/settings-patch";
+import { cn } from "~/lib/utils";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -274,7 +275,8 @@ export function AssistantsSection({
           active={item.id === draft?.id}
           onSelect={() => setAssistantId(item.id)}
           onMove={moveAssistant}
-          onDelete={() => removeAssistantById(item.id)}
+          // 至少保留一个助手:只剩一个时不给删除菜单(否则菜单在、点了却没有反应)。
+          onDelete={settings.assistants.length > 1 ? () => removeAssistantById(item.id) : undefined}
         >
           <span className="flex items-center gap-2">
             <UIAvatar size="sm" name={item.name || t("settings:assistants.default_name")} avatar={item.avatar} />
@@ -385,16 +387,36 @@ function AssistantEditor({
     patchDraft({ [key]: items.filter((_, itemIndex) => itemIndex !== index) } as Partial<AssistantProfile>);
   };
 
+  // 温度 / Top P:未设置(null)= 不发送,用模型默认值。滑块需要一个位置,未设置时停在 1 并淡化
+  // 已选段,数字框留空显示「默认」——显示值与实际发送一致;「恢复默认」写回 null。
   const parameterControl = (key: "temperature" | "topP", label: string, max: number, step: number) => {
-    const value = typeof draft[key] === "number" ? draft[key] : 1;
+    const unset = typeof draft[key] !== "number";
+    const value = unset ? 1 : (draft[key] as number);
     const commit = (raw: string) => {
-      if (raw.trim() === "") return;
+      if (raw.trim() === "") {
+        if (!unset) patchDraft({ [key]: null } as Partial<AssistantProfile>);
+        return;
+      }
       const next = Number(raw);
       if (!Number.isFinite(next)) return;
       patchDraft({ [key]: Math.min(max, Math.max(0, next)) } as Partial<AssistantProfile>);
     };
     return (
-      <SettingsField label={label}>
+      <SettingsField
+        label={label}
+        hint={unset ? t("settings:assistants.param_default_desc") : undefined}
+        trailing={
+          <Button
+            type="button"
+            variant="ghost"
+            size="compact"
+            disabled={unset}
+            onClick={() => patchDraft({ [key]: null } as Partial<AssistantProfile>)}
+          >
+            {t("settings:assistants.param_reset")}
+          </Button>
+        }
+      >
         <div className="flex items-center gap-3">
           <Slider
             min={0}
@@ -402,13 +424,16 @@ function AssistantEditor({
             step={step}
             value={[value]}
             aria-label={label}
+            className={cn(unset && "[&_[data-slot=slider-thumb]]:before:opacity-25")}
             onValueChange={([next]) => patchDraft({ [key]: next ?? null } as Partial<AssistantProfile>)}
           />
           <Input
-            key={`${key}-${value}`}
-            className="w-24"
+            key={`${key}-${unset ? "unset" : value}`}
+            className="w-20 shrink-0"
+            inputMode="decimal"
             aria-label={label}
-            defaultValue={numberText(value)}
+            defaultValue={unset ? "" : numberText(value)}
+            placeholder={t("settings:assistants.param_default")}
             onBlur={(event) => commit(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") commit(event.currentTarget.value);

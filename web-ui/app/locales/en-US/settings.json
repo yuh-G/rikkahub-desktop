@@ -350,6 +350,9 @@
     "regex_name_ph": "Rule name",
     "delete_regex": "Delete regex",
     "visual_only": "Visual only",
+    "param_default": "Default",
+    "param_reset": "Reset",
+    "param_default_desc": "Not set: the parameter is omitted and the model default applies. Drag or type a value to set it.",
     "max_tokens_ph": "Default",
     "max_tokens_desc": "Leave empty to omit it and use the server default.",
     "context_message_size": "Context message limit",
@@ -578,7 +581,8 @@
       "scrape_script": "Scrape script",
       "depth_basic": "Basic",
       "depth_standard": "Standard",
-      "depth_advanced": "Advanced"
+      "depth_advanced": "Advanced",
+      "depth_deep": "Deep"
     }
   },
   "models": {
@@ -674,7 +678,6 @@
       "bottom": "Bottom of chat",
       "depth": "At depth"
     },
-    "json_invalid": "Invalid JSON",
     "status_off": "Disabled",
     "status_error": "Connection error",
     "status_connected": "Connected",
@@ -716,9 +719,6 @@
       "url_desc": "The Streamable HTTP / SSE endpoint of the MCP server.",
       "headers": "Custom headers",
       "headers_desc": "Attached to every connection and call, typically for API key auth.",
-      "tools_json": "Tools JSON",
-      "tools_ph": "Auto-filled with the tools/list result after enabling and saving; you can also edit the enable field manually",
-      "tools_desc": "Tools are synced when auto-saving an enabled MCP service.",
       "last_error": "Last error: {{error}}",
       "tools_title": "Tools",
       "tools_count": "{{count}} tools — enable each one and choose whether it needs your approval.",

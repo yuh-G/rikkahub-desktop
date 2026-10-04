@@ -350,6 +350,9 @@
     "regex_name_ph": "规则名称",
     "delete_regex": "删除正则",
     "visual_only": "仅视觉替换",
+    "param_default": "默认",
+    "param_reset": "恢复默认",
+    "param_default_desc": "未设置：不发送该参数，使用模型默认值。拖动滑块或输入数值即可指定。",
     "max_tokens_ph": "默认",
     "max_tokens_desc": "留空则不发送该参数，使用服务端默认值。",
     "context_message_size": "上下文消息限制",
@@ -578,7 +581,8 @@
       "scrape_script": "抓取脚本",
       "depth_basic": "基础",
       "depth_standard": "标准",
-      "depth_advanced": "深入"
+      "depth_advanced": "深入",
+      "depth_deep": "深入"
     }
   },
   "models": {
@@ -674,7 +678,6 @@
       "bottom": "对话底部",
       "depth": "指定深度"
     },
-    "json_invalid": "JSON 格式不正确",
     "status_off": "已关闭",
     "status_error": "连接异常",
     "status_connected": "已连接",
@@ -716,9 +719,6 @@
       "url_desc": "MCP 服务器的 Streamable HTTP / SSE 入口地址。",
       "headers": "自定义请求头",
       "headers_desc": "连接与调用时附加到每个请求上，常用于 API Key 鉴权。",
-      "tools_json": "工具列表 JSON",
-      "tools_ph": "启用并保存后自动写入 tools/list 的结果，也可以手动编辑 enable 字段",
-      "tools_desc": "自动保存启用的 MCP 服务时会同步工具。",
       "last_error": "最近错误：{{error}}",
       "tools_title": "工具",
       "tools_count": "共 {{count}} 个工具，可逐个设置是否启用、是否需要用户审核。",

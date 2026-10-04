@@ -26,6 +26,7 @@ import {
   resolveServiceEndpoint,
   serviceEndpointBase,
 } from "@server/search/service-endpoints";
+import { resolveSearchDepth, searchDepthSpecOf } from "@server/search/service-depth";
 import { searchSelectionAfterDelete } from "@server/foundation/search-selection";
 import {
   clone,
@@ -691,24 +692,9 @@ export function SearchSection({
               </>
             ) : null}
             {textValue(draft.type) === "custom_js" ? (
-              // Custom JS 用户只可能是高级用户,深度/结果数量不折叠直示(该类型也没有请求地址框)。
+              // Custom JS 用户只可能是高级用户,结果数量不折叠直示(该类型也没有请求地址框)。
+              // 不给深度:脚本入参只有 (query, resultSize),深度传不进去。
               <>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("settings:search.depth")}</span>
-                  <Select
-                    value={textValue(draft.depth) || "standard"}
-                    onValueChange={(depth) => patchDraft({ depth })}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="basic">{t("settings:search.field.depth_basic")}</SelectItem>
-                      <SelectItem value="standard">{t("settings:search.field.depth_standard")}</SelectItem>
-                      <SelectItem value="advanced">{t("settings:search.field.depth_advanced")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </label>
                 <label className="space-y-2">
                   <span className="text-sm font-medium">{t("settings:search.result_count")}</span>
                   <Input
@@ -772,22 +758,31 @@ export function SearchSection({
                     </label>
                   );
                 })()}
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("settings:search.depth")}</span>
-                  <Select
-                    value={textValue(draft.depth) || "standard"}
-                    onValueChange={(depth) => patchDraft({ depth })}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="basic">{t("settings:search.field.depth_basic")}</SelectItem>
-                      <SelectItem value="standard">{t("settings:search.field.depth_standard")}</SelectItem>
-                      <SelectItem value="advanced">{t("settings:search.field.depth_advanced")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </label>
+                {(() => {
+                  // 深度只对登记了的服务显示,选项与显示值都按后端实际发送的口径解析(所见即所发)。
+                  const depthSpec = searchDepthSpecOf(textValue(draft.type));
+                  if (!depthSpec) return null;
+                  return (
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium">{t("settings:search.depth")}</span>
+                      <Select
+                        value={resolveSearchDepth(draft) ?? depthSpec.fallback}
+                        onValueChange={(depth) => patchDraft({ depth })}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {depthSpec.values.map((value) => (
+                            <SelectItem key={value} value={value}>
+                              {t(`settings:search.field.depth_${value}`)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </label>
+                  );
+                })()}
                 <label className="space-y-2">
                   <span className="text-sm font-medium">{t("settings:search.result_count")}</span>
                   <Input

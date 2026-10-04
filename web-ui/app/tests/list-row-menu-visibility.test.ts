@@ -58,6 +58,17 @@ describe("设置列表 SettingsListRow", () => {
     // 鼠标点按留下的 :focus 不该让「⋯」常显(菜单关闭焦点还原滞留的根因),故禁用 focus-within 常显类。
     expect(SHARED).not.toContain("group-focus-within/settings-row:opacity-100");
   });
+
+  test("「至少保留一个」的列表:只剩一条时不给删除菜单(菜单在、点了却无反应即空壳)", () => {
+    const read = (name: string) =>
+      readFileSync(join(import.meta.dir, "..", "components", "settings", name), "utf8");
+    expect(read("providers.tsx")).toContain(
+      "onDelete={settings.providers.length > 1 ? () => deleteProviderById(provider.id) : undefined}",
+    );
+    expect(read("assistants.tsx")).toContain(
+      "onDelete={settings.assistants.length > 1 ? () => removeAssistantById(item.id) : undefined}",
+    );
+  });
 });
 
 describe("会话列表 SidebarMenuAction", () => {

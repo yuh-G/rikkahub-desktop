@@ -8,6 +8,7 @@ import { domainOfUrl, faviconForUrl, isRecord, stripHtml } from "../foundation/u
 import { state } from "../persistence/json-store";
 import { jsonBody, textBody } from "../model-providers";
 import { addLog } from "../api/logs";
+import { resolveSearchDepth } from "./service-depth";
 import { requireServiceEndpoint } from "./service-endpoints";
 
 export function buildSearchContext() {
@@ -433,7 +434,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
         headers: requestHeaders,
-        body: JSON.stringify({ query, max_results: maxResults, search_depth: service.depth ?? "basic", include_images: true }),
+        body: JSON.stringify({ query, max_results: maxResults, search_depth: resolveSearchDepth(service), include_images: true }),
       });
       const raw = await response.json();
       addLog({
@@ -470,7 +471,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
   if (type === "rikkahub") {
     const exec = async (apiKey: string) => {
       const endpoint = requireServiceEndpoint(service);
-      const requestBody = { q: query, depth: service.depth ?? "standard", outputType: "sourcedAnswer", includeImages: false };
+      const requestBody = { q: query, depth: resolveSearchDepth(service), outputType: "sourcedAnswer", includeImages: false };
       const requestHeaders = { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) };
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
@@ -862,7 +863,7 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
   if (type === "linkup") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
       const endpoint = requireServiceEndpoint(service);
-      const depth = String(service.depth ?? "standard");
+      const depth = resolveSearchDepth(service) ?? "standard";
       const body: Record<string, JsonValue> = { q: query, depth, outputType: "sourcedAnswer", includeImages: "false" };
       const requestHeaders = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
       const response = await fetchWithTimeout(endpoint, {
@@ -1327,7 +1328,7 @@ export async function testSearchService(service: SearchService) {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(k ? { Authorization: `Bearer ${k}` } : {}) },
-        body: JSON.stringify({ q: "RikkaHub", depth: service.depth ?? "standard", outputType: "sourcedAnswer", includeImages: false }),
+        body: JSON.stringify({ q: "RikkaHub", depth: resolveSearchDepth(service), outputType: "sourcedAnswer", includeImages: false }),
       });
       const text = await response.text();
       if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
@@ -1531,7 +1532,7 @@ export async function testSearchService(service: SearchService) {
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
         headers: { Authorization: `Bearer ${k}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ q: "RikkaHub", depth: "standard", outputType: "sourcedAnswer", includeImages: "false" }),
+        body: JSON.stringify({ q: "RikkaHub", depth: resolveSearchDepth(service), outputType: "sourcedAnswer", includeImages: "false" }),
       });
       const text = await response.text();
       if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
