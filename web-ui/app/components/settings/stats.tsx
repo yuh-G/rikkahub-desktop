@@ -231,20 +231,21 @@ export function StatsSection({ stats }: { stats: StatsPayload | null }) {
           <span>{t("settings:stats.more")}</span>
         </div>
         {stats.daily.length === 0 ? (
-          <div className="mt-3 text-xs text-muted-foreground">
+          <div className="mt-3 text-xs text-[var(--ds-text-secondary)]">
             {t("settings:stats.heatmap_empty")}
           </div>
         ) : null}
       </SettingsGroup>
       <div className="grid gap-8 md:grid-cols-2">
         <SettingsGroup title={t("settings:stats.model_usage")}>
-          <SettingsRows>
-            {stats.models.slice(0, 8).map((item) => (
+          {/* 不截断:条目本就不多,截前 8 项会让排在后面的模型/供应商无处可查;过长时组内滚动。 */}
+          <SettingsRows className="max-h-80 overflow-y-auto">
+            {stats.models.map((item) => (
               <div key={item.id} className={STAT_ROW}>
                 <span className="truncate">
                   {[item.providerName, item.name || item.id].filter(Boolean).join(" / ")}
                 </span>
-                <span className="text-muted-foreground">{item.count}</span>
+                <span className="shrink-0 tabular-nums text-[var(--ds-text-secondary)]">{item.count}</span>
               </div>
             ))}
             {stats.models.length === 0 ? (
@@ -258,7 +259,7 @@ export function StatsSection({ stats }: { stats: StatsPayload | null }) {
             {(stats.requestGroups ?? []).map((item) => (
               <div key={item.name} className={STAT_ROW}>
                 <span className="truncate">{item.name}</span>
-                <span className="text-muted-foreground">
+                <span className="shrink-0 tabular-nums text-[var(--ds-text-secondary)]">
                   {t("settings:stats.ok_failed", { ok: item.ok, failed: item.failed })}
                 </span>
               </div>
@@ -269,12 +270,12 @@ export function StatsSection({ stats }: { stats: StatsPayload | null }) {
           </SettingsRows>
         </SettingsGroup>
         <SettingsGroup title={t("settings:stats.provider_requests")}>
-          <SettingsRows>
-            {stats.providers.slice(0, 8).map((item) => (
+          <SettingsRows className="max-h-80 overflow-y-auto">
+            {stats.providers.map((item) => (
               <div key={item.name} className={STAT_ROW}>
                 <span className="truncate">{item.name}</span>
-                <span className="text-muted-foreground">
-                  {item.ok} / {item.failed}
+                <span className="shrink-0 tabular-nums text-[var(--ds-text-secondary)]">
+                  {t("settings:stats.ok_failed", { ok: item.ok, failed: item.failed })}
                 </span>
               </div>
             ))}
