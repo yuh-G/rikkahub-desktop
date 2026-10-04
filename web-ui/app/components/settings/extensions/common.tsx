@@ -37,37 +37,47 @@ export function useBindingAssistant(settings: Settings): AssistantProfile | null
   );
 }
 
-/** 「作用于助手」选择器本体:label + Select。整行工具栏(注入页)与左栏列表头(技能/
- *  快捷消息页)共用;窄容器里 label 与下拉同排放不下时折行,label 仍读得清。 */
+/** 「作用于助手」选择器:一颗紧凑的 ghost 胶囊下拉(「作用于助手:<名> ▾」),品牌色字示意可点但不抢眼。
+ *  整行工具栏(注入页)与左栏列表头(技能/快捷消息页,stretch 撑满栏宽)共用。 */
 export function BindingAssistantSelect({
   settings,
   assistant,
+  stretch = false,
   className,
 }: {
   settings: Settings;
   assistant: AssistantProfile;
+  stretch?: boolean;
   className?: string;
 }) {
   const { t } = useTranslation();
-  const selectId = React.useId();
   return (
-    <div className={cn("flex flex-wrap items-center gap-2", className)}>
-      <label htmlFor={selectId} className="text-xs text-[var(--ds-text-secondary)]" title={t("settings:mcp.binding_assistant_desc")}>
-        {t("settings:mcp.binding_assistant")}
-      </label>
-      <Select value={assistant.id} onValueChange={setBindingAssistant}>
-        <SelectTrigger id={selectId} className="w-48">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {settings.assistants.map((item) => (
-            <SelectItem key={item.id} value={item.id}>
-              {item.name || t("settings:assistants.default_name")}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
+    <Select value={assistant.id} onValueChange={setBindingAssistant}>
+      <SelectTrigger
+        size="sm"
+        aria-label={t("settings:mcp.binding_assistant")}
+        title={t("settings:mcp.binding_assistant_desc")}
+        className={cn(
+          "max-w-full gap-1 rounded-[var(--ds-radius-pill)] bg-transparent px-2.5 text-xs font-medium text-[var(--ds-brand-primary)] shadow-none transition-colors duration-(--ds-duration-fast) ease-(--ds-ease-swift) hover:bg-[var(--ds-on-surface)] hover:shadow-none focus-visible:shadow-[var(--ds-input-shadow-focus)] [&_svg:not([class*='text-'])]:text-[var(--ds-brand-primary)]",
+          stretch && "w-full justify-between",
+          className,
+        )}
+      >
+        <span className="flex min-w-0 items-center gap-1">
+          <span className="shrink-0 text-[var(--ds-text-secondary)]">{t("settings:mcp.binding_assistant")}</span>
+          <span className="min-w-0 truncate">
+            <SelectValue />
+          </span>
+        </span>
+      </SelectTrigger>
+      <SelectContent>
+        {settings.assistants.map((item) => (
+          <SelectItem key={item.id} value={item.id}>
+            {item.name || t("settings:assistants.default_name")}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 

@@ -40,7 +40,7 @@ export function QuickMessagesSection({ settings, onSettings }: SectionProps) {
       settings={settings}
       assistant={assistant}
       onSettings={onSettings}
-      bindingSelect={<BindingAssistantSelect settings={settings} assistant={assistant} className="mb-2" />}
+      bindingSelect={<BindingAssistantSelect settings={settings} assistant={assistant} stretch className="mb-1" />}
     />
   );
 }
