@@ -278,7 +278,6 @@ function LorebookEntryRow({
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = React.useState(false);
-  const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const bodyId = React.useId();
   const patch = (next: Partial<Record<string, unknown>>) => onChange({ ...entry, ...next });
   const keywords = Array.isArray(entry.keywords) ? entry.keywords.map(String) : [];
@@ -290,13 +289,9 @@ function LorebookEntryRow({
     : keywords.length > 0
       ? t("settings:mcp.keywords_count", { count: keywords.length })
       : t("settings:mcp.no_trigger");
-  const advancedAttention =
-    Number(entry.scanDepth ?? 4) !== 4 ||
-    entry.useRegex === true ||
-    entry.caseSensitive === true ||
-    Number(entry.priority ?? 0) !== 0;
+  // 条目卡本身已是折叠层,条目内不再嵌「高级设置」(否则 条目→条目高级→页高级 三层折叠)。
   return (
-    <div className="rounded-[var(--ds-radius-md)] border">
+    <div className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)]">
       <div className="flex items-center gap-3 px-3 py-2">
         <button
           type="button"
@@ -362,38 +357,34 @@ function LorebookEntryRow({
             />
           </SettingsField>
           <InjectionPlacementFields value={entry} onChange={patch} />
-          <SettingsAdvancedSection open={advancedOpen} onOpenChange={setAdvancedOpen} attention={advancedAttention}>
-            <div className="space-y-5 pt-2">
-              <SettingsField label={t("settings:mcp.scan_depth")} hint={t("settings:mcp.scan_depth_hint")}>
-                <Input
-                  type="number"
-                  min={1}
-                  className="w-32"
-                  value={numberText(entry.scanDepth ?? 4)}
-                  onChange={(event) => patch({ scanDepth: Math.max(1, Number(event.target.value) || 4) })}
-                  placeholder="4"
-                />
-              </SettingsField>
-              <SettingsRows>
-                <SettingsSwitchRow
-                  label={t("settings:mcp.use_regex")}
-                  checked={entry.useRegex === true}
-                  disabled={constantActive}
-                  onCheckedChange={(checked) => patch({ useRegex: checked })}
-                />
-                <SettingsSwitchRow
-                  label={t("settings:mcp.case_sensitive")}
-                  checked={entry.caseSensitive === true}
-                  disabled={constantActive}
-                  onCheckedChange={(checked) => patch({ caseSensitive: checked })}
-                />
-              </SettingsRows>
-              <PriorityField value={entry.priority} onChange={(priority) => patch({ priority })} />
-            </div>
-          </SettingsAdvancedSection>
+          <SettingsField label={t("settings:mcp.scan_depth")} hint={t("settings:mcp.scan_depth_hint")}>
+            <Input
+              type="number"
+              min={1}
+              className="w-32"
+              value={numberText(entry.scanDepth ?? 4)}
+              onChange={(event) => patch({ scanDepth: Math.max(1, Number(event.target.value) || 4) })}
+              placeholder="4"
+            />
+          </SettingsField>
+          <SettingsRows>
+            <SettingsSwitchRow
+              label={t("settings:mcp.use_regex")}
+              checked={entry.useRegex === true}
+              disabled={constantActive}
+              onCheckedChange={(checked) => patch({ useRegex: checked })}
+            />
+            <SettingsSwitchRow
+              label={t("settings:mcp.case_sensitive")}
+              checked={entry.caseSensitive === true}
+              disabled={constantActive}
+              onCheckedChange={(checked) => patch({ caseSensitive: checked })}
+            />
+          </SettingsRows>
+          <PriorityField value={entry.priority} onChange={(priority) => patch({ priority })} />
           <div className="flex justify-end">
-            <Button type="button" variant="ghost" size="sm" onClick={onDelete}>
-              <Trash2 className="size-4" />
+            <Button type="button" variant="danger" size="compact" onClick={onDelete}>
+              <Trash2 />
               {t("settings:mcp.delete_entry")}
             </Button>
           </div>
