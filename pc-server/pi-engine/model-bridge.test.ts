@@ -490,7 +490,7 @@ describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运
 });
 
 describe("xhigh/max 档位放行(与聊天引擎原样透传收敛)", () => {
-  it("通用 reasoning-effort 协议登记 xhigh/max 同名映射(pi 默认 clamp 到 high,登记后原样出线)", () => {
+  it("通用 reasoning-effort 协议登记 xhigh/max 同名映射 + off→none(pi 默认 clamp 到 high、off 不发字段,登记后原样出线)", () => {
     const reasoner = model("some-reasoner", "Reasoner");
     reasoner.abilities.push("REASONING");
     const result = mapProviderModelToPi(
@@ -498,7 +498,7 @@ describe("xhigh/max 档位放行(与聊天引擎原样透传收敛)", () => {
       reasoner,
     );
     if (!result.ok) throw new Error(result.reason);
-    expect(result.mapping.config.models?.[0]?.thinkingLevelMap).toEqual({ xhigh: "xhigh", max: "max" });
+    expect(result.mapping.config.models?.[0]?.thinkingLevelMap).toEqual({ off: "none", xhigh: "xhigh", max: "max" });
   });
 
   it("厂商专属协议不登记(effort 压制或另有收拢表,勿覆盖)", () => {
@@ -512,7 +512,7 @@ describe("xhigh/max 档位放行(与聊天引擎原样透传收敛)", () => {
     expect(ark.mapping.config.models?.[0]?.thinkingLevelMap).toBeUndefined();
   });
 
-  it("google 协议登记 xhigh/max(vendor 扩键后预算通道精确命中注入表,compat 保持不设)", () => {
+  it("google 协议登记 xhigh/max(vendor 扩键后预算通道精确命中注入表,compat 保持不设;off:none 对 google 无害——resolveGoogleThinkingLevel 对 off 短路,不查映射)", () => {
     const gm = model("gemini-2.5-flash", "GF");
     gm.abilities.push("REASONING");
     const google = mapProviderModelToPi(
@@ -520,11 +520,11 @@ describe("xhigh/max 档位放行(与聊天引擎原样透传收敛)", () => {
       gm,
     );
     if (!google.ok) throw new Error(google.reason);
-    expect(google.mapping.config.models?.[0]?.thinkingLevelMap).toEqual({ xhigh: "xhigh", max: "max" });
+    expect(google.mapping.config.models?.[0]?.thinkingLevelMap).toEqual({ off: "none", xhigh: "xhigh", max: "max" });
     expect(google.mapping.config.models?.[0]?.compat).toBeUndefined();
   });
 
-  it("openai-responses 协议登记 xhigh/max(聊天引擎 reasoning.effort 原样透传,pi 侧同步放行)", () => {
+  it("openai-responses 协议登记 xhigh/max(聊天引擎 reasoning.effort 原样透传,pi 侧同步放行;off:none 供 responses 的 off 兜底分支取值)", () => {
     const rm = model("gpt-5.2", "G5");
     rm.abilities.push("REASONING");
     const responses = mapProviderModelToPi(
@@ -532,7 +532,7 @@ describe("xhigh/max 档位放行(与聊天引擎原样透传收敛)", () => {
       rm,
     );
     if (!responses.ok) throw new Error(responses.reason);
-    expect(responses.mapping.config.models?.[0]?.thinkingLevelMap).toEqual({ xhigh: "xhigh", max: "max" });
+    expect(responses.mapping.config.models?.[0]?.thinkingLevelMap).toEqual({ off: "none", xhigh: "xhigh", max: "max" });
   });
 });
 

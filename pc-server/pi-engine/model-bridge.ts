@@ -301,8 +301,11 @@ function piThinkingOverridesFor(
   // xhigh/max 两档默认不放行(getSupportedThinkingLevels 仅 thinkingLevelMap 显式登记
   // 才支持),MAX 档会被 clamp 到 high——与聊天引擎默认分支"档位原样透传(含 xhigh/max,
   // 安卓对齐)"分歧(engine-request-diff 实证:chat=max/pi=high)。登记同名映射放行,
-  // 两引擎逐字收敛;其余四档 pi 天然放行且不映射,勿画蛇添足。
-  return { thinkingLevelMap: { xhigh: "xhigh", max: "max" } };
+  // 两引擎逐字收敛;其余四档 pi 天然放行且不映射,勿画蛇添足。off 亦须登记映射到
+  // "none":pi 默认 off 不发字段(吃服务端默认=思考照跑),而官方 completions 自
+  // GPT-5.1+ 起接受显式 none(安卓 40426e93 放开钳位),登记后 off 发 reasoning_effort:
+  // "none" 与聊天引擎逐字一致。
+  return { thinkingLevelMap: { off: "none", xhigh: "xhigh", max: "max" } };
 }
 
 /** 映射不到时给用户看的原因（模型选择器过滤面与错误提示共用，方案"诚实披露，不硬塞"）。
@@ -357,12 +360,14 @@ export function mapProviderModelToPi(provider: Provider, model: Model, limits?: 
   // google/responses 字段与格式 pi 原生已对,但 xhigh/max 两档须同名登记放行(pi
   // getSupportedThinkingLevels 缺映射会钳 high),聊天引擎两处均原样透传:responses
   // 发 reasoning.effort=档位,google 折预算(vendor 扩键后 xhigh/max 精确命中注入表)。
+  // off:none 同 reasoning-effort 协议的理由(responses 的 off 兜底分支取它显式发
+  // effort:"none";google 的 resolveGoogleThinkingLevel 对 off 短路,不消费该映射)。
   const thinkingOverrides =
     api === "openai-completions"
       ? piThinkingOverridesFor(provider, model)
       : api === "anthropic-messages"
         ? piAnthropicThinkingOverrides()
-        : { thinkingLevelMap: { xhigh: "xhigh", max: "max" } };
+        : { thinkingLevelMap: { off: "none", xhigh: "xhigh", max: "max" } };
 
   const contextWindow =
     typeof limits?.contextWindow === "number" && limits.contextWindow > 0

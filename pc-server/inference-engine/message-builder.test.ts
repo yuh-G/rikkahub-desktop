@@ -277,10 +277,18 @@ describe("reasoningPayloadForProvider — Moonshot Kimi 代际", () => {
     const relay = { type: "openai", baseUrl: "https://relay.example.com/v1", apiKey: "k" } as unknown as Provider;
     expect(reasoningPayloadForProvider(relay, m("kimi-k3"), "medium")).toEqual({ reasoning_effort: "high" });
     expect(reasoningPayloadForProvider(relay, m("kimi-k3"), "xhigh")).toEqual({ reasoning_effort: "max" });
+    // K3 官方不收 none:off 仍映 low(此判定先于下方 none 放行,K3 例外不受影响)。
     expect(reasoningPayloadForProvider(relay, m("kimi-k3"), "off")).toEqual({ reasoning_effort: "low" });
     expect(reasoningPayloadForProvider(relay, m("kimi-k3"), "auto")).toEqual({});
     // 非 K3 模型经中转不受影响,档位原样透传(既有兜底行为)。
     expect(reasoningPayloadForProvider(relay, m("some-model"), "medium")).toEqual({ reasoning_effort: "medium" });
+  });
+
+  test("completions off→none 原样传,不再钳 low(官方 GPT-5.1+ 起收 none;安卓 40426e93 同步)", () => {
+    const relay = { type: "openai", baseUrl: "https://relay.example.com/v1", apiKey: "k" } as unknown as Provider;
+    expect(reasoningPayloadForProvider(relay, m("some-model"), "off")).toEqual({ reasoning_effort: "none" });
+    expect(reasoningPayloadForProvider(relay, m("some-model"), "auto")).toEqual({});
+    expect(reasoningPayloadForProvider(relay, m("some-model"), "max")).toEqual({ reasoning_effort: "max" });
   });
 
   test("温度禁发:K2.5+ 采样参数官方固定(跨 host 生效);旧 kimi 与其他模型不受影响", () => {

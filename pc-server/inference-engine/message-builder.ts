@@ -1084,13 +1084,17 @@ export function reasoningPayloadForProvider(providerItem: Provider, modelItem: M
     return { extra_body: { google: { thinking_config: thinkingConfig } } };
   }
   // Android default else branch: passes effort through as-is (including "xhigh").
-  // OFF maps to "low" (lowest budget), AUTO sends no field.
+  // OFF maps to "none" (official completions accepts none since GPT-5.1+; Android 40426e93
+  // dropped the old off→low clamp), AUTO sends no field.
   if (normalized === "auto") return {};
-  if (normalized === "off") return { reasoning_effort: "low" };
   // K3 经透传型中转(未知 host)同样只认 low/high/max——档位收拢与 moonshot 官方
   // 分支、pi 引擎共用 request-dialect 同一张表;网关型 host(OpenRouter/DashScope
-  // 等)有自己的方言翻译,已在上方各自分支返回,不经此兜底。
-  if (isKimiK3Model(modelItem.modelId)) return { reasoning_effort: effortLowHighMaxFor(normalized) ?? "high" };
+  // 等)有自己的方言翻译,已在上方各自分支返回,不经此兜底。off 例外:K3 官方不收
+  // none,off 语义是"思考关不掉映 low"(表注),不享受下方 none 放行。
+  if (isKimiK3Model(modelItem.modelId)) {
+    return { reasoning_effort: normalized === "off" ? "low" : effortLowHighMaxFor(normalized) ?? "high" };
+  }
+  if (normalized === "off") return { reasoning_effort: "none" };
   return { reasoning_effort: normalized };
 }
 
