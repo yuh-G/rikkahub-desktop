@@ -18,7 +18,6 @@ import {
   InlineEditText,
   SettingsField,
   SettingsGroup,
-  SettingsRow,
   SettingsRows,
   SettingsStack,
   SettingsSwitchRow,
@@ -45,7 +44,10 @@ const DISPLAY_TOGGLES = [
 
 const FONT_PREVIEW_FALLBACK = '"Noto Sans SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif';
 
-/** 通用 › 个人资料:头像 + 昵称。头像点按即换,昵称行内编辑(显式提交,不走防抖自动保存)。 */
+/** 通用 › 个人资料:头像 + 昵称。分节纵排(标题在上、内容在下),头像点按即换,
+ *  昵称行内编辑(显式提交,不走防抖自动保存)。不用 SettingsRow 的左右分栏——
+ *  头像行与文字行高差大,左右分栏会把右侧控件顶到行中央、上下错落,右侧也形
+ *  不成统一对齐列;纵排让两节共享同一条左基线,标题与内容垂直相邻,读起来顺。 */
 export function ProfileSection({ settings }: PageProps) {
   const { t } = useTranslation();
   const display = settings.displaySetting;
@@ -59,33 +61,30 @@ export function ProfileSection({ settings }: PageProps) {
   };
 
   return (
-    <SettingsGroup>
-      <SettingsRows>
-        <SettingsRow
-          label={t("settings:general.avatar")}
-          control={
-            <AvatarCropper
-              value={display.userAvatar ?? { type: "dummy" }}
-              fallbackName={nickname || t("settings:general.nickname")}
-              onChange={(avatar: AssistantAvatar) => saveDisplayPatch({ userAvatar: avatar })}
-            />
-          }
-        />
-        <SettingsRow
-          label={t("settings:general.nickname")}
-          control={
-            <InlineEditText
-              value={nickname}
-              placeholder={t("settings:general.nickname_unset")}
-              ariaLabel={t("settings:general.nickname")}
-              allowEmpty
-              className="text-sm"
-              onCommit={saveNickname}
-            />
-          }
-        />
-      </SettingsRows>
-    </SettingsGroup>
+    <SettingsStack>
+      <SettingsGroup title={t("settings:general.avatar")}>
+        <div className="flex items-center gap-4 pt-1">
+          <AvatarCropper
+            value={display.userAvatar ?? { type: "dummy" }}
+            fallbackName={nickname || t("settings:general.nickname")}
+            onChange={(avatar: AssistantAvatar) => saveDisplayPatch({ userAvatar: avatar })}
+            avatarClassName="size-16"
+          />
+        </div>
+      </SettingsGroup>
+      <SettingsGroup title={t("settings:general.nickname")}>
+        <div className="pt-1">
+          <InlineEditText
+            value={nickname}
+            placeholder={t("settings:general.nickname_unset")}
+            ariaLabel={t("settings:general.nickname")}
+            allowEmpty
+            className="text-sm"
+            onCommit={saveNickname}
+          />
+        </div>
+      </SettingsGroup>
+    </SettingsStack>
   );
 }
 

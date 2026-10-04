@@ -163,7 +163,10 @@ export function AvatarCropper({
           title={t("avatar_cropper.click_to_change")}
           className="group/avatar-pick relative shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
-          <UIAvatar size="lg" name={fallbackName} avatar={value} className={cn("size-14", avatarClassName)} />
+          {/* 自定义尺寸走 avatarClassName + size="default":Avatar 的 lg/sm 档是
+              data-[size=*] 变体类,与普通的 size-* 伪类共存时特异性压过后者,
+              传进来的尺寸会被档位的 40px 悄悄吃掉——一律用 default(32px 档)再覆写。 */}
+          <UIAvatar name={fallbackName} avatar={value} className={cn("size-14", avatarClassName)} />
           <span
             aria-hidden
             className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 text-white opacity-0 transition-opacity duration-(--ds-duration-fast) ease-(--ds-ease-swift) group-hover/avatar-pick:opacity-100 group-focus-visible/avatar-pick:opacity-100"
