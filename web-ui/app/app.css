@@ -1354,11 +1354,10 @@
   /* 设置模态的顶带替身(titlebar-overlay.tsx):本体遮罩(z-50)压住真实顶带让其
      毛玻璃,替身在更高层(z-[90])复刻品牌行 + [-口×] 保持清晰。模态打开时 Radix
      给 body 挂 pointer-events:none(连同后代继承)——替身壳自身 pointer-events:none
-     (命中对整层透明、不挡视口点击),只把「Logo+品牌名 与 [-口×]」点亮可见。
-     注意:不要把整块「拖拽区壳」点亮——壳若可见,会透出遮罩的模糊/压暗,裹出一圈
-     暗影(品牌区看起来像蒙了层灰)。替身拖拽区壳保持命中透明、不透出背景,
-     品牌行只点亮它的内容行([data-titlebar-brand-content]),壳外依旧模糊。 */
-  [data-titlebar-overlay] [data-titlebar-brand-content] {
+     (命中对整层透明、不挡视口点击),只把「拖拽区 + 按钮」点亮可见命中;
+     拖拽区是 div(非交互选择器覆盖对象),它的拖拽靠 mousedown 自己收,
+     借替身壳豁免遮罩即可。 */
+  [data-titlebar-overlay] [data-tauri-drag-region] {
     visibility: visible;
   }
   /* 替身内的按钮/链接/角色按钮:窗控钮 [-口×] 与品牌行的可点形态在替身里恢复命中。 */
