@@ -113,12 +113,13 @@ export function SettingsAdvancedToggle({
       aria-controls={controls.join(" ")}
       title={showDot ? t("settings:common.advanced_attention") : undefined}
       className={cn(
-        "inline-flex h-7 items-center gap-1 rounded-[var(--ds-radius-sm)] px-2 text-xs font-medium text-[var(--ds-text-secondary)] outline-none transition-colors duration-(--ds-duration-fast) ease-(--ds-ease-swift) hover:bg-[var(--ds-on-surface)] hover:text-[var(--ds-text-primary)] focus-visible:ring-2 focus-visible:ring-ring/50",
+        // ghost 胶囊 + 品牌色字:可点击的信号,但不是实底按钮,不抢眼;与分组小标题(secondary 色)区分开。
+        "inline-flex h-7 items-center gap-1 rounded-[var(--ds-radius-pill)] px-2.5 text-xs font-medium text-[var(--ds-brand-primary)] outline-none transition-colors duration-(--ds-duration-fast) ease-(--ds-ease-swift) hover:bg-[var(--ds-on-surface)] focus-visible:ring-2 focus-visible:ring-ring/50",
         className,
       )}
       onClick={() => onOpenChange(!open)}
     >
-      {showDot ? <span aria-hidden className="size-1.5 rounded-full bg-[var(--ds-text-secondary)]" /> : null}
+      {showDot ? <span aria-hidden className="size-1.5 rounded-full bg-[var(--ds-brand-primary)]" /> : null}
       {t("settings:common.advanced")}
       <ChevronDown
         aria-hidden
@@ -312,14 +313,15 @@ export function SettingsAdvancedSection({
   children: React.ReactNode;
 }) {
   const id = React.useId();
+  // 页尾独立一节:上方一条细线把它立成段落分界,而不是飘在字段后面的一行小字。
   return (
-    <section className={className}>
+    <section className={cn("border-t border-[var(--ds-divider)] pt-3", className)}>
       <SettingsAdvancedToggle
         open={open}
         onOpenChange={onOpenChange}
         controls={[id]}
         attention={attention}
-        className="-ml-2"
+        className="-ml-2.5"
       />
       <SettingsAdvancedRegion id={id} open={open} className="pt-1">
         {children}
@@ -703,10 +705,13 @@ export function SettingsSplit({
   );
 }
 
-/** 详情栏收尾行:左侧自动保存状态,右侧删除等危险/收尾动作。与上方内容以一条细线分开。 */
+/**
+ * 详情栏收尾行:左侧自动保存状态,右侧收尾动作。不画分隔线——删除已进列表行「⋯」菜单、
+ * 自动保存 idle 态不渲染,多数时候这一行是空的,常驻细线会在页尾留下一条孤线。
+ */
 export function SettingsDetailFooter({ status, children }: { status?: React.ReactNode; children?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-t border-[var(--ds-divider)] pt-5">
+    <div className="flex items-center justify-between gap-3">
       <div className="min-w-0">{status}</div>
       {children != null ? <div className="flex shrink-0 items-center gap-2">{children}</div> : null}
     </div>

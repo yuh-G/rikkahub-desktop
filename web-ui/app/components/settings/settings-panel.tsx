@@ -39,17 +39,18 @@ export function SettingsNavList({
             type="button"
             aria-current={selected ? "page" : undefined}
             className={cn(
-              "flex w-full items-center gap-2 rounded-[var(--ds-radius-md)] px-3 py-2 text-left text-sm outline-none transition-all duration-200 focus-visible:ring-2 focus-visible:ring-ring/50",
+              // 选中/未选同字重同字色:只靠底色与阴影区分,选中时文字宽度不跳。
+              "flex w-full items-center gap-3 rounded-[var(--ds-radius-md)] px-3 py-2 text-left text-sm font-medium text-[var(--ds-text-primary)] outline-none transition-all duration-200 focus-visible:ring-2 focus-visible:ring-ring/50",
               selected
-                ? "bg-[var(--ds-surface-100)] font-medium text-[var(--ds-text-primary)] shadow-[var(--ds-elevation-100)]"
-                : "text-sidebar-foreground hover:bg-[var(--ds-on-surface)]",
+                ? "bg-[var(--ds-surface-100)] shadow-[var(--ds-elevation-100)]"
+                : "hover:bg-[var(--ds-on-surface)]",
             )}
             onClick={() => onSelect(item.id)}
           >
             <Icon
               className={cn(
-                "size-4 shrink-0 transition-colors",
-                selected ? "text-foreground" : "text-muted-foreground",
+                "size-[1.125rem] shrink-0 transition-colors",
+                selected ? "text-[var(--ds-text-primary)]" : "text-[var(--ds-icon)]",
               )}
             />
             <span className="min-w-0 truncate">{t(item.labelKey)}</span>
