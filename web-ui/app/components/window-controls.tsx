@@ -85,26 +85,27 @@ export function windowDragRegionProps() {
   } as const;
 }
 
-/**
- * 顶带(品牌行 + 窗控钮)的实时像素高度。--app-band-h 是 rem 值,随 UI 缩放变化,
- * JS 判定"某次点击是否落在顶带"时按当前值换算,不写死 32px。
- */
-export function measureAppBandHeight(): number {
-  if (typeof window === "undefined") return 0;
-  const probe = document.createElement("div");
-  probe.style.position = "absolute";
-  probe.style.visibility = "hidden";
-  probe.style.height = "var(--app-band-h)";
-  document.body.appendChild(probe);
-  const px = probe.getBoundingClientRect().height;
-  probe.remove();
-  return Number.isFinite(px) ? px : 0;
+/** 摊到「顶带替身」里的窗口拖拽区上:替身本体是 invisible(见 titlebar-overlay.tsx
+    头注),拖拽区借 visibility:visible 豁免遮罩;替身自身始终 pointer-events:none,
+    故此处不需要 pointer-events 恢复。 */
+export function titlebarOverlayDragRegionProps() {
+  return {
+    ...windowDragRegionProps(),
+    "data-titlebar-overlay": true,
+  } as const;
 }
 
 export function WindowControlsBar({
   className,
+  alwaysVisible = false,
   ...props
-}: React.HTMLAttributes<HTMLDivElement> & { className?: string }) {
+}: React.HTMLAttributes<HTMLDivElement> & {
+  className?: string;
+  /** 强制渲染(即使不在 Tauri 壳内):为「设置模态顶带替身」服务——替身始终要画出清晰
+      的 [-口×],只是非壳内时点击静默为空(浏览器预览下没有原生窗口可控)。默认 false,
+      行为与旧版完全一致:浏览器预览不渲染。 */
+  alwaysVisible?: boolean;
+}) {
   const { t } = useTranslation("page");
   const [maximized, setMaximized] = React.useState(false);
   const [tauri, setTauri] = React.useState(false);
@@ -140,8 +141,8 @@ export function WindowControlsBar({
     };
   }, []);
 
-  // 浏览器预览:不渲染窗控条,各页布局与原生环境外一致。
-  if (!isTauri()) return null;
+  // 浏览器预览且未强制:不渲染窗控条,各页布局与原生环境外一致。
+  if (!tauri && !alwaysVisible) return null;
 
   return (
     <div
@@ -152,7 +153,7 @@ export function WindowControlsBar({
         className,
       )}
     >
-      {tauri ? (
+      {(tauri || alwaysVisible) ? (
         <div className="flex h-full items-center">
           <WindowControlButton
             variant="default"

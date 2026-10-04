@@ -34,6 +34,7 @@ import {
 import { toast } from "sonner";
 import { GlobalConfirmDialog } from "./components/global-confirm-dialog";
 import { SettingsDialog } from "./components/settings/settings-dialog";
+import { TitleBarOverlay } from "./components/titlebar-overlay";
 import { useAppErrorsStore } from "./stores/app-errors-store";
 import { startUsageActivityBeacon } from "./services/usage-activity";
 import { useApprovalNotifications } from "./lib/approval-notification";
@@ -382,6 +383,10 @@ function AppContent() {
       {/* 设置模态挂在 Outlet 之后、全局确认框之前:同为 z-50 的 portal 按挂载先后叠放,
           分区里触发的确认框必须盖在设置模态之上。 */}
       <SettingsDialog />
+      {/* 顶带替身:设置模态本体遮罩(z-50)压住真实顶带让它毛玻璃,本替身在更高层复刻
+          品牌行与 [-口×] 保持清晰可点(见 titlebar-overlay.tsx 头注)。挂在 SettingsDialog
+          之后,portal 同层后挂载者居上。 */}
+      <TitleBarOverlay />
       <ExposedBanner />
       <WebAuthGate />
       <StartupGate />
