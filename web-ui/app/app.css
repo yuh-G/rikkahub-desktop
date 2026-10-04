@@ -1826,18 +1826,23 @@
 
 /* ── 设置列表拖拽排序(drag-reorder.ts)────────────────────────────── */
 /* 被拖行:提层 + 浮起材质(白底卡 + 层叠投影 + 微放大),随指针 translateY(JS 内联,瞬时)。
-   transition 只对 transform 置 0ms——指针跟随位移要逐帧贴合,有过渡反而拖泥带水;
-   底色/投影的出入场仍走 swift。 */
-.rk-drag-row {
+   关键「跟手」坑:行根本身还带着 Tailwind 的 `transition` 工具类,它的 transition-property
+   含 transform(默认 ~150ms 缓动)——不压住,JS 写的每帧 translateY 都被缓动拖尾,行在
+   指针后面追(不跟手)。`transition` 工具类与单类选择器特异性相同,谁生效取决于产物里的
+   先后序,故用双类(.rk-drag-row.rk-drag-row)压过它,并把 transform/duration 一并钉死。
+   will-change 提升到独立合成层,逐帧 transform 不挤主线程重排路径。 */
+.rk-drag-row.rk-drag-row {
   position: relative;
   z-index: 10;
   pointer-events: none; /* 挤动判定按兄弟行的位置算,被拖行自身不再吃指针 */
+  will-change: transform;
   background-color: var(--ds-surface-100);
   /* 浮起材质:elevation-300 层叠投影在浅底上偏轻,叠一道 ds-menu 同源的 0.5px 描边环,
      让卡片轮廓在经过处始终可辨(参考项目浮层的边线做法)。 */
   box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12), var(--ds-elevation-300);
-  transition: background-color var(--ds-motion-swift), box-shadow var(--ds-motion-swift),
-    transform 0ms;
+  transition-property: background-color, box-shadow;
+  transition-duration: var(--ds-duration-fast);
+  transition-timing-function: var(--ds-ease-swift);
 }
 /* 挤动行(拖拽中的兄弟行):拖动全程 DOM 顺序不动,行只做纯 transform 投影位移
    (drag-reorder.ts 的 projectShifts 写内联 translateY),soft 缓动让挤开/收回
@@ -1845,9 +1850,10 @@
 .rk-drag-shift {
   transition: transform var(--ds-motion-soft), background-color var(--ds-motion-swift);
 }
-/* prefers-reduced-motion:换位判定与提交照常(信息仍在),位移瞬时(动效退场)。 */
+/* prefers-reduced-motion:换位判定与提交照常(信息仍在),位移瞬时(动效退场)。
+   .rk-drag-row 用双类对齐上面主规则的特异性,确保这里的 transition:none 能压过它。 */
 @media (prefers-reduced-motion: reduce) {
-  .rk-drag-row,
+  .rk-drag-row.rk-drag-row,
   .rk-drag-shift {
     transition: none;
   }

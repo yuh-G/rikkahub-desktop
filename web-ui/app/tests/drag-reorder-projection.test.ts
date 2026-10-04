@@ -114,4 +114,25 @@ describe("拖拽排序投影架构", () => {
     expect(SOURCE).toContain('"rk-drag-row"');
     expect(SOURCE).toContain('"rk-drag-shift"');
   });
+
+  test("被拖行跟手:transform 不进 transition(否则行在指针后面缓动拖尾)", () => {
+    // 「不跟手」根因:行根带 Tailwind 的 `transition` 工具类(transition-property 含 transform,
+    // 默认 ~150ms)。.rk-drag-row 必须把 transform 移出 transition,且特异性要压过工具类
+    // (单类与工具类同级,先后序不定,故用双类)。回退即复现「行追指针」。
+    const css = readFileSync(join(import.meta.dir, "..", "app.css"), "utf8");
+    const rowRule = /\.rk-drag-row\.rk-drag-row\s*\{[^}]*\}/.exec(css);
+    expect(rowRule, "需要双类特异性压过 Tailwind transition 工具类").not.toBeNull();
+    expect(rowRule![0]).toContain("transition-property");
+    expect(rowRule![0]).not.toMatch(/transition-property:[^;}]*transform/);
+  });
+
+  test("拖动全程禁止文本选中(蓝底高亮):preventDefault + 会话期 user-select none", () => {
+    // 不拦 pointerdown 默认手势、不在会话期压 user-select,指针一移动 Chromium 就在
+    // 兄弟行里圈选文本(用户实测拖拽时其他文字变蓝)。
+    expect(SOURCE).toContain("event.preventDefault()");
+    expect(SOURCE).toContain('document.body.style.userSelect = "none"');
+    // 清理必须还原 user-select(否则整页永久禁选)。
+    const cleanup = bodyOf(/s\.cleanup = \(\) => /);
+    expect(cleanup).toContain("document.body.style.userSelect = previousUserSelect");
+  });
 });

@@ -149,6 +149,9 @@ function dragMove(s: DragSession, clientY: number): void {
  */
 export function startRowDrag(event: React.PointerEvent, onCommit: (from: number, to: number) => void): void {
   if (event.button !== 0) return;
+  // 阻止浏览器原生拖选/文本选中的默认手势:不拦,指针一移动 Chromium 就会开始在
+  // 兄弟行里圈选文本(蓝底高亮),与我们的指针驱动拖拽互相打架。
+  event.preventDefault();
   const handle = event.currentTarget as HTMLElement;
   const row = handle.closest<HTMLElement>("[data-sort-id]");
   const list = row?.parentElement;
@@ -225,7 +228,11 @@ export function startRowDrag(event: React.PointerEvent, onCommit: (from: number,
     for (const other of rows) {
       if (other !== row) other.classList.add(SHIFTING_CLASS);
     }
+    // 拖动全程关掉文本选择(蓝底高亮):pointerdown 的 preventDefault 只拦了起拖手势,
+    // 拖动中指针掠过兄弟行时 Chromium 仍会圈选文本,需在整个会话期压 user-select。
+    const previousUserSelect = document.body.style.userSelect;
     document.body.classList.add("rk-dragging-cursor");
+    document.body.style.userSelect = "none";
     s.cleanup = () => {
       cancelAnimationFrame(s.scrollRaf);
       row.classList.remove(DRAGGING_CLASS, "rk-drag-instant");
@@ -235,6 +242,7 @@ export function startRowDrag(event: React.PointerEvent, onCommit: (from: number,
         other.style.transform = "";
       }
       document.body.classList.remove("rk-dragging-cursor");
+      document.body.style.userSelect = previousUserSelect;
     };
     s.scrollRaf = requestAnimationFrame(() => autoScrollTick(s, clientY));
   };
