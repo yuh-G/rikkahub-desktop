@@ -130,7 +130,7 @@ export async function fetchProviderModels(providerItem: Provider) {
 export async function fetchProviderBalance(providerItem: Provider) {
   const option = providerItem.balanceOption ?? { enabled: false, apiPath: "", resultPath: "" };
   if (!option.enabled) throw new Error("余额查询未启用");
-  if (providerItem.type !== "openai") throw new Error("原版仅对 OpenAI-compatible 供应商执行余额查询");
+  if (providerItem.type !== "openai") throw new Error("余额查询仅支持 OpenAI-compatible 供应商");
   const apiPath = String(option.apiPath ?? "").trim();
   if (!apiPath) throw new Error("余额 API Path 为空");
   const endpoint = /^https?:\/\//i.test(apiPath) ? apiPath : `${providerItem.baseUrl.replace(/\/+$/, "")}${apiPath.startsWith("/") ? apiPath : `/${apiPath}`}`;

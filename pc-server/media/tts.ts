@@ -221,7 +221,7 @@ export function normalizeTtsProviders(value: unknown): TtsProvider[] {
   // 保证同一 type 每次启动只记一条,不会刷屏。
   const preservedTypes = [...new Set(raw.map((i) => String(i.type ?? "")).filter((t) => t && !TTS_PROVIDER_TYPES.includes(t as TtsProvider["type"])))];
   if (preservedTypes.length > 0) {
-    reportError("media", "warn", `检测到 ${preservedTypes.length} 类来自移动端的语音合成服务，桌面端暂不支持，已原样保留以便回传：${preservedTypes.join("、")}`, undefined, "voice_provider_preserved", { kind: "tts", types: preservedTypes.join(",") });
+    reportError("media", "warn", `检测到 ${preservedTypes.length} 类来自 APP端的语音合成服务，桌面端暂不支持，已原样保留以便回传：${preservedTypes.join("、")}`, undefined, "voice_provider_preserved", { kind: "tts", types: preservedTypes.join(",") });
   }
   const normalized = raw.map((item) => {
     const rawType = String(item.type ?? "");

@@ -328,7 +328,7 @@ export function downgradeUnknownPartForAndroid(part: Record<string, unknown>): R
     : typeof part.toolName === "string" ? `[工具调用 ${part.toolName}]`
     : typeof part.url === "string" ? `[附件 ${part.url}]`
     : "";
-  return { type: "text", text: `[此内容(${type})暂不支持移动端显示]${summary ? `\n${summary}` : ""}` };
+  return { type: "text", text: `[此内容(${type})暂不支持在 APP端显示]${summary ? `\n${summary}` : ""}` };
 }
 
 /** A-3 + C3:导出方向的消息 part 清洗——「黑名单删除 + 白名单降级」双闸。
@@ -429,7 +429,7 @@ function generateRikkaHubDb(dbPath: string, backupNameById?: Map<number, string>
     }
     return { ok: true, downgradedParts: counter.downgraded };
   } catch (err) {
-    reportError("backup", "error", "安卓会话库生成失败，导出包将不含会话", err, "android_db_export_failed");
+    reportError("backup", "error", "APP端会话库生成失败，导出包将不含会话", err, "android_db_export_failed");
     return { ok: false, downgradedParts: 0 };
   }
 }
@@ -884,7 +884,7 @@ export function createSettingsBackupZipToPath(targetZipPath: string, onProgress?
       const dumped = exportPcConversationsDump(join(stageDir, "pc_conversations.db"));
       if (dumped >= 0) console.log(`[backup] pc_conversations.db staged (${dumped} conversations)`);
     } catch (dumpErr) {
-      reportError("backup", "error", "PC 会话库导出失败，恢复时将回退安卓格式", dumpErr, "pc_db_export_failed");
+      reportError("backup", "error", "桌面端会话库导出失败，恢复时将回退 APP端格式", dumpErr, "pc_db_export_failed");
     }
     if ((getConversationsDb() ? listAllConversationMetas(getConversationsDb()!).length : 0) > 0 || memoryStore.exportFlat().length > 0) {
       onProgress?.("正在生成对话数据库...");
@@ -894,7 +894,7 @@ export function createSettingsBackupZipToPath(targetZipPath: string, onProgress?
         if (dbResult.ok) {
           if (dbResult.downgradedParts > 0) {
             // B2↔C3:有 part 被白名单降级成占位文本——知情透出,不再是「看似完整的降级备份」。
-            warnings.push(`${dbResult.downgradedParts} 段内容移动端暂不支持，已在备份中降级为占位文本`);
+            warnings.push(`${dbResult.downgradedParts} 段内容 APP端暂不支持，已在备份中降级为占位文本`);
           }
           for (const suffix of ["-wal", "-shm", "-journal"]) {
             const p = dbPath + suffix;
@@ -906,12 +906,12 @@ export function createSettingsBackupZipToPath(targetZipPath: string, onProgress?
           if (existsSync(dbPath)) try { rmSync(dbPath); } catch { /* */ }
           // B4-①:rikka_hub.db 是 PC→APP 会话的唯一载体,失败=该备份恢复后无会话。分级降级:
           // zip 仍产出(PC→PC 走 pc_conversations.db 不受影响),但记 warning 让前端显式告知。
-          warnings.push("对话数据库(rikka_hub.db)生成失败，本备份恢复到移动端将不含会话");
+          warnings.push("对话数据库(rikka_hub.db)生成失败，本备份恢复到 APP端将不含会话");
         }
       } catch (dbErr) {
         console.error("[backup] generateRikkaHubDb failed:", dbErr);
         if (existsSync(dbPath)) try { rmSync(dbPath); } catch { /* */ }
-        warnings.push("对话数据库(rikka_hub.db)生成失败，本备份恢复到移动端将不含会话");
+        warnings.push("对话数据库(rikka_hub.db)生成失败，本备份恢复到 APP端将不含会话");
       }
     }
     if (uploadPlan.copies.length > 0) {

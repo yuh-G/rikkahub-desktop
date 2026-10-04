@@ -68,7 +68,7 @@ export function normalizeAsrProviders(value: unknown): AsrProvider[] {
   // 看到「这个语音识别服务来自移动端,桌面端暂不支持」——保留 ≠ 静默(30s 风暴合并防刷屏)。
   const preservedTypes = [...new Set(records.map((i) => String(i.type ?? "")).filter((t) => t && !isPcKnownAsrType(t)))];
   if (preservedTypes.length > 0) {
-    reportError("media", "warn", `检测到 ${preservedTypes.length} 类来自移动端的语音识别服务，桌面端暂不支持，已原样保留以便回传：${preservedTypes.join("、")}`, undefined, "voice_provider_preserved", { kind: "asr", types: preservedTypes.join(",") });
+    reportError("media", "warn", `检测到 ${preservedTypes.length} 类来自 APP端的语音识别服务，桌面端暂不支持，已原样保留以便回传：${preservedTypes.join("、")}`, undefined, "voice_provider_preserved", { kind: "asr", types: preservedTypes.join(",") });
   }
   return records
     .map((item) => {
@@ -118,7 +118,7 @@ export async function transcribeAudioWithAsrProvider(file: File) {
   // 消费点降级(backup C4):mimo/step 等桌面端未实现的类型在存储层被原样保留(见
   // normalizeAsrProviders),这里显式拒绝并告知,绝不能落进 else 分支当 volcengine 跑。
   if (!isPcKnownAsrType(provider.type)) {
-    throw new Error(`当前桌面端尚不支持「${provider.name}」(${provider.type})语音识别——该配置来自移动端，请改用 OpenAI / DashScope / 火山引擎，或在移动端使用`);
+    throw new Error(`当前桌面端尚不支持「${provider.name}」(${provider.type})语音识别——该配置来自 APP端，请改用 OpenAI / DashScope / 火山引擎，或在 APP端使用`);
   }
   if (!provider.apiKey.trim()) throw new Error("ASR API Key is empty");
   const endpoint = provider.type === "openai_realtime"
@@ -433,7 +433,7 @@ export function startAsrRealtimeSession(client: any, providerId?: string) {
   // 消费点降级(backup C4):未实现的跨端类型(mimo/step 等)显式拒绝,不落进下方
   // else 分支被当 volcengine 端点连上错误的 WebSocket。
   if (!isPcKnownAsrType(provider.type)) {
-    client.send(JSON.stringify({ type: "error", error: `当前桌面端尚不支持「${provider.name}」(${provider.type})语音识别，请在移动端使用` }));
+    client.send(JSON.stringify({ type: "error", error: `当前桌面端尚不支持「${provider.name}」(${provider.type})语音识别，请在 APP端使用` }));
     return;
   }
   const endpoint = provider.type === "openai_realtime"
