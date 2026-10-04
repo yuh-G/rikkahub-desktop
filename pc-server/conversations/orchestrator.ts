@@ -26,6 +26,7 @@ import {
   openAiChatCompletionsModalities,
   reasoningPayloadForProvider,
   responseApiBuiltInTools,
+  responseApiFunctionTool,
   responseApiIncludeForProvider,
   responseApiReasoningForProvider,
   supportsAbility,
@@ -263,12 +264,7 @@ export async function callProvider(
       ...(include ? { include } : {}),
       ...(providerItem.promptCacheKey === true ? { prompt_cache_key: conversation.id } : {}),
       tools: [
-        ...functionTools.map((tool: any) => ({
-          type: "function",
-          name: tool.function.name,
-          description: tool.function.description,
-          parameters: tool.function.parameters,
-        })),
+        ...functionTools.map(responseApiFunctionTool),
         ...builtInTools,
       ].filter(Boolean),
     };
@@ -366,12 +362,7 @@ export async function callProviderStreaming(
   }
   if (providerItem.useResponseApi) {
     const responseTools = [
-      ...tools.map((tool: any) => ({
-        type: "function",
-        name: tool.function.name,
-        description: tool.function.description,
-        parameters: tool.function.parameters,
-      })),
+      ...tools.map(responseApiFunctionTool),
       ...responseApiBuiltInTools(picked.model),
     ];
     const systemContent = conversationResponseApiInstructions(conversation, assistant);

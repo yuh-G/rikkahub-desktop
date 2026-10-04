@@ -708,6 +708,22 @@ export function responseApiBuiltInTools(modelItem: Model) {
 }
 
 
+/** Responses 函数工具声明（orchestrator 流式/非流式两出口的单源投影）。
+ *  strict:false 必须显式发（安卓 a6dbb8cd 同步,#1990）:Responses 对 function 工具
+ *  不带 strict 时按严格模式处理,schema 里的可选字段全部被视作必填,模型只能给本应
+ *  省略的字段硬填默认值(0/""/[]),下游按 schema 校验参数即失败。关掉 strict 让
+ *  schema 的 optional 语义如实生效。 */
+export function responseApiFunctionTool(tool: { function: { name?: unknown; description?: unknown; parameters?: unknown } }) {
+  return {
+    type: "function" as const,
+    name: String(tool.function.name ?? ""),
+    description: String(tool.function.description ?? ""),
+    parameters: tool.function.parameters ?? { type: "object", properties: {} },
+    strict: false as const,
+  };
+}
+
+
 export function openAiChatCompletionsModalities(modelItem: Model, providerItem: Provider) {
   if (hostOfProvider(providerItem) === "openrouter.ai" && supportsOutputModality(modelItem, "IMAGE")) {
     return ["image", "text"];

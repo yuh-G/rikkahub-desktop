@@ -16,7 +16,9 @@ import {
   isModelAllowTemperature,
   parseDataUrl,
   reasoningPayloadForProvider,
+  responseApiBuiltInTools,
   responseApiContentFromUiParts,
+  responseApiFunctionTool,
   responseApiMessagesFromUiMessages,
   shouldUseExternalWebSearch,
   supportsInputModality,
@@ -524,6 +526,34 @@ describe("chatCompletionsWireMessages — tool 消息内部字段出线剥离", 
       content: "done",
       _rikkahub_tool_output_parts: [{ type: "text", text: "done" }],
     });
+  });
+});
+
+// Responses 函数工具显式关 strict(安卓 a6dbb8cd 同步,#1990):不带 strict 时
+// Responses 按严格模式处理,schema 可选字段全变必填,模型硬填默认值致参数校验失败。
+// 单源投影 responseApiFunctionTool(orchestrator 流式/非流式两出口共用)。
+describe("responseApiFunctionTool — strict:false 显式声明", () => {
+  test("声明带 strict:false,四个字段齐备", () => {
+    const tool = responseApiFunctionTool({
+      function: {
+        name: "get_weather",
+        description: "Get weather",
+        parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+      },
+    });
+    expect(tool).toEqual({
+      type: "function",
+      name: "get_weather",
+      description: "Get weather",
+      parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+      strict: false,
+    });
+  });
+
+  test("参数缺省时兜底空 schema,不因 undefined 出线(Responses 拒非法 parameters)", () => {
+    const tool = responseApiFunctionTool({ function: { name: "noop" } });
+    expect(tool.parameters).toEqual({ type: "object", properties: {} });
+    expect(tool.strict).toBe(false);
   });
 });
 
