@@ -6,7 +6,7 @@ import { readFileSync, statSync } from "node:fs";
 import { bumpAnalyticsImgCount } from "../app-config/analytics";
 import { fetchWithTimeout } from "../foundation/net";
 import { join } from "node:path";
-import type { GeneratedImage, JsonValue, Model, StoredFile } from "../foundation/types";
+import type { GeneratedImage, JsonValue, Model, Provider, StoredFile } from "../foundation/types";
 import { filesDir } from "../foundation/paths";
 import { saveState, state } from "../persistence/json-store";
 import {
@@ -18,6 +18,7 @@ import {
   jsonBody,
   textBody,
 } from "../model-providers";
+import { hostOfProvider } from "../inference-engine/message-builder";
 import { modelExists } from "../conversations/auxiliary";
 import { resolveProviderAuthForProvider } from "../model-providers/auth";
 import { addLog } from "../api/logs";
@@ -34,6 +35,46 @@ function imageSize(aspectRatio: string) {
     default:
       return { openai: "1024x1024", google: "1:1" };
   }
+}
+
+// Grok 生图不支持 size 参数(x.ai images API 只认默认尺寸,带 size 即 400)。命中
+// x.ai 系 host 或模型名含 grok 时省略。host 经 hostOfProvider 解析后精确匹配——
+// baseUrl 含 "x.ai" 子串会把 "xxx-max.ai" 之类中转域名误判成 Grok。
+export function isGrokImageHost(base: string, modelId: string): boolean {
+  const host = hostOfProvider({ baseUrl: base } as Provider).toLowerCase();
+  return host === "x.ai" || host.endsWith(".x.ai") || modelId.toLowerCase().includes("grok");
+}
+
+// size 省略判定:空串或 "auto" 不写入请求体(服务端默认尺寸)。当前调用方传的
+// 三档恒为具体值,该判定为将来自定义分辨率输入预留零成本通路。
+export function wantsImageSize(size: string): boolean {
+  return size.trim() !== "" && size.toLowerCase() !== "auto";
+}
+
+// OpenRouter 没有 /images/edits 端点,图片编辑改走 /images/generations 的
+// input_references 传参考图。host 判定与 orchestrator 的 session_id 注入共用
+// hostOfProvider 的解析语义,不做第二套 contains 匹配。
+export function isOpenRouterImageHost(base: string): boolean {
+  return hostOfProvider({ baseUrl: base } as Provider).toLowerCase() === "openrouter.ai";
+}
+
+// OpenRouter 编辑请求体(data-URL 形态,对齐安卓 editImageWithInputReferences):
+// 模型/提示词/张数 + input_references[{type:"image_url",image_url:{url:data:...}}]。
+// size 沿用 Grok/auto 同一套省略判定。
+export function openRouterImageEditBody(input: {
+  modelId: string;
+  prompt: string;
+  count: number;
+  size: string;
+  references: { data: Buffer; mime: string }[];
+}): Record<string, JsonValue> {
+  const body: Record<string, JsonValue> = { model: input.modelId, prompt: input.prompt, n: input.count };
+  if (wantsImageSize(input.size) && !isGrokImageHost("", input.modelId)) body.size = input.size;
+  body.input_references = input.references.map((ref) => ({
+    type: "image_url",
+    image_url: { url: `data:${ref.mime || "image/png"};base64,${ref.data.toString("base64")}` },
+  }));
+  return body;
 }
 
 function imageFileExtension(mime: string) {
@@ -187,6 +228,47 @@ export async function callImageGeneration(input: {
   const base = resolvedAuth.baseUrl?.replace(/\/+$/, "") ?? providerItem.baseUrl.replace(/\/+$/, "");
   const headers = applyModelRequestHeaders({ ...resolvedAuth.headers }, providerItem, modelItem);
   if (references.length > 0) {
+    // OpenRouter 没有 /images/edits:参考图经 /images/generations 的 input_references
+    // 以 data-URL 传入,响应仍是 data[] 形态,落盘/溯源与 multipart 编辑一致。
+    if (isOpenRouterImageHost(base)) {
+      const endpoint = `${base}/images/generations`;
+      const body = applyModelCustomBody(
+        openRouterImageEditBody({
+          modelId: selectedModel,
+          prompt: input.prompt,
+          count,
+          size: sizes.openai,
+          references: references.map((file) => ({ data: readFileSync(file.path), mime: file.mime || "image/png" })),
+        }),
+        modelItem,
+      );
+      const response = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        timeoutMs: IMAGE_GEN_TIMEOUT_MS,
+        signal: input.signal,
+      });
+      const text = await response.text();
+      addLog({
+        providerId: providerItem.id,
+        providerName: providerItem.name,
+        url: endpoint,
+        ok: response.ok,
+        status: response.status,
+        kind: "provider:image:edit",
+        durationMs: Date.now() - started,
+        method: "POST",
+        requestHeaders: headers,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody(body),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throw new Error(`Failed to edit image: ${response.status} ${text.slice(0, 500)}`);
+      return await collectImageResponseItems(text, input.prompt, modelItem, "image_edit", references.map((file) => file.id));
+    }
+
     const endpoint = `${base}/images/edits`;
     const form = new FormData();
     form.append("model", selectedModel);
@@ -218,19 +300,16 @@ export async function callImageGeneration(input: {
       error: response.ok ? undefined : textBody(text),
     });
     if (!response.ok) throw new Error(`Failed to edit image: ${response.status} ${text.slice(0, 500)}`);
-    const raw = JSON.parse(text || "{}");
-    const defaultFormat = String(raw.output_format ?? "png");
-    const sourceFileIds = references.map((file) => file.id);
-    const items = [];
-    for (const item of Array.isArray(raw.data) ? raw.data : []) {
-      const parsed = await parseImageDataItem(item as Record<string, JsonValue> | undefined, defaultFormat);
-      if (parsed) items.push(await saveGeneratedImage(parsed.data, parsed.mime, input.prompt, modelItem, "image_edit", sourceFileIds));
-    }
-    return items;
+    return await collectImageResponseItems(text, input.prompt, modelItem, "image_edit", references.map((file) => file.id));
   }
 
   const endpoint = `${base}/images/generations`;
-  const body = applyModelCustomBody({ model: selectedModel, prompt: input.prompt, n: count, size: sizes.openai }, modelItem);
+  const body = applyModelCustomBody(
+    isGrokImageHost(base, selectedModel)
+      ? { model: selectedModel, prompt: input.prompt, n: count }
+      : { model: selectedModel, prompt: input.prompt, n: count, size: sizes.openai },
+    modelItem,
+  );
   const response = await fetchWithTimeout(endpoint, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
@@ -255,12 +334,23 @@ export async function callImageGeneration(input: {
     error: response.ok ? undefined : textBody(text),
   });
   if (!response.ok) throw new Error(`Failed to generate image: ${response.status} ${text.slice(0, 500)}`);
+  return await collectImageResponseItems(text, input.prompt, modelItem, "image_generation");
+}
+
+// OpenAI images 响应尾段(data[] 逐条解析 → 落盘登记)。生成与两条编辑路共用。
+async function collectImageResponseItems(
+  text: string,
+  prompt: string,
+  modelItem: Model,
+  type: GeneratedImage["type"],
+  sourceFileIds: number[] = [],
+) {
   const raw = JSON.parse(text || "{}");
   const defaultFormat = String(raw.output_format ?? "png");
   const items = [];
   for (const item of Array.isArray(raw.data) ? raw.data : []) {
     const parsed = await parseImageDataItem(item as Record<string, JsonValue> | undefined, defaultFormat);
-    if (parsed) items.push(await saveGeneratedImage(parsed.data, parsed.mime, input.prompt, modelItem, "image_generation"));
+    if (parsed) items.push(await saveGeneratedImage(parsed.data, parsed.mime, prompt, modelItem, type, sourceFileIds));
   }
   return items;
 }
