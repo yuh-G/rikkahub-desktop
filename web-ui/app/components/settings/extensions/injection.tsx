@@ -607,8 +607,8 @@ function LorebookEditor({
             action={
               <Button
                 type="button"
-                variant="outline"
-                size="sm"
+                variant="tertiary"
+                size="compact"
                 onClick={() => setEntries([...entries, createLorebookEntry()])}
               >
                 <Plus className="size-4" />
@@ -834,7 +834,7 @@ function PromptItemEditor({
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-xs text-[var(--ds-text-secondary)]">{t("settings:mcp.template_vars")}</span>
                 {PROMPT_VARIABLES.map((variable) => (
-                  <Button key={variable} type="button" size="xs" variant="outline" onClick={() => appendVariable(variable)}>
+                  <Button key={variable} type="button" size="xs" variant="tertiary" onClick={() => appendVariable(variable)}>
                     {variable}
                   </Button>
                 ))}

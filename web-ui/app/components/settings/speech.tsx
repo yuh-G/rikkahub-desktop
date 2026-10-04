@@ -335,7 +335,7 @@ export function TtsSection({
                 description={t("settings:speech.tts_detail_desc", { type: typeLabel(draft.type) })}
                 action={
                   <>
-                    <Button size="sm" variant="outline" onClick={() => void handleTest()} title={t("settings:speech.test_title")}>
+                    <Button size="compact" variant="tertiary" onClick={() => void handleTest()} title={t("settings:speech.test_title")}>
                       {isTestPlaying ? <Square className="size-4" /> : <Volume2 className="size-4" />}
                       {isTestPlaying ? t("settings:speech.stop") : t("settings:speech.test")}
                     </Button>

@@ -531,7 +531,7 @@ export function DefaultModelsSection({
             {activePromptKey && !(activePromptKey === "compressPrompt" && compressEngineTab === "pi") ? (
               <Button
                 type="button"
-                variant="outline"
+                variant="tertiary"
                 onClick={() => patchDraft({ [activePromptKey]: promptMeta[activePromptKey].defaultValue })}
               >
                 <RefreshCw className="size-4" />

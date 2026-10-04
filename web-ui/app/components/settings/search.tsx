@@ -215,7 +215,7 @@ function SearchApiKeyList({
         );
       })}
       {/* +号独立放底部:所有 key 框只有 input+叉号,等宽;末框不再被+号挤窄。 */}
-      <Button type="button" variant="outline" size="sm" onClick={add} className="w-full justify-center">
+      <Button type="button" variant="tertiary" size="compact" onClick={add} className="w-full justify-center">
         <Plus className="size-4" />
         {t("settings:search.key_add")}
       </Button>

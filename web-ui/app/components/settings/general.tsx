@@ -192,8 +192,8 @@ export function AppSection({ settings }: PageProps) {
               />
               <Button
                 type="button"
-                variant="outline"
-                size="sm"
+                variant="tertiary"
+                size="compact"
                 className="shrink-0"
                 disabled={shellBusy}
                 onClick={() => void submitShellPath()}

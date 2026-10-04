@@ -465,8 +465,8 @@ function McpServerEditor({
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
-                size="sm"
-                variant="outline"
+                size="compact"
+                variant="tertiary"
                 disabled={oauthBusy || !textValue(draft.url)}
                 onClick={() => void startOAuth()}
               >

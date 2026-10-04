@@ -308,8 +308,8 @@ export function ProxySection({ settings }: { settings: Settings; onSettings: (se
                 />
                 <Button
                   type="button"
-                  variant="outline"
-                  size="sm"
+                  variant="tertiary"
+                  size="compact"
                   className="shrink-0"
                   onClick={() => void detectSystemProxy()}
                   disabled={detecting}
@@ -403,8 +403,8 @@ export function ProxySection({ settings }: { settings: Settings; onSettings: (se
             />
             <Button
               type="button"
-              variant="outline"
-              size="sm"
+              variant="tertiary"
+              size="compact"
               className="shrink-0"
               onClick={() => void testProxy()}
               disabled={testing || !status?.activeUrl}
@@ -599,8 +599,8 @@ export function PortRequestSection({ settings }: { settings: Settings; onSetting
             />
             <Button
               type="button"
-              variant="outline"
-              size="sm"
+              variant="tertiary"
+              size="compact"
               className="shrink-0"
               disabled={!uaDraft}
               onClick={() => patchUa("")}

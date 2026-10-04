@@ -167,8 +167,8 @@ export function AboutSection() {
                   {row.action === "update" ? (
                     <Button
                       type="button"
-                      variant="outline"
-                      size="sm"
+                      variant="tertiary"
+                      size="compact"
                       className="ml-2 shrink-0"
                       onClick={(event) => {
                         event.stopPropagation();

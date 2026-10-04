@@ -358,7 +358,7 @@ export function SettingsListAddButton({
   const pickedRef = React.useRef(false);
   if (!items) {
     return (
-      <Button className="mb-1 w-full justify-start" variant="outline" onClick={onClick} disabled={disabled}>
+      <Button className="mb-1 w-full justify-start" variant="tertiary" onClick={onClick} disabled={disabled}>
         {leading}
         {label}
       </Button>
@@ -367,7 +367,7 @@ export function SettingsListAddButton({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button className="mb-1 w-full justify-start" variant="outline" disabled={disabled}>
+        <Button className="mb-1 w-full justify-start" variant="tertiary" disabled={disabled}>
           {leading}
           <span className="min-w-0 flex-1 truncate text-left">{label}</span>
           <ChevronDown aria-hidden className="size-4 text-[var(--ds-icon)]" />
@@ -435,7 +435,7 @@ export function SettingsKeyValueList({
       label={label}
       description={description}
       trailing={
-        <Button type="button" size="sm" variant="outline" onClick={() => onChange([...items, { key: "", value: "" }])}>
+        <Button type="button" size="compact" variant="tertiary" onClick={() => onChange([...items, { key: "", value: "" }])}>
           <Plus className="size-4" />
           {t("settings:common.add")}
         </Button>

@@ -387,7 +387,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
           ) : null}
           {authEvent.phase === "select_method" && authEvent.methods ? (
             authEvent.methods.map((method) => (
-              <Button key={method.id} variant="outline" size="sm" onClick={() => void submitMethod(method.id)} disabled={submitting}>
+              <Button key={method.id} variant="tertiary" size="compact" onClick={() => void submitMethod(method.id)} disabled={submitting}>
                 {t(method.labelKey)}
               </Button>
             ))
@@ -399,11 +399,11 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
         {authEvent.phase === "waiting_browser" && authEvent.authUrl ? (
           <div className="mt-3 space-y-2">
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => void openExternal(authEvent.authUrl!)}>
+              <Button variant="tertiary" size="compact" onClick={() => void openExternal(authEvent.authUrl!)}>
                 <ExternalLink className="mr-1 size-3" />
                 {t("settings:providers.oauth.open_browser")}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => void copy(authEvent.authUrl!)}>
+              <Button variant="tertiary" size="compact" onClick={() => void copy(authEvent.authUrl!)}>
                 {t("settings:providers.oauth.copy_url")}
               </Button>
             </div>
@@ -423,11 +423,11 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
             // 免输入完整链接(Kimi/Grok):视同浏览器登录,主行动=打开授权页面,验证码降为兜底。
             <div className="mt-3 space-y-2">
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => void openExternal(authEvent.deviceCode!.verificationUri)}>
+                <Button variant="tertiary" size="compact" onClick={() => void openExternal(authEvent.deviceCode!.verificationUri)}>
                   <ExternalLink className="mr-1 size-3" />
                   {t("settings:providers.oauth.open_auth_page")}
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => void copy(authEvent.deviceCode!.verificationUri)}>
+                <Button variant="tertiary" size="compact" onClick={() => void copy(authEvent.deviceCode!.verificationUri)}>
                   {t("settings:providers.oauth.copy_url")}
                 </Button>
               </div>
@@ -453,7 +453,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span className="break-all">{authEvent.deviceCode.verificationUri}</span>
-                <Button variant="outline" size="sm" onClick={() => void openExternal(authEvent.deviceCode!.verificationUri)}>
+                <Button variant="tertiary" size="compact" onClick={() => void openExternal(authEvent.deviceCode!.verificationUri)}>
                   <ExternalLink className="size-3" />
                 </Button>
               </div>
@@ -1472,11 +1472,11 @@ export function ProvidersSection({
               description={t("settings:providers.models_desc", { count: draft.models?.length ?? 0 })}
               action={
                 <>
-                  <Button variant="outline" size="sm" onClick={openAddModelDialog} title={t("settings:providers.add_model_title")}>
+                  <Button variant="tertiary" size="compact" onClick={openAddModelDialog} title={t("settings:providers.add_model_title")}>
                     <Plus className="size-4" />
                     {t("settings:providers.add_model")}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => void fetchModels()} disabled={fetchingModels}>
+                  <Button variant="tertiary" size="compact" onClick={() => void fetchModels()} disabled={fetchingModels}>
                     {fetchingModels ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
                     {t("settings:providers.fetch_models")}
                   </Button>
@@ -1607,7 +1607,7 @@ export function ProvidersSection({
             <SettingsGroup
               title={t("settings:providers.test_title")}
               action={
-                <Button variant="outline" size="sm" onClick={() => void test()} disabled={testing}>
+                <Button variant="tertiary" size="compact" onClick={() => void test()} disabled={testing}>
                   {testing ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
                   {t("settings:providers.test")}
                 </Button>

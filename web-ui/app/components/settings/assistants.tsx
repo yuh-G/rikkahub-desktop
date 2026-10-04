@@ -478,7 +478,7 @@ function AssistantEditor({
     </SettingsEmpty>
   );
   const addButton = (onClick: () => void) => (
-    <Button type="button" size="sm" variant="outline" onClick={onClick}>
+    <Button type="button" size="compact" variant="tertiary" onClick={onClick}>
       <Plus className="size-4" />
       {t("settings:assistants.add_button")}
     </Button>

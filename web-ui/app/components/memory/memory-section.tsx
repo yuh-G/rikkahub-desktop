@@ -51,8 +51,8 @@ function MemoryItem({ entry, scope, assistantId }: {
         <div className="space-y-2">
           <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} />
           <div className="flex gap-1">
-            <Button size="sm" onClick={() => void save()}><Check className="size-3.5" /></Button>
-            <Button size="sm" variant="outline" onClick={() => { setEditing(false); setDraft(entry.content); }}><X className="size-3.5" /></Button>
+            <Button size="compact" onClick={() => void save()}><Check className="size-3.5" /></Button>
+            <Button size="compact" variant="tertiary" onClick={() => { setEditing(false); setDraft(entry.content); }}><X className="size-3.5" /></Button>
           </div>
         </div>
       ) : (
@@ -310,7 +310,7 @@ export function MemorySection({
           />
           {batchError && <div className="text-sm text-destructive">{batchError}</div>}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setBatchTarget(null)}>{t("settings:memory.cancel")}</Button>
+            <Button variant="tertiary" onClick={() => setBatchTarget(null)}>{t("settings:memory.cancel")}</Button>
             <Button onClick={() => void saveBatch()}>{t("settings:memory.save")}</Button>
           </DialogFooter>
         </DialogContent>
