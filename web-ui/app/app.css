@@ -1351,12 +1351,12 @@
   * {
     @apply border-border outline-ring/50;
   }
-  /* 设置模态的顶带替身(titlebar-overlay.tsx):本体遮罩压住真实顶带让其毛玻璃,
-     替身在更高层复刻品牌行 + [-口×] 保持清晰。模态打开时 Radix 给 body 挂
-     pointer-events:none(连同后代继承)——替身自身是 invisible(visibility:hidden),
-     命中判定对整层透明;这里只让其中的拖拽区「可见命中」,借替身壳豁免遮罩,
-     拖拽区是 div(不在放行选择器内),它的拖拽靠 mousedown 自己收。
-     替身自身始终 pointer-events:none,故无需 body:has() 恢复(它从未被锁)。 */
+  /* 设置模态的顶带替身(titlebar-overlay.tsx):本体遮罩(z-50)压住真实顶带让其
+     毛玻璃,替身在更高层(z-[90])复刻品牌行 + [-口×] 保持清晰。模态打开时 Radix
+     给 body 挂 pointer-events:none(连同后代继承)——替身壳自身 pointer-events:none
+     (命中对整层透明、不挡视口点击),只把「拖拽区 + 按钮」点亮可见命中;
+     拖拽区是 div(非交互选择器覆盖对象),它的拖拽靠 mousedown 自己收,
+     借替身壳豁免遮罩即可。 */
   [data-titlebar-overlay] [data-tauri-drag-region] {
     visibility: visible;
   }

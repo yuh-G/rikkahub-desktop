@@ -36,6 +36,22 @@ describe("设置模态顶带替身", () => {
     expect(idxOverlay, "替身须在 SettingsDialog 之后挂载,同 z 层时居上").toBeGreaterThan(idxSettings);
   });
 
+  test("替身带显式高 z-index 且自身命中透明(靠 visibility 点亮子元素)", () => {
+    // Radix Overlay/Content 是 z-50;替身必须明确高于它,否则替身内清晰的 chrome
+    // 会被模态遮罩盖住(表现成「顶带跟着模糊、窗控点不动」)。
+    expect(OVERLAY).toMatch(/z-\[\d{2,}\]/);
+    // 替身壳自身命中透明(pointer-events:none,不挡视口点击),靠 visibility 让子元素
+    // 可见命中;「替身壳又开回 pointer-events」会破坏这条红线。
+    expect(OVERLAY).toContain("pointer-events-none");
+    expect(OVERLAY).toContain("invisible");
+  });
+
+  test("替身内的拖拽区壳显式恢复命中(拖拽靠 mousedown 收,不能命中透明)", () => {
+    // 替身壳是 invisible + pointer-events-none;拖拽区那层壳必须显式 pointer-events-auto,
+    // 否则替身内的拖拽把手命中透明,窗口拖不动。
+    expect(OVERLAY).toContain("pointer-events-auto");
+  });
+
   test("替身复用真实顶带的 brand/window-controls(不另写复制品)", () => {
     // 替身必须 import 共享实现,而不是内联另一份 Logo/窗控钮。
     expect(OVERLAY).toContain('from "~/components/sidebar-brand"');
