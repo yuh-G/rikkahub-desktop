@@ -123,31 +123,43 @@ export function isValidBinding(tokens: string[]): boolean {
   return (hasModifier && hasMain) || isSingleFunctionKey;
 }
 
-/** 单个 token 的显示文本。 */
+/** 平台判定:macOS 用 ⌘/⌃/⌥/⇧ 符号且组合不加「+」,其余平台用 Ctrl/Alt/Shift 字样加「+」。
+ *  navigator.platform 已被废弃但所有引擎仍返回;配 userAgentData 兜底,Safari/Firefox 无
+ *  userAgentData 时回落 platform。模块级算一次,渲染期间平台不会变。 */
+export const IS_MAC_PLATFORM: boolean = (() => {
+  const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
+  const platform = (uaData?.platform ?? navigator.platform ?? "").toLowerCase();
+  return platform.includes("mac");
+})();
+
+/** 单个 token 的显示文本(按平台:mac 修饰键给符号,其余平台给字样)。 */
 export function formatToken(token: string): string {
   switch (token) {
-    case "Ctrl": return "Ctrl";
-    case "Alt": return "Alt";
-    case "Shift": return "Shift";
-    case "Meta": return "Win";
+    case "Ctrl": return IS_MAC_PLATFORM ? "⌃" : "Ctrl";
+    case "Alt": return IS_MAC_PLATFORM ? "⌥" : "Alt";
+    case "Shift": return IS_MAC_PLATFORM ? "⇧" : "Shift";
+    case "Meta": return IS_MAC_PLATFORM ? "⌘" : "Win";
     case "Up": return "↑";
     case "Down": return "↓";
     case "Left": return "←";
     case "Right": return "→";
-    case "Enter": return "↵";
-    case "Backspace": return "⌫";
-    case "Delete": return "Del";
-    case "Escape": return "Esc";
+    case "Enter": return IS_MAC_PLATFORM ? "return" : "↵";
+    case "Backspace": return IS_MAC_PLATFORM ? "delete" : "⌫";
+    case "Delete": return IS_MAC_PLATFORM ? "delete" : "Del";
+    case "Escape": return IS_MAC_PLATFORM ? "esc" : "Esc";
     case "Tab": return "⇥";
-    case "Space": return "Space";
+    case "Space": return IS_MAC_PLATFORM ? "␣" : "Space";
     default: return token;
   }
 }
 
-/** 完整 binding 的显示文本,如 "Ctrl+N"、"Alt+↑"、"F2"。 */
+/** 组合键各键之间的连接符:mac 习惯直接并排(⌘⇧F),其余平台加「+」。 */
+export const TOKEN_JOINER = IS_MAC_PLATFORM ? "" : "+";
+
+/** 完整 binding 的显示文本,如 "Ctrl+N"、"Alt+↑"、"F2";mac 下符号并排,如 "⌘,"、"⌥↑"。 */
 export function formatBinding(tokens: string[] | undefined): string {
   if (!tokens || tokens.length === 0) return "";
-  return normalizeTokens(tokens).map(formatToken).join("+");
+  return normalizeTokens(tokens).map(formatToken).join(TOKEN_JOINER);
 }
 
 /**
