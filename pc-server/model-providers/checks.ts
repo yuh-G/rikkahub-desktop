@@ -31,7 +31,7 @@ export function endpointFor(providerItem: Provider, baseUrlOverride?: string) {
   // claude 拼接标准化(A):剥尾部 /v1 再拼全路径 /v1/messages——与 pi 引擎 piBaseUrlFor
   // 同款归一化,用户填 https://api.anthropic.com 或 .../v1 都能工作。此前 `${base}/messages`
   // 要求 baseUrl 必须带 /v1,漏填即 404,且同一配置工作区(pi 剥 /v1 由 SDK 拼)能跑、
-  // 聊天挂——引擎间行为分歧。设置页 Base URL 预览(providers.tsx endpointPreview)同步同款规则。
+  // 聊天挂——引擎间行为分歧。设置页 Base URL 预览(settings/providers/common.ts endpointPreview)同步同款规则。
   if (providerItem.type === "claude") return `${base.replace(/\/v1$/, "")}/v1/messages`;
   return `${base}/models/{model}:generateContent`;
 }

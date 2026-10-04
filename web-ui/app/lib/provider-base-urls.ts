@@ -1,6 +1,6 @@
 // lib/provider-base-urls.ts — 供应商 base 地址登记与 API 格式切换换算(纯函数,零依赖)。
-// 独立成文件而非留在 providers.tsx 内,是为了让 pc-server 侧的 bun test 能直接 import
-// 锁行为(web-ui 无测试框架;providers.tsx 是 tsx 且拉一整棵 React 依赖树,不可测)。
+// 独立成文件而非留在 settings/providers/ 内,是为了让 pc-server 侧的 bun test 能直接 import
+// 锁行为(供应商页组件拉一整棵 React 依赖树,不可测)。
 // 改动这里的表/逻辑时,必须同步跑 pc-server/api/provider-base-urls.test.ts 的往返矩阵。
 
 export type ProviderKind = "openai" | "claude" | "google";
