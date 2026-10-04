@@ -101,6 +101,17 @@ describe("拖拽排序投影架构", () => {
     expect(move).not.toContain("style.transform = `translateY(");
   });
 
+  test("判定基准 = 被拖行中心,半高取被拖行自身真实高(非步长半)", () => {
+    // 「越滑越提前交换」实测根因:槽位判定中心 = 布局 top + 指针位移 + 半高。半高若用
+    // slotStep/2(步长 = 行高+间距)会多算「间距/2」,且误差随滑过行数线性累积——A 才滑到
+    // 初始 B 位,BCD 已滑完。必须用被拖行自身 rect.height/2(dnd-kit rectIntersection 同款,
+    // 恒定不累积)。回退成 slotStep/2 即回归。
+    const move = bodyOf(/function dragMove\s*\([^)]*\)/);
+    expect(move).toContain("getBoundingClientRect()");
+    expect(move).toContain("dragRect.height / 2");
+    expect(move).not.toContain("slotStep / 2");
+  });
+
   test("兄弟行让位是投影位移(±step),不得回退成 FLIP 两拍写法", () => {
     const shifts = bodyOf(/function projectShifts\s*\([^)]*\)/);
     expect(shifts).toContain("-step");

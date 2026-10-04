@@ -135,8 +135,13 @@ function dragMove(s: DragSession, clientY: number): void {
   const pointerShift = clientY - s.startY;
   // 投影槽 = 被拖行中心落点(不是指针位置):行比指针高,按行中心判定跨界,行的
   // 视觉覆盖与槽位切换一致,快拖慢拖手感一致。被拖行布局位静止(DOM 顺序不动),
-  // 其 rect.top 是常量,center = 布局位 + 位移合成,每帧稳定。
-  const center = s.rows[s.from].getBoundingClientRect().top + pointerShift + s.slotStep / 2;
+  // 其 rect 是常量,center = 布局位 + 位移合成,每帧稳定。
+  // 半高必须取被拖行**自身**的 rect.height/2(dnd-kit rectIntersection 同款),不能用
+  // slotStep/2:slotStep 含 space-y 间距(步长 = 行高+间距),用半步长当半高会多算
+  // 「间距/2」,且该误差随滑过行数线性累积((n-1)×间距/2)——正是「越滑越提前交换」
+  // 的根因。真高度恒定,与滑过行数无关,不累积。
+  const dragRect = s.rows[s.from].getBoundingClientRect();
+  const center = dragRect.top + pointerShift + dragRect.height / 2;
   const to = dropSlotAt(s, center);
   s.current = to;
   projectShifts(s, to);
