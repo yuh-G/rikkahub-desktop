@@ -3,57 +3,31 @@ import { Slider as SliderPrimitive } from "radix-ui"
 
 import { cn } from "~/lib/utils"
 
+// NewMax DsSlider 形态:16px 高胶囊轨道,22×12 白色拇指嵌在轨道内(四周留 2px)。
+// 实现:根节点即轨道(overflow-hidden 裁切);拇指命中盒取 26×16 透明盒——Radix 按拇指实测
+// 宽度做 in-bounds 偏移,盒边贴轨道边,after 伪元素画内缩 2px 的白胶囊;已选段由拇指
+// before 伪元素向左无限延伸、被轨道裁切而成,因此填充恒盖到拇指右缘(两端都不露底色)。
+// 该做法只适用于单拇指;全应用没有范围选择用法,需要时再另立变体。
 function Slider({
   className,
-  defaultValue,
-  value,
-  min = 0,
-  max = 100,
   ...props
 }: React.ComponentProps<typeof SliderPrimitive.Root>) {
-  const _values = React.useMemo(
-    () =>
-      Array.isArray(value)
-        ? value
-        : Array.isArray(defaultValue)
-          ? defaultValue
-          : [min, max],
-    [value, defaultValue, min, max]
-  )
-
   return (
     <SliderPrimitive.Root
       data-slot="slider"
-      defaultValue={defaultValue}
-      value={value}
-      min={min}
-      max={max}
       className={cn(
-        "relative flex w-full touch-none items-center select-none data-[disabled]:opacity-50 data-[orientation=vertical]:h-full data-[orientation=vertical]:min-h-44 data-[orientation=vertical]:w-auto data-[orientation=vertical]:flex-col",
+        "relative flex h-4 w-full touch-none items-center overflow-hidden rounded-full bg-[var(--ds-on-surface)] select-none data-[disabled]:opacity-40",
         className
       )}
       {...props}
     >
-      <SliderPrimitive.Track
-        data-slot="slider-track"
-        className={cn(
-          "relative grow overflow-hidden rounded-full bg-muted data-[orientation=horizontal]:h-1.5 data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full data-[orientation=vertical]:w-1.5"
-        )}
-      >
-        <SliderPrimitive.Range
-          data-slot="slider-range"
-          className={cn(
-            "absolute bg-primary data-[orientation=horizontal]:h-full data-[orientation=vertical]:w-full"
-          )}
-        />
+      <SliderPrimitive.Track data-slot="slider-track" className="relative h-full grow">
+        <SliderPrimitive.Range data-slot="slider-range" className="absolute h-full" />
       </SliderPrimitive.Track>
-      {Array.from({ length: _values.length }, (_, index) => (
-        <SliderPrimitive.Thumb
-          data-slot="slider-thumb"
-          key={index}
-          className="block size-4 shrink-0 rounded-full border border-primary bg-white shadow-sm ring-ring/50 transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50"
-        />
-      ))}
+      <SliderPrimitive.Thumb
+        data-slot="slider-thumb"
+        className="relative block h-4 w-[26px] cursor-grab outline-none active:cursor-grabbing data-[disabled]:pointer-events-none before:absolute before:inset-y-0 before:right-0 before:w-[200vw] before:rounded-r-full before:bg-[var(--ds-brand-primary)] after:absolute after:inset-[2px] after:rounded-full after:bg-[var(--ds-surface-100)] after:transition-shadow after:duration-(--ds-duration-base) after:ease-(--ds-ease-spring) active:after:shadow-[var(--ds-elevation-200)] focus-visible:after:shadow-[0_0_0_2px_var(--ring)]"
+      />
     </SliderPrimitive.Root>
   )
 }
