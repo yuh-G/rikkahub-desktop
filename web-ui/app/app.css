@@ -1356,7 +1356,10 @@
      给 body 挂 pointer-events:none(连同后代继承)——替身壳自身 pointer-events:none
      (命中对整层透明、不挡视口点击),只把「拖拽区 + 按钮」点亮可见命中;
      拖拽区是 div(非交互选择器覆盖对象),它的拖拽靠 mousedown 自己收,
-     借替身壳豁免遮罩即可。 */
+     借替身壳豁免遮罩即可。
+     替身拖拽区壳必须背景透明(默认即透明):它若被填上底色,会透出遮罩的
+     模糊/压暗、在 Logo/品牌名外围裹出一圈暗影——拖拽区壳只负责命中与坐标,
+     不负责承载任何底色。 */
   [data-titlebar-overlay] [data-tauri-drag-region] {
     visibility: visible;
   }

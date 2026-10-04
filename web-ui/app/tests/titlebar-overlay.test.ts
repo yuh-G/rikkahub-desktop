@@ -89,6 +89,19 @@ describe("设置模态顶带替身", () => {
     expect(CSS).not.toContain("body:has([data-settings-overlay]) [data-app-titlebar]");
   });
 
+  test("替身拖拽区壳背景透明(不透出遮罩的模糊/压暗)", () => {
+    // 替身拖拽区壳只负责命中与坐标、不承载任何底色——它若被填上底色,
+    // 会透出遮罩的模糊/压暗,在 Logo/品牌名外围裹出一圈暗影(品牌区像蒙了层灰)。
+    // 替身组件与共享的 WindowControlsBar 都不允许给拖拽区壳上 bg(背景交给壳外、遮罩自己糊)。
+    expect(OVERLAY).not.toMatch(/\[data-tauri-drag-region\][^}]*bg-/);
+    expect(OVERLAY).not.toContain("bg-");
+    // 替身拖拽区壳自身的 CSS 块里不得出现 background 声明(壳保持透明)。
+    const shellBlock = /\[data-titlebar-overlay\]\s*\[data-tauri-drag-region\]\s*\{([^}]*)\}/.exec(CSS);
+    expect(shellBlock, "替身需点亮拖拽区壳(visibility)").not.toBeNull();
+    expect(shellBlock![1]).toContain("visibility: visible");
+    expect(shellBlock![1]).not.toContain("background");
+  });
+
   test("WindowControlsBar 支持强制渲染(替身需要始终画出 [-口×])", () => {
     // alwaysVisible 让替身在非壳内也画出窗控钮(浏览器预览下点击静默为空)。
     expect(WINDOW_CONTROLS).toContain("alwaysVisible");
