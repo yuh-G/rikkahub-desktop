@@ -36,6 +36,7 @@ import {
   SettingsAdvancedSection,
   SettingsDetailFooter,
   SettingsDetailHeader,
+  SettingsField,
   SettingsListAddButton,
   SettingsListRow,
   SettingsSplit,
@@ -282,6 +283,7 @@ export function SearchSection({
     Array<{ key: string; status: "ok" | "fail"; failCode?: string; detail?: string }>
   >([]);
   const { t } = useTranslation();
+  const fieldId = React.useId();
   // 「高级设置」展开态:切换服务不收起,离开本页(重挂载)复位为收起。
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
 
@@ -454,6 +456,64 @@ export function SearchSection({
     toast.success(t("settings:search.deleted"));
   };
 
+  // B6-1:测试结果紧跟基础字段(测试钮在页头),不被展开的高级区推到页尾。
+  const testPanel =
+    testResult || keyTestEntries.length > 1 ? (
+      <div className="mt-4 space-y-3">
+        {testResult ? (
+          <pre className="max-h-56 overflow-auto rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3 text-xs whitespace-pre-wrap">
+            {testResult}
+          </pre>
+        ) : null}
+        {keyTestEntries.length > 1 ? (
+          <div className="space-y-1.5 rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3">
+            <div className="text-xs font-medium text-[var(--ds-text-secondary)]">
+              {t("settings:search.key_status_title")}
+            </div>
+            {keyTestEntries.map((entry, index) => (
+              <div key={index} className="space-y-0.5">
+                <div className="flex items-center gap-2 text-xs">
+                  {entry.status === "ok" ? (
+                    <CheckCircle2 className="size-3.5 shrink-0 text-[var(--ds-success)]" />
+                  ) : (
+                    <XCircle className="size-3.5 shrink-0 text-[var(--ds-danger)]" />
+                  )}
+                  <code className="font-mono">{entry.key}</code>
+                  <span
+                    className={cn(
+                      "text-[var(--ds-text-secondary)]",
+                      entry.status === "fail" && "text-[var(--ds-danger)]",
+                    )}
+                  >
+                    {entry.status === "ok"
+                      ? t("settings:search.key_ok")
+                      : t(`settings:search.key_fail_${entry.failCode ?? "other"}`)}
+                  </span>
+                </div>
+                {/* issue11:失败时附底层错误原文,便于区分超时/证书/DNS/5xx */}
+                {entry.status === "fail" && entry.detail ? (
+                  <div className="pl-5.5 font-mono text-mini break-all text-[var(--ds-text-secondary)]">
+                    {entry.detail}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    ) : null;
+  const resultCountField = (
+    <SettingsField label={t("settings:search.result_count")} htmlFor={`${fieldId}-result-count`}>
+      <Input
+        id={`${fieldId}-result-count`}
+        className="w-24"
+        inputMode="numeric"
+        value={numberText(draft.resultSize ?? settings.searchCommonOptions.resultSize)}
+        onChange={(event) => patchDraft({ resultSize: Number(event.target.value) || 10 })}
+      />
+    </SettingsField>
+  );
+
   return (
     <>
       <SettingsSplit
@@ -542,8 +602,7 @@ export function SearchSection({
           />
           <section>
           <div className="grid gap-4 @xl:grid-cols-2">
-            <label className="space-y-2 @xl:col-span-2">
-              <span className="text-sm font-medium">{t("settings:search.type")}</span>
+            <SettingsField label={t("settings:search.type")} htmlFor={`${fieldId}-type`} className="@xl:col-span-2">
               <Select
                 value={textValue(draft.type) || "tavily"}
                 onValueChange={(type) => {
@@ -570,7 +629,7 @@ export function SearchSection({
                   if (type === "searxng") setAdvancedOpen(true);
                 }}
               >
-                <SelectTrigger className="w-60 max-w-full">
+                <SelectTrigger id={`${fieldId}-type`} className="w-60 max-w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -588,28 +647,25 @@ export function SearchSection({
                   ))}
                 </SelectContent>
               </Select>
-            </label>
+            </SettingsField>
             {textValue(draft.type) !== "searxng" && textValue(draft.type) !== "custom_js" ? (
-              <div className="space-y-2 @xl:col-span-2">
-                <span className="text-sm font-medium">API Key</span>
+              <SettingsField label="API Key" hint={t("settings:search.api_key_hint")} className="@xl:col-span-2">
                 <SearchApiKeyList
                   value={textValue(draft.apiKey)}
                   onChange={(apiKey) => patchDraft({ apiKey })}
                   testEntries={keyTestEntries}
                 />
-                <span className="text-xs text-muted-foreground">{t("settings:search.api_key_hint")}</span>
-              </div>
+              </SettingsField>
             ) : null}
             {textValue(draft.type) === "doubao" ? (
               // 豆包(火山 Search-Infinity)两模:global=综合搜索(带图),custom=网页搜索。
               // 对齐 APP DoubaoOptions 的 Mode 分段选择器。
-              <label className="space-y-2">
-                <span className="text-sm font-medium">{t("settings:search.field.mode")}</span>
+              <SettingsField label={t("settings:search.field.mode")} htmlFor={`${fieldId}-mode`}>
                 <Select
                   value={textValue(draft.mode) || "custom"}
                   onValueChange={(mode) => patchDraft({ mode })}
                 >
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger id={`${fieldId}-mode`} className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -617,47 +673,51 @@ export function SearchSection({
                     <SelectItem value="custom">{t("settings:search.field.custom")}</SelectItem>
                   </SelectContent>
                 </Select>
-              </label>
+              </SettingsField>
             ) : null}
             {textValue(draft.type) === "searxng" ? (
               <>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("settings:search.field.engines")}</span>
+                <SettingsField label={t("settings:search.field.engines")} htmlFor={`${fieldId}-engines`}>
                   <Input
+                    id={`${fieldId}-engines`}
                     value={textValue(draft.engines)}
                     onChange={(event) => patchDraft({ engines: event.target.value })}
                     placeholder="google,bing"
                   />
-                </label>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("settings:search.field.language")}</span>
+                </SettingsField>
+                <SettingsField label={t("settings:search.field.language")} htmlFor={`${fieldId}-language`}>
                   <Input
+                    id={`${fieldId}-language`}
                     value={textValue(draft.language)}
                     onChange={(event) => patchDraft({ language: event.target.value })}
                     placeholder="zh-CN"
                   />
-                </label>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("settings:search.field.username")}</span>
+                </SettingsField>
+                <SettingsField label={t("settings:search.field.username")} htmlFor={`${fieldId}-username`}>
                   <Input
+                    id={`${fieldId}-username`}
                     value={textValue(draft.username)}
                     onChange={(event) => patchDraft({ username: event.target.value })}
                   />
-                </label>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("settings:search.field.password")}</span>
+                </SettingsField>
+                <SettingsField label={t("settings:search.field.password")} htmlFor={`${fieldId}-password`}>
                   <PasswordInput
+                    id={`${fieldId}-password`}
                     value={textValue(draft.password)}
                     onChange={(password) => patchDraft({ password })}
                   />
-                </label>
+                </SettingsField>
               </>
             ) : null}
             {textValue(draft.type) === "custom_js" ? (
               <>
-                <label className="space-y-2 @xl:col-span-2">
-                  <span className="text-sm font-medium">{t("settings:search.field.search_script")}</span>
+                <SettingsField
+                  label={t("settings:search.field.search_script")}
+                  htmlFor={`${fieldId}-search-script`}
+                  className="@xl:col-span-2"
+                >
                   <Textarea
+                    id={`${fieldId}-search-script`}
                     value={textValue(draft.searchScript)}
                     onChange={(event) => patchDraft({ searchScript: event.target.value })}
                     className="min-h-56 font-mono text-xs"
@@ -665,10 +725,14 @@ export function SearchSection({
                       "async function search(query, resultSize) {\n  const res = await fetch('https://example.com/search?q=' + encodeURIComponent(query));\n  const data = await res.json();\n  return { items: data.results.map((r) => ({ title: r.title, url: r.url, text: r.snippet })) };\n}"
                     }
                   />
-                </label>
-                <label className="space-y-2 @xl:col-span-2">
-                  <span className="text-sm font-medium">{t("settings:search.field.scrape_script")}</span>
+                </SettingsField>
+                <SettingsField
+                  label={t("settings:search.field.scrape_script")}
+                  htmlFor={`${fieldId}-scrape-script`}
+                  className="@xl:col-span-2"
+                >
                   <Textarea
+                    id={`${fieldId}-scrape-script`}
                     value={textValue(draft.scrapeScript)}
                     onChange={(event) => patchDraft({ scrapeScript: event.target.value })}
                     className="min-h-40 font-mono text-xs"
@@ -676,25 +740,16 @@ export function SearchSection({
                       "async function scrape(urls) {\n  return { urls: await Promise.all(urls.map(async (url) => {\n    const res = await fetch(url);\n    return { url, content: await res.text() };\n  })) };\n}"
                     }
                   />
-                </label>
+                </SettingsField>
               </>
             ) : null}
             {textValue(draft.type) === "custom_js" ? (
               // Custom JS 用户只可能是高级用户,结果数量不折叠直示(该类型也没有请求地址框)。
               // 不给深度:脚本入参只有 (query, resultSize),深度传不进去。
-              <>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("settings:search.result_count")}</span>
-                  <Input
-                    value={numberText(
-                      draft.resultSize ?? settings.searchCommonOptions.resultSize,
-                    )}
-                    onChange={(event) => patchDraft({ resultSize: Number(event.target.value) || 10 })}
-                  />
-                </label>
-              </>
+              resultCountField
             ) : null}
           </div>
+          {testPanel}
           {textValue(draft.type) !== "custom_js" ? (
             <SettingsAdvancedSection
               open={advancedOpen}
@@ -719,12 +774,17 @@ export function SearchSection({
                   const preview = raw ? resolveServiceEndpoint(draft as Record<string, unknown>) : "";
                   const badScheme = raw.length > 0 && !/^https?:\/\//i.test(raw);
                   return (
-                    <label className="space-y-2 @xl:col-span-2">
-                      <span className="text-sm font-medium">
-                        {t("settings:search.request_url")}
-                        {type === "searxng" ? ` — ${t("settings:search.request_url_required")}` : ""}
-                      </span>
+                    <SettingsField
+                      label={
+                        type === "searxng"
+                          ? `${t("settings:search.request_url")} — ${t("settings:search.request_url_required")}`
+                          : t("settings:search.request_url")
+                      }
+                      htmlFor={`${fieldId}-request-url`}
+                      className="@xl:col-span-2"
+                    >
                       <Input
+                        id={`${fieldId}-request-url`}
                         value={raw}
                         onChange={(event) => patchDraft({ [field]: event.target.value })}
                         placeholder={official || "https://search.example.com"}
@@ -743,7 +803,7 @@ export function SearchSection({
                               ? t("settings:search.request_url_hint", { official })
                               : t("settings:search.request_url_hint_selfhost")}
                       </span>
-                    </label>
+                    </SettingsField>
                   );
                 })()}
                 {(() => {
@@ -751,13 +811,12 @@ export function SearchSection({
                   const depthSpec = searchDepthSpecOf(textValue(draft.type));
                   if (!depthSpec) return null;
                   return (
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium">{t("settings:search.depth")}</span>
+                    <SettingsField label={t("settings:search.depth")} htmlFor={`${fieldId}-depth`}>
                       <Select
                         value={resolveSearchDepth(draft) ?? depthSpec.fallback}
                         onValueChange={(depth) => patchDraft({ depth })}
                       >
-                        <SelectTrigger className="w-full">
+                        <SelectTrigger id={`${fieldId}-depth`} className="w-full">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -768,60 +827,12 @@ export function SearchSection({
                           ))}
                         </SelectContent>
                       </Select>
-                    </label>
+                    </SettingsField>
                   );
                 })()}
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("settings:search.result_count")}</span>
-                  <Input
-                    value={numberText(
-                      draft.resultSize ?? settings.searchCommonOptions.resultSize,
-                    )}
-                    onChange={(event) => patchDraft({ resultSize: Number(event.target.value) || 10 })}
-                  />
-                </label>
+                {resultCountField}
               </div>
             </SettingsAdvancedSection>
-          ) : null}
-          {testResult ? (
-            <pre className="mt-4 max-h-56 overflow-auto rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">
-              {testResult}
-            </pre>
-          ) : null}
-          {keyTestEntries.length > 1 ? (
-            <div className="mt-3 space-y-1.5 rounded-md border bg-card p-3">
-              <div className="text-xs font-medium text-muted-foreground">
-                {t("settings:search.key_status_title")}
-              </div>
-              {keyTestEntries.map((entry, index) => (
-                <div key={index} className="space-y-0.5">
-                  <div className="flex items-center gap-2 text-xs">
-                    {entry.status === "ok" ? (
-                      <CheckCircle2 className="size-3.5 shrink-0 text-success" />
-                    ) : (
-                      <XCircle className="size-3.5 shrink-0 text-destructive" />
-                    )}
-                    <code className="font-mono">{entry.key}</code>
-                    <span
-                      className={cn(
-                        "text-muted-foreground",
-                        entry.status === "fail" && "text-destructive",
-                      )}
-                    >
-                      {entry.status === "ok"
-                        ? t("settings:search.key_ok")
-                        : t(`settings:search.key_fail_${entry.failCode ?? "other"}`)}
-                    </span>
-                  </div>
-                  {/* issue11:失败时附底层错误原文,便于区分超时/证书/DNS/5xx */}
-                  {entry.status === "fail" && entry.detail ? (
-                    <div className="pl-5.5 font-mono text-mini break-all text-muted-foreground">
-                      {entry.detail}
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
           ) : null}
           </section>
           <SettingsDetailFooter
