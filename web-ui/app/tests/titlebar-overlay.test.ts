@@ -63,6 +63,18 @@ describe("设置模态顶带替身", () => {
     expect(OVERLAY).toContain("invisible");
   });
 
+  test("替身坐标与主界面顶带逐字对齐(三页同源,不出现第二份魔法数)", () => {
+    // 与 conversations.tsx 的顶带坐标同源:品牌行 ml-4 mt-1(左 16px / 距顶 4px),
+    // 窗控 ml-auto mt-1.5 mr-2(右 8px)。替身与真实顶带共用组件,坐标也复刻同一组
+    // 工具类——漂移风险点就在「替身的 Logo / [-口×] 与主界面错位」,这里锁住。
+    expect(OVERLAY).toContain('className="ml-4 mt-1"');
+    expect(OVERLAY).toContain('className="ml-auto mt-1.5 mr-2"');
+    // 外层容器与主界面顶带同向(items-start:品牌行/窗控各带 mt-*,纵向对齐),
+    // 不得回退成 items-center(那会让品牌行/窗控纵向居中带,与主界面错半个带高)。
+    expect(OVERLAY).toContain("items-start");
+    expect(OVERLAY).not.toContain("items-center");
+  });
+
   test("替身拖拽区从 windowDragRegionProps 派生(同源),不另写拖拽逻辑", () => {
     expect(WINDOW_CONTROLS).toContain("titlebarOverlayDragRegionProps");
     // 替身专用派生必须把 windowDragRegionProps 摊开,不得另起一套 startDragging 调用。

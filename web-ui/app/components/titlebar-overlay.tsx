@@ -29,12 +29,16 @@ export function TitleBarOverlay() {
       data-titlebar-overlay=""
       className="pointer-events-none invisible fixed inset-x-0 top-0 h-[var(--app-band-h)] z-[90]"
     >
+      {/* 三页同源坐标与主界面顶带逐字对齐(conversations.tsx):外层 items-start,
+          品牌行 ml-4 mt-1(左 16px / 距顶 4px),窗控 ml-auto mt-1.5 mr-2(右 8px)。
+          替身与真实顶带共用 SidebarBrandRow / WindowControlsBar,坐标也复刻同一组
+          工具类——主界面顶带坐标若调,这里跟着改,不出现第二份魔法数。 */}
       <div
-        className="pointer-events-auto flex h-full items-center px-4"
+        className="pointer-events-auto flex h-full items-start"
         {...titlebarOverlayDragRegionProps()}
       >
-        <SidebarBrandRow />
-        <WindowControlsBar className="ml-auto mt-1.5" alwaysVisible />
+        <SidebarBrandRow className="ml-4 mt-1" />
+        <WindowControlsBar className="ml-auto mt-1.5 mr-2" alwaysVisible />
       </div>
     </div>
   );
