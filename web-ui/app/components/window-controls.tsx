@@ -146,6 +146,7 @@ export function WindowControlsBar({
 
   return (
     <div
+      data-titlebar-chrome=""
       {...windowDragRegionProps()}
       {...props}
       className={cn(

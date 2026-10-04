@@ -16,6 +16,7 @@ const ROOT = join(import.meta.dir, ".."); // app/
 const OVERLAY = readFileSync(join(ROOT, "components", "titlebar-overlay.tsx"), "utf8");
 const DIALOG = readFileSync(join(ROOT, "components", "settings", "settings-dialog.tsx"), "utf8");
 const WINDOW_CONTROLS = readFileSync(join(ROOT, "components", "window-controls.tsx"), "utf8");
+const SIDEBAR_BRAND = readFileSync(join(ROOT, "components", "sidebar-brand.tsx"), "utf8");
 const ROOT_TSX = readFileSync(join(ROOT, "root.tsx"), "utf8");
 const CSS = readFileSync(join(ROOT, "app.css"), "utf8");
 
@@ -87,6 +88,31 @@ describe("设置模态顶带替身", () => {
     expect(CSS).toContain('[data-titlebar-overlay] :is(button, a, [role="button"])');
     // 旧的「body:has() 顶栏豁免」规则必须移除(替身方案不再需要恢复真实顶带的命中)。
     expect(CSS).not.toContain("body:has([data-settings-overlay]) [data-app-titlebar]");
+  });
+
+  test("设置模态打开时隐去真实顶带 chrome(消暗影环),替身副本豁免保持可见", () => {
+    // 真实 chrome(品牌行/窗控条)若留着,其像素会被本体遮罩的 backdrop-filter 糊成鬼影,
+    // 替身清晰版盖上去后鬼影向外晕开、在 Logo/品牌名外围裹出一圈暗影。故模态打开时
+    // 隐去真实 chrome,让遮罩只采样顶带背景;替身副本经 [data-titlebar-overlay] 豁免保持可见。
+    // ①两个共享组件根都带 chrome 标记(替身复用同组件,副本也带标记、走豁免)。
+    expect(SIDEBAR_BRAND).toContain('data-titlebar-chrome=""');
+    expect(WINDOW_CONTROLS).toContain('data-titlebar-chrome=""');
+    // ②隐藏规则:模态打开时隐去所有 chrome。
+    const hideBlock =
+      /body:has\(\[data-settings-overlay\]\)\s+\[data-titlebar-chrome\]\s*\{([^}]*)\}/.exec(CSS);
+    expect(hideBlock, "CSS 需有「隐去真实 chrome」规则").not.toBeNull();
+    expect(hideBlock![1]).toContain("visibility: hidden");
+    // ③替身豁免:替身作用域内的 chrome 副本保持可见。
+    const exemptBlock =
+      /body:has\(\[data-settings-overlay\]\)\s+\[data-titlebar-overlay\]\s+\[data-titlebar-chrome\]\s*\{([^}]*)\}/.exec(
+        CSS,
+      );
+    expect(exemptBlock, "CSS 需有「替身副本豁免」规则").not.toBeNull();
+    expect(exemptBlock![1]).toContain("visibility: visible");
+    // ④替身自身不标 chrome(豁免只认组件共享根上的标记,替身壳不掺和)。
+    //    只查 JSX 属性形态,避开 header 注释里对该词的文字引用。
+    expect(OVERLAY).not.toContain('data-titlebar-chrome=""');
+    expect(OVERLAY).not.toContain("data-titlebar-chrome=");
   });
 
   test("替身拖拽区壳背景透明(不透出遮罩的模糊/压暗)", () => {

@@ -1367,6 +1367,20 @@
   [data-titlebar-overlay] :is(button, a, [role="button"]) {
     visibility: visible;
   }
+  /* 消「暗影环」:设置模态打开时,把真实顶带的 chrome(品牌行 + [-口×])隐去,
+     让本体遮罩的 backdrop-filter 只采样顶带那片均匀背景(糊了看不出);清晰版由
+     z-[90] 替身供给。若留着真实 chrome,它的像素会被糊成一团鬼影,替身清晰版
+     盖上去后鬼影向外晕开,在 Logo/品牌名外围形成一圈暗影。
+     用 visibility:hidden(而非 display:none)——顶带容器保留布局、不触发回流;
+     替身自身不受影响(见下条豁免)。chrome 标在组件根(sidebar-brand/window-controls),
+     替身复用同一组共享组件,其副本会命中下条替身作用域豁免,保持可见。 */
+  body:has([data-settings-overlay]) [data-titlebar-chrome] {
+    visibility: hidden;
+  }
+  /* 替身副本豁免:替身里的品牌行/窗控条也带 data-titlebar-chrome(同组件),须保持可见。 */
+  body:has([data-settings-overlay]) [data-titlebar-overlay] [data-titlebar-chrome] {
+    visibility: visible;
+  }
   /* 界面字号缩放:改 <html> 根字号,所有 rem 单位(字号/间距/图标/圆角…)等比同步变化,
      比例守恒 → 不可能撑破任何布局。变量 --rikkahub-ui-scale 由 root.tsx 从 displaySetting
      写入,null/未设置时 fallback 为 1,默认根字号 16px 与浏览器默认一致,视觉零差异。

@@ -7,8 +7,10 @@ import Logo from "~/components/logo";
 import { windowDragRegionProps } from "~/components/window-controls";
 
 export function SidebarBrandRow({ className }: { className?: string }) {
+  // data-titlebar-chrome:设置模态打开时真实顶带的 chrome(本组件 + 窗控条)会被
+  // body:has([data-settings-overlay]) 规则隐去,由 z-[90] 顶带替身供给清晰版(见 app.css)。
   return (
-    <div className={cn("flex h-7 items-center", className)} {...windowDragRegionProps()}>
+    <div data-titlebar-chrome="" className={cn("flex h-7 items-center", className)} {...windowDragRegionProps()}>
       <div className="flex min-w-0 items-center gap-2">
         <Logo className="size-5 shrink-0 text-primary" />
         <span className="truncate text-sm font-semibold text-[var(--ds-text-primary)]">RikkaHub</span>

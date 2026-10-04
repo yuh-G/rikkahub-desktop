@@ -3,6 +3,11 @@
 // 毛玻璃;本替身在更高层复刻一遍品牌行与 [-口×](走共享的 SidebarBrandRow /
 // WindowControlsBar,与真实顶带逐字同源),保持清晰、可点。
 //
+// 消「暗影环」:真实顶带的 chrome(品牌行/窗控条)带 data-titlebar-chrome 标记,
+// 模态打开时被 app.css 的 body:has([data-settings-overlay]) 规则隐去(visibility:hidden),
+// 让 backdrop-filter 只采样顶带那片均匀背景——替身清晰版盖上去才不会有被糊开的
+// 鬼影在 Logo/品牌名外围裹出一圈暗影。替身自身副本经 [data-titlebar-overlay] 豁免保持可见。
+//
 // 为什么替身要自带高 z-index(z-[90])而非靠「后挂载赢同层」:替身走的是
 // 「自身命中透明、子元素可见命中」的细剪裁——替身壳始终 pointer-events:none,
 // 只靠 visibility 把拖拽区/按钮点亮。它必须明确叠在 Radix Overlay(z-50)之上,
