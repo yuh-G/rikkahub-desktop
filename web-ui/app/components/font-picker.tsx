@@ -154,8 +154,8 @@ export function FontPicker({
         setOpen(false);
       }}
       className={cn(
-        "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition hover:bg-accent",
-        selected && "bg-accent/60",
+        "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition hover:bg-[var(--ds-on-surface)]",
+        selected && "bg-[var(--ds-on-surface-active)]",
       )}
       style={{ fontFamily: fam || fallbackFamily }}
     >
@@ -275,7 +275,7 @@ export function FontPicker({
 
       {showPreview && (
         <div
-          className="rounded-md border bg-muted/30 px-3 py-2 text-sm"
+          className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] px-3 py-2 text-sm"
           style={{ fontFamily: previewFamily }}
         >
           {t("font_picker.preview_sample")}
@@ -389,7 +389,7 @@ export function FontManagerDialog({ open, onClose, onChanged }: FontManagerDialo
                   {custom.map((entry) => (
                     <div
                       key={entry.id}
-                      className="flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5"
+                      className="flex items-center justify-between gap-2 rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] px-2.5 py-1.5"
                     >
                       <span className="truncate text-sm" style={{ fontFamily: entry.family }}>
                         {entry.label}
@@ -478,7 +478,7 @@ export function FontPickerPair({
           showPreview={false}
         />
       </div>
-      <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2">
+      <div className="space-y-1 rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] px-3 py-2">
         {previewRows.map((row) => (
           <div key={row.tag} className="flex items-baseline gap-2 text-sm">
             <span className="w-8 shrink-0 text-mini text-muted-foreground">{row.tag}</span>

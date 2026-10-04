@@ -675,7 +675,7 @@ function AssistantEditor({
                   {t("settings:assistants.template_missing_warn", { token: DEFAULT_MESSAGE_TEMPLATE })}
                 </Notice>
               ) : null}
-              <div className="rounded-md border bg-muted/30 p-3">
+              <div className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3">
                 <div className="mb-2 text-sm font-medium">{t("settings:assistants.template_preview")}</div>
                 <div className="space-y-2">
                   {messageTemplatePreview.map((item) => (
@@ -688,7 +688,7 @@ function AssistantEditor({
                 <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
                   <span>{t("settings:assistants.available_vars")}</span>
                   {TEMPLATE_VARIABLES.map((variable) => (
-                    <code key={variable} className="rounded bg-muted px-1.5 py-0.5 font-mono">
+                    <code key={variable} className="rounded bg-[var(--ds-on-surface-active)] px-1.5 py-0.5 font-mono">
                       {`{{ ${variable} }}`}
                     </code>
                   ))}
@@ -706,7 +706,7 @@ function AssistantEditor({
               <div className="space-y-3">
                 {presetMessages.length === 0 ? emptyHint(t("settings:assistants.no_preset")) : null}
                 {presetMessages.map((message, index) => (
-                  <div key={String(message.id ?? index)} className="rounded-md border bg-muted/20 p-3">
+                  <div key={String(message.id ?? index)} className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3">
                     <div className="mb-2 flex items-center gap-2">
                       <Select
                         value={textValue(message.role).toUpperCase() || "ASSISTANT"}
@@ -772,7 +772,7 @@ function AssistantEditor({
                     updateAt("regexes", assistantRegexes, index, { affectingScope: [...nextScopes] });
                   };
                   return (
-                    <div key={String(regex.id ?? index)} className="rounded-md border bg-muted/20 p-3">
+                    <div key={String(regex.id ?? index)} className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3">
                       <div className="mb-3 flex items-center gap-2">
                         <Switch
                           checked={regex.enabled !== false}
@@ -860,7 +860,7 @@ function AssistantEditor({
               <div className="space-y-2">
                 {customBodies.length === 0 ? emptyHint(t("settings:assistants.no_body")) : null}
                 {customBodies.map((body, index) => (
-                  <div key={index} className="rounded-md border bg-muted/20 p-3">
+                  <div key={index} className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3">
                     <div className="mb-2 flex items-center gap-2">
                       <Input
                         value={textValue(body.key ?? body.name)}

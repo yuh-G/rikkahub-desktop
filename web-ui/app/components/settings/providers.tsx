@@ -431,7 +431,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
                   {t("settings:providers.oauth.copy_url")}
                 </Button>
               </div>
-              <div className="flex items-center gap-3 rounded-md bg-muted px-3 py-2">
+              <div className="flex items-center gap-3 rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] px-3 py-2">
                 <span className="text-xs text-muted-foreground">{t("settings:providers.oauth.device_code_fallback_hint")}</span>
                 <span className="font-mono text-lg font-bold tracking-widest">{authEvent.deviceCode.userCode}</span>
                 <Button variant="ghost" size="sm" onClick={() => void copy(authEvent.deviceCode!.userCode)}>
@@ -445,7 +445,7 @@ function ProviderLoginPanel({ provider }: { provider: ProviderProfile }) {
           ) : (
             // 裸地址(Copilot / ChatGPT 设备码):授权页不预填,验证码保持大字便于手抄。
             <div className="mt-3 space-y-2">
-              <div className="flex items-center gap-3 rounded-md bg-muted px-3 py-2">
+              <div className="flex items-center gap-3 rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] px-3 py-2">
                 <span className="font-mono text-2xl font-bold tracking-widest">{authEvent.deviceCode.userCode}</span>
                 <Button variant="ghost" size="sm" onClick={() => void copy(authEvent.deviceCode!.userCode)}>
                   {t("settings:providers.oauth.copy_code")}
@@ -1546,8 +1546,8 @@ export function ProvidersSection({
                           }
                         }}
                         className={cn(
-                          "flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 transition hover:border-primary/40 hover:bg-muted/40",
-                          focused && "border-primary bg-primary/5 shadow-sm",
+                          "flex cursor-pointer items-center gap-3 rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] px-3 py-2 outline-none transition-colors duration-(--ds-duration-fast) ease-(--ds-ease-swift) hover:bg-[var(--ds-on-surface-active)] focus-visible:ring-2 focus-visible:ring-ring/50",
+                          focused && "bg-[var(--ds-on-surface-active)] ring-2 ring-[var(--ds-brand-primary)]/40",
                         )}
                       >
                         <span onClick={(event) => event.stopPropagation()}>
