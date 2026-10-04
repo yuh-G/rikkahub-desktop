@@ -7,16 +7,49 @@ import { useMemoryStore } from "~/stores";
 import type { Settings, MemoryEntry, WriteStrategy } from "~/types";
 import {
   SettingsGroup,
+  SettingsRow,
   SettingsRows,
   SettingsStack,
+  SettingsSwitchRow,
 } from "~/components/settings/shared";
 import { Switch } from "~/components/ui/switch";
+import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { Input } from "~/components/ui/input";
 import { confirmDialog } from "~/stores/confirm-store";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "~/components/ui/dialog";
+
+// 新增一条记忆:单行输入,Enter 或「添加」提交(输入法组字中的 Enter 不算)。
+function MemoryAddInput({ value, onChange, onSubmit, className }: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className={cn("flex items-center gap-2", className)}>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            onSubmit();
+          }
+        }}
+        placeholder={t("settings:memory.add_placeholder")}
+        aria-label={t("settings:memory.add")}
+      />
+      <Button variant="tertiary" size="compact" className="shrink-0" disabled={!value.trim()} onClick={onSubmit}>
+        <Plus />
+        {t("settings:common.add")}
+      </Button>
+    </div>
+  );
+}
 
 // 单条记忆:展示 + 行内编辑/删除。变更后后端 broadcast memory SSE,store 自动刷新(无需回调)。
 function MemoryItem({ entry, scope, assistantId }: {
@@ -79,6 +112,7 @@ export function MemorySection({
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
+  const strategyId = React.useId();
   const snapshot = useMemoryStore((s) => s.snapshot);
   const ms = settings.memorySettings ?? { globalEnabled: false, writeStrategy: "ask" as WriteStrategy };
   const [newGlobal, setNewGlobal] = React.useState("");
@@ -90,6 +124,19 @@ export function MemorySection({
     onSettings({ ...settings, memorySettings: next });
     await api.post("settings/memory-settings", patch);
   };
+
+  const batchButton = (scope: "global" | "assistant") => (
+    <Button
+      variant="ghost"
+      size="compact"
+      className="text-[var(--ds-text-secondary)]"
+      title={t("settings:memory.batch_edit_hint")}
+      onClick={() => openBatch(scope)}
+    >
+      <FileJson />
+      {t("settings:memory.batch_edit")}
+    </Button>
+  );
 
   const addGlobal = async () => {
     const content = newGlobal.trim();
@@ -156,47 +203,40 @@ export function MemorySection({
   return (
     <>
       <SettingsStack>
-      <SettingsGroup
-        title={t("settings:memory.write_strategy_title")}
-        description={t("settings:memory.write_strategy_subtitle")}
-        fields
-      >
-          <Select value={ms.writeStrategy} onValueChange={(v) => void updateMemorySettings({ writeStrategy: v as WriteStrategy })}>
-            <SelectTrigger className="w-full sm:w-72"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ask">{t("settings:memory.strategy_ask")}</SelectItem>
-              <SelectItem value="always_assistant">{t("settings:memory.strategy_always_assistant")}</SelectItem>
-              <SelectItem value="always_global" disabled={!ms.globalEnabled}>{t("settings:memory.strategy_always_global")}</SelectItem>
-              <SelectItem value="readonly">{t("settings:memory.strategy_readonly")}</SelectItem>
-            </SelectContent>
-          </Select>
-      </SettingsGroup>
+      <SettingsRows>
+        <SettingsRow
+          label={t("settings:memory.write_strategy_title")}
+          description={t("settings:memory.write_strategy_subtitle")}
+          htmlFor={strategyId}
+          control={
+            <Select value={ms.writeStrategy} onValueChange={(v) => void updateMemorySettings({ writeStrategy: v as WriteStrategy })}>
+              <SelectTrigger id={strategyId} className="w-60 max-w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ask">{t("settings:memory.strategy_ask")}</SelectItem>
+                <SelectItem value="always_assistant">{t("settings:memory.strategy_always_assistant")}</SelectItem>
+                <SelectItem value="always_global" disabled={!ms.globalEnabled}>{t("settings:memory.strategy_always_global")}</SelectItem>
+                <SelectItem value="readonly">{t("settings:memory.strategy_readonly")}</SelectItem>
+              </SelectContent>
+            </Select>
+          }
+        />
+      </SettingsRows>
 
       <SettingsGroup
         title={t("settings:memory.global_title")}
         description={t("settings:memory.global_subtitle")}
-        action={
-            <>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-8 text-muted-foreground"
-                title={t("settings:memory.batch_edit_hint")}
-                onClick={() => openBatch("global")}
-              >
-                <FileJson className="size-4" />
-              </Button>
-              <Switch
-                checked={ms.globalEnabled}
-                onCheckedChange={(v) => void updateMemorySettings({ globalEnabled: v })}
-                aria-label={t("settings:memory.global_title")}
-              />
-            </>
-        }
+        action={batchButton("global")}
       >
-        <div className={ms.globalEnabled ? "pt-1" : "pt-1 opacity-50"}>
+        <SettingsRows>
+          <SettingsSwitchRow
+            label={t("settings:memory.global_enable")}
+            checked={ms.globalEnabled}
+            onCheckedChange={(v) => void updateMemorySettings({ globalEnabled: v })}
+          />
+        </SettingsRows>
+        <div className={ms.globalEnabled ? undefined : "opacity-50"}>
           {snapshot.globalMemories.length === 0 && (
-            <div className="py-2 text-sm text-muted-foreground">{t("settings:memory.empty_global")}</div>
+            <div className="py-2 text-sm text-[var(--ds-text-secondary)]">{t("settings:memory.empty_global")}</div>
           )}
           <SettingsRows>
             {snapshot.globalMemories.map((m) => (
@@ -204,10 +244,7 @@ export function MemorySection({
             ))}
           </SettingsRows>
           {ms.globalEnabled && (
-            <div className="flex gap-2 pt-2">
-              <Textarea value={newGlobal} onChange={(e) => setNewGlobal(e.target.value)} rows={1} placeholder={t("settings:memory.add_placeholder")} className="resize-none" />
-              <Button size="icon" onClick={() => void addGlobal()}><Plus className="size-4" /></Button>
-            </div>
+            <MemoryAddInput value={newGlobal} onChange={setNewGlobal} onSubmit={() => void addGlobal()} className="pt-2" />
           )}
         </div>
       </SettingsGroup>
@@ -215,17 +252,7 @@ export function MemorySection({
       <SettingsGroup
         title={t("settings:memory.assistant_title")}
         description={t("settings:memory.assistant_subtitle")}
-        action={
-            <Button
-              size="icon"
-              variant="ghost"
-              className="size-8 text-muted-foreground"
-              title={t("settings:memory.batch_edit_hint")}
-              onClick={() => openBatch("assistant")}
-            >
-              <FileJson className="size-4" />
-            </Button>
-        }
+        action={batchButton("assistant")}
       >
         <div className="space-y-2 pt-2">
           <Input
@@ -257,16 +284,11 @@ export function MemorySection({
                         <MemoryItem key={m.id} entry={m} scope="assistant" assistantId={a.id} />
                       ))}
                     </SettingsRows>
-                    <div className="flex gap-2">
-                      <Textarea
-                        value={newByAssistant[a.id] ?? ""}
-                        onChange={(e) => setNewByAssistant((m) => ({ ...m, [a.id]: e.target.value }))}
-                        rows={1}
-                        placeholder={t("settings:memory.add_placeholder")}
-                        className="resize-none"
-                      />
-                      <Button size="icon" aria-label={t("settings:memory.add")} title={t("settings:memory.add")} onClick={() => void addAssistant(a.id)}><Plus className="size-4" /></Button>
-                    </div>
+                    <MemoryAddInput
+                      value={newByAssistant[a.id] ?? ""}
+                      onChange={(value) => setNewByAssistant((m) => ({ ...m, [a.id]: value }))}
+                      onSubmit={() => void addAssistant(a.id)}
+                    />
                   </div>
                 )}
               </div>
@@ -282,8 +304,8 @@ export function MemorySection({
           {snapshot.assistantMemories
             .filter((g) => !settings.assistants.some((a) => a.id === g.assistantId))
             .map((g) => (
-              <div key={g.assistantId} className="space-y-2 rounded-md border border-dashed p-2">
-                <div className="text-xs text-muted-foreground">
+              <div key={g.assistantId} className="space-y-2 rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] px-3 py-2">
+                <div className="text-xs text-[var(--ds-text-secondary)]">
                   {t("settings:memory.orphan_group", { name: g.assistantName, n: g.memories.length })}
                 </div>
                 <SettingsRows>

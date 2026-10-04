@@ -59,6 +59,8 @@
     "write_strategy_subtitle": "How to handle new things the AI wants to remember.",
     "global_subtitle": "Shared memories that apply to every assistant.",
     "assistant_subtitle": "Only apply within the matching assistant's chats.",
+    "global_enable": "Enable global memory",
+    "batch_edit": "Batch edit",
     "batch_edit_hint": "Edit raw JSON",
     "empty_global": "No global memories yet.",
     "empty_assistant": "This assistant has no memories yet.",
