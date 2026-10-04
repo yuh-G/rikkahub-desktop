@@ -16,7 +16,6 @@ import {
   isModelAllowTemperature,
   parseDataUrl,
   reasoningPayloadForProvider,
-  responseApiBuiltInTools,
   responseApiContentFromUiParts,
   responseApiFunctionTool,
   responseApiMessagesFromUiMessages,

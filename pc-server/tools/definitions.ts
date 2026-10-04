@@ -6,6 +6,7 @@ import type { Assistant, JsonValue, MemorySettings } from "../foundation/types";
 import { isMcpToolEnabledForAssistant } from "./approval";
 import { listSkills } from "./skills";
 import { ASK_USER_TOOL_DESCRIPTION, ASK_USER_TOOL_NAME, askUserQuestionsSchema } from "./ask-user";
+import { inlineMcpToolSchema } from "./schema-inline";
 
 export function openAiSearchTools(enableWebSearch: boolean) {
   return enableWebSearch
@@ -211,7 +212,12 @@ export function openAiMcpTools(assistant: Assistant, mcpServers: JsonValue[]) {
           function: {
             name: `mcp__${String(tool.name ?? "").replace(/[^a-zA-Z0-9_-]/g, "_")}`,
             description: String(tool.description ?? `MCP tool from ${serverName}`),
-            parameters: tool.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : { type: "object", properties: {} },
+            // $ref 内联展开(安卓 cf79246b 同款):Google 原生路不认悬空引用,整条请求
+            // 400;展开在声明单源处做,聊天引擎三家协议与 pi 引擎同源继承。无 $ref 时
+            // 原对象透传(零拷贝)。
+            parameters: tool.inputSchema && typeof tool.inputSchema === "object"
+              ? inlineMcpToolSchema(tool.inputSchema)
+              : { type: "object", properties: {} },
           },
         })).filter((tool) => tool.function.name !== "mcp__");
     });

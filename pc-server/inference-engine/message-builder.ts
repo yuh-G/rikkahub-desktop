@@ -541,7 +541,7 @@ export function groupAssistantPartsByToolBoundary(parts: MessagePart[]): Array<
  *  chat-completions 线上字段**：name 是部分严格网关 400 的来源（安卓 6e98691c 同步移除），
  *  内部 parts 更会原样进 JSON.stringify 泄漏到第三方请求体。出线上前必须经
  *  chatCompletionsWireMessages 投影剥除。 */
-export function toolResultApiMessage(part: JsonValue): ApiMessage {
+export function toolResultApiMessage(part: Record<string, unknown>): ApiMessage {
   return {
     role: "tool",
     name: String(part.toolName ?? ""),
