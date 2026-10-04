@@ -820,6 +820,7 @@
     "skip_brackets_desc": "跳过中英文括号里的注释、语气与舞台说明。",
     "asr_empty": "暂无语音识别服务，点击新增开始配置。",
     "selected": "已选择",
+    "in_use": "使用中",
     "set_current": "设为当前",
     "name": "名称",
     "api_key": "API Key",

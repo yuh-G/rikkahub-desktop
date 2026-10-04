@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { Check, Square, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
+import { StatusBadge } from "~/components/ui/status-badge";
 import { Input } from "~/components/ui/input";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { getAudioPlaybackKey, playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
@@ -77,12 +78,13 @@ function ProviderListItem({ name, typeLabel, current }: { name: string; typeLabe
 }
 
 /** 「设为当前」与「已选择」:当前项给中性已选态(不可再点),其余给描边按钮。 */
+// 「使用中」是状态不是动作:当前项只显示徽标,非当前项才给「设为当前」。
 function SetCurrentButton({ current, onSelect }: { current: boolean; onSelect: () => void }) {
   const { t } = useTranslation();
+  if (current) return <StatusBadge tone="success">{t("settings:speech.in_use")}</StatusBadge>;
   return (
-    <Button size="sm" variant={current ? "secondary" : "outline"} disabled={current} onClick={onSelect}>
-      {current ? <Check className="size-4" /> : null}
-      {current ? t("settings:speech.selected") : t("settings:speech.set_current")}
+    <Button size="compact" variant="tertiary" onClick={onSelect}>
+      {t("settings:speech.set_current")}
     </Button>
   );
 }
@@ -288,6 +290,23 @@ export function TtsSection({
 
   return (
     <SettingsStack>
+      {/* 朗读过滤对所有服务生效,是朗读偏好而非某个服务的配置;放在双栏之上,不被长详情栏埋到页尾。 */}
+      <SettingsGroup title={t("settings:speech.read_filter_title")} description={t("settings:speech.read_filter_desc")}>
+        <SettingsRows>
+          <SettingsSwitchRow
+            label={t("settings:speech.only_read_quoted")}
+            description={t("settings:speech.only_read_quoted_desc")}
+            checked={display.ttsOnlyReadQuoted === true}
+            onCheckedChange={(checked) => patchDisplay({ ttsOnlyReadQuoted: checked })}
+          />
+          <SettingsSwitchRow
+            label={t("settings:speech.skip_brackets")}
+            description={t("settings:speech.skip_brackets_desc")}
+            checked={display.ttsOnlyReadOutsideBrackets === true}
+            onCheckedChange={(checked) => patchDisplay({ ttsOnlyReadOutsideBrackets: checked })}
+          />
+        </SettingsRows>
+      </SettingsGroup>
       <SettingsSplit
         list={
           <div className="space-y-1">
@@ -373,23 +392,6 @@ export function TtsSection({
         )}
       </SettingsSplit>
 
-      {/* 朗读过滤对所有服务生效,是朗读偏好而非某个服务的配置,放在服务配置之后。 */}
-      <SettingsGroup title={t("settings:speech.read_filter_title")} description={t("settings:speech.read_filter_desc")}>
-        <SettingsRows>
-          <SettingsSwitchRow
-            label={t("settings:speech.only_read_quoted")}
-            description={t("settings:speech.only_read_quoted_desc")}
-            checked={display.ttsOnlyReadQuoted === true}
-            onCheckedChange={(checked) => patchDisplay({ ttsOnlyReadQuoted: checked })}
-          />
-          <SettingsSwitchRow
-            label={t("settings:speech.skip_brackets")}
-            description={t("settings:speech.skip_brackets_desc")}
-            checked={display.ttsOnlyReadOutsideBrackets === true}
-            onCheckedChange={(checked) => patchDisplay({ ttsOnlyReadOutsideBrackets: checked })}
-          />
-        </SettingsRows>
-      </SettingsGroup>
     </SettingsStack>
   );
 }

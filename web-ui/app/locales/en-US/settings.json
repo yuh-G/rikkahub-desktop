@@ -820,6 +820,7 @@
     "skip_brackets_desc": "Skip notes, tone and stage directions inside Chinese/English brackets.",
     "asr_empty": "No speech recognition services yet. Click Add to configure one.",
     "selected": "Selected",
+    "in_use": "In use",
     "set_current": "Set current",
     "name": "Name",
     "api_key": "API Key",
