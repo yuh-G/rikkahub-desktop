@@ -433,13 +433,28 @@ describe("reasoningPayloadForProvider — 2026-09 新格式方言", () => {
     });
   });
 
-  test("百炼:qwen 系发 thinking_budget;直供 kimi-k3 官方不支持该参数,只发开关", () => {
+  test("百炼分代:qwen3.8 走 reasoning_effort;直供 kimi-k3 开关+effort;旧系 enable_thinking+budget", () => {
+    // qwen3.8 系(2026-10 官方):effort 推荐控制面,档位收拢(max/high→xhigh、minimal→low),
+    // off 发 none(这代思考可关),auto 不发;旧参数与 effort 互斥,绝不并发。
+    expect(reasoningPayloadForProvider(dashscope, model("qwen3.8-max"), "max")).toEqual({ reasoning_effort: "xhigh" });
+    expect(reasoningPayloadForProvider(dashscope, model("qwen3.8-flash"), "minimal")).toEqual({ reasoning_effort: "low" });
+    expect(reasoningPayloadForProvider(dashscope, model("qwen3.8-2.4t-a95b"), "medium")).toEqual({ reasoning_effort: "medium" });
+    expect(reasoningPayloadForProvider(dashscope, model("qwen3.8-max"), "off")).toEqual({ reasoning_effort: "none" });
+    expect(reasoningPayloadForProvider(dashscope, model("qwen3.8-max"), "auto")).toEqual({});
+    // 直供 kimi-k3:enable_thinking 开关(官方支持 false 关思考)+effort 档位(max/high/low)。
+    expect(reasoningPayloadForProvider(dashscope, model("kimi-k3"), "high")).toEqual({
+      enable_thinking: true,
+      reasoning_effort: "high",
+    });
+    expect(reasoningPayloadForProvider(dashscope, model("kimi-k3"), "off")).toEqual({ enable_thinking: false });
+    // Qwen3~3.7/VL 混合思考系:文档未废弃旧参数,维持 enable_thinking+thinking_budget。
     expect(reasoningPayloadForProvider(dashscope, model("qwen3-max"), "high")).toEqual({
       enable_thinking: true,
       thinking_budget: 8000,
     });
-    expect(reasoningPayloadForProvider(dashscope, model("kimi-k3"), "high")).toEqual({
+    expect(reasoningPayloadForProvider(dashscope, model("qwen3.5-397b-a17b"), "low")).toEqual({
       enable_thinking: true,
+      thinking_budget: 1000,
     });
   });
 });

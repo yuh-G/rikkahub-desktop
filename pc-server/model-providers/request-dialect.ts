@@ -341,6 +341,32 @@ export function isArkSeed2Model(modelId: string): boolean {
   return /doubao-seed-[2-9]/i.test(modelId);
 }
 
+/** DashScope 上走顶层 reasoning_effort 的 Qwen 代际(qwen3.8 全系,2026-10 官方文档
+ *  核实):thinking_summaries 世代以 effort 为推荐控制面,旧 enable_thinking+
+ *  thinking_budget 对这代不再是推荐参数(且与 effort 互斥,同发报错)。Qwen3/3.5/
+ *  3.6/3.7/VL 混合思考系文档仍按旧参数描述、未标废弃——维持 enable_thinking 路。
+ *  版本号判定:3.8 及以上走 effort,3.7 及以下走旧路(未来 3.9/4 默认跟随新口径)。 */
+export function isDashScopeEffortQwenModel(modelId: string): boolean {
+  const m = /qwen[-._]?(\d+)(?:\.(\d+))?/i.exec(modelId);
+  if (!m) return false;
+  const major = Number(m[1]);
+  const minor = Number(m[2] ?? 0);
+  return major > 3 || (major === 3 && minor >= 8);
+}
+
+/** 方言事实:DashScope qwen3.8 系的 effort 收拢表(官方 2026-10 文档:可选
+ *  xhigh(默认)/medium/low;max/high 映射 xhigh、minimal 映射 low、none 表示关闭
+ *  思考,越界值报错)。用户档位收拢后再发,off→none(这代思考可关)。 */
+export const DASHSCOPE_QWEN38_EFFORT_BY_LEVEL = {
+  off: "none",
+  minimal: "low",
+  low: "low",
+  medium: "medium",
+  high: "xhigh",
+  xhigh: "xhigh",
+  max: "xhigh",
+} as const;
+
 /** 小米 MiMo 官方主机(api.xiaomimimo.com 与订阅制 token-plan-cn 子域):思考开关走
  *  thinking:{type}(官方 OpenAI 兼容文档 mimo.mi.com/docs/zh-CN/api/chat/openai-api,
  *  安卓 ChatCompletionsAPI L354-360 同口径)。独立谓词与主机族写法,同 isOfficialOpenAiHost。 */
@@ -464,7 +490,14 @@ export type OpenAiThinkingSwitchProtocol =
   | "suppress";
 
 export function openAiThinkingSwitchProtocol(host: string, modelId: string): OpenAiThinkingSwitchProtocol {
-  if (host === "dashscope.aliyuncs.com") return "enable-thinking-flag";
+  if (host === "dashscope.aliyuncs.com") {
+    // qwen3.8 系:reasoning_effort 是推荐控制面(旧参数与 effort 互斥,同发报错);
+    // 直供 kimi-k3:官方明示「kimi-k3 不支持 thinking_budget」且档位走 max/high/low,
+    // effort 即强度入口;其余(qwen3~3.7/VL 混合思考系、直供 GLM 等)维持旧参数路。
+    if (isDashScopeEffortQwenModel(modelId)) return "reasoning-effort";
+    if (isKimiK3Model(modelId)) return "reasoning-effort";
+    return "enable-thinking-flag";
+  }
   if (host === "api.siliconflow.cn") {
     return SILICONFLOW_THINKING_MODELS.has(modelId) ? "enable-thinking-flag" : "suppress";
   }

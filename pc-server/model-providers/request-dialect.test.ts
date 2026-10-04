@@ -200,8 +200,13 @@ describe("request-dialect Kimi 代际", () => {
 
 // 厂商思考开关协议(全面审查 7):host 级事实,聊天引擎按它拼字段、pi 引擎按它译 compat。
 describe("request-dialect 厂商思考开关协议", () => {
-  it("host 级判定:DashScope=enable_thinking;火山/智谱/DeepSeek=thinking.type;书生=thinking_mode;兜底=reasoning_effort", () => {
+  it("host 级判定:DashScope 分代;火山/智谱/DeepSeek=thinking.type;书生=thinking_mode;兜底=reasoning_effort", () => {
+    // DashScope 分代(2026-10 官方):qwen3.8 系与直供 kimi-k3 走 reasoning_effort,
+    // 其余(qwen3~3.7/VL 混合思考系、直供 GLM)维持 enable_thinking。
     expect(openAiThinkingSwitchProtocol("dashscope.aliyuncs.com", "qwen3-max")).toBe("enable-thinking-flag");
+    expect(openAiThinkingSwitchProtocol("dashscope.aliyuncs.com", "qwen3.5-397b-a17b")).toBe("enable-thinking-flag");
+    expect(openAiThinkingSwitchProtocol("dashscope.aliyuncs.com", "qwen3.8-max")).toBe("reasoning-effort");
+    expect(openAiThinkingSwitchProtocol("dashscope.aliyuncs.com", "kimi-k3")).toBe("reasoning-effort");
     expect(openAiThinkingSwitchProtocol("ark.cn-beijing.volces.com", "doubao-seed-2.0")).toBe("thinking-type-object");
     expect(openAiThinkingSwitchProtocol("open.bigmodel.cn", "glm-5")).toBe("thinking-type-object");
     expect(openAiThinkingSwitchProtocol("api.deepseek.com", "deepseek-reasoner")).toBe("thinking-type-object");

@@ -17,10 +17,12 @@ import { createPiCredentialStore, isOAuthProvider, oauthFlowFor } from "../model
 import {
   ARK_SEED2_EFFORT_BY_LEVEL,
   budgetTokensFor,
+  DASHSCOPE_QWEN38_EFFORT_BY_LEVEL,
   DEEPSEEK_EFFORT_BY_LEVEL,
   DEFAULT_OUTPUT_TOKENS,
   EFFORT_LOW_HIGH_MAX_BY_LEVEL,
   isArkSeed2Model,
+  isDashScopeEffortQwenModel,
   isKimiK3Model,
   isSiliconFlowEffortModel,
   isZhipuEffortModel,
@@ -229,12 +231,32 @@ function piThinkingOverridesFor(
     };
   }
   const protocol = openAiThinkingSwitchProtocol(host, model.modelId);
+  if (host === "dashscope.aliyuncs.com") {
+    // qwen3.8 系(2026-10 官方:reasoning_effort 推荐控制面,与旧参数互斥):pi 原生
+    // openai format 发顶层 effort,档位查 qwen3.8 收拢表(off→none 这代思考可关)。
+    // 直供 kimi-k3:qwen format 仍发 enable_thinking 开关(pi 该 format 的固定语义),
+    // 另开 effort 档位(max/high/low);off 不标 null——off 由 qwen format 发
+    // enable_thinking:false 关思考(官方支持),与聊天引擎同义;budget 不设(官方不支持)。
+    if (isDashScopeEffortQwenModel(model.modelId)) {
+      return {
+        compat: { supportsReasoningEffort: true },
+        thinkingLevelMap: { ...DASHSCOPE_QWEN38_EFFORT_BY_LEVEL },
+      };
+    }
+    if (isKimiK3Model(model.modelId)) {
+      return {
+        compat: { thinkingFormat: "qwen", supportsReasoningEffort: true },
+        thinkingLevelMap: EFFORT_LOW_HIGH_MAX_BY_LEVEL,
+      };
+    }
+    // Qwen3~3.7/VL 混合思考系与直供 GLM:enable_thinking+thinking_budget(文档未废弃)。
+    return { compat: { thinkingFormat: "qwen", supportsReasoningEffort: false, thinkingTokenBudgetField: "thinking_budget" } };
+  }
   if (protocol === "enable-thinking-flag") {
-    // DashScope/SiliconFlow 白名单:qwen format 发 enable_thinking+thinking_budget
+    // SiliconFlow 白名单:qwen format 发 enable_thinking+thinking_budget
     // (聊天引擎同款两字段;budget 查受控 settings 注入的 PI_THINKING_BUDGETS,与聊天
-    // 引擎 budgetTokensFor 同源同值,pi 侧另 clamp 在答案余量内)。百炼直供 kimi-k3
-    // 官方不支持 thinking_budget,不设字段(聊天引擎同防御)。
-    const budgetField = isKimiK3Model(model.modelId) ? {} : { thinkingTokenBudgetField: "thinking_budget" };
+    // 引擎 budgetTokensFor 同源同值,pi 侧另 clamp 在答案余量内)。
+    const budgetField = { thinkingTokenBudgetField: "thinking_budget" };
     if (host === "api.siliconflow.cn" && isSiliconFlowEffortModel(model.modelId)) {
       // V4 系/GLM-5.2 托管版另发 reasoning_effort(原样透传,服务端自行收拢;xhigh/max
       // 登记过 session clamp),与聊天引擎并发口径一致。

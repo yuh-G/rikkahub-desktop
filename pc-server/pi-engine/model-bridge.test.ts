@@ -124,17 +124,30 @@ describe("mapProviderModelToPi", () => {
       };
     };
 
-    // DashScope:qwen format 发 enable_thinking+thinking_budget(与聊天引擎同款两字段);
-    // effort 端点不认,压制。
-    const dashscope = compatOf("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3-max");
-    expect(dashscope.compat?.thinkingFormat).toBe("qwen");
-    expect(dashscope.compat?.supportsReasoningEffort).toBe(false);
-    expect(dashscope.compat?.thinkingTokenBudgetField).toBe("thinking_budget");
-
-    // 百炼直供 kimi-k3:官方不支持 thinking_budget,不设字段(qwen format 仍走 enable_thinking)。
+    // DashScope 分代(2026-10 官方):qwen3.8 系走原生 openai format 的 reasoning_effort
+    // (档位查 qwen3.8 收拢表,off→none 思考可关);直供 kimi-k3 走 qwen format 开关+effort
+    // (budget 不设,官方不支持);Qwen3~3.7/VL 旧系 qwen format+budget(文档未废弃)。
+    const dashscope38 = compatOf("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3.8-max");
+    expect(dashscope38.compat?.thinkingFormat).toBeUndefined();
+    expect(dashscope38.compat?.supportsReasoningEffort).toBe(true);
+    expect(dashscope38.compat?.thinkingTokenBudgetField).toBeUndefined();
+    expect(dashscope38.thinkingLevelMap).toEqual({
+      off: "none",
+      minimal: "low",
+      low: "low",
+      medium: "medium",
+      high: "xhigh",
+      xhigh: "xhigh",
+      max: "xhigh",
+    });
     const dashscopeK3 = compatOf("https://dashscope.aliyuncs.com/compatible-mode/v1", "kimi-k3");
     expect(dashscopeK3.compat?.thinkingFormat).toBe("qwen");
+    expect(dashscopeK3.compat?.supportsReasoningEffort).toBe(true);
     expect(dashscopeK3.compat?.thinkingTokenBudgetField).toBeUndefined();
+    const dashscopeLegacy = compatOf("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3-max");
+    expect(dashscopeLegacy.compat?.thinkingFormat).toBe("qwen");
+    expect(dashscopeLegacy.compat?.supportsReasoningEffort).toBe(false);
+    expect(dashscopeLegacy.compat?.thinkingTokenBudgetField).toBe("thinking_budget");
 
     // SiliconFlow:白名单模型走 qwen format;白名单外压制(发 enable_thinking 会 400)。
     const sfListed = compatOf("https://api.siliconflow.cn/v1", "Qwen/Qwen3.5-397B-A17B");

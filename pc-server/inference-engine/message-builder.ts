@@ -8,10 +8,12 @@ import { id, isRecord } from "../foundation/utils";
 import {
   ARK_SEED2_EFFORT_BY_LEVEL,
   budgetTokensFor,
+  DASHSCOPE_QWEN38_EFFORT_BY_LEVEL,
   deepseekEffortFor,
   effortLowHighMaxFor,
   gemini3ThinkingLevelFor,
   isArkSeed2Model,
+  isDashScopeEffortQwenModel,
   isKimiK26Model,
   isKimiK27Model,
   isKimiK3Model,
@@ -986,9 +988,26 @@ export function reasoningPayloadForProvider(providerItem: Provider, modelItem: M
     return { reasoning: { effort: normalized } };
   }
   if (host === "dashscope.aliyuncs.com") {
+    // qwen3.8 系(2026-10 官方文档核实):reasoning_effort 是推荐控制面(默认 xhigh,
+    // off 发 none 这代思考可关;max/high 映 xhigh、minimal 映 low,表单源 request-dialect),
+    // 旧 enable_thinking/thinking_budget 与 effort 互斥、同发报错——不发。auto 不发字段,
+    // 用服务端默认。
+    if (isDashScopeEffortQwenModel(modelItem.modelId)) {
+      if (normalized === "auto") return {};
+      return { reasoning_effort: DASHSCOPE_QWEN38_EFFORT_BY_LEVEL[normalized as keyof typeof DASHSCOPE_QWEN38_EFFORT_BY_LEVEL] ?? "xhigh" };
+    }
+    // 直供 kimi-k3:官方明示「kimi-k3 支持传入 false 关闭思考」+档位走 reasoning_effort
+    // (max/high/low);off 关思考不发 effort,其余档查 K3 收拢表(与 moonshot 官方同表)。
+    if (isKimiK3Model(modelItem.modelId)) {
+      if (normalized === "off") return { enable_thinking: false };
+      if (normalized === "auto") return {};
+      return { enable_thinking: true, reasoning_effort: effortLowHighMaxFor(normalized) ?? "high" };
+    }
+    // Qwen3~3.7/VL 混合思考系与直供 GLM:文档仍按 enable_thinking+thinking_budget 描述
+    // (未标废弃)。百炼官方:thinking_budget 适用 Qwen3 系与直供 GLM/Kimi,唯 kimi-k3
+    // 不支持该参数(K3 已在上方分支返回,此处不再特判)。
     const result: Record<string, any> = { enable_thinking: enabled };
-    // 百炼官方:thinking_budget 适用 Qwen3 系与直供 GLM/Kimi,唯 kimi-k3 不支持该参数。
-    if (normalized !== "auto" && !isKimiK3Model(modelItem.modelId)) result.thinking_budget = budgetTokensFor(normalized);
+    if (normalized !== "auto") result.thinking_budget = budgetTokensFor(normalized);
     return result;
   }
   if (host === "api.siliconflow.cn") {
