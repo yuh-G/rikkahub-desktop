@@ -18,6 +18,7 @@ import {
 } from "~/components/ui/dropdown-menu";
 import { Input } from "~/components/ui/input";
 import { Switch } from "~/components/ui/switch";
+import { startRowDrag } from "~/components/settings/drag-reorder";
 import { cn } from "~/lib/utils";
 
 export function textValue(value: unknown): string {
@@ -780,6 +781,9 @@ export function SettingsDetailHeader({
  * `badge` 是行尾的常驻徽标(如供应商的「订阅」):常态显示徽标,悬停/聚焦/菜单打开时
  * 让位给「⋯」钮——同位互换,不并排抢位。删除走 onDelete(按本行 id,而非详情草稿),
  * 确认对话框与各页的防复活时序由调用方的 onDelete 实现;disabled 时整条不弹菜单。
+ *
+ * 排序:拖拽把手(GripVertical)经 startRowDrag(drag-reorder.ts)驱动,移动中兄弟行
+ * 平滑挤开(预览重排 + transition),松手才提交 onMove——见该文件的交互说明。
  */
 export function SettingsListRow({
   id,
@@ -803,7 +807,6 @@ export function SettingsListRow({
   badge?: React.ReactNode;
 }) {
   const { t } = useTranslation();
-  const [over, setOver] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const canMove = typeof onMove === "function";
@@ -832,27 +835,6 @@ export function SettingsListRow({
       }}
     >
       <div
-        draggable={canMove}
-        onDragStart={(event) => {
-          if (!canMove) return;
-          event.dataTransfer.setData("text/plain", String(index));
-          event.dataTransfer.effectAllowed = "move";
-        }}
-        onDragOver={(event) => {
-          if (!canMove) return;
-          event.preventDefault();
-          setOver(true);
-        }}
-        onDragLeave={() => {
-          if (canMove) setOver(false);
-        }}
-        onDrop={(event) => {
-          if (!canMove) return;
-          event.preventDefault();
-          setOver(false);
-          const from = Number(event.dataTransfer.getData("text/plain"));
-          if (Number.isFinite(from)) onMove?.(from, index);
-        }}
         onContextMenu={(event) => {
           if (!canDelete) return;
           event.preventDefault();
@@ -865,12 +847,20 @@ export function SettingsListRow({
         className={[
           "group/settings-row flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition",
           active ? "bg-[var(--ds-on-surface-active)]" : "hover:bg-[var(--ds-on-surface)]",
-          over ? "ring-2 ring-primary/40" : "",
         ].join(" ")}
         data-sort-id={id}
       >
         {canMove ? (
-          <GripVertical className="size-4 shrink-0 cursor-grab text-muted-foreground" />
+          // 拖拽把手:起拖判定/挤动动画全在 drag-reorder.ts;touch-action 关掉默认手势,
+          // 触屏也能拖。把手自身不触发行选中(点一下只是点了一下)。
+          <span
+            data-drag-handle=""
+            onPointerDown={(event) => startRowDrag(event, (from, to) => onMove?.(from, to))}
+            className="flex shrink-0 cursor-grab touch-none text-muted-foreground active:cursor-grabbing"
+            aria-hidden="true"
+          >
+            <GripVertical className="size-4" />
+          </span>
         ) : null}
         <button type="button" className="min-w-0 flex-1" onClick={onSelect}>
           {children}

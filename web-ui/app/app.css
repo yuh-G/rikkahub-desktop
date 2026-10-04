@@ -5,7 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* ===== 默认主题 = NewMax 视觉复刻(2026-08-01 前端重构 A0) =====
+  /* ===== 默认主题(2026-08-01 前端重构 A0 定稿) =====
      暖奶油画布 + 白色浮起面板 + 墨绿品牌色,取自参考项目 design-tokens.css。
      预置(data-theme)与用户自定义主题照旧覆写这些同名变量,机制不变。 */
   /* 斜杠指令染色(拍板 2026-09-05):编辑器代码蓝,深浅主题共用同一档——只在
@@ -97,7 +97,7 @@
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
-  /* ===== NewMax 设计令牌(--ds-*) =====
+  /* ===== DS 设计令牌(--ds-*) =====
      阴影/圆角/动效为主题中性;带色令牌一律由语义变量派生(color-mix),
      预置/自定义主题无需覆写即可正确适配。表面色阶仅默认主题的组件样式使用。 */
   --ds-surface-100: #ffffff;
@@ -157,7 +157,7 @@
   --ds-brand-primary-text: var(--primary-foreground);
   --ds-action-primary: var(--ds-brand-primary);
   --ds-action-primary-text: var(--ds-brand-primary-text);
-  /* 图标灰:NewMax 明暗共用中性灰,不随品牌色染色 */
+  /* 图标灰:明暗共用中性灰,不随品牌色染色 */
   --ds-icon: #7e7f7e;
   --ds-selection-bg: color-mix(in srgb, var(--primary) 85%, transparent);
   --ds-surface-input: var(--ds-surface-100);
@@ -176,7 +176,7 @@
 }
 
 .dark {
-  /* NewMax 暗色:近黑炭底 + 荧绿品牌色;表面色阶反转(100 最暗 → 400 最亮)。 */
+  /* 暗色:近黑炭底 + 荧绿品牌色;表面色阶反转(100 最暗 → 400 最亮)。 */
   --background: #191a1a;
   --foreground: rgba(255, 255, 255, 0.9);
   --card: #1e1f1f;
@@ -240,7 +240,7 @@
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
-  /* NewMax 设计令牌暗色值(预置主题的暗色态一并继承,均为中性/派生色)。 */
+  /* DS 设计令牌暗色值(预置主题的暗色态一并继承,均为中性/派生色)。 */
   --ds-surface-100: #191a1a;
   --ds-surface-200: #1e1f1f;
   --ds-surface-300: #252726;
@@ -1135,7 +1135,7 @@
 }
 
 
-/* ===== 花色主题的 NewMax 令牌自适应(前端重构 R1) =====
+/* ===== 花色主题的 DS 令牌自适应(前端重构 R1) =====
    默认主题(default)用上面的手调值;其余预置/自定义主题统一从语义变量派生,
    并去掉所有白色内衬阴影(在深色/花色底上会发灰),换成前景色描边+柔和投影。
    注意选择器特异度:必须高于 .dark 的 ds 块,且暗色派生块在亮色派生块之后。 */
@@ -1649,12 +1649,12 @@
 
 
 @layer components {
-/* ===== NewMax DS 组件样式类(前端重构 R1,自参考项目原样移植) =====
+/* ===== DS 组件样式类(前端重构 R1,自参考项目原样移植) =====
    这些类是视觉还原的通用基座:菜单/弹层容器、工具条按钮、胶囊、语音发送钮等。
-   组件侧(shadcn/Radix)通过挂这些类获得 NewMax 的材质与动效。 */
+   组件侧(shadcn/Radix)通过挂这些类获得 DS 的材质与动效。 */
 
 /* 菜单容器:所有下拉/右键/弹出面板共用。三层结构由 ::before(垫板)与
-   ::after(白内衬)完成,与 NewMax 的三 div 结构等效。 */
+   ::after(白内衬)完成,与参考项目的三 div 结构等效。 */
 .ds-menu {
   position: relative;
   border-radius: 18px;
@@ -1724,7 +1724,7 @@
   background-color: var(--ds-on-surface);
 }
 
-/* 工具条图标钮:输入卡底行的常驻底色钮(NewMax .toolbar-btn) */
+/* 工具条图标钮:输入卡底行的常驻底色钮(参考项目 .toolbar-btn) */
 .toolbar-btn {
   background-color: var(--ds-on-surface) !important;
 }
@@ -1743,7 +1743,7 @@
   color: inherit;
 }
 
-/* 输入卡外壳:层叠环形阴影 + focus 抬升(NewMax .chat-input-box) */
+/* 输入卡外壳:层叠环形阴影 + focus 抬升(参考项目 .chat-input-box) */
 .chat-input-box {
   box-shadow: var(--ds-chat-composer-shadow);
   transition: box-shadow var(--ds-motion-soft);
@@ -1752,7 +1752,7 @@
   box-shadow: var(--ds-chat-composer-shadow-focus);
 }
 
-/* 语音/发送动作钮:32px 圆钮,发送态品牌色填充,录音态展开(NewMax .cpd-action-btn) */
+/* 语音/发送动作钮:32px 圆钮,发送态品牌色填充,录音态展开(参考项目 .cpd-action-btn) */
 .cpd-action-btn {
   transition:
     background-color var(--ds-duration-slow) var(--ds-ease-soft),
@@ -1790,7 +1790,7 @@
   display: flex;
   animation: cpd-icon-in var(--ds-motion-soft) both;
 }
-/* 录音态跳动声纹条(NewMax .cpd-voice-bars 原样移植) */
+/* 录音态跳动声纹条(参考项目 .cpd-voice-bars 原样移植) */
 .cpd-voice-bars {
   display: flex;
   align-items: center;
@@ -1811,7 +1811,7 @@
   50% { transform: scaleY(1); }
 }
 
-/* 白内衬浮层:面板悬浮材质(NewMax .ds-inset-overlay) */
+/* 白内衬浮层:面板悬浮材质(参考项目 .ds-inset-overlay) */
 .ds-inset-overlay {
   position: relative;
 }
@@ -1822,6 +1822,39 @@
   border-radius: inherit;
   box-shadow: var(--ds-menu-shadow-inset);
   pointer-events: none;
+}
+
+/* ── 设置列表拖拽排序(drag-reorder.ts)────────────────────────────── */
+/* 被拖行:提层 + 浮起材质(白底卡 + 层叠投影),随指针 translateY(JS 内联,瞬时)。
+   transition 只对 transform 置 0ms——指针跟随位移要逐帧贴合,有过渡反而拖泥带水;
+   底色/投影的出入场仍走 swift。 */
+.rk-drag-row {
+  position: relative;
+  z-index: 10;
+  pointer-events: none; /* 挤动判定按兄弟行的位置算,被拖行自身不再吃指针 */
+  background-color: var(--ds-surface-100);
+  /* 浮起材质:elevation-300 层叠投影在浅底上偏轻,叠一道 ds-menu 同源的 0.5px 描边环,
+     让卡片轮廓在经过处始终可辨(参考项目浮层的边线做法)。 */
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12), var(--ds-elevation-300);
+  transition: background-color var(--ds-motion-swift), box-shadow var(--ds-motion-swift),
+    transform 0ms;
+}
+/* 挤动行(拖拽中的兄弟行):换位时 JS 做 FLIP(内联 translateY 从旧位差清零),
+   transform 过渡接管滑开/合拢;行自身的 hover 底色维持 swift。 */
+.rk-drag-shift {
+  transition: transform var(--ds-motion-soft), background-color var(--ds-motion-swift);
+}
+/* prefers-reduced-motion:换位判定与提交照常(信息仍在),位移瞬时(动效退场)。 */
+@media (prefers-reduced-motion: reduce) {
+  .rk-drag-row,
+  .rk-drag-shift {
+    transition: none;
+  }
+}
+/* 拖拽期间全局 grabbing 光标(把手 cursor-grab 在 pointer capture 下不跟随指针移动)。 */
+body.rk-dragging-cursor,
+body.rk-dragging-cursor * {
+  cursor: grabbing !important;
 }
 
 /* ── 语音模式(Siri 风)────────────────────────────────────────────── */
