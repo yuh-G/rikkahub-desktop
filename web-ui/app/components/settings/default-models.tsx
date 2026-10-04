@@ -23,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "~/components/ui/dialog";
+import { SegmentedTabs } from "~/components/ui/segmented-tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { getModelDisplayName } from "~/lib/display";
 import { Switch } from "~/components/ui/switch";
@@ -482,35 +483,31 @@ export function DefaultModelsSection({
           {activePromptKey === "compressPrompt" ? (
             // 压缩 prompt 分引擎:对话引擎可编辑;工作区引擎(pi)原生内置、只读。
             // 其余 prompt 无引擎差异,不显示此切换。
-            <div className="flex gap-1 rounded-lg border bg-muted/40 p-1 self-start">
-              {(["chat", "pi"] as const).map((tab) => (
-                <Button
-                  key={tab}
-                  type="button"
-                  size="sm"
-                  variant={compressEngineTab === tab ? "default" : "ghost"}
-                  onClick={() => setCompressEngineTab(tab)}
-                >
-                  {t(`settings:models.compress_engine.${tab}`)}
-                </Button>
-              ))}
-            </div>
+            <SegmentedTabs
+              size="sm"
+              className="self-start"
+              aria-label={activePrompt?.title}
+              items={(["chat", "pi"] as const).map((tab) => ({
+                value: tab,
+                label: t(`settings:models.compress_engine.${tab}`),
+              }))}
+              value={compressEngineTab}
+              onChange={setCompressEngineTab}
+            />
           ) : null}
           {editingPrompt === "titlePrompt" || editingPrompt === "suggestionPrompt" ? (
             // 快速模型下标题/建议两条提示词:对话框内切换编辑(与压缩的分引擎切换同构)。
-            <div className="flex gap-1 rounded-lg border bg-muted/40 p-1 self-start">
-              {(["title", "suggestion"] as const).map((tab) => (
-                <Button
-                  key={tab}
-                  type="button"
-                  size="sm"
-                  variant={fastTab === tab ? "default" : "ghost"}
-                  onClick={() => setFastTab(tab)}
-                >
-                  {t(`settings:models.fast_tab.${tab}`)}
-                </Button>
-              ))}
-            </div>
+            <SegmentedTabs
+              size="sm"
+              className="self-start"
+              aria-label={activePrompt?.title}
+              items={(["title", "suggestion"] as const).map((tab) => ({
+                value: tab,
+                label: t(`settings:models.fast_tab.${tab}`),
+              }))}
+              value={fastTab}
+              onChange={setFastTab}
+            />
           ) : null}
           {activePromptKey ? (
             activePromptKey === "compressPrompt" && compressEngineTab === "pi" ? (

@@ -37,6 +37,7 @@ import {
   SettingsKeyValueList,
   SettingsListAddButton,
   SettingsListRow,
+  SettingsRow,
   SettingsRows,
   SettingsSplit,
   SettingsStack,
@@ -589,19 +590,25 @@ function AssistantEditor({
               {parameterControl("temperature", t("settings:assistants.temperature"), 2, 0.05)}
               {parameterControl("topP", t("settings:assistants.top_p"), 1, 0.01)}
             </div>
-            <SettingsField label={t("settings:assistants.max_tokens")} hint={t("settings:assistants.max_tokens_desc")}>
-              <Input
-                className="max-w-60"
-                inputMode="numeric"
-                aria-label={t("settings:assistants.max_tokens")}
-                value={numberText(draft.maxTokens)}
-                placeholder={t("settings:assistants.max_tokens_ph")}
-                onChange={(event) => {
-                  const raw = event.target.value.trim();
-                  patchDraft({ maxTokens: raw === "" ? null : Math.max(1, Number(raw) || 1) });
-                }}
+            <SettingsRows>
+              <SettingsRow
+                label={t("settings:assistants.max_tokens")}
+                description={t("settings:assistants.max_tokens_desc")}
+                control={
+                  <Input
+                    className="w-32"
+                    inputMode="numeric"
+                    aria-label={t("settings:assistants.max_tokens")}
+                    value={numberText(draft.maxTokens)}
+                    placeholder={t("settings:assistants.max_tokens_ph")}
+                    onChange={(event) => {
+                      const raw = event.target.value.trim();
+                      patchDraft({ maxTokens: raw === "" ? null : Math.max(1, Number(raw) || 1) });
+                    }}
+                  />
+                }
               />
-            </SettingsField>
+            </SettingsRows>
             <SettingsField
               label={t("settings:assistants.context_message_size")}
               hint={t("settings:assistants.context_message_desc")}
