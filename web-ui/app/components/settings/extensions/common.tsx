@@ -55,7 +55,7 @@ export function BindingAssistantSelect({
         {t("settings:mcp.binding_assistant")}
       </label>
       <Select value={assistant.id} onValueChange={setBindingAssistant}>
-        <SelectTrigger id={selectId} className="h-8 w-48">
+        <SelectTrigger id={selectId} className="w-48">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

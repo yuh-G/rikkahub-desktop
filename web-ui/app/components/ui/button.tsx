@@ -20,6 +20,12 @@ const buttonVariants = cva(
           "border bg-background shadow-xs hover:bg-[var(--ds-on-surface)] hover:border-ring/50 dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
         secondary:
           "bg-[var(--ds-on-surface)] text-secondary-foreground hover:bg-[var(--ds-on-surface-active)]",
+        // 设置页次要动作的标准形态:on-surface 浅底 + 品牌色字,可辨但不抢主操作
+        tertiary:
+          "bg-[var(--ds-on-surface)] text-[var(--ds-brand-primary)] hover:bg-[var(--ds-on-surface-active)]",
+        // 破坏性动作的低调形态:6% 危险色浅底 + 危险色字(实底红留给确认对话框)
+        danger:
+          "bg-[color-mix(in_srgb,var(--ds-danger)_6%,transparent)] text-[var(--ds-danger)] hover:bg-[color-mix(in_srgb,var(--ds-danger)_12%,transparent)] focus-visible:ring-destructive/30",
         ghost:
           "hover:bg-[var(--ds-on-surface)] hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline active:opacity-100",
@@ -28,6 +34,8 @@ const buttonVariants = cva(
         default: "h-9 px-4 py-2 has-[>svg]:px-3",
         xs: "h-6 gap-1 px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
         sm: "h-8 gap-1.5 px-3 text-compact has-[>svg]:px-2.5",
+        // 设置页行内动作的标准尺寸(与 h-8 输入框并排时略矮一档,不压过控件本身)
+        compact: "h-7 gap-1 px-2.5 text-xs has-[>svg]:px-2 [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-10 px-6 has-[>svg]:px-4",
         icon: "size-9",
         "icon-xs": "size-6 [&_svg:not([class*='size-'])]:size-3",

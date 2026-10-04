@@ -120,6 +120,8 @@
   --ds-warning: #916300;
   --ds-success-bg: color-mix(in srgb, var(--ds-success) 8%, var(--card));
   --ds-warning-bg: color-mix(in srgb, var(--ds-warning) 8%, var(--card));
+  /* danger 直接派生 destructive(各主题已各自定义),明暗与花色主题无需另写 */
+  --ds-danger: var(--destructive);
   --ds-danger-bg: color-mix(in srgb, var(--destructive) 8%, var(--card));
   --ds-radius-sm: 8px;
   --ds-radius-md: 12px;
@@ -1714,7 +1716,7 @@
   color: #e54d42 !important;
 }
 .ds-menu-item-danger:hover {
-  background: color-mix(in srgb, var(--ds-danger, var(--destructive)) 6%, transparent) !important;
+  background: color-mix(in srgb, var(--ds-danger) 6%, transparent) !important;
 }
 .ds-menu-divider {
   margin: 4px 0;

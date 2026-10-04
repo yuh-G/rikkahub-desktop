@@ -14,7 +14,8 @@ function Checkbox({
     <CheckboxPrimitive.Root
       data-slot="checkbox"
       className={cn(
-        "peer border-input dark:bg-input/30 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground dark:data-[state=checked]:bg-primary data-[state=checked]:border-primary focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive size-4 shrink-0 rounded-[4px] border shadow-xs transition-shadow outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
+        // 与输入框同材质:无边框 + surface-input 底 + 描边阴影;选中走品牌色实底
+        "peer bg-[var(--ds-surface-input)] shadow-[var(--ds-input-shadow)] hover:shadow-[var(--ds-input-shadow-hover)] data-[state=checked]:bg-[var(--ds-brand-primary)] data-[state=checked]:text-[var(--ds-brand-primary-text)] data-[state=checked]:shadow-none focus-visible:shadow-[var(--ds-input-shadow-focus)] aria-invalid:shadow-[0_0_0_1px_var(--destructive)] size-4 shrink-0 rounded-[5px] border-0 transition-[background-color,box-shadow] duration-150 outline-none disabled:cursor-not-allowed disabled:opacity-50",
         className
       )}
       {...props}

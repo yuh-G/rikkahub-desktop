@@ -656,7 +656,7 @@ function AssistantEditor({
                         value={textValue(message.role).toUpperCase() || "ASSISTANT"}
                         onValueChange={(role) => updateAt("presetMessages", presetMessages, index, { role })}
                       >
-                        <SelectTrigger className="h-8 w-36">
+                        <SelectTrigger className="w-36">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
