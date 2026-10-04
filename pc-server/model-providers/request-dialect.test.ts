@@ -14,6 +14,7 @@ import {
   isMiMoOfficialHost,
   isSamplingLockedModel,
   isSiliconFlowEffortModel,
+  isThinkingLevelGeminiModel,
   isZhipuEffortModel,
   isZhipuForcedThinkingModel,
   isZhipuGlm53Model,
@@ -86,6 +87,28 @@ describe("request-dialect 统一请求方言", () => {
     expect(registeredOutputLimit("qwen3.8-max-0902")).toBe(131_072); // 快照版本
     // Gemini 3.5 Pro 厂商未公布输出上限——刻意不登记,返回 null 落兜底(不编数)。
     expect(registeredOutputLimit("gemini-3.5-pro")).toBeNull();
+  });
+
+  it("输出上限登记表:Claude 5.5(2026-10-04 官方 overview 直抓,5.0 系并列同表)", () => {
+    expect(registeredOutputLimit("claude-opus-5-5")).toBe(128_000);
+    expect(registeredOutputLimit("claude-sonnet-5-5")).toBe(128_000);
+    // 5.0 系官方表格与 5.5 并列同规格(Context 1M · Max output 128K)。
+    expect(registeredOutputLimit("claude-opus-5")).toBe(128_000);
+    expect(registeredOutputLimit("claude-sonnet-5")).toBe(128_000);
+    // 4.x 旧系不命中本条(4.8 有独立条目,其余落目录/兜底)。
+    expect(registeredOutputLimit("claude-opus-4-5")).toBeNull();
+    expect(registeredOutputLimit("claude-haiku-4-5")).toBeNull();
+  });
+
+  it("thinkingLevel 系 Gemini 判定:3/4 系命中,2.5 系与误邻不命中", () => {
+    expect(isThinkingLevelGeminiModel("gemini-3-pro")).toBe(true);
+    expect(isThinkingLevelGeminiModel("gemini-3.5-flash")).toBe(true);
+    expect(isThinkingLevelGeminiModel("gemini-4-pro")).toBe(true); // 安卓抢先登记口径
+    expect(isThinkingLevelGeminiModel("gemini-4-flash-preview")).toBe(true);
+    expect(isThinkingLevelGeminiModel("gemini-2.5-flash")).toBe(false);
+    expect(isThinkingLevelGeminiModel("gemini-2.5-pro")).toBe(false);
+    expect(isThinkingLevelGeminiModel("gemini-flash-latest")).toBe(false); // 2.x latest 系
+    expect(isThinkingLevelGeminiModel("gemma-4-31b-it")).toBe(false); // 词边界:非 gemini-N 主系
   });
 
   it("历史 reasoning 项:仅官方主机回传(火山 400 内测实证 2026-09-05,第二轮必炸根因)", () => {
@@ -183,9 +206,11 @@ describe("request-dialect 厂商思考开关协议", () => {
     expect(openAiThinkingSwitchProtocol("open.bigmodel.cn", "glm-5")).toBe("thinking-type-object");
     expect(openAiThinkingSwitchProtocol("api.deepseek.com", "deepseek-reasoner")).toBe("thinking-type-object");
     expect(openAiThinkingSwitchProtocol("chat.intern-ai.org.cn", "intern-s1")).toBe("thinking-mode-flag");
-    // 兜底:官方 OpenAI/混元/阶跃/中转——OpenAI 原生 reasoning_effort。
+    // 兜底:官方 OpenAI/混元/阶跃/中转——OpenAI 原生 reasoning_effort。混元 2026-10 迁
+    // TokenHub 后出厂 host 换 tokenhub.tencentmaas.com,新旧域同落兜底(host 级无特判分支)。
     expect(openAiThinkingSwitchProtocol("api.openai.com", "o3")).toBe("reasoning-effort");
     expect(openAiThinkingSwitchProtocol("api.hunyuan.cloud.tencent.com", "hunyuan-t1")).toBe("reasoning-effort");
+    expect(openAiThinkingSwitchProtocol("tokenhub.tencentmaas.com", "hy3")).toBe("reasoning-effort");
     expect(openAiThinkingSwitchProtocol("api.stepfun.com", "step-3")).toBe("reasoning-effort");
     expect(openAiThinkingSwitchProtocol("relay.example.com", "some-model")).toBe("reasoning-effort");
   });

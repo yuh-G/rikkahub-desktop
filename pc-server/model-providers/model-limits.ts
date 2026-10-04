@@ -83,6 +83,9 @@ const FIRST_PARTY_CATALOG_KEYS: readonly string[] = [
   "minimax",
   "minimax-cn",
   "tencent-coding-plan",
+  // 腾讯 MaaS 聚合平台 TokenHub(混元 API 2026-10 迁入,出厂 baseUrl 所指):其目录行
+  // 是混元官方口径(hy3/hy4 系),老 hunyuan 域名无目录键。
+  "tencent-tokenhub",
   "nvidia",
   "modelscope",
   "sensenova",

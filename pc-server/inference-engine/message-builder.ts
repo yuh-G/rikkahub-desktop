@@ -18,6 +18,7 @@ import {
   isMiMoOfficialHost,
   isSamplingLockedModel,
   isSiliconFlowEffortModel,
+  isThinkingLevelGeminiModel,
   isZhipuEffortModel,
   isZhipuForcedThinkingModel,
   isZhipuGlm53Model,
@@ -467,19 +468,19 @@ export function googleGenerationConfig(modelItem: Model, assistant: Assistant) {
   }
   if (supportsAbility(modelItem, "REASONING")) {
     const normalized = reasoningLevelNormalized(assistant.reasoningLevel);
-    const isGemini3 = /\bgemini[-._]?3\b/i.test(modelItem.modelId);
+    const useThinkingLevel = isThinkingLevelGeminiModel(modelItem.modelId);
     const isGeminiPro = /2[.-]5.*pro/i.test(modelItem.modelId);
     const thinkingConfig: Record<string, JsonValue> = { includeThoughts: true };
     if (normalized === "off") {
-      if (isGemini3) {
-        // Gemini 3 思考不可关：off 取该型号的最少思考档（Pro 无 minimal，表内收 low）。
+      if (useThinkingLevel) {
+        // Gemini 3/4 思考不可关：off 取该型号的最少思考档（Pro 无 minimal，表内收 low）。
         thinkingConfig.thinkingLevel = gemini3ThinkingLevelFor(modelItem.modelId, "minimal");
       } else if (!isGeminiPro) {
         thinkingConfig.thinkingBudget = 0;
         thinkingConfig.includeThoughts = false;
       }
     } else if (normalized !== "auto") {
-      if (isGemini3) {
+      if (useThinkingLevel) {
         thinkingConfig.thinkingLevel = gemini3ThinkingLevelFor(modelItem.modelId, normalized);
       } else {
         thinkingConfig.thinkingBudget = budgetTokensFor(normalized);
@@ -1022,11 +1023,11 @@ export function reasoningPayloadForProvider(providerItem: Provider, modelItem: M
   // 思维内容(对齐 Cherry Studio;安卓端此场景同样缺失,属 PC 端补强)。字段区分与原生
   // 路径 googleGenerationConfig 一致:Gemini 3 用 thinking_level,2.5 系用 thinking_budget。
   if (/\bgemini[-._]?\d/i.test(modelItem.modelId)) {
-    const isGemini3 = /\bgemini[-._]?3\b/i.test(modelItem.modelId);
+    const useThinkingLevel = isThinkingLevelGeminiModel(modelItem.modelId);
     const isGeminiPro = /2[.-]5.*pro/i.test(modelItem.modelId);
     const thinkingConfig: Record<string, any> = { include_thoughts: true };
     if (normalized === "off") {
-      if (isGemini3) {
+      if (useThinkingLevel) {
         // 同原生路径：off 取该型号最少思考档（档位表单源 request-dialect）。
         thinkingConfig.thinking_level = gemini3ThinkingLevelFor(modelItem.modelId, "minimal");
       } else if (!isGeminiPro) {
@@ -1034,7 +1035,7 @@ export function reasoningPayloadForProvider(providerItem: Provider, modelItem: M
         thinkingConfig.include_thoughts = false;
       }
     } else if (normalized !== "auto") {
-      if (isGemini3) {
+      if (useThinkingLevel) {
         thinkingConfig.thinking_level = gemini3ThinkingLevelFor(modelItem.modelId, normalized);
       } else {
         thinkingConfig.thinking_budget = budgetTokensFor(normalized);

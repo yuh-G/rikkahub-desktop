@@ -55,6 +55,21 @@ describe("inferModelAbilities", () => {
     expect(inferModelAbilities("gpt-4o")).not.toContain("REASONING");
   });
 
+  it("2026-10 模型注册更新:Claude 5.5 视觉补位 + Gemini 4 抢先登记;近邻不误伤", () => {
+    // Claude 5.x 系全部 visionInput(官方 overview「All current Claude models support
+    // text and image input … and vision」2026-10-04)——claude-3/claude-4 字面量接不住
+    // claude-opus-5 这类夹名变体,补现代变体位(存量 claude-5/sonnet-5 一并自愈)。
+    for (const id of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-sonnet-5"]) {
+      expect(inferInputModalities(id)).toContain("IMAGE");
+    }
+    // Gemini 4 对齐 APP GEMINI_4 抢先登记:TOOL(既有 gemini 前缀)+ REASONING(新增代际位)。
+    expect(inferModelAbilities("gemini-4-pro")).toContain("REASONING");
+    expect(inferModelAbilities("gemini-4-flash")).toContain("REASONING");
+    expect(inferModelAbilities("gemini-4-pro")).toContain("TOOL");
+    // 误伤面:gemma-4 不升 REASONING(非 gemini-N 主系;vision 由既有 gemini 子串兜底是既有行为)。
+    expect(inferModelAbilities("gemma-4-31b-it")).not.toContain("REASONING");
+  });
+
   it("2026-09 新模型视觉:对齐 APP visionInput() 登记;纯文本型号不收", () => {
     // 有 visionInput() 的(APP 行号见 index.ts 注释):含裸 k3(KIMI_K3_ALIAS)与 muse 系。
     for (const id of ["deepseek-flash", "deepseek-v4.1-flash", "step-3.7-flash", "minimax-m3", "mimo-v3", "mimo-v2.5", "longcat-2.0", "qwen3.8", "glm-5.3-flash", "gpt-5.6", "gpt-6-astra", "k3", "muse-spark"]) {
@@ -83,6 +98,11 @@ describe("预置供应商(对齐 APP)", () => {
     // 两家都按预置顺序参与排序(rank 有限值)。
     expect(builtinProviderRank(minimax!)).toBeLessThan(Number.MAX_SAFE_INTEGER);
     expect(builtinProviderRank(mimo!)).toBeLessThan(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("腾讯混元出厂 baseUrl 已迁 TokenHub(APP 2.5.5 对齐;Anthropic 兼容口=同 base /v1/messages)", () => {
+    const hunyuan = defaultProviders().find((p) => p.id === "ef5d149b-8e34-404b-818c-6ec242e5c3c5");
+    expect(hunyuan?.baseUrl).toBe("https://tokenhub.tencentmaas.com/v1");
   });
 
   it("RikkaHub 已下架:不在默认集,在 SUNSET 集(存量子清理只删未配 key 的)", () => {

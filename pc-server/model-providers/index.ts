@@ -22,8 +22,10 @@ export function inferModelAbilities(modelId: string): string[] {
   // claude-{opus,sonnet,haiku}-X to catch all Anthropic models 3.5+ which all support thinking.
   // Kimi 代际走方言谓词(K2.5 起全系支持思考;正则无 kimi 模式曾致能力位缺失,
   // UI 推理选项不显示、两引擎思考链路未激活)。存量模型由启动时 enrichModel 并集自愈。
+  // gemini-4:2026-10 对齐安卓 ModelRegistry.GEMINI_4 抢先登记(彼时模型未发布,
+  // 3.x 起全系 reasoning 的代际语义延续)。
   if (
-    /(gpt-[56]|^o[134]|[/:_-]o[134]|reason|reasoning|thinking|deepseek-r1|deepseek-reasoner|deepseek-v4|deepseek.*v4|deepseek-flash|qwq|qvq|qwen3|glm-[45]|glm-z1|hunyuan-a13b|[/:_-]hy[3-9]|^hy[3-9]|mimo-v2|mimo-v3|minimax[-/_]?m[-._]?3|longcat|step[-._]?3|muse|claude-3[.-]7|claude-4|claude-(opus|sonnet|haiku)-(3[.-]7|[4-9]|\d{2,})|gemini-2[.-]5|gemini-3|grok-4)/i.test(
+    /(gpt-[56]|^o[134]|[/:_-]o[134]|reason|reasoning|thinking|deepseek-r1|deepseek-reasoner|deepseek-v4|deepseek.*v4|deepseek-flash|qwq|qvq|qwen3|glm-[45]|glm-z1|hunyuan-a13b|[/:_-]hy[3-9]|^hy[3-9]|mimo-v2|mimo-v3|minimax[-/_]?m[-._]?3|longcat|step[-._]?3|muse|claude-3[.-]7|claude-4|claude-(opus|sonnet|haiku)-(3[.-]7|[4-9]|\d{2,})|gemini-2[.-]5|gemini-[34]|grok-4)/i.test(
       name,
     ) ||
     isKimiReasoningModel(name)
@@ -55,7 +57,10 @@ export function inferInputModalities(modelId: string, raw?: any): string[] {
   //   mimo-v2.5/v3 系(L544/555/561)、longcat-2.0(L582)、qwen3.7/3.8 非 Max(L362/368)、
   //   gpt-5.6/gpt-6(经 gpt-4o 同款 token 命中,补 gpt-5/gpt-6)、glm-4v/5.3-flash。
   //   纯文本(刻意不收):hy3/hy4、qwen3.7/3.8-max、glm-5.2/5.3 普通版——安卓同样无 visionInput。
-  return /(vision|visual|vl|omni|gpt-4o|gpt-4\.1|gpt-5|gpt-6|gemini|claude-3|claude-4|qwen.*vl|qwen3[.-]?[78](?!.*max)|glm-4v|glm-5[.-]3[.-]?flash|deepseek.*(flash|v[-._]?4)|step[-._]?3|minimax[-._/]?m[-._]?3|longcat|mimo[-_./:]?v?2[-_./:]?5|mimo[-_./:]?v?2[-_./:]?omni|mimo[-_./:]?v?3|muse|grok-vision|llava|pixtral)/i.test(modelId) || isKimiK3Model(modelId)
+  //   Claude:官方 models overview「All current Claude models support text and image input…
+  //   and vision」(2026-10-04 直抓)——5.x 系起 claude-3/claude-4 字面量接不住
+  //   claude-opus-5 这类夹名变体,补 claude-(opus|sonnet|haiku)-\d 现代变体位。
+  return /(vision|visual|vl|omni|gpt-4o|gpt-4\.1|gpt-5|gpt-6|gemini|claude-3|claude-4|claude-(opus|sonnet|haiku)-\d|qwen.*vl|qwen3[.-]?[78](?!.*max)|glm-4v|glm-5[.-]3[.-]?flash|deepseek.*(flash|v[-._]?4)|step[-._]?3|minimax[-._/]?m[-._]?3|longcat|mimo[-_./:]?v?2[-_./:]?5|mimo[-_./:]?v?2[-_./:]?omni|mimo[-_./:]?v?3|muse|grok-vision|llava|pixtral)/i.test(modelId) || isKimiK3Model(modelId)
     ? ["TEXT", "IMAGE"]
     : ["TEXT"];
 }
@@ -245,7 +250,9 @@ export function defaultProviders(): Provider[] {
       name: "Anthropic",
       baseUrl: "https://api.anthropic.com/v1",
       shortDescription: "Anthropic Claude 原生 API",
-      models: [model("claude-opus-4-6"), model("claude-sonnet-4-6"), model("claude-haiku-4-5-20251001")],
+      // 2026-10 对齐当前代(官方已将 4.x 归 legacy;5.5 与 4.8 同价降档)。老用户 state 的
+      // models 由 mergeById 保留,不受影响。
+      models: [model("claude-opus-5-5"), model("claude-sonnet-5-5"), model("claude-haiku-4-5-20251001")],
     }),
     // Claude 订阅紧跟「Anthropic」(同家)。仅工作区可用(chatCapable:false,方案 §6 决策②):
     // 凭证要求 Claude Code 全套伪装(pi 内建),宿主聊天引擎不接(resolve 处闸门),模型也
@@ -316,7 +323,11 @@ export function defaultProviders(): Provider[] {
     }),
     provider({ id: "f76cae46-069a-4334-ab8e-224e4979e58c", name: "阿里云百炼", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" }),
     provider({ id: "3dfd6f9b-f9d9-417f-80c1-ff8d77184191", name: "火山引擎", baseUrl: "https://ark.cn-beijing.volces.com/api/v3" }),
-    provider({ id: "ef5d149b-8e34-404b-818c-6ec242e5c3c5", name: "腾讯混元", baseUrl: "https://api.hunyuan.cloud.tencent.com/v1" }),
+    // 2026-10 对齐 APP 2.5.5(158f1f68):混元 API 迁腾讯 MaaS 聚合平台 TokenHub,新出厂
+    // 指向 tokenhub(旧 api.hunyuan.cloud.tencent.com 冻结运营——官方公告「不再新增模型
+    // 能力,已购服务可继续使用」)。Anthropic 兼容口=同 base 的 /v1/messages(②类,不在
+    // 前端登记表单列);存量用户 state 里的旧地址不迁移(安卓同语义)。
+    provider({ id: "ef5d149b-8e34-404b-818c-6ec242e5c3c5", name: "腾讯混元", baseUrl: "https://tokenhub.tencentmaas.com/v1" }),
     // 对齐 APP 新增的两家内置供应商(APP 的 MaruCode 为赞助商位,不移植)。沿用 APP 的稳定
     // UUID,使未来 merge/reorder 与 APP 对齐;均无出厂预置模型,配 key 后由 /models 拉取。
     provider({

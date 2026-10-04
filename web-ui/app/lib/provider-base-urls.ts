@@ -24,7 +24,7 @@ export const BUILTIN_BASE_URLS: Record<string, string> = {
   "f099ad5b-ef03-446d-8e78-7e36787f780b": "https://api.deepseek.com/v1",
   "f76cae46-069a-4334-ab8e-224e4979e58c": "https://dashscope.aliyuncs.com/compatible-mode/v1",
   "3dfd6f9b-f9d9-417f-80c1-ff8d77184191": "https://ark.cn-beijing.volces.com/api/v3",
-  "ef5d149b-8e34-404b-818c-6ec242e5c3c5": "https://api.hunyuan.cloud.tencent.com/v1",
+  "ef5d149b-8e34-404b-818c-6ec242e5c3c5": "https://tokenhub.tencentmaas.com/v1",
   "3bc40dc1-b11a-46fa-863b-6306971223be": "https://open.bigmodel.cn/api/paas/v4",
   "d6c4d8c6-3f62-4ca9-a6f3-7ade6b15ecc3": "https://api.moonshot.cn/v1",
   "f4f8870e-82d3-495b-9b64-d58e508b3b2c": "https://api.stepfun.com/v1",
@@ -48,7 +48,8 @@ export const BUILTIN_BASE_URLS: Record<string, string> = {
 //   智谱       https://docs.bigmodel.cn/cn/guide/develop/claude/introduction
 //   火山方舟   https://www.volcengine.com/docs/82379/2160841 (按量付费口径;Agent Plan 是 /api/coding)
 //   阿里百炼   https://help.aliyun.com/zh/model-studio/claude-code FAQ(搜索常见的 /api/v2/anthropic 实测 404,是错的)
-//   腾讯混元   https://cloud.tencent.com/document/product/1729/127293
+//   腾讯混元   https://cloud.tencent.com/document/product/1729/127293 (旧域镜像;2026-10 迁
+//              TokenHub 后 Anthropic 兼容口实测为同 base 的 /v1/messages,登记行已撤)
 //   阶跃星辰   https://platform.stepfun.com/docs/zh/step-plan/integrations/claude-code (Step Plan 订阅制)
 //   Gemini     https://ai.google.dev/gemini-api/docs/openai (google 原生 → openai 兼容层)
 // Anthropic 官方无公开 OpenAI 兼容层,不登记。纪律:只认厂商自己的文档,查不到实证就不
@@ -74,10 +75,11 @@ export const PROVIDER_FORMAT_BASES: Record<string, Partial<Record<ProviderKind, 
   "f76cae46-069a-4334-ab8e-224e4979e58c": {
     claude: "https://dashscope.aliyuncs.com/apps/anthropic",
   },
-  // 腾讯混元(①类)
-  "ef5d149b-8e34-404b-818c-6ec242e5c3c5": {
-    claude: "https://api.hunyuan.cloud.tencent.com/anthropic",
-  },
+  // 腾讯混元(②类,2026-10 对齐 APP 2.5.5:API 迁 TokenHub,出厂换 tokenhub.tencentmaas.com。
+  // TokenHub 官方声明兼容 Anthropic 协议,实测端点=同 base 的 /v1/messages——②类留空,
+  // 切到 claude 格式时回出厂 base,后端 claude 拼接层剥尾 /v1 再拼 /v1/messages 恰好落对。
+  // 旧域 api.hunyuan.cloud.tencent.com 的 /anthropic 镜像已随平台冻结,不再登记为切换
+  // 目标;老用户 state 里指向旧域的地址视为自定义,永不覆写(安卓同语义:不迁移存量)。
   // 阶跃星辰(①类:Step Plan 订阅制端点)
   "f4f8870e-82d3-495b-9b64-d58e508b3b2c": {
     claude: "https://api.stepfun.com/step_plan",

@@ -170,6 +170,14 @@ export const OUTPUT_LIMIT_FACTS: readonly OutputLimitFact[] = [
     source: "OpenAI 官方模型页(gpt-6-astra / gpt-5.6-sol/terra/luna)「Max output 128K · Context 1.05M」(2026-09-17 官方截图直证)",
   },
   {
+    // Anthropic Claude Opus 5.5 / Sonnet 5.5:同步 API 128K(Batch+beta 头可到 300K,取同步保守值)。
+    // 5.5 与 4.8 同规格;5.0 系目录同值但未在本行登记前发布,一并收进(同一代定价行,官方表格并列)。
+    match: (id) => /claude-(opus|sonnet)[-._]?5([.-]5)?\b/i.test(id) || /claude-(opus|sonnet)-5-5/i.test(id),
+    cap: 128_000,
+    source:
+      "platform.claude.com/docs/en/about-claude/models/overview「Claude Opus 5.5 / Sonnet 5.5 Context 1M · Max output 128K」(2026-10-04 直抓)",
+  },
+  {
     // Anthropic Claude Opus 4.8:同步 API 128K(Batch+beta 头可到 300K,取同步保守值)。
     match: (id) => /claude-opus-4[.-]8/i.test(id),
     cap: 128_000,
@@ -376,8 +384,19 @@ export function isGemini3ProModel(modelId: string): boolean {
   return /gemini-3(?:\.\d+)?-pro/i.test(modelId);
 }
 
-/** 六档 → Gemini 3 thinking_level 官方值（按型号查对应表；未知档位保守收 high，
- *  与 pi 对未映射高档位的行为一致）。 */
+/** 走 thinkingLevel(而非 thinkingBudget)思考参数的 Gemini 系判定。Gemini 3 起官方
+ *  以 thinking_level 为推荐控制面(2.5 系仍是 thinking_budget)。Gemini 4 尚未发布,
+ *  此处按安卓 ModelRegistry.GEMINI_4 的抢先口径一并纳入——发布后模型沿用代际语义,
+ *  若届时官方改用别的参数名,这里的判定错误会在真机首测暴露,再修一处即可。
+ *  消费面:聊天引擎 Google 原生路 + OpenAI 兼容路的 gemini 分支(message-builder)。
+ *  pi 侧 0.85.1 无 gemini-4 谓词(落 budgetTokens),属两引擎已知差异,升 pi 时对齐。 */
+export function isThinkingLevelGeminiModel(modelId: string): boolean {
+  return /\bgemini[-._]?[34]\b/i.test(modelId);
+}
+
+/** 六档 → Gemini thinking_level 官方值（按型号查对应表；未知档位保守收 high，
+ *  与 pi 对未映射高档位的行为一致）。Pro 表当前仅 Gemini 3 Pro 实证,gemini-4-pro
+ *  尚无官方文档,先行按非 Pro 全值域表(发布后核对再改)。 */
 export function gemini3ThinkingLevelFor(modelId: string, level: string): string {
   const table = isGemini3ProModel(modelId) ? GEMINI3_PRO_THINKING_LEVEL_BY_LEVEL : GEMINI3_THINKING_LEVEL_BY_LEVEL;
   return (table as Record<string, string>)[level] ?? "high";

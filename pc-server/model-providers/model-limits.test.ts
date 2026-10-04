@@ -86,6 +86,15 @@ const CATALOG: ModelCatalog = {
     },
   },
   google: { models: { "gemini-2.5-pro": { limit: { context: 1_048_576, output: 65_536 } } } },
+  // 腾讯 TokenHub(混元 2026-10 迁入的新出厂端点;目录行取自本机缓存真实值):
+  // hy3 输出 128000 < 上下文 256000,自洽可取;hunyuan-2.0 是占位行(output==context)。
+  "tencent-tokenhub": {
+    api: "https://tokenhub.tencentmaas.com/v1",
+    models: {
+      hy3: { limit: { context: 256_000, output: 128_000 } },
+      "hunyuan-2.0": { limit: { context: 262_144, output: 262_144 } },
+    },
+  },
 };
 
 describe("A 行为:按端点身份取上限(2026-09-09 GLM-5.3 1210 报障复现)", () => {
@@ -132,6 +141,15 @@ describe("A 行为:按端点身份取上限(2026-09-09 GLM-5.3 1210 报障复现
     ).toBe(65_536);
     // Azure 也走官方判定(与 openAiMaxTokensField 共用 isOfficialOpenAiHost)。
     expect(resolveCatalogKeys(CATALOG, "my-rg.openai.azure.com")).not.toContain("openrouter");
+  });
+
+  test("腾讯混元新出厂端点(TokenHub)经一线目录键命中,hy3 上限可查", () => {
+    // 2026-10 混元迁 TokenHub 后出厂 baseUrl=tokenhub.tencentmaas.com/v1——host 索引
+    // 接住 tencent-tokenhub 目录键(它有 api 字段,精确命中,不落一线全集)。
+    expect(resolveCatalogKeys(CATALOG, "tokenhub.tencentmaas.com")).toEqual(["tencent-tokenhub"]);
+    expect(outputLimitFor(CATALOG, at("https://tokenhub.tencentmaas.com/v1"), "hy3")).toBe(128_000);
+    // 占位行照旧丢弃(hunyuan-2.0 output==context)。
+    expect(outputLimitFor(CATALOG, at("https://tokenhub.tencentmaas.com/v1"), "hunyuan-2.0")).toBeNull();
   });
 
   test("精确行存在时后缀行不得参与 min(否则 gpt-5 会被 chat-latest 砍到 1/8)", () => {
