@@ -567,7 +567,7 @@ function AssistantEditor({
           </SettingsRows>
         </SettingsGroup>
 
-        <SettingsAdvancedRegion id={advancedId} open={advancedOpen} className="space-y-8">
+        <SettingsAdvancedRegion id={advancedId} open={advancedOpen} className="space-y-6">
           <SettingsGroup
             title={t("settings:assistants.local_tools_title")}
             description={t("settings:assistants.local_tools_desc")}

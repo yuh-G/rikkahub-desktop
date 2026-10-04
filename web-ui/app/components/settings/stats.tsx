@@ -253,7 +253,7 @@ export function StatsSection({ stats }: { stats: StatsPayload | null }) {
             ) : null}
           </SettingsRows>
         </SettingsGroup>
-        <div className="space-y-8">
+        <div className="space-y-6">
         <SettingsGroup title={t("settings:stats.request_groups")}>
           <SettingsRows>
             {(stats.requestGroups ?? []).map((item) => (

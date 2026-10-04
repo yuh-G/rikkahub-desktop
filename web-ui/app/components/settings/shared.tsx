@@ -263,9 +263,10 @@ export function InlineEditText({
   );
 }
 
-/** 页面内容的纵向骨架:各 SettingsGroup 之间统一 2rem 节奏。 */
+/** 页面内容的纵向骨架:各 SettingsGroup 之间统一节奏。详情页首行是名称/头像的标题行,
+ *  分组间距过宽会让正文显得离标题很远(1.5rem:标题行与首个分组也走同一节奏)。 */
 export function SettingsStack({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn("space-y-8", className)}>{children}</div>;
+  return <div className={cn("space-y-6", className)}>{children}</div>;
 }
 
 /**
