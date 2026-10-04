@@ -451,7 +451,7 @@
     "active_from_system": "{{url}}（来自系统代理）",
     "not_active": "未启用（所有请求直连）",
     "socks_not_supported": "不支持 SOCKS 代理（运行时不支持），请改用代理工具的 HTTP 端口。",
-    "mode_desc": "选择代理模式",
+    "mode": "代理模式",
     "mode_auto": "跟随系统",
     "mode_manual": "手动指定",
     "mode_direct": "强制直连",

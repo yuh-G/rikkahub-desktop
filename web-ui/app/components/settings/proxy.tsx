@@ -14,9 +14,12 @@ import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { patchSettingsLocal } from "~/lib/settings-patch";
 import { isTauriEnvironment } from "~/lib/system-info";
 import api from "~/services/api";
+import { cn } from "~/lib/utils";
 import {
   SettingsField,
   SettingsGroup,
+  SettingsRow,
+  SettingsRows,
   SettingsStack,
 } from "~/components/settings/shared";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
@@ -146,6 +149,7 @@ async function saveProxyFields(fields: Partial<ProxyConfig>): Promise<ProxySaveR
 export function ProxySection({ settings }: { settings: Settings; onSettings: (settings: Settings) => void }) {
   const { t } = useTranslation();
   const addressId = React.useId();
+  const modeId = React.useId();
   const bypassId = React.useId();
   const usernameId = React.useId();
   const passwordId = React.useId();
@@ -260,36 +264,44 @@ export function ProxySection({ settings }: { settings: Settings; onSettings: (se
     <SettingsStack>
       <SettingsGroup
         title={t("settings:proxy.http_title")}
-        description={t("settings:proxy.mode_desc")}
         action={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
         fields
       >
-        <div className="space-y-2">
-          <Select
-            value={draft.mode}
-            onValueChange={(v) => patch({ mode: v as ProxyMode })}
-            disabled={status?.containerMode === true}
-          >
-            <SelectTrigger className="w-full" aria-label={t("settings:proxy.http_title")}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent position="popper" sideOffset={4}>
-              <SelectItem value="auto">{t("settings:proxy.mode_auto")}</SelectItem>
-              <SelectItem value="manual">{t("settings:proxy.mode_manual")}</SelectItem>
-              <SelectItem value="direct">{t("settings:proxy.mode_direct")}</SelectItem>
-              <SelectItem value="env">{t("settings:proxy.mode_env")}</SelectItem>
-            </SelectContent>
-          </Select>
-          <div className="text-xs text-[var(--ds-text-secondary)]">
-            {draft.mode === "auto" && t("settings:proxy.mode_auto_desc")}
-            {draft.mode === "manual" && t("settings:proxy.mode_manual_desc")}
-            {draft.mode === "direct" && t("settings:proxy.mode_direct_desc")}
-            {draft.mode === "env" && t("settings:proxy.mode_env_desc")}
-          </div>
-          {draft.mode === "env" && status?.containerMode === false && (
-            <Notice tone="warning">{t("settings:proxy.env_desktop_hint")}</Notice>
-          )}
-        </div>
+        <SettingsRows className="-mt-3">
+          <SettingsRow
+            label={t("settings:proxy.mode")}
+            htmlFor={modeId}
+            description={t(`settings:proxy.mode_${draft.mode}_desc`)}
+            control={
+              <Select
+                value={draft.mode}
+                onValueChange={(v) => patch({ mode: v as ProxyMode })}
+                disabled={status?.containerMode === true}
+              >
+                <SelectTrigger id={modeId} className="w-60 max-w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper" sideOffset={4}>
+                  <SelectItem value="auto">{t("settings:proxy.mode_auto")}</SelectItem>
+                  <SelectItem value="manual">{t("settings:proxy.mode_manual")}</SelectItem>
+                  <SelectItem value="direct">{t("settings:proxy.mode_direct")}</SelectItem>
+                  <SelectItem value="env">{t("settings:proxy.mode_env")}</SelectItem>
+                </SelectContent>
+              </Select>
+            }
+          />
+          <SettingsRow
+            label={t("settings:proxy.current")}
+            control={
+              <span className="max-w-72 truncate font-mono text-xs text-[var(--ds-text-primary)]" title={activeDisplay}>
+                {activeDisplay}
+              </span>
+            }
+          />
+        </SettingsRows>
+        {draft.mode === "env" && status?.containerMode === false && (
+          <Notice tone="warning">{t("settings:proxy.env_desktop_hint")}</Notice>
+        )}
 
         {status?.containerMode && (
           <Notice>{t("settings:proxy.container_mode_desc")}</Notice>
@@ -387,11 +399,6 @@ export function ProxySection({ settings }: { settings: Settings; onSettings: (se
           </SettingsField>
         )}
 
-        <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          {t("settings:proxy.current")}:
-          <span className="font-mono text-foreground">{activeDisplay}</span>
-        </div>
-
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <Input
@@ -414,7 +421,7 @@ export function ProxySection({ settings }: { settings: Settings; onSettings: (se
             </Button>
           </div>
           {testResult && (
-            <div className={`text-xs ${testResult.ok ? "text-success" : "text-destructive"}`}>
+            <div className={cn("text-xs", testResult.ok ? "text-[var(--ds-success)]" : "text-[var(--ds-danger)]")}>
               {testResult.ok
                 ? t("settings:proxy.test_ok", { latency: testResult.latencyMs ?? 0 })
                 : `${t("settings:proxy.test_fail")}${testResult.error ? `: ${testResult.error}` : ""}`}
@@ -535,29 +542,37 @@ export function PortRequestSection({ settings }: { settings: Settings; onSetting
         action={<AutosaveStatusRow status={portAutosave.status} onRetry={() => void portAutosave.saveNow()} />}
         fields
       >
-        <SettingsField
-          label={t("settings:proxy.port_number")}
-          htmlFor={portId}
-          hint={t("settings:proxy.port_number_hint", { port: status?.defaultPort ?? "…" })}
-        >
-          <Input
-            id={portId}
-            type="number"
-            inputMode="numeric"
-            disabled={portLocked}
-            value={portDraft}
-            onChange={(event) => {
-              portAutosave.markDirty();
-              setPortDraft(event.target.value);
-            }}
-            placeholder={status?.defaultPort != null ? String(status.defaultPort) : ""}
-            min={1}
-            max={65535}
-            step={1}
+        <SettingsRows className="-mt-3">
+          <SettingsRow
+            label={t("settings:proxy.port_number")}
+            htmlFor={portId}
+            description={
+              status?.runningPort != null
+                ? t("settings:proxy.port_running", { port: status.runningPort })
+                : t("settings:proxy.port_number_hint", { port: status?.defaultPort ?? "…" })
+            }
+            control={
+              <Input
+                id={portId}
+                className="w-28"
+                type="number"
+                inputMode="numeric"
+                disabled={portLocked}
+                value={portDraft}
+                onChange={(event) => {
+                  portAutosave.markDirty();
+                  setPortDraft(event.target.value);
+                }}
+                placeholder={status?.defaultPort != null ? String(status.defaultPort) : ""}
+                min={1}
+                max={65535}
+                step={1}
+              />
+            }
           />
-        </SettingsField>
+        </SettingsRows>
         {status?.containerMode ? (
-          <div className="text-xs text-muted-foreground">{t("settings:proxy.port_container_locked")}</div>
+          <div className="text-xs text-[var(--ds-text-secondary)]">{t("settings:proxy.port_container_locked")}</div>
         ) : status ? (
           <Notice
             tone="warning"
@@ -573,11 +588,6 @@ export function PortRequestSection({ settings }: { settings: Settings; onSetting
             {t("settings:proxy.port_restart_note")}
           </Notice>
         ) : null}
-        {status?.runningPort != null && (
-          <div className="text-xs text-muted-foreground">
-            {t("settings:proxy.port_running", { port: status.runningPort })}
-          </div>
-        )}
       </SettingsGroup>
 
       <SettingsGroup
@@ -586,29 +596,27 @@ export function PortRequestSection({ settings }: { settings: Settings; onSetting
         action={<AutosaveStatusRow status={uaAutosave.status} onRetry={() => void uaAutosave.saveNow()} />}
         fields
       >
-        <SettingsField label={t("settings:proxy.ua_label")} htmlFor={uaId}>
-          <div className="flex gap-2">
-            <Input
-              id={uaId}
-              className="flex-1 font-mono text-sm"
-              value={uaDraft}
-              onChange={(event) => patchUa(event.target.value)}
-              placeholder={status?.defaultUserAgent ?? ""}
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <Button
-              type="button"
-              variant="tertiary"
-              size="compact"
-              className="shrink-0"
-              disabled={!uaDraft}
-              onClick={() => patchUa("")}
-            >
-              <RotateCcw className="size-4" />
-              {t("settings:proxy.ua_reset")}
-            </Button>
-          </div>
+        <SettingsField
+          label={t("settings:proxy.ua_label")}
+          htmlFor={uaId}
+          trailing={
+            uaDraft ? (
+              <Button type="button" variant="ghost" size="compact" onClick={() => patchUa("")}>
+                <RotateCcw />
+                {t("settings:proxy.ua_reset")}
+              </Button>
+            ) : null
+          }
+        >
+          <Input
+            id={uaId}
+            className="font-mono text-sm"
+            value={uaDraft}
+            onChange={(event) => patchUa(event.target.value)}
+            placeholder={status?.defaultUserAgent ?? ""}
+            autoComplete="off"
+            spellCheck={false}
+          />
         </SettingsField>
       </SettingsGroup>
     </SettingsStack>

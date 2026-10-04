@@ -451,7 +451,7 @@
     "active_from_system": "{{url}} (from system proxy)",
     "not_active": "Not enabled (direct connection)",
     "socks_not_supported": "SOCKS proxy is not supported (runtime limitation). Please use the proxy tool's HTTP port.",
-    "mode_desc": "Choose proxy mode",
+    "mode": "Proxy mode",
     "mode_auto": "Follow system",
     "mode_manual": "Manual",
     "mode_direct": "Force direct",
