@@ -101,15 +101,26 @@ describe("拖拽排序投影架构", () => {
     expect(move).not.toContain("style.transform = `translateY(");
   });
 
-  test("判定基准 = 被拖行中心,半高取被拖行自身真实高(非步长半)", () => {
-    // 「越滑越提前交换」实测根因:槽位判定中心 = 布局 top + 指针位移 + 半高。半高若用
-    // slotStep/2(步长 = 行高+间距)会多算「间距/2」,且误差随滑过行数线性累积——A 才滑到
-    // 初始 B 位,BCD 已滑完。必须用被拖行自身 rect.height/2(dnd-kit rectIntersection 同款,
-    // 恒定不累积)。回退成 slotStep/2 即回归。
+  test("投影槽判定 = 中心对中心模型(逐级 floor,判定项取行高半 H/2 非步长半)", () => {
+    // 「越滑越提前交换」实测根因有二,层层递进:
+    //  (a) 槽位网格用整条 step 当每行高度(y < slotTop + step/2),step=行高+间距,行只
+    //      有行高高——每行多算半间距,误差逐行累积(n*g/2)。
+    //  (b) 即便改成 floor 模型,判定项若用 step/2(=H/2+g/2)仍比正确的 H/2 大半个间距,
+    //      同样逐行早 g/2、累积。
+    // 正解 = 中心对中心(与 dnd-kit closestCenter 同语义):A 中心过「目标行自身视觉中线」
+    // 才换;中线间距=step,但 A 中心先于「底缘对齐」H/2 就压到中线,故判定项 = H/2(纯
+    // 行高,不含间距),与滑过行数无关、不累积。实现 = floor((pointerShift + H/2)/step)。
+    const drop = bodyOf(/function dropSlotAt\s*\([^)]*\)/);
+    expect(drop).toContain("pointerShift");
+    expect(drop).toContain("s.from");
+    expect(drop).toContain("Math.floor");
+    // 判定项必须是被拖行真高的一半(H/2),不是步长的一半(step/2)。
+    expect(drop).toContain("H / 2");
+    expect(drop).not.toContain("step / 2");
+    // 回退成「逐槽 y < slotTop + step/2」网格判定即回归(连环提前的根源)。
+    expect(drop).not.toContain("slotTop");
     const move = bodyOf(/function dragMove\s*\([^)]*\)/);
-    expect(move).toContain("getBoundingClientRect()");
-    expect(move).toContain("dragRect.height / 2");
-    expect(move).not.toContain("slotStep / 2");
+    expect(move).toContain("dropSlotAt(s, pointerShift)");
   });
 
   test("兄弟行让位是投影位移(±step),不得回退成 FLIP 两拍写法", () => {

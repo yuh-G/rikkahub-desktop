@@ -75,17 +75,26 @@ function findScroller(element: HTMLElement): HTMLElement | null {
 }
 
 /**
- * 指针 Y 落在哪个槽位(0..count):过某槽位中点即认为投影到该槽。
- * 槽位 = 列表容器 top + 首行偏移 + i×步长(等差模型;DOM 静止,槽位是纯布局事实)。
+ * 被拖行中心投影到哪个槽位(0..count):中心越过「目标行自身的视觉中线」即换到该槽。
+ *
+ * 槽位模型 = 中心对中心(与 dnd-kit closestCenter / 成熟列表排序同语义)。设 d =
+ * pointerShift(被拖行中心的位移),H = 被拖行行高,step = 行高+行间距:
+ *   第 K 行的视觉中线在 A 原中线 + K*step 处(中线间距 = step);
+ *   A 中心过第 K 行中线 ⟺ d ≥ K*step − H/2(A 中心先于「底缘对齐」H/2 就压到中线)。
+ *   ⟹ n = floor((d + H/2)/step),to = clamp(from + n, 0, count)。
+ * floor 产出逐级整数,每次只前进一格,天然无「越滑越提前」的累积。
+ *
+ * 为什么判定项必须是 H/2 而非 step/2:二者相差半个行间距 g/2。若用 step/2(=H/2+g/2),
+ * 每行的触发点都早了 g/2,且逐行线性累积(第 n 行早 n*g/2)——正是「A 才滑到 B,BCD 已
+ * 连环换」的根因。H 是纯行高(不含间距),与滑过行数无关,不累积。
  */
-function dropSlotAt(s: DragSession, y: number): number {
+function dropSlotAt(s: DragSession, pointerShift: number): number {
+  const count = s.rows.length;
   const step = s.slotStep;
-  const base = s.list.getBoundingClientRect().top + s.slotOffset;
-  for (let i = 0; i < s.rows.length; i++) {
-    const slotTop = base + i * step;
-    if (y < slotTop + step / 2) return i;
-  }
-  return s.rows.length;
+  const H = s.rows[s.from].getBoundingClientRect().height;
+  if (step <= 0 || H <= 0) return s.from;
+  const n = Math.floor((pointerShift + H / 2) / step);
+  return Math.min(count, Math.max(0, s.from + n));
 }
 
 /**
@@ -133,16 +142,10 @@ function autoScrollTick(s: DragSession, clientY: number): void {
 
 function dragMove(s: DragSession, clientY: number): void {
   const pointerShift = clientY - s.startY;
-  // 投影槽 = 被拖行中心落点(不是指针位置):行比指针高,按行中心判定跨界,行的
-  // 视觉覆盖与槽位切换一致,快拖慢拖手感一致。被拖行布局位静止(DOM 顺序不动),
-  // 其 rect 是常量,center = 布局位 + 位移合成,每帧稳定。
-  // 半高必须取被拖行**自身**的 rect.height/2(dnd-kit rectIntersection 同款),不能用
-  // slotStep/2:slotStep 含 space-y 间距(步长 = 行高+间距),用半步长当半高会多算
-  // 「间距/2」,且该误差随滑过行数线性累积((n-1)×间距/2)——正是「越滑越提前交换」
-  // 的根因。真高度恒定,与滑过行数无关,不累积。
-  const dragRect = s.rows[s.from].getBoundingClientRect();
-  const center = dragRect.top + pointerShift + dragRect.height / 2;
-  const to = dropSlotAt(s, center);
+  // 投影槽 = 被拖行中心(= 布局中心 + pointerShift)越过目标行视觉中线的那个槽。
+  // 判定用 pointerShift(被拖行中心的位移)直接进 dropSlotAt 的中心对中心模型;
+  // 被拖行布局位静止(DOM 顺序不动),位移合成每帧稳定,快拖慢拖手感一致。
+  const to = dropSlotAt(s, pointerShift);
   s.current = to;
   projectShifts(s, to);
   // 用 CSS `translate` 而非 `transform: translateY()`:translate 是独立的合成层属性,
