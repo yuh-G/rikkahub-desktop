@@ -160,7 +160,7 @@ export function AboutSection() {
               <>
                 <div className="flex min-w-0 items-center gap-3">
                   <Icon className="size-4 shrink-0 text-muted-foreground" />
-                  <div className="font-medium">{row.label}</div>
+                  <div data-settings-label="" className="font-medium">{row.label}</div>
                 </div>
                 <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
                   <span className="truncate">{row.value}</span>
@@ -194,13 +194,14 @@ export function AboutSection() {
                 <button
                   key={row.key}
                   type="button"
+                  data-settings-item=""
                   className={cn(LINK_ROW, "justify-between gap-4")}
                   onClick={row.onClick}
                 >
                   {content}
                 </button>
               ) : (
-                <div key={row.key} className={cn(STATIC_ROW, "justify-between gap-4")}>
+                <div key={row.key} data-settings-item="" className={cn(STATIC_ROW, "justify-between gap-4")}>
                   {content}
                 </div>
               )

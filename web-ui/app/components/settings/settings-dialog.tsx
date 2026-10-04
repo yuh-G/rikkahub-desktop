@@ -10,10 +10,10 @@ import { settingsPageKey } from "~/components/settings/settings-nav";
 import { SETTINGS_DOCKED_PAGES, SETTINGS_PAGES } from "~/components/settings/settings-registry";
 import {
   SETTINGS_PAGE_PANEL_ID,
-  SettingsNavList,
   SettingsPageHeader,
   useSettingsSnapshot,
 } from "~/components/settings/settings-panel";
+import { SettingsSidebarNav, useSettingsSearchFocus } from "~/components/settings/settings-search";
 import { Button } from "~/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "~/components/ui/dialog";
 import { Kbd } from "~/components/ui/kbd";
@@ -27,8 +27,10 @@ import { useSettingsStore } from "~/stores/app-store";
 import {
   closeSettingsDialog,
   currentSettingsSub,
+  setSettingsDialogLocation,
   setSettingsDialogSection,
   setSettingsDialogSub,
+  setSettingsNavQuery,
   useSettingsDialogStore,
   withSettingsLocation,
 } from "~/stores/settings-dialog-store";
@@ -82,8 +84,16 @@ export function SettingsDialog() {
           if (y < bandH) event.preventDefault();
         }}
         // 快捷键录制中 Esc 是"取消录制",由录制按钮自己消费;此时不能顺带关掉整个设置。
+        // 侧栏搜索有输入时 Esc 先清空搜索,再按一次才关闭。
         onEscapeKeyDown={(event) => {
-          if (areHotkeysPaused()) event.preventDefault();
+          if (areHotkeysPaused()) {
+            event.preventDefault();
+            return;
+          }
+          if (useSettingsDialogStore.getState().navQuery) {
+            event.preventDefault();
+            setSettingsNavQuery("");
+          }
         }}
         // Radix 默认聚焦第一个可聚焦元素(侧栏首项「通用」):停在别的一级时,焦点环落在一个
         // 并未选中的项上,像是选错了位置。改为聚焦当前一级的导航项,焦点与选中态一致。
@@ -117,6 +127,7 @@ function SettingsDialogBody() {
   const pageKey = settingsPageKey(section, sub);
   const Page = SETTINGS_PAGES[pageKey];
   const docked = SETTINGS_DOCKED_PAGES.has(pageKey);
+  useSettingsSearchFocus(pageKey);
 
   return (
     <>
@@ -131,9 +142,13 @@ function SettingsDialogBody() {
           <OpenSettingsShortcut />
           <DialogDescription className="sr-only">{t("settings:nav.subtitle")}</DialogDescription>
         </div>
-        <ScrollArea className="min-h-0 flex-1">
-          <SettingsNavList active={section} onSelect={setSettingsDialogSection} className="px-2 pb-3" />
-        </ScrollArea>
+        <SettingsSidebarNav
+          active={section}
+          onSelect={setSettingsDialogSection}
+          onLocate={setSettingsDialogLocation}
+          focusShortcut
+          listClassName="px-2 pb-3"
+        />
       </aside>
       <div className="relative flex min-w-0 flex-1 flex-col">
         {/* 页头兼作窗口拖拽区:无边框窗口被遮罩盖住后,它与左栏标题行是仅有的拖拽把手。

@@ -11,6 +11,7 @@ function SearchInput({
   onValueChange,
   onClear,
   clearLabel,
+  ref,
   ...props
 }: Omit<React.ComponentProps<"input">, "value" | "onChange" | "type"> & {
   value: string
@@ -19,6 +20,8 @@ function SearchInput({
   clearLabel: string
 }) {
   const inputRef = React.useRef<HTMLInputElement>(null)
+  // 外部 ref(如 Ctrl+F 聚焦)与内部 ref(清除后回焦)并存。
+  React.useImperativeHandle(ref, () => inputRef.current!, [])
   return (
     <div data-slot="search-input" className={cn("relative", className)}>
       <Search

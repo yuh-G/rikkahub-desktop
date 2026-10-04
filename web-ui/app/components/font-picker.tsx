@@ -460,8 +460,8 @@ export function FontPickerPair({
     { tag: t("font_picker.tag_mixed"), text: t("font_picker.preview_mixed_text"), family: merged },
   ];
   return (
-    <div className="block space-y-2">
-      <span className="text-sm font-medium">{label}</span>
+    <div data-settings-item="" className="block space-y-2">
+      <span data-settings-label="" className="text-sm font-medium">{label}</span>
       <div className="grid gap-2 sm:grid-cols-2">
         <FontPicker
           label={t("font_picker.tag_en")}

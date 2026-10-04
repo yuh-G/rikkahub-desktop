@@ -140,12 +140,13 @@ export function KeybindingSettings({ leading }: { leading?: React.ReactNode }) {
           return (
             <div
               key={action}
+              data-settings-item=""
               className={cn(
                 "flex items-center justify-between gap-2 py-2",
                 !entry.enabled && "opacity-60",
               )}
             >
-              <span className="text-sm font-medium">{t(`settings:hotkeys.actions.${action}`)}</span>
+              <span data-settings-label="" className="text-sm font-medium">{t(`settings:hotkeys.actions.${action}`)}</span>
               <div className="flex items-center gap-2">
                 {/* 录制钮两态与输入框同语言:静止是 ghost 胶囊,录制中亮起聚焦阴影。 */}
                 {isEditing ? (

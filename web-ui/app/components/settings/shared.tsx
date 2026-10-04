@@ -109,6 +109,7 @@ export function SettingsAdvancedToggle({
   return (
     <button
       type="button"
+      data-settings-advanced=""
       aria-expanded={open}
       aria-controls={controls.join(" ")}
       title={showDot ? t("settings:common.advanced_attention") : undefined}
@@ -507,10 +508,10 @@ export function SettingsGroup({
   return (
     <section className={className}>
       {hasHeader ? (
-        <div className="flex min-h-7 items-start justify-between gap-4">
+        <div data-settings-item="" className="flex min-h-7 items-start justify-between gap-4">
           <div className="min-w-0">
             {title != null ? (
-              <h2 className="text-xs font-semibold leading-7 text-[var(--ds-text-secondary)]">{title}</h2>
+              <h2 data-settings-label="" className="text-xs font-semibold leading-7 text-[var(--ds-text-secondary)]">{title}</h2>
             ) : null}
             {description != null ? (
               <p className="text-xs text-[var(--ds-text-tertiary)]">{description}</p>
@@ -552,10 +553,11 @@ export function SettingsRow({
   const Label = htmlFor ? "label" : "div";
   // flex-wrap:窄屏整页里宽控件(下拉框)放不下时整体折到标题下方,而不是把标题挤成一列字。
   return (
-    <div className={cn("py-3", className)}>
+    <div data-settings-item="" className={cn("py-3", className)}>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="min-w-[min(12rem,100%)] flex-1">
           <Label
+            data-settings-label=""
             htmlFor={htmlFor}
             className="block text-sm font-medium text-[var(--ds-text-primary)]"
           >
@@ -625,10 +627,10 @@ export function SettingsField({
 }) {
   const Label = htmlFor ? "label" : "div";
   return (
-    <div className={cn("space-y-2", className)}>
+    <div data-settings-item="" className={cn("space-y-2", className)}>
       <div className="flex min-h-5 items-center justify-between gap-3">
         <div className="min-w-0">
-          <Label htmlFor={htmlFor} className="block text-sm font-medium text-[var(--ds-text-primary)]">
+          <Label data-settings-label="" htmlFor={htmlFor} className="block text-sm font-medium text-[var(--ds-text-primary)]">
             {label}
           </Label>
           {description != null ? (

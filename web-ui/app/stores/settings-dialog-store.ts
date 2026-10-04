@@ -24,6 +24,22 @@ interface SettingsDialogState {
    * 只用一次:用户主动切一级/二级即清空,否则页面重挂载时会被再次拉回深链目标。
    */
   search: string;
+  /** 侧栏设置搜索的输入。两种形态共用:模态的 Esc 守卫要读它(有输入时 Esc 先清空而非关闭)。 */
+  navQuery: string;
+  /** 搜索选中后待定位的设置项;壳层的页面挂载后据此滚动 + 闪烁,定位完即清空。 */
+  focusTarget: SettingsFocusTarget | null;
+}
+
+/** 搜索结果跳转后在页面里要找的设置项。nonce 让「重复选中同一项」也能再次触发定位。 */
+export interface SettingsFocusTarget {
+  /** 目标页键:壳层只在该页挂载时定位,中途换页不会把定位带到别的页上。 */
+  page: string;
+  title: string;
+  /** 在「高级设置」折叠区内:找不到行(未展开)时先替用户展开再找。 */
+  advanced: boolean;
+  /** 页内分段标签的文字:先切到该标签再找行。 */
+  tab?: string;
+  nonce: number;
 }
 
 export const useSettingsDialogStore = create<SettingsDialogState>(() => ({
@@ -31,6 +47,8 @@ export const useSettingsDialogStore = create<SettingsDialogState>(() => ({
   section: "general",
   subBySection: {},
   search: "",
+  navQuery: "",
+  focusTarget: null,
 }));
 
 /** 当前一级下应显示的二级:记忆值合法则用之,否则第一个;无二级为 null。 */
@@ -54,6 +72,8 @@ export function openSettingsDialog(search = ""): void {
   useSettingsDialogStore.setState((state) => ({
     open: true,
     search,
+    navQuery: "",
+    focusTarget: null,
     section: location?.section ?? state.section,
     subBySection: location ? rememberSub(state.subBySection, location) : state.subBySection,
   }));
@@ -78,6 +98,34 @@ export function setSettingsDialogSub(sub: string): void {
   useSettingsDialogStore.setState((state) => ({
     search: "",
     subBySection: rememberSub(state.subBySection, { section: state.section, sub }),
+  }));
+}
+
+export function setSettingsNavQuery(navQuery: string): void {
+  useSettingsDialogStore.setState({ navQuery });
+}
+
+/**
+ * 搜索选中:清空搜索、记下待定位项。位置切换由调用方按形态完成(模态 setSettingsDialogLocation,
+ * 整页走路由)——两者都在同一次事件里,页面挂载时 focusTarget 已就位。
+ */
+export function requestSettingsFocus(target: Omit<SettingsFocusTarget, "nonce"> | null): void {
+  useSettingsDialogStore.setState({
+    navQuery: "",
+    focusTarget: target ? { ...target, nonce: Date.now() + Math.random() } : null,
+  });
+}
+
+export function clearSettingsFocus(): void {
+  useSettingsDialogStore.setState({ focusTarget: null });
+}
+
+/** 模态里一次切到指定一级 + 二级(搜索选中用;sub 不属于该一级时按记忆/默认补全)。 */
+export function setSettingsDialogLocation(section: SettingsTabId, sub: string | null): void {
+  useSettingsDialogStore.setState((state) => ({
+    section,
+    search: "",
+    subBySection: rememberSub(state.subBySection, { section, sub }),
   }));
 }
 

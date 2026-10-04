@@ -16,10 +16,10 @@ import {
 } from "~/components/settings/settings-nav";
 import {
   SETTINGS_PAGE_PANEL_ID,
-  SettingsNavList,
   SettingsPageHeader,
   useSettingsSnapshot,
 } from "~/components/settings/settings-panel";
+import { SettingsSidebarNav, useSettingsSearchFocus } from "~/components/settings/settings-search";
 import { SETTINGS_PAGES, SETTINGS_DOCKED_PAGES } from "~/components/settings/settings-registry";
 
 import { Button } from "~/components/ui/button";
@@ -111,6 +111,8 @@ function SettingsPage({
     onLocation({ section, sub: resolved });
     navigate(`/settings${withSettingsLocation("", section, resolved)}`, { replace: true });
   };
+  const pageKey = settingsPageKey(location.section, location.sub);
+  useSettingsSearchFocus(pageKey);
 
   if (!settings) {
     return (
@@ -124,7 +126,6 @@ function SettingsPage({
     );
   }
 
-  const pageKey = settingsPageKey(location.section, location.sub);
   const Page = SETTINGS_PAGES[pageKey];
   // 停靠页(双栏独立滚动)判据与模态外壳同源(SETTINGS_DOCKED_PAGES)。
   const docked = SETTINGS_DOCKED_PAGES.has(pageKey);
@@ -152,16 +153,20 @@ function SettingsPage({
             <div className="text-sm font-semibold">{t("settings:nav.subtitle")}</div>
           </div>
         </div>
-        <ScrollArea className="min-h-0 flex-1">
-          <SettingsNavList
+        <div className="flex min-h-0 flex-1 flex-col pt-2">
+          <SettingsSidebarNav
             active={location.section}
             onSelect={(next) => {
               go(next, useSettingsDialogStore.getState().subBySection[next] ?? null);
               setContentOpen(true);
             }}
-            className="p-2"
+            onLocate={(section, sub) => {
+              go(section, sub);
+              setContentOpen(true);
+            }}
+            listClassName="px-2 pb-2"
           />
-        </ScrollArea>
+        </div>
       </aside>
       <div
         className={cn(

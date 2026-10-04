@@ -1898,3 +1898,23 @@
 }
 
 }
+
+/* 设置搜索选中后的定位高亮(settings-search.tsx):行底一抹 on-surface-active 淡出。
+   外扩用 box-shadow 而非 padding,不改行的布局。 */
+[data-settings-flash] {
+  border-radius: var(--ds-radius-md);
+  animation: settings-flash 1.4s var(--ds-ease-swift);
+}
+@keyframes settings-flash {
+  0%, 35% {
+    background-color: var(--ds-on-surface-active);
+    box-shadow: 0 0 0 6px var(--ds-on-surface-active);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-settings-flash] { animation: none; }
+}
