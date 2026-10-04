@@ -328,7 +328,10 @@ export function TtsSection({
           <div className="@container">
             <SettingsStack>
               <SettingsDetailHeader
-                title={draft.name || typeLabel(draft.type)}
+                title={draft.name}
+                titlePlaceholder={typeLabel(draft.type)}
+                titleLabel={t("settings:speech.name")}
+                onTitleCommit={(name) => patchDraft({ name })}
                 description={t("settings:speech.tts_detail_desc", { type: typeLabel(draft.type) })}
                 action={
                   <>
@@ -345,9 +348,6 @@ export function TtsSection({
               />
 
               <SettingsGroup fields>
-                <SettingsField label={t("settings:speech.name")}>
-                  <Input value={draft.name} onChange={(event) => patchDraft({ name: event.target.value })} />
-                </SettingsField>
                 <SpeechFields fields={fields} section="basic" draft={draft} onPatch={patchFields} />
               </SettingsGroup>
 
@@ -554,7 +554,10 @@ export function AsrSection({
         <div className="@container">
           <SettingsStack>
             <SettingsDetailHeader
-              title={draft.name || asrTypeLabel(draft.type)}
+              title={draft.name}
+              titlePlaceholder={asrTypeLabel(draft.type)}
+              titleLabel={t("settings:speech.name")}
+              onTitleCommit={(name) => patchDraft({ name })}
               description={t("settings:speech.asr_detail_desc", { type: asrTypeLabel(draft.type) })}
               action={
                 <SetCurrentButton
@@ -565,9 +568,6 @@ export function AsrSection({
             />
 
             <SettingsGroup fields>
-              <SettingsField label={t("settings:speech.name")}>
-                <Input value={draft.name} onChange={(event) => patchDraft({ name: event.target.value })} />
-              </SettingsField>
               <SpeechFields fields={fields} section="basic" draft={draft} onPatch={patchFields} />
             </SettingsGroup>
 

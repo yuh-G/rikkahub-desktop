@@ -24,7 +24,8 @@ const ZOOM_MAX = 3;
 
 /**
  * 可点击更换的头像:头像本身就是按钮(悬停压暗 + 相机图标),选图后进裁剪框;当前不是默认头像
- * 时旁边给一颗「恢复默认」。avatarClassName 控制头像尺寸(默认 56px)。
+ * 时旁边给一颗「恢复默认」。avatarClassName 控制头像尺寸(默认 56px)。bare:只渲染头像本身
+ * (嵌进详情标题行时用,「恢复默认」由调用方放在合适位置)。
  */
 export function AvatarCropper({
   value,
@@ -32,6 +33,7 @@ export function AvatarCropper({
   onChange,
   avatarClassName,
   hint = true,
+  bare = false,
 }: {
   value?: AssistantAvatar | null;
   fallbackName: string;
@@ -39,6 +41,7 @@ export function AvatarCropper({
   avatarClassName?: string;
   /** 是否在头像旁显示「点击更换头像」说明(空间紧时关掉,悬停提示仍在)。 */
   hint?: boolean;
+  bare?: boolean;
 }) {
   const { t } = useTranslation("common");
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -176,7 +179,7 @@ export function AvatarCropper({
           accept="image/jpeg,image/png,image/gif,image/webp"
           onChange={chooseFile}
         />
-        {hint || !isDefault ? (
+        {!bare && (hint || !isDefault) ? (
           <div className="flex min-w-0 flex-col items-start gap-0.5">
             {hint ? <span className="text-xs text-[var(--ds-text-tertiary)]">{t("avatar_cropper.click_to_change")}</span> : null}
             {!isDefault ? (

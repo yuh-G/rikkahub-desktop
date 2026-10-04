@@ -30,6 +30,7 @@ import {
   SettingsAdvancedRegion,
   SettingsAdvancedToggle,
   SettingsDetailFooter,
+  SettingsDetailHeader,
   SettingsEmpty,
   SettingsField,
   SettingsGroup,
@@ -444,6 +445,17 @@ function AssistantEditor({
     );
   };
 
+  // 头像立即保存并强制在聊天中使用助手头像(换了头像却不显示没有意义);恢复默认同走这里。
+  const saveAvatar = async (avatar: AssistantProfile["avatar"]) => {
+    const nextDraft = { ...draft, avatar, useAssistantAvatar: avatar?.type !== "dummy" || draft.useAssistantAvatar };
+    setDraft(nextDraft);
+    await api.post("settings/assistant/detail", nextDraft);
+    patchSettingsLocal((current) => ({
+      assistantId: nextDraft.id,
+      assistants: upsertById(current.assistants, nextDraft),
+    }));
+  };
+
   const switchRow = ([key, labelKey]: readonly [keyof AssistantProfile, string]) => (
     <SettingsSwitchRow
       key={key}
@@ -488,26 +500,36 @@ function AssistantEditor({
   return (
     <div className="@container">
       <SettingsStack>
-        <SettingsGroup title={t("settings:assistants.basic_title")} fields>
-          <SettingsField label={t("settings:assistants.avatar")}>
+        {/* 首行即身份:点头像换图、点名字改名,不再分两个字段把同一个助手写两遍。 */}
+        <SettingsDetailHeader
+          leading={
             <AvatarCropper
+              bare
               value={draft.avatar}
+              avatarClassName="size-12"
               fallbackName={draft.name || t("settings:assistants.default_name")}
-              onChange={async (avatar) => {
-                // 头像立即保存并强制在聊天中使用助手头像(换了头像却不显示没有意义)。
-                const nextDraft = { ...draft, avatar, useAssistantAvatar: true };
-                setDraft(nextDraft);
-                await api.post("settings/assistant/detail", nextDraft);
-                patchSettingsLocal((current) => ({
-                  assistantId: nextDraft.id,
-                  assistants: upsertById(current.assistants, nextDraft),
-                }));
-              }}
+              onChange={saveAvatar}
             />
-          </SettingsField>
-          <SettingsField label={t("settings:assistants.name")}>
-            <Input value={draft.name} onChange={(event) => patchDraft({ name: event.target.value })} />
-          </SettingsField>
+          }
+          title={draft.name}
+          titlePlaceholder={t("settings:assistants.default_name")}
+          titleLabel={t("settings:assistants.name")}
+          onTitleCommit={(name) => patchDraft({ name })}
+          description={
+            draft.avatar && draft.avatar.type !== "dummy" ? (
+              <button
+                type="button"
+                className="rounded-[var(--ds-radius-sm)] text-[var(--ds-text-tertiary)] outline-none transition-colors hover:text-[var(--ds-brand-primary)] focus-visible:ring-2 focus-visible:ring-ring/50"
+                onClick={() => void saveAvatar({ type: "dummy" })}
+              >
+                {t("common:avatar_cropper.reset")}
+              </button>
+            ) : (
+              t("common:avatar_cropper.click_to_change")
+            )
+          }
+        />
+        <SettingsGroup title={t("settings:assistants.basic_title")} fields>
           <SettingsField
             label={t("settings:assistants.system_prompt")}
             hint={

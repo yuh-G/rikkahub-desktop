@@ -385,7 +385,10 @@ function McpServerEditor({
       <div className="@container">
         <SettingsStack>
           <SettingsDetailHeader
-            title={textValue(common.name) || t("settings:mcp.server.default_name")}
+            title={textValue(common.name)}
+            titlePlaceholder={t("settings:mcp.server.default_name")}
+            titleLabel={t("settings:mcp.name")}
+            onTitleCommit={(name) => patchDraft({ ...draft, commonOptions: { ...common, name } })}
             description={t("settings:mcp.server.detail_desc")}
             action={
               <LabeledSwitch
@@ -397,15 +400,6 @@ function McpServerEditor({
           />
 
           <SettingsGroup title={t("settings:mcp.connection_title")} fields>
-            <SettingsField label={t("settings:mcp.name")}>
-              <Input
-                value={textValue(common.name)}
-                onChange={(event) =>
-                  patchDraft({ ...draft, commonOptions: { ...common, name: event.target.value } })
-                }
-                placeholder={t("settings:mcp.server.default_name")}
-              />
-            </SettingsField>
             <SettingsField label={t("settings:mcp.transport")}>
               <SegmentedControl
                 stretch

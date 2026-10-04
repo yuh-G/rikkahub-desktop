@@ -153,7 +153,10 @@ function QuickMessageEditor({
       <div className="@container">
         <SettingsStack>
           <SettingsDetailHeader
-            title={textValue(draft.title) || t("settings:mcp.tab.quick")}
+            title={textValue(draft.title)}
+            titlePlaceholder={t("settings:mcp.tab.quick")}
+            titleLabel={t("settings:mcp.quick.title")}
+            onTitleCommit={(title) => patchDraft({ title })}
             description={t("settings:mcp.quick.page_desc")}
             action={
               <BindingSwitch
@@ -163,13 +166,6 @@ function QuickMessageEditor({
             }
           />
           <SettingsGroup fields>
-            <SettingsField label={t("settings:mcp.quick.title")} hint={t("settings:mcp.quick.title_hint")}>
-              <Input
-                value={textValue(draft.title)}
-                onChange={(event) => patchDraft({ title: event.target.value })}
-                placeholder={t("settings:mcp.tab.quick")}
-              />
-            </SettingsField>
             <SettingsField label={t("settings:mcp.quick.content")} hint={t("settings:mcp.quick.content_hint")}>
               <Textarea
                 value={textValue(draft.content)}

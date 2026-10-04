@@ -713,23 +713,52 @@ export function SettingsDetailFooter({ status, children }: { status?: React.Reac
   );
 }
 
-/** 详情栏的标题行:名称(+说明)+ 右侧动作。替代各详情卡顶部的手写 flex 头。 */
+/**
+ * 详情栏的标题行:名称(+说明)+ 右侧动作。替代各详情卡顶部的手写 flex 头。
+ * 传 onTitleCommit 则标题就地可改(取代紧跟在下面、把同一个名字再写一遍的「名称」输入框):
+ * title 此时是原始名称串,titlePlaceholder 是空名时显示的兜底(类型默认名)。leading 放图标/头像。
+ */
 export function SettingsDetailHeader({
   title,
   description,
   action,
+  leading,
+  onTitleCommit,
+  titlePlaceholder,
+  titleLabel,
 }: {
   title: React.ReactNode;
   description?: React.ReactNode;
   action?: React.ReactNode;
+  leading?: React.ReactNode;
+  onTitleCommit?: (next: string) => void;
+  titlePlaceholder?: string;
+  /** 可编辑标题的无障碍名(「名称」)。 */
+  titleLabel?: string;
 }) {
   return (
     <div className="flex items-start justify-between gap-4">
-      <div className="min-w-0">
-        <h2 className="truncate text-base font-semibold text-[var(--ds-text-primary)]">{title}</h2>
-        {description != null ? (
-          <p className="mt-0.5 text-xs text-[var(--ds-text-secondary)]">{description}</p>
-        ) : null}
+      <div className="flex min-w-0 items-center gap-3">
+        {leading}
+        <div className="min-w-0">
+          {onTitleCommit ? (
+            <h2 className="flex min-w-0">
+              <InlineEditText
+                value={typeof title === "string" ? title : ""}
+                placeholder={titlePlaceholder}
+                ariaLabel={titleLabel ?? titlePlaceholder ?? ""}
+                className="text-base font-semibold"
+                inputClassName="w-72 text-base"
+                onCommit={onTitleCommit}
+              />
+            </h2>
+          ) : (
+            <h2 className="truncate text-base font-semibold text-[var(--ds-text-primary)]">{title}</h2>
+          )}
+          {description != null ? (
+            <p className="mt-0.5 text-xs text-[var(--ds-text-secondary)]">{description}</p>
+          ) : null}
+        </div>
       </div>
       {action != null ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
     </div>

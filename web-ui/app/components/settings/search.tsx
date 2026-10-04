@@ -526,35 +526,23 @@ export function SearchSection({
       >
         <div className="@container">
         <SettingsStack>
-          <div className="flex items-center gap-3">
-            <AIIcon name={searchServiceLabelForType(textValue(draft.type))} size={40} />
-            <div className="min-w-0 flex-1">
-              <SettingsDetailHeader
-                title={
-                  textValue(draft.name) ||
-                  searchServiceLabelForType(textValue(draft.type)) ||
-                  t("settings:search.service_default")
-                }
-                description={textValue(draft.type) || t("settings:search.field.custom")}
-                action={
-                  <Button variant="outline" size="sm" onClick={() => void test()} disabled={testing}>
-                    {testing ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
-                    {t("settings:search.test")}
-                  </Button>
-                }
-              />
-            </div>
-          </div>
+          <SettingsDetailHeader
+            leading={<AIIcon name={searchServiceLabelForType(textValue(draft.type))} size={40} />}
+            title={textValue(draft.name)}
+            titlePlaceholder={searchServiceLabelForType(textValue(draft.type)) || t("settings:search.service_default")}
+            titleLabel={t("settings:search.name")}
+            onTitleCommit={(name) => patchDraft({ name })}
+            description={textValue(draft.type) || t("settings:search.field.custom")}
+            action={
+              <Button variant="tertiary" size="compact" onClick={() => void test()} disabled={testing}>
+                {testing ? <Loader2 className="animate-spin" /> : <Database />}
+                {t("settings:search.test")}
+              </Button>
+            }
+          />
           <section>
           <div className="grid gap-4 @xl:grid-cols-2">
-            <label className="space-y-2">
-              <span className="text-sm font-medium">{t("settings:search.name")}</span>
-              <Input
-                value={textValue(draft.name)}
-                onChange={(event) => patchDraft({ name: event.target.value })}
-              />
-            </label>
-            <label className="space-y-2">
+            <label className="space-y-2 @xl:col-span-2">
               <span className="text-sm font-medium">{t("settings:search.type")}</span>
               <Select
                 value={textValue(draft.type) || "tavily"}
@@ -582,7 +570,7 @@ export function SearchSection({
                   if (type === "searxng") setAdvancedOpen(true);
                 }}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger className="w-60 max-w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

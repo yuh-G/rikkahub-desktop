@@ -1391,7 +1391,10 @@ export function ProvidersSection({
         <div className="@container">
           <SettingsStack>
             <SettingsDetailHeader
-              title={draft.name || t(providerFormatLabelKey(kind, draft))}
+              title={draft.name}
+              titlePlaceholder={t(providerFormatLabelKey(kind, draft))}
+              titleLabel={t("settings:providers.name")}
+              onTitleCommit={(name) => patchDraft({ name })}
               description={textValue(draft.shortDescription) || t(providerFormatLabelKey(kind, draft))}
               action={
                 <label className="flex items-center gap-2 text-sm text-[var(--ds-text-secondary)]">
@@ -1406,9 +1409,6 @@ export function ProvidersSection({
             />
 
             <SettingsGroup title={t("settings:providers.connection_title")} fields>
-              <SettingsField label={t("settings:providers.name")}>
-                <Input value={draft.name} onChange={(event) => patchDraft({ name: event.target.value })} />
-              </SettingsField>
               {!isOauth ? (
                 <>
                   <SettingsField label={t("settings:providers.type")}>

@@ -579,7 +579,10 @@ function LorebookEditor({
       <div className="@container">
         <SettingsStack>
           <SettingsDetailHeader
-            title={textValue(draft.name) || t("settings:mcp.tab.lorebook")}
+            title={textValue(draft.name)}
+            titlePlaceholder={t("settings:mcp.lorebook.name_ph")}
+            titleLabel={t("settings:mcp.name")}
+            onTitleCommit={(name) => patchDraft({ name })}
             description={t("settings:mcp.lorebook.page_desc")}
             action={
               <BindingSwitch
@@ -590,13 +593,6 @@ function LorebookEditor({
           />
 
           <SettingsGroup fields>
-            <SettingsField label={t("settings:mcp.name")}>
-              <Input
-                value={textValue(draft.name)}
-                onChange={(event) => patchDraft({ name: event.target.value })}
-                placeholder={t("settings:mcp.lorebook.name_ph")}
-              />
-            </SettingsField>
             <SettingsField label={t("settings:mcp.lorebook.desc")}>
               <Input
                 value={textValue(draft.description)}
@@ -814,7 +810,10 @@ function PromptItemEditor({
       <div className="@container">
         <SettingsStack>
           <SettingsDetailHeader
-            title={textValue(draft.name) || title}
+            title={textValue(draft.name)}
+            titlePlaceholder={title}
+            titleLabel={t("settings:mcp.name")}
+            onTitleCommit={(name) => patchDraft({ name })}
             description={t("settings:mcp.mode_page_desc")}
             action={
               <BindingSwitch
@@ -825,13 +824,6 @@ function PromptItemEditor({
           />
 
           <SettingsGroup fields>
-            <SettingsField label={t("settings:mcp.name")}>
-              <Input
-                value={textValue(draft.name)}
-                onChange={(event) => patchDraft({ name: event.target.value })}
-                placeholder={title}
-              />
-            </SettingsField>
             <SettingsField label={t("settings:mcp.inject_content")}>
               <Textarea
                 value={textValue(draft.content)}
