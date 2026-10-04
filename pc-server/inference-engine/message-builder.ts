@@ -351,6 +351,9 @@ export const GOOGLE_SCHEMA_STRIP_KEYS = new Set([
   "exclusiveMinimum",
   "format",
   "additionalProperties",
+  // propertyNames(安卓 4391d5a5,#1935):开源 MCP 工具 schema 常用的键名模式校验,
+  // Gemini functionDeclarations 不认——发出即 400 拒整条请求。
+  "propertyNames",
   "enum",
 ]);
 

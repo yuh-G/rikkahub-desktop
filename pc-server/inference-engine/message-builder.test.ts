@@ -13,6 +13,7 @@ import {
   dataUrlForMessageUrl,
   documentPartsFirst,
   groupAssistantPartsByToolBoundary,
+  googleFunctionDeclarations,
   isModelAllowTemperature,
   parseDataUrl,
   reasoningPayloadForProvider,
@@ -165,6 +166,55 @@ describe("supportsInputModality", () => {
     expect(supportsInputModality(visionModel, "image")).toBe(true);
     expect(supportsInputModality(textModel, "IMAGE")).toBe(false);
     expect(supportsInputModality({} as Model, "TEXT")).toBe(false);
+  });
+});
+
+// Gemini functionDeclarations.parameters 是 OpenAPI 子集,只认少数 JSON Schema 关键字;
+// 开源 MCP 工具 schema 越来越常用高级校验关键字(安卓 4391d5a5 加 propertyNames,#1935),
+// 逐个补齐清单并锁行为——清单缺一个,撞上的工具就整条请求 400。
+describe("googleFunctionDeclarations — 不兼容 schema 关键字剥离", () => {
+  const mcpTool = (parameters: unknown) => ({
+    type: "function",
+    function: { name: "run_job", description: "d", parameters },
+  });
+
+  test("propertyNames/const/format/additionalProperties/enum 等全清单递归剥除;properties/items 下行", () => {
+    const declarations = googleFunctionDeclarations([
+      mcpTool({
+        type: "object",
+        properties: {
+          trigger: { type: "string", minLength: 3 },
+          nested: {
+            type: "object",
+            properties: { key: { type: "string", format: "date-time" } },
+            propertyNames: { type: "string", pattern: "^[a-z]+$" },
+            additionalProperties: false,
+          },
+          items: { type: "array", items: { type: "string", const: "fixed" } },
+          amount: { type: "number", exclusiveMinimum: 0, exclusiveMaximum: 10 },
+        },
+        enum: ["a", "b"],
+      }),
+    ]);
+    const params = declarations[0]!.parameters as Record<string, any>;
+    expect(params.propertyNames).toBeUndefined();
+    expect(params.enum).toBeUndefined();
+    expect(params.properties.nested.propertyNames).toBeUndefined();
+    expect(params.properties.nested.additionalProperties).toBeUndefined();
+    expect(params.properties.nested.properties.key.format).toBeUndefined();
+    expect(params.properties.items.items.const).toBeUndefined();
+    expect(params.properties.amount.exclusiveMinimum).toBeUndefined();
+    expect(params.properties.amount.exclusiveMaximum).toBeUndefined();
+    // 兼容关键字原样保留:模型仍能看到类型与约束语义。
+    expect(params.properties.trigger).toEqual({ type: "string", minLength: 3 });
+    expect(params.properties.nested.properties.key.type).toBe("string");
+  });
+
+  test("无关键字命中的 schema 原样透传;无 parameters 工具落空 schema", () => {
+    const clean = { type: "object", properties: { q: { type: "string" } }, required: ["q"] };
+    const declarations = googleFunctionDeclarations([mcpTool(clean), { type: "function", function: { name: "no_args", description: "d" } }]);
+    expect((declarations[0] as any).parameters).toEqual(clean);
+    expect((declarations[1] as any).parameters).toEqual({ type: "object", properties: {} });
   });
 });
 
