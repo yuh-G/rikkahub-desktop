@@ -1,25 +1,30 @@
-// components/settings/drag-reorder.ts — 设置左栏列表的拖拽排序(挤动动画版)。
+// components/settings/drag-reorder.ts — 设置左栏列表的拖拽排序(投影式挤动)。
 //
-// 单一模块级控制器接管所有列表(供应商/助手/搜索/语音/拓展)的拖拽:HTML5 DnD 的拖影不可
-// 定制、拖动过程中其它行纹丝不动(用户要的「经过时被挤开」做不了),故改为指针驱动:
-//   1. 按住拖拽把手(GripVertical)起拖,被拖行随指针 translateY,提层 + 白卡浮起材质;
-//   2. 移动中按指针 Y 做「过半即换位」判定,实时把预览序列重排(DOM 直插);每次换位对
-//      受影响的兄弟行做 **FLIP**:换位前记旧位,重排后把「旧位-新位」写成内联 transform 再清零
-//      ——CSS transition 接管,行平滑滑开/合拢(挤动 = live reorder 的视觉效果本体);
-//   3. 松手提交 onMove(from, to)(调用方都是先乐观更新状态再落库,顺序瞬接,无跳变)。
+// 单一模块级控制器接管所有列表(供应商/助手/搜索/语音/拓展)的拖拽,HTML5 DnD 的拖影
+// 不可定制、拖动过程中其它行纹丝不动(用户要的「经过时被挤开」做不了),故指针驱动。
 //
-// 两个关键不变量(反复踩坑后定稿,勿改):
-//   - **换位判定用等差槽位模型,全程不读 DOM rect**:挤动行的 FLIP/CSS 过渡期间
-//     getBoundingClientRect 处于半途值,拿它做中点判定会在指针附近抖动、连环换位
-//     (步步追移动中的靶子)。列表行高一致、间距一致,槽位 = 首行布局位 + i×步长,
-//     槽位模型在重排/过渡/滚动的任何时刻都稳定(判定用视口坐标,滚动时实时换算锚点)。
-//   - **FLIP 只作用于换位涉及的行**:每次换位只记「被拖行跳过的那段」的旧位。全程记录
-//     全表会与下一次换位的补偿互相踩踏。
+// 架构:拖动全程**不动 DOM 顺序**(只写 transform,布局位不变),与 dnd-kit 的
+// verticalListSortingStrategy 同构——上一版(96f5bd6)拖动中 insertBefore 实时重排,
+// 有两个不治之症:
+//   1. 不跟手:insertBefore 改的是被拖行的**布局位**,每越过一行它就地跳一格,
+//      而内联 translateY 仍按起拖点算,行在指针下抽动一整个步长;
+//   2. 挤动剧烈:FLIP 两拍之间被拖行也在换位,每次跨界都重放全步长位移。
+// 投影式把两个问题一起消掉:DOM 静止、人人只在原布局位上做纯 transform。
+//   - 被拖行:translateY = 指针位移,逐帧贴合(transition: none),材质浮起;
+//   - 兄弟行:按「被拖行投影到哪个槽位」反推各自的目标位移——被拖行从 from 抬起
+//     落到 to 时,夹在两槽之间的行各让一格(±step),写一次 translateY 后交给
+//     CSS transition 缓动,只有跨界那一次增量,位移连续不叠加;
+//   - 松手:一次性把被拖行 insertBefore 到提交槽位、清空所有 transform、提交
+//     onMove。DOM 重排发生在收尾的一瞬(顺序与投影一致),无可见跳变。
+//
+// 槽位判定用等差模型(首行偏移 + i×步长),不读过渡中的行 rect——半途值会在指针
+// 附近抖动造成连环跨界(上一版的核心教训,保留)。
 //
 // 交互细节:
 //   - 阈值 4px 才算拖拽:点一下把手(无移动)什么也不发生;
-//   - 列表在滚动容器里(双栏各自内滚):指针贴近上下缘时自动滚(滚动改锚点,判定不失效);
-//   - prefers-reduced-motion:换位判定照常(顺序反馈仍在),FLIP 行位移瞬时(transition: none)。
+//   - 列表在滚动容器里(双栏各自内滚):指针贴近上下缘时自动滚(槽位锚点按视口
+//     实时换算,滚动不失效);
+//   - prefers-reduced-motion:判定照常(顺序反馈仍在),位移瞬时。
 //
 // 为什么不用 dnd-kit/Reorder(motion):引入新依赖 + 全量改行结构,而我们的行是
 // DropdownMenu 包着的复杂复合体;这里零依赖、不碰行内部结构,表面积最小。
@@ -29,15 +34,15 @@ import * as React from "react";
 type DragSession = {
   /** 被拖行的元素。 */
   dragEl: HTMLElement;
-  /** 列表容器(所有排序行的共同父级)。槽位锚点用它——容器自身从不被 FLIP/指针移动。 */
+  /** 列表容器(所有排序行的共同父级)。槽位锚点用它——容器自身从不动,滚动天然跟随。 */
   list: HTMLElement;
-  /** 当前预览序列里参与排序的行(含被拖行,随换位刷新顺序)。 */
+  /** 参与排序的行(DOM 顺序恒定 = 起拖顺序,全程不 insertBefore)。 */
   rows: HTMLElement[];
-  /** 起拖时被拖行的下标(onMove 的 from)。 */
+  /** 起拖槽位(onMove 的 from)。 */
   from: number;
-  /** 当前预览序列里被拖行的下标(松手即 onMove 的 to)。 */
+  /** 当前投影槽位(松手即 onMove 的 to)。 */
   current: number;
-  /** 起拖 Y,位移 = clientY - startY。 */
+  /** 起拖 Y,被拖行位移 = clientY - startY。 */
   startY: number;
   /** 槽位几何:首行槽位相对列表容器的偏移(恒定),与行步长(行高+间距)。 */
   slotOffset: number;
@@ -70,8 +75,8 @@ function findScroller(element: HTMLElement): HTMLElement | null {
 }
 
 /**
- * 指针 Y 落在哪个槽位(0..count):过某槽位中点即认为该槽让位。
- * 槽位 = 列表容器 top + 首行偏移 + i×步长(等差模型,见文件头不变量说明)。
+ * 指针 Y 落在哪个槽位(0..count):过某槽位中点即认为投影到该槽。
+ * 槽位 = 列表容器 top + 首行偏移 + i×步长(等差模型;DOM 静止,槽位是纯布局事实)。
  */
 function dropSlotAt(s: DragSession, y: number): number {
   const step = s.slotStep;
@@ -84,64 +89,30 @@ function dropSlotAt(s: DragSession, y: number): number {
 }
 
 /**
- * 把被拖行换到 toSlot(可见序列、不含被拖行的下标;dropSlot 语义 = 插到该槽),
- * 并对受影响的兄弟行做 FLIP。受影响的行 = 被拖行跳过的那段(它们是被挤开/收回的行)。
+ * 投影重摆:被拖行落到 to 槽时,其余行各让到哪。全表写一遍(幂等,跨界时只有
+ * 段内行的目标变化):
+ *   to 在 from 之后(下移):第 i 行(i ∈ (from, to]) 让 -step(上移补位);
+ *   to 在 from 之前(上移):第 i 行(i ∈ [to, from)) 让 +step(下移补位);
+ *   其余行位移 0。
  */
-function applyPreview(s: DragSession, dropSlot: number): void {
-  if (dropSlot === s.current) return;
-  const parent = s.dragEl.parentElement;
-  if (!parent) return;
-
-  const visible = s.rows.filter((row) => row !== s.dragEl);
-  const fromSlot = s.current;
-  const toSlot = Math.min(dropSlot, visible.length);
-
-  // FLIP 第一拍:受影响的行记换位前的布局位。布局位不能读 rect(过渡半途值),
-  // 用等差模型反推:该行换位前在 visible 序列里的绝对槽位 × 步长 + 列表锚点
-  // (换位前 dragEl 尚在 fromSlot,可见序列第 i 行的绝对槽位 = i + (i >= fromSlot ? 1 : 0))。
+function projectShifts(s: DragSession, to: number): void {
   const step = s.slotStep;
-  const base = s.list.getBoundingClientRect().top + s.slotOffset;
-  const lo = Math.min(fromSlot, toSlot);
-  const hi = Math.max(fromSlot, toSlot);
-  const affected: Array<{ row: HTMLElement; oldTop: number }> = [];
-  for (let i = lo; i < hi; i++) {
-    affected.push({ row: visible[i], oldTop: base + (i + (i >= fromSlot ? 1 : 0)) * step });
-  }
-
-  // 重排:insertBefore 立即改变布局(布局属性不参与 transition)。
-  const anchor = visible[toSlot] ?? null;
-  if (anchor) parent.insertBefore(s.dragEl, anchor);
-  else parent.appendChild(s.dragEl);
-
-  // FLIP 第二拍:受影响的行已在新布局槽位,补内联 transform 让视觉停在旧槽。
-  // 新绝对槽位同理反推:换位后 dragEl 在 toSlot,可见序列第 i 行 = i + (i >= toSlot ? 1 : 0)。
-  // 同时内联 transition:none 关掉这一拍的过渡(否则「写 delta」本身会被动画,FLIP 失效)。
-  for (let i = 0; i < affected.length; i++) {
-    const visIdx = lo + i;
-    const row = affected[i].row;
-    const oldTop = affected[i].oldTop;
-    const delta = oldTop - (base + (visIdx + (visIdx >= toSlot ? 1 : 0)) * step);
-    if (delta !== 0) {
-      row.style.transition = "none";
-      row.style.transform = `translateY(${delta}px)`;
+  for (let i = 0; i < s.rows.length; i++) {
+    const row = s.rows[i];
+    if (row === s.dragEl) continue;
+    let shift = 0;
+    if (to > s.from) {
+      if (i > s.from && i <= to) shift = -step;
+    } else if (to < s.from) {
+      if (i >= to && i < s.from) shift = step;
     }
+    // 只有目标变了才写(位移相同时不重写 style,避免打断进行中的缓动)。
+    const next = shift === 0 ? "" : `translateY(${shift}px)`;
+    if (row.style.transform !== next) row.style.transform = next;
   }
-  // FLIP 第三拍:强制回流后清零,transition 从旧位滑向新位。
-  void parent.offsetHeight;
-  for (const { row } of affected) {
-    if (row.style.transform !== "") {
-      row.style.transition = "";
-      row.style.transform = "";
-    }
-  }
-
-  // 同步 rows 序列(换位后的可见顺序),供下一次判定与最终提交。
-  visible.splice(toSlot, 0, s.dragEl);
-  s.rows = visible;
-  s.current = toSlot;
 }
 
-/** 自动滚动:指针在滚动容器上下 32px 缘内时持续滚,挤动判定随指针同步刷新。 */
+/** 自动滚动:指针在滚动容器上下 32px 缘内时持续滚,投影随指针同步刷新。 */
 function autoScrollTick(s: DragSession, clientY: number): void {
   const scroller = s.scroller;
   if (scroller) {
@@ -161,13 +132,15 @@ function autoScrollTick(s: DragSession, clientY: number): void {
 }
 
 function dragMove(s: DragSession, clientY: number): void {
-  s.dragEl.style.transform = `translateY(${clientY - s.startY}px)`;
-  const absSlot = dropSlotAt(s, clientY);
-  // absSlot 是全表槽位(含被拖行);applyPreview 用可见序列(不含被拖行)的下标。
-  // 指针越过的槽位若在被拖行之后,可见下标 = 绝对槽位 - 1,反之原样。
-  const dragAbs = s.rows.indexOf(s.dragEl);
-  const visSlot = absSlot > dragAbs ? absSlot - 1 : absSlot;
-  applyPreview(s, visSlot);
+  const pointerShift = clientY - s.startY;
+  // 投影槽 = 被拖行中心落点(不是指针位置):行比指针高,按行中心判定跨界,行的
+  // 视觉覆盖与槽位切换一致,快拖慢拖手感一致。被拖行布局位静止(DOM 顺序不动),
+  // 其 rect.top 是常量,center = 布局位 + 位移合成,每帧稳定。
+  const center = s.rows[s.from].getBoundingClientRect().top + pointerShift + s.slotStep / 2;
+  const to = dropSlotAt(s, center);
+  s.current = to;
+  projectShifts(s, to);
+  s.dragEl.style.transform = `translateY(${pointerShift}px)`;
 }
 
 /**
@@ -208,6 +181,14 @@ export function startRowDrag(event: React.PointerEvent, onCommit: (from: number,
     session = null;
     if (!s) return;
     const toIndex = s.current;
+    // 提交前的收尾:被拖行还在原布局位上浮着,兄弟行也让着位。先按投影把 DOM 摆到
+    // 最终顺序再清 transform——落定画面与松手瞬间的投影一致,无二次动画。
+    if (commit && toIndex !== s.from) {
+      const visible = s.rows.filter((r) => r !== s.dragEl);
+      const anchor = visible[toIndex] ?? null;
+      if (anchor) list.insertBefore(s.dragEl, anchor);
+      else list.appendChild(s.dragEl);
+    }
     s.cleanup();
     if (commit && toIndex !== s.from) onCommit(s.from, toIndex);
   };
@@ -216,7 +197,7 @@ export function startRowDrag(event: React.PointerEvent, onCommit: (from: number,
 
   const begin = (clientY: number) => {
     // 槽位几何:起拖瞬间没有任何过渡,此刻的 rect 是真布局位。首行槽位以列表容器为锚
-    // (容器自身从不被 FLIP/指针移动,滚动时它的视口 top 同步变,锚天然跟随)。
+    // (容器自身从不动,滚动时它的视口 top 同步变,锚天然跟随)。
     const scroller = findScroller(row);
     const firstRect = rows[0].getBoundingClientRect();
     const nextRect = rows[1]?.getBoundingClientRect();
@@ -252,7 +233,6 @@ export function startRowDrag(event: React.PointerEvent, onCommit: (from: number,
       for (const other of rows) {
         other.classList.remove(SHIFTING_CLASS);
         other.style.transform = "";
-        other.style.transition = "";
       }
       document.body.classList.remove("rk-dragging-cursor");
     };

@@ -1825,7 +1825,7 @@
 }
 
 /* ── 设置列表拖拽排序(drag-reorder.ts)────────────────────────────── */
-/* 被拖行:提层 + 浮起材质(白底卡 + 层叠投影),随指针 translateY(JS 内联,瞬时)。
+/* 被拖行:提层 + 浮起材质(白底卡 + 层叠投影 + 微放大),随指针 translateY(JS 内联,瞬时)。
    transition 只对 transform 置 0ms——指针跟随位移要逐帧贴合,有过渡反而拖泥带水;
    底色/投影的出入场仍走 swift。 */
 .rk-drag-row {
@@ -1839,8 +1839,9 @@
   transition: background-color var(--ds-motion-swift), box-shadow var(--ds-motion-swift),
     transform 0ms;
 }
-/* 挤动行(拖拽中的兄弟行):换位时 JS 做 FLIP(内联 translateY 从旧位差清零),
-   transform 过渡接管滑开/合拢;行自身的 hover 底色维持 swift。 */
+/* 挤动行(拖拽中的兄弟行):拖动全程 DOM 顺序不动,行只做纯 transform 投影位移
+   (drag-reorder.ts 的 projectShifts 写内联 translateY),soft 缓动让挤开/收回
+   平滑衔接——跨界只发生一次增量,不再有 FLIP 两拍的跳变。 */
 .rk-drag-shift {
   transition: transform var(--ds-motion-soft), background-color var(--ds-motion-swift);
 }
