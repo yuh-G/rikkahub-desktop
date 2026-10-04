@@ -57,6 +57,7 @@ import {
   SettingsEmpty,
   SettingsField,
   SettingsGroup,
+  SettingsRow,
   SettingsRows,
   SettingsListAddButton,
   SettingsListRow,
@@ -1604,30 +1605,33 @@ export function ProvidersSection({
               </div>
             </SettingsGroup>
 
-            <SettingsGroup
-              title={t("settings:providers.test_title")}
-              action={
-                <Button variant="tertiary" size="compact" onClick={() => void test()} disabled={testing}>
-                  {testing ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
-                  {t("settings:providers.test")}
-                </Button>
-              }
-              fields
-            >
-              <SettingsField label={t("settings:providers.test_model")}>
-                <Select value={effectiveTestModelId} onValueChange={setTestModelId}>
-                  <SelectTrigger className="w-full" aria-label={t("settings:providers.test_model")}>
-                    <SelectValue placeholder={t("settings:providers.test_model_ph")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {mergedTestModels.map((model) => (
-                      <SelectItem key={model.id ?? model.modelId} value={model.modelId}>
-                        {getModelDisplayName(model.displayName, model.modelId)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </SettingsField>
+            <SettingsGroup title={t("settings:providers.test_title")} fields>
+              {/* 先选模型再测:下拉与「测试」同排,顺序即操作顺序。 */}
+              <SettingsRows className="-mt-3">
+                <SettingsRow
+                  label={t("settings:providers.test_model")}
+                  control={
+                    <>
+                      <Select value={effectiveTestModelId} onValueChange={setTestModelId}>
+                        <SelectTrigger className="w-48 max-w-full" aria-label={t("settings:providers.test_model")}>
+                          <SelectValue placeholder={t("settings:providers.test_model_ph")} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {mergedTestModels.map((model) => (
+                            <SelectItem key={model.id ?? model.modelId} value={model.modelId}>
+                              {getModelDisplayName(model.displayName, model.modelId)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button variant="tertiary" size="compact" onClick={() => void test()} disabled={testing}>
+                        {testing ? <Loader2 className="animate-spin" /> : <Database />}
+                        {t("settings:providers.test")}
+                      </Button>
+                    </>
+                  }
+                />
+              </SettingsRows>
               {(testing || testChecks.length > 0 || testInfo) &&
               !isImageTestMode &&
               !imageTestResult ? (

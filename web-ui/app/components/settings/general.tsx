@@ -286,8 +286,7 @@ export function AppearanceSection({ settings }: PageProps) {
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs"
+                size="compact"
                 disabled={(display.uiFontSize ?? null) === null}
                 onClick={() => patchDisplay({ uiFontSize: null })}
               >
