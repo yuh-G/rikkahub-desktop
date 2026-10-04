@@ -9,7 +9,8 @@ import { useTranslation } from "react-i18next";
 
 import { AboutSection, DonateSection } from "~/components/settings/about";
 import { AssistantsSection } from "~/components/settings/assistants";
-import { BackupSection, WebServiceSection } from "~/components/settings/data";
+import { BackupSection } from "~/components/settings/data/backup";
+import { WebServiceSection } from "~/components/settings/data/web-service";
 import { DefaultModelsSection } from "~/components/settings/default-models";
 import { McpSection } from "~/components/settings/extensions/mcp";
 import { PromptInjectionSection } from "~/components/settings/extensions/injection";
