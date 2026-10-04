@@ -89,13 +89,16 @@ describe("拖拽排序投影架构", () => {
     expect(finish).toContain("toIndex !== s.from");
   });
 
-  test("被拖行跟手:位移 = 纯指针位移(clientY - startY),无槽位修正项", () => {
+  test("被拖行跟手:位移 = 纯指针位移(clientY - startY),经 CSS translate 逐帧直写", () => {
     const move = bodyOf(/function dragMove\s*\([^)]*\)/);
     expect(move).toContain("clientY - s.startY");
-    // translateY 模板里只有 pointerShift 一个变量(混入 step/槽位即偏离指针)。
-    const writes = move.match(/translateY\(\$\{[^}]+\}px\)/g) ?? [];
+    // 跟手写法 = CSS `translate` 合成层属性(dnd-kit 同款),与兄弟行 transform 过渡不纠缠;
+    // 写回 `transform: translateY()` 即回退(会和行根 transition 打架)。模板只有 pointerShift 一个变量。
+    expect(move).toContain(".translate =");
+    const writes = move.match(/translate\s*=\s*`0 \$\{[^}]+\}px`/g) ?? [];
     expect(writes.length).toBeGreaterThan(0);
     expect(writes.every((w) => w.includes("pointerShift"))).toBe(true);
+    expect(move).not.toContain("style.transform = `translateY(");
   });
 
   test("兄弟行让位是投影位移(±step),不得回退成 FLIP 两拍写法", () => {
@@ -110,20 +113,31 @@ describe("拖拽排序投影架构", () => {
     const css = readFileSync(join(import.meta.dir, "..", "app.css"), "utf8");
     const shiftRule = /\.rk-drag-shift\s*\{[^}]*\}/.exec(css);
     expect(shiftRule).not.toBeNull();
-    expect(shiftRule![0]).toContain("transform var(--ds-motion-soft)");
+    // 兄弟行让位用 slow+soft 渐变成熟感(弱化「瞬间交换」);回退成无缓动/硬切即变脆。
+    expect(shiftRule![0]).toContain("transform var(--ds-duration-slow) var(--ds-ease-soft)");
     expect(SOURCE).toContain('"rk-drag-row"');
     expect(SOURCE).toContain('"rk-drag-shift"');
   });
 
-  test("被拖行跟手:transform 不进 transition(否则行在指针后面缓动拖尾)", () => {
-    // 「不跟手」根因:行根带 Tailwind 的 `transition` 工具类(transition-property 含 transform,
-    // 默认 ~150ms)。.rk-drag-row 必须把 transform 移出 transition,且特异性要压过工具类
-    // (单类与工具类同级,先后序不定,故用双类)。回退即复现「行追指针」。
+  test("被拖行跟手:drag 规则与 Tailwind transition 同层(utilities),且 transform 不进 transition", () => {
+    // 「不跟手」实测根因(live trace 实锤):行根带 Tailwind 的 `transition` 工具类
+    // (transition-property 含 transform,~150ms),而 Tailwind v4 把它放进 @layer utilities。
+    // drag 规则若在更早的层(components/base),utilities 层靠后必赢、**与特异性无关**——
+    // 双类也压不过层序,transform 仍被缓动,行在指针后面追(lag 随拖动累积、松手再补几百 ms)。
+    // 修法:整组放 @layer utilities 与 `transition` 同层,双类才比特异性胜出、排除 transform。
     const css = readFileSync(join(import.meta.dir, "..", "app.css"), "utf8");
-    const rowRule = /\.rk-drag-row\.rk-drag-row\s*\{[^}]*\}/.exec(css);
-    expect(rowRule, "需要双类特异性压过 Tailwind transition 工具类").not.toBeNull();
+    const utilBlock = /@layer\s+utilities\s*\{/.exec(css);
+    expect(utilBlock, "drag 规则必须在 @layer utilities(与 transition 工具类同层)").not.toBeNull();
+    // 双类规则必须出现在 @layer utilities 之内(层序才压得过)。
+    const after = css.slice(utilBlock!.index);
+    const rowRule = /\.rk-drag-row\.rk-drag-row\s*\{[^}]*\}/.exec(after);
+    expect(rowRule, "utilities 层内需要双类特异性压过 .transition 单类").not.toBeNull();
     expect(rowRule![0]).toContain("transition-property");
-    expect(rowRule![0]).not.toMatch(/transition-property:[^;}]*transform/);
+    // 跟手红线:transform 与 translate 都不得进 transition(逐帧直写被缓动 = 行追指针)。
+    expect(rowRule![0]).not.toMatch(/transition-property:[^;}]*(transform|translate)/);
+    // 观感对齐成熟库(dnd-kit isDragging):被拖行变淡不浮起(opacity,而非 box-shadow 浮起卡)。
+    expect(rowRule![0]).toContain("opacity");
+    expect(rowRule![0]).not.toContain("box-shadow");
   });
 
   test("拖动全程禁止文本选中(蓝底高亮):preventDefault + 会话期 user-select none", () => {

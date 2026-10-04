@@ -1824,46 +1824,6 @@
   pointer-events: none;
 }
 
-/* ── 设置列表拖拽排序(drag-reorder.ts)────────────────────────────── */
-/* 被拖行:提层 + 浮起材质(白底卡 + 层叠投影 + 微放大),随指针 translateY(JS 内联,瞬时)。
-   关键「跟手」坑:行根本身还带着 Tailwind 的 `transition` 工具类,它的 transition-property
-   含 transform(默认 ~150ms 缓动)——不压住,JS 写的每帧 translateY 都被缓动拖尾,行在
-   指针后面追(不跟手)。`transition` 工具类与单类选择器特异性相同,谁生效取决于产物里的
-   先后序,故用双类(.rk-drag-row.rk-drag-row)压过它,并把 transform/duration 一并钉死。
-   will-change 提升到独立合成层,逐帧 transform 不挤主线程重排路径。 */
-.rk-drag-row.rk-drag-row {
-  position: relative;
-  z-index: 10;
-  pointer-events: none; /* 挤动判定按兄弟行的位置算,被拖行自身不再吃指针 */
-  will-change: transform;
-  background-color: var(--ds-surface-100);
-  /* 浮起材质:elevation-300 层叠投影在浅底上偏轻,叠一道 ds-menu 同源的 0.5px 描边环,
-     让卡片轮廓在经过处始终可辨(参考项目浮层的边线做法)。 */
-  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12), var(--ds-elevation-300);
-  transition-property: background-color, box-shadow;
-  transition-duration: var(--ds-duration-fast);
-  transition-timing-function: var(--ds-ease-swift);
-}
-/* 挤动行(拖拽中的兄弟行):拖动全程 DOM 顺序不动,行只做纯 transform 投影位移
-   (drag-reorder.ts 的 projectShifts 写内联 translateY),soft 缓动让挤开/收回
-   平滑衔接——跨界只发生一次增量,不再有 FLIP 两拍的跳变。 */
-.rk-drag-shift {
-  transition: transform var(--ds-motion-soft), background-color var(--ds-motion-swift);
-}
-/* prefers-reduced-motion:换位判定与提交照常(信息仍在),位移瞬时(动效退场)。
-   .rk-drag-row 用双类对齐上面主规则的特异性,确保这里的 transition:none 能压过它。 */
-@media (prefers-reduced-motion: reduce) {
-  .rk-drag-row.rk-drag-row,
-  .rk-drag-shift {
-    transition: none;
-  }
-}
-/* 拖拽期间全局 grabbing 光标(把手 cursor-grab 在 pointer capture 下不跟随指针移动)。 */
-body.rk-dragging-cursor,
-body.rk-dragging-cursor * {
-  cursor: grabbing !important;
-}
-
 /* ── 语音模式(Siri 风)────────────────────────────────────────────── */
 /* 胶囊玻璃材质:在 --ds-pill-bg 之上叠真玻璃模糊,四角细高光,动态岛质感。
    性能加固:@supports 门控——不支持 backdrop-filter 的老 GPU/浏览器退化为半透明
@@ -1937,6 +1897,51 @@ body.rk-dragging-cursor * {
   .vm-wave-bar, .vm-ripple, .vm-breathe { animation: none; }
 }
 
+}
+
+/* ── 设置列表拖拽排序(drag-reorder.ts)────────────────────────────── */
+/* 关键「跟手」坑——根因是**级联层,不是特异性**:行根本身带 Tailwind 的 `transition`
+   工具类(transition-property 含 transform,默认 ~150ms 缓动),而 Tailwind v4 把工具类
+   全放进顶层 `@layer utilities`。本组规则**必须也在顶层**(不能落在 `@layer components`
+   里——那会嵌套成 components>utilities,嵌套层仍排在顶层 utilities 之后、照样输)。
+   与 `transition` 同层后比特异性:双类(.rk-drag-row.rk-drag-row)2-0 压过单类 1-0,
+   transform 才真正移出 transition——否则 JS 写的每帧 translateY 都被缓动,行在指针后面追
+   (实测实锤:lag 随拖动累积到 160px、松手后再补 ~300ms;live trace 见 drag-reorder 记忆)。 */
+@layer utilities {
+  /* 被拖行:随指针逐帧直写 `translate`(独立合成层属性,无过渡纠缠,跟手),视觉上
+     不浮起、只**轻微变淡 + 提前景**——这是成熟列表排序(dnd-kit useSortable:isDragging
+     → opacity 0.8、zIndex 提前)的观感:被拖行「溶」在指针下,换位全靠兄弟行滑开表达,
+     自身不跳。浮起投影反而会放大「瞬移感」,故弃用。transition 只留 opacity/背景,
+     transform/translate 绝不进 transition(跟手红线,见下方层序注释)。 */
+  .rk-drag-row.rk-drag-row {
+    position: relative;
+    z-index: 10;
+    pointer-events: none; /* 挤动判定按兄弟行的位置算,被拖行自身不再吃指针 */
+    opacity: 0.8;
+    transition-property: opacity, background-color;
+    transition-duration: var(--ds-duration-fast);
+    transition-timing-function: var(--ds-ease-swift);
+  }
+  /* 挤动行(拖拽中的兄弟行):拖动全程 DOM 顺序不动,行只做纯 transform 投影位移
+     (drag-reorder.ts 的 projectShifts 写内联 translateY)。slow+soft 缓动让「让位」
+     渐变成熟——跨界只有一次增量,位移连续;用 --ds-duration-slow(350ms)而非 base,
+     滑开更从容,弱化「瞬间交换」的脆感。 */
+  .rk-drag-shift {
+    transition: transform var(--ds-duration-slow) var(--ds-ease-soft), background-color var(--ds-motion-swift);
+  }
+  /* prefers-reduced-motion:换位判定与提交照常(信息仍在),位移瞬时(动效退场)。
+     同层双类对齐上面主规则的特异性,确保这里的 transition:none 能压过它。 */
+  @media (prefers-reduced-motion: reduce) {
+    .rk-drag-row.rk-drag-row,
+    .rk-drag-shift {
+      transition: none;
+    }
+  }
+}
+/* 拖拽期间全局 grabbing 光标(把手 cursor-grab 在 pointer capture 下不跟随指针移动)。 */
+body.rk-dragging-cursor,
+body.rk-dragging-cursor * {
+  cursor: grabbing !important;
 }
 
 /* 设置搜索选中后的定位高亮(settings-search.tsx):行底一抹 on-surface-active 淡出。

@@ -140,7 +140,9 @@ function dragMove(s: DragSession, clientY: number): void {
   const to = dropSlotAt(s, center);
   s.current = to;
   projectShifts(s, to);
-  s.dragEl.style.transform = `translateY(${pointerShift}px)`;
+  // 用 CSS `translate` 而非 `transform: translateY()`:translate 是独立的合成层属性,
+  // 与兄弟行 transform 上的过渡各走各的,逐帧直写无任何缓动纠缠(dnd-kit 同款写法)。
+  s.dragEl.style.translate = `0 ${pointerShift}px`;
 }
 
 /**
@@ -162,14 +164,16 @@ export function startRowDrag(event: React.PointerEvent, onCommit: (from: number,
   const from = rows.indexOf(row);
   if (from === -1) return;
 
-  // 阈值内不动 DOM:先挂监听,越过 4px 才正式起拖(点一下把手 = 普通点击)。
+  // 阈值内不动 DOM:先挂监听,越过 6px 才正式起拖(点一下把手 = 普通点击)。
+  // 6px 对齐成熟库的起拖激活距离(dnd-kit PointerSensor distance 5~8):给「点按」
+  // 留足容错,避免一碰把手就觉得「已经开始换位了」。
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const startY = event.clientY;
   let started = false;
 
   const onMove = (e: PointerEvent) => {
     if (!started) {
-      if (Math.abs(e.clientY - startY) < 4) return;
+      if (Math.abs(e.clientY - startY) < 6) return;
       started = true;
       begin(e.clientY);
     }
@@ -236,7 +240,7 @@ export function startRowDrag(event: React.PointerEvent, onCommit: (from: number,
     s.cleanup = () => {
       cancelAnimationFrame(s.scrollRaf);
       row.classList.remove(DRAGGING_CLASS, "rk-drag-instant");
-      row.style.transform = "";
+      row.style.translate = "";
       for (const other of rows) {
         other.classList.remove(SHIFTING_CLASS);
         other.style.transform = "";

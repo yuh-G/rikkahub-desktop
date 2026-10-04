@@ -63,3 +63,4 @@ pc-server/tsconfig.unused.json
 
 # 参考项目（本地逆向研究用，613MB asar 等大文件，永不入库）
 /Reference-project/
+/.verify-drag/
