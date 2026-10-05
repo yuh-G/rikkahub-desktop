@@ -434,10 +434,12 @@ function McpServerEditor({
                       type="button"
                       size="compact"
                       variant="tertiary"
-                      disabled={reconnectBusy}
-                      onClick={() => void reconnectNow()}
+                      disabled={reconnectBusy || oauthBusy}
+                      // 首次 401 即直达授权流(对齐 APP 4ba5d79f):鉴权过期重连无意义,
+                      // 直接打开浏览器重新授权;普通故障保持立即重连。
+                      onClick={() => void (liveHealth.kind === "auth_expired" ? startOAuth() : reconnectNow())}
                     >
-                      {reconnectBusy ? <Loader2 className="animate-spin" /> : null}
+                      {reconnectBusy || oauthBusy ? <Loader2 className="animate-spin" /> : null}
                       {liveHealth.kind === "auth_expired" ? t("settings:mcp.oauth.reauthorize") : t("settings:mcp.health.reconnect_now")}
                     </Button>
                   ) : undefined

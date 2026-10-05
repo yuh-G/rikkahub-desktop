@@ -90,14 +90,27 @@ export function generatePkce(): { verifier: string; challenge: string } {
   return { verifier, challenge };
 }
 
-/** 规范化 canonical resource URI(RFC 8707 + MCP 规范):小写 scheme/host、去掉 fragment。 */
+/** 规范化 canonical resource URI(RFC 8707 + MCP 规范):小写 scheme/host、去掉 fragment。
+ *  根路径不带尾部斜杠(APP b8e0fec4):URL 构造器会把 https://mcp.mongodb.com 规范化成
+ *  带斜杠形态,而资源服务器声明的 resource 恒为无斜杠——不剥会被判 resource 不匹配。 */
 export function canonicalResource(serverUrl: string): string {
   try {
     const url = new URL(serverUrl);
     url.hash = "";
+    if (url.pathname === "/" && !url.search) return url.toString().replace(/\/$/, "");
     return url.toString();
   } catch {
     return serverUrl;
+  }
+}
+
+/** 服务器 origin(scheme://host[:port]),PRM 缺失时作为授权服务器 issuer 的回退值。 */
+export function serverOriginOf(serverUrl: string): string | null {
+  try {
+    const url = new URL(serverUrl);
+    return url.origin;
+  } catch {
+    return null;
   }
 }
 
@@ -337,14 +350,19 @@ export async function startMcpOAuth(serverId: string, redirectUri: string): Prom
   const serverName = String(common.name ?? "MCP Server");
   const existing = oauthStateOf(server);
 
-  const protectedResource = await discoverProtectedResource(serverUrl);
-  const issuer = protectedResource.authorization_servers?.[0];
-  if (!issuer) throw new Error("受保护资源未声明授权服务器");
+  // PRM 缺失回退(APP 4ba5d79f):部分服务器(如 Zomato)不提供 RFC 9728 元数据,按旧版
+  // 规范退回服务器 origin 作为授权服务器 issuer。元数据拿到了但没声明授权服务器,同样回退。
+  const protectedResource = await discoverProtectedResource(serverUrl).catch((err: unknown) => {
+    console.info("[mcp-oauth] 受保护资源元数据发现失败,回退服务器 origin:", err instanceof Error ? err.message : err);
+    return null;
+  });
+  const issuer = protectedResource?.authorization_servers?.[0] ?? serverOriginOf(serverUrl);
+  if (!issuer) throw new Error("无法确定授权服务器");
   const metadata = await discoverAuthorizationServer(issuer);
   const authorizationEndpoint = metadata.authorization_endpoint!;
   const tokenEndpoint = metadata.token_endpoint!;
   const scope = existing?.scope
-    ?? protectedResource.scopes_supported?.join(" ")
+    ?? protectedResource?.scopes_supported?.join(" ")
     ?? metadata.scopes_supported?.join(" ")
     ?? null;
 

@@ -7,7 +7,7 @@
 // 且授权与换码必须逐字沿用注册时的那个回调。
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 
-import { completeMcpOAuth, isSameLoopbackCallback, oauthStateOf, redirectUriDriftAction, startMcpOAuth } from "./mcp-oauth";
+import { canonicalResource, completeMcpOAuth, isSameLoopbackCallback, oauthStateOf, redirectUriDriftAction, startMcpOAuth } from "./mcp-oauth";
 import { handleSettingsRoutes } from "../api/handlers/settings";
 import { flushSaveState, setState, state } from "../persistence/json-store";
 import type { JsonValue, State } from "../foundation/types";
@@ -86,6 +86,9 @@ beforeAll(() => {
       if (pathname === "/mcp") {
         return new Response("", { status: 401, headers: { "WWW-Authenticate": `Bearer resource_metadata="${base}/prm"` } });
       }
+      // 无 PRM 服务器(APP 4ba5d79f 互操作场景):不回 401、well-known 全 404——
+      // 发现链必须回退到服务器 origin 当 issuer。
+      if (pathname === "/plain-mcp") return new Response("ok");
       if (pathname === "/prm") return Response.json({ resource: `${base}/mcp`, authorization_servers: [base] });
       if (pathname === "/.well-known/oauth-authorization-server") {
         return Response.json({
@@ -159,6 +162,45 @@ describe("startMcpOAuth 回调地址(全链路)", () => {
     await completeMcpOAuth({ code: "code-2", state: auth.searchParams.get("state") });
     expect(tokenForms[0]!.get("redirect_uri")).toBe(current);
     expect(storedOauth()).toMatchObject({ clientId: "c-new", redirectUri: current });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 互操作增强(APP b8e0fec4/4ba5d79f):canonicalResource 根路径去尾斜杠 + PRM 缺失
+// 回退服务器 origin 当授权服务器。
+// ---------------------------------------------------------------------------
+describe("canonicalResource(根路径无尾斜杠)", () => {
+  test("根路径剥掉尾部斜杠,非根路径保持", () => {
+    expect(canonicalResource("https://mcp.mongodb.com/")).toBe("https://mcp.mongodb.com");
+    expect(canonicalResource("https://mcp.mongodb.com")).toBe("https://mcp.mongodb.com");
+    expect(canonicalResource("https://example.com/mcp/")).toBe("https://example.com/mcp/");
+    expect(canonicalResource("https://example.com/mcp#frag")).toBe("https://example.com/mcp");
+  });
+  test("带查询的根路径不剥(查询与路径语义绑定)", () => {
+    expect(canonicalResource("https://example.com/?a=1")).toBe("https://example.com/?a=1");
+  });
+  test("非法 URL 原样返回", () => {
+    expect(canonicalResource("not a url")).toBe("not a url");
+  });
+});
+
+describe("PRM 缺失回退服务器 origin", () => {
+  test("无 RFC 9728 元数据的服务器:以 origin 为 issuer 完成发现与授权", async () => {
+    setState({
+      settings: { mcpServers: [{ id: "s2", url: `${base}/plain-mcp`, commonOptions: { name: "Plain" } }] },
+    } as unknown as State);
+    const { authorizationUrl } = await startMcpOAuth("s2", "http://localhost:8080/api/mcp/oauth/callback");
+    const auth = new URL(authorizationUrl);
+    // issuer=origin → well-known 在同源命中,授权端点来自该元数据。
+    expect(auth.searchParams.get("redirect_uri")).toBe("http://localhost:8080/api/mcp/oauth/callback");
+    expect(registrations).toHaveLength(1);
+    expect(auth.searchParams.get("resource")).toBe(`${base}/plain-mcp`);
+  });
+
+  test("元数据在场时不走回退(声明 authorization_servers 优先)", async () => {
+    withServer({});
+    const { authorizationUrl } = await startMcpOAuth("s1", "http://localhost:8080/api/mcp/oauth/callback");
+    expect(new URL(authorizationUrl).searchParams.get("resource")).toBe(`${base}/mcp`);
   });
 });
 
