@@ -9,6 +9,7 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { globalAgentsPath } from "../foundation/paths";
+import { reportError } from "../observability/app-errors";
 
 /** 候选名清单(pi resource-loader.loadContextFileFromDir 同序,AGENTS.override.md
  *  除外——那是 pi 的手动遮蔽机制,不是用户编辑入口的读写对象)。 */
@@ -57,12 +58,28 @@ function findGlobalContextFileIn(baseDir: string): string | null {
 export function readGlobalAgentsFileIn(baseDir: string): GlobalAgentsFile {
   const found = findGlobalContextFileIn(baseDir);
   if (!found) return { fileName: "AGENTS.md", exists: false, content: "", template: GLOBAL_AGENTS_TEMPLATE };
-  return {
-    fileName: found,
-    exists: true,
-    content: readFileSync(join(baseDir, found), "utf8"),
-    template: GLOBAL_AGENTS_TEMPLATE,
-  };
+  try {
+    return {
+      fileName: found,
+      exists: true,
+      content: readFileSync(join(baseDir, found), "utf8"),
+      template: GLOBAL_AGENTS_TEMPLATE,
+    };
+  } catch (err) {
+    // 候选存在但读不出(Windows 反病毒在用户刚保存后扫描写关闭文件的 EBUSY/EPERM,与
+    // state.json 读失败三分类同类)。本函数在每轮工作区生成装配时被调,把异常上抛会让
+    // 每一轮生成都打成错误横幅——按"文件不存在"降级(该轮不注入全局层,锁释放后下轮
+    // 自愈),对齐 APP 2689e753 的静默跳过语义,但按 P2-1 纪律留错误中心记录。
+    reportError(
+      "workspace",
+      "warn",
+      "全局工作区指引读取失败，本轮工作区会话不注入（下轮自动重试）",
+      err,
+      "global_agents_read_failed",
+      { path: join(baseDir, found) },
+    );
+    return { fileName: found, exists: false, content: "", template: GLOBAL_AGENTS_TEMPLATE };
+  }
 }
 
 export function writeGlobalAgentsFileIn(baseDir: string, content: string): GlobalAgentsFile {
