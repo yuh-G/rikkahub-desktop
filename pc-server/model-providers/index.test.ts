@@ -2,6 +2,7 @@
 import { describe, expect, it } from "bun:test";
 
 import {
+  OAUTH_PROVIDER_IDS,
   SUNSET_PROVIDER_IDS,
   applyModelRequestHeaders,
   applyRequestHeaders,
@@ -9,6 +10,7 @@ import {
   defaultProviders,
   inferInputModalities,
   inferModelAbilities,
+  placeOAuthProvidersAfterAnchors,
 } from "./index";
 
 describe("inferModelAbilities", () => {
@@ -244,8 +246,26 @@ describe("订阅预置行(§6.1 贴同家 API)+ flow 元数据", () => {
     // flow 元数据是前端过滤与闸门的单源:anthropic 关对话,其余订阅均可对话。
     const { OAUTH_FLOWS } = require("./auth/flows");
     expect(OAUTH_FLOWS.anthropic.chatCapable).toBe(false);
-    for (const flowId of ["openai-codex", "kimi-coding", "github-copilot", "xai"]) {
+    for (const flowId of ["openai-codex", "openai-chatgpt", "kimi-coding", "github-copilot", "xai"]) {
       expect(OAUTH_FLOWS[flowId].chatCapable ?? true).toBe(true);
     }
+  });
+
+  it("OpenAI 两轨订阅链式锚定:ChatGPT(新版)贴 OpenAI,Codex 贴 ChatGPT(新版)——归位幂等不震荡", () => {
+    // 锚点表是链式(Codex 锚的不是 OpenAI 而是 ChatGPT 新行):若两行都直接锚 OpenAI,
+    // placeOAuthProvidersAfterAnchors 的邻位短路会互相争位。这里锁出厂序 + 乱序重排后的收敛序。
+    const providers = defaultProviders();
+    const openai = providers.findIndex((p) => p.id === "1eeea727-9ee5-4cae-93e6-6fb01a4d051e");
+    expect(providers[openai + 1]?.id).toBe(OAUTH_PROVIDER_IDS["openai-chatgpt"]);
+    expect(providers[openai + 2]?.id).toBe(OAUTH_PROVIDER_IDS["openai-codex"]);
+    // 乱序输入(两行都被挪远)→ 归位后恢复链式序(幂等:再跑一次结果不变)。
+    const shuffled = [providers[openai + 2]!, providers[0]!, providers[openai + 1]!, ...providers.filter((_, i) => ![openai, openai + 1, openai + 2].includes(i))];
+    const once = placeOAuthProvidersAfterAnchors(shuffled);
+    const twice = placeOAuthProvidersAfterAnchors(once);
+    const idxOf = (list: typeof providers) => list.map((p) => p.id);
+    expect(idxOf(twice)).toEqual(idxOf(once));
+    const ids = idxOf(once);
+    expect(ids.indexOf(OAUTH_PROVIDER_IDS["openai-chatgpt"])).toBe(ids.indexOf("1eeea727-9ee5-4cae-93e6-6fb01a4d051e") + 1);
+    expect(ids.indexOf(OAUTH_PROVIDER_IDS["openai-codex"])).toBe(ids.indexOf(OAUTH_PROVIDER_IDS["openai-chatgpt"]) + 1);
   });
 });

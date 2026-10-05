@@ -6,8 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { applyShaping, OAUTH_PROVIDER_SHAPING, shapingFor } from "./shaping";
 
 describe("OAUTH_PROVIDER_SHAPING 声明表", () => {
-  test("五个 flow 均登记,autoEnable 全开(登录成功即启用)", () => {
-    for (const flowId of ["openai-codex", "kimi-coding", "github-copilot", "xai", "anthropic"]) {
+  test("六个 flow 均登记,autoEnable 全开(登录成功即启用)", () => {
+    for (const flowId of ["openai-codex", "openai-chatgpt", "kimi-coding", "github-copilot", "xai", "anthropic"]) {
       expect(OAUTH_PROVIDER_SHAPING[flowId]?.autoEnable).toBe(true);
     }
   });
@@ -27,9 +27,20 @@ describe("OAUTH_PROVIDER_SHAPING 声明表", () => {
 
   test("streamingOnly:仅 Codex 声明(端点只收 SSE),其余 flow 非流式可用", () => {
     expect(OAUTH_PROVIDER_SHAPING["openai-codex"]?.streamingOnly).toBe(true);
-    for (const flowId of ["kimi-coding", "github-copilot", "xai", "anthropic"]) {
+    for (const flowId of ["openai-chatgpt", "kimi-coding", "github-copilot", "xai", "anthropic"]) {
       expect(OAUTH_PROVIDER_SHAPING[flowId]?.streamingOnly ?? false).toBe(false);
     }
+  });
+
+  test("openai-chatgpt(Sign in with ChatGPT):字段白名单与 pi isChatGPTSignIn 分支逐项对齐,无实验通道头", () => {
+    // pi openai-responses.ts 对该登录拒收 max_output_tokens/temperature/prompt_cache_retention/
+    // prompt_cache_options(buildParams 的 omitUnsupportedFields 分支);宿主聊天引擎经
+    // dropBodyFields 同步剔除。pi 升级改这个白名单时,这里就是核对项(去读
+    // isChatGPTSignIn/omitUnsupportedFields 的消费点,逐字段比对)。
+    const s = OAUTH_PROVIDER_SHAPING["openai-chatgpt"];
+    expect(s.dropBodyFields).toEqual(["max_output_tokens", "temperature", "prompt_cache_retention", "prompt_cache_options"]);
+    // 标准 api.openai.com 端点:无 OpenAI-Beta/originator 实验头(Codex 专属)。
+    expect(s.ensureHeaders).toBeUndefined();
   });
 
   test("Copilot 静态身份头逐字锁定(pi auth/oauth/github-copilot.ts 私有常量的当刻取值;pi 升级须核对)", () => {

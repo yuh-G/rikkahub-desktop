@@ -39,7 +39,7 @@ import {
  *
  *  - registered(apiKey 供应商):宿主 provider UUID 直接作 pi providerId(与 pi 内建 id 永不
  *    冲突),经 registerProvider 把宿主配置译成 pi 的 ProviderConfigInput,注册面完全由我们权威。
- *  - builtin(订阅供应商):pi 侧身份 = flow.piProviderId(openai-codex / kimi-coding …)。凭证不
+ *  - builtin(订阅供应商):pi 侧身份 = flow.piProviderId(openai-codex / openai / kimi-coding …)。凭证不
  *    是 apiKey 而是 15 分钟级会过期的 OAuth access,必须由 pi 的 getAuth 每请求经我们的
  *    CredentialStore 锁内刷新;Codex 还有专用 api(openai-codex-responses,/codex 路径 +
  *    account-id 头 + 加密推理回传)——这些 pi 内建 provider 原生具备,重新 registerProvider

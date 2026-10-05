@@ -163,8 +163,12 @@ export const OAUTH_PROVIDER_IDS: Record<string, string> = Object.fromEntries(
 // 订阅供应商「贴同家 API」的锚点(用户拍板 2026-09-25;2026-09-26 追加 Copilot→Vercel):
 // 补插/归位时移到锚点之后。锚点 = 同家 API 预置的 id;锚点被用户删除/墓碑时归位跳过
 // (保持补插的尾部默认位)。Copilot 无同家 API 预置,用户指定贴在 Vercel 之后。
+// OpenAI 两行订阅是链式锚定(新版 ChatGPT→OpenAI、Codex→新版 ChatGPT):若两行都直接
+// 锚 OpenAI,归位会互相争同一邻位(后处理的把先处理的挤走),链式保证稳定收敛为
+// OpenAI, ChatGPT(新), ChatGPT(Codex) 的固定序列,幂等不震荡。
 export const OAUTH_PROVIDER_ANCHOR_AFTER: Record<string, string> = {
-  [OAUTH_PROVIDER_IDS["openai-codex"]]: "1eeea727-9ee5-4cae-93e6-6fb01a4d051e", // → OpenAI
+  [OAUTH_PROVIDER_IDS["openai-chatgpt"]]: "1eeea727-9ee5-4cae-93e6-6fb01a4d051e", // → OpenAI
+  [OAUTH_PROVIDER_IDS["openai-codex"]]: OAUTH_PROVIDER_IDS["openai-chatgpt"], // → ChatGPT(新版,链式)
   [OAUTH_PROVIDER_IDS["kimi-coding"]]: "d6c4d8c6-3f62-4ca9-a6f3-7ade6b15ecc3", // → 月之暗面
   [OAUTH_PROVIDER_IDS["xai"]]: "ff3cde7e-0f65-43d7-8fb2-6475c99f5990", // → xAI(P2)
   [OAUTH_PROVIDER_IDS["anthropic"]]: "b2c7e1a4-9f3d-4a6e-8c1b-5d7f9e2a3b14", // → Anthropic(P3)
@@ -237,10 +241,20 @@ export function defaultProviders(): Provider[] {
     // 订阅制供应商(authMode:"oauth"),紧跟同家 API 预置(用户拍板 2026-09-25:各家贴近各家)。
     // 出厂 enabled:false、apiKey:""、模型目录随包(catalog.ts 登录时铺入)。凭证只在登录后落 oauth 字段。
     provider({
-      id: OAUTH_PROVIDER_IDS["openai-codex"],
+      id: OAUTH_PROVIDER_IDS["openai-chatgpt"],
       name: "ChatGPT",
+      baseUrl: "https://api.openai.com/v1",
+      shortDescription: "使用 ChatGPT 订阅登录(Sign in with ChatGPT),无需 API Key",
+      authMode: "oauth",
+      useResponseApi: true,
+    }),
+    // 旧版 Codex 订阅轨(pi 上游已标 legacy;上游下线前保留,已登录用户不受影响)。
+    // 目录与请求通道与新版不同(实验通道头+加密 reasoning 回传),不共用预置行。
+    provider({
+      id: OAUTH_PROVIDER_IDS["openai-codex"],
+      name: "ChatGPT (Codex)",
       baseUrl: "https://chatgpt.com/backend-api/codex",
-      shortDescription: "使用 ChatGPT Plus/Pro 订阅登录,无需 API Key",
+      shortDescription: "使用 ChatGPT Plus/Pro 订阅登录(旧版通道),无需 API Key",
       authMode: "oauth",
       useResponseApi: true,
     }),

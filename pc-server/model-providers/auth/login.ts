@@ -13,7 +13,7 @@ import type { OAuthFlowId, Provider } from "../../foundation/types";
 import { reportError } from "../../observability/app-errors";
 import { state } from "../../persistence/json-store";
 import { bundledModelsFor } from "./catalog";
-import { OAUTH_FLOWS, loadOAuthFlow, oauthFlowFor } from "./flows";
+import { OAUTH_FLOWS, loadOAuthFlow, oauthFlowFor, oauthDeviceId } from "./flows";
 import { shapingFor } from "./shaping";
 
 export type LoginPhase =
@@ -293,7 +293,10 @@ async function runLogin(
 ): Promise<LoginOutcome> {
   const { controller } = attempt;
   try {
-    const credential = await oauth.login(makeInteraction(providerId, flowId, attempt));
+    // Sign in with ChatGPT 等需要稳定安装标识的 flow 在这里注入 getDeviceId
+    // (pi LoginOptions 契约:登录方按需调用,须每次返回同值;实现见 flows.ts oauthDeviceId)。
+    const loginOptions = OAUTH_FLOWS[flowId].requiresDeviceId ? { getDeviceId: oauthDeviceId } : undefined;
+    const credential = await oauth.login(makeInteraction(providerId, flowId, attempt), loginOptions);
     if (controller.signal.aborted) return { ok: false, error: "cancelled" };
     const ok = commitLogin(providerId, flowId, credential);
     if (!ok) {

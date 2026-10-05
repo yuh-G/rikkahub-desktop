@@ -11,7 +11,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { activeLoginEvents, cancelLogin, currentLoginEvent, initProviderAuthBroadcast, loginInProgress, logoutProvider, resumePrompt, startLogin, type ProviderAuthEvent } from "./login";
-import { clearOAuthFlowOverride, overrideOAuthFlow } from "./flows";
+import { clearOAuthFlowOverride, invalidateOauthDeviceIdCache, oauthDeviceId, overrideOAuthFlow } from "./flows";
 import { setState, state } from "../../persistence/json-store";
 import { defaultSettings } from "../../app-config/defaults";
 import type { Provider } from "../../foundation/types";
@@ -424,5 +424,67 @@ describe("login orchestration", () => {
     const provider = state.settings.providers.find((p) => p.id === ANTHROPIC_PROVIDER_ID);
     expect(provider?.oauth?.flow).toBe("anthropic");
     expect(provider?.oauth?.credential?.access).toBe("code-abc#state-xyz");
+  });
+
+  test("openai-chatgpt(Sign in with ChatGPT):getDeviceId 透传且稳定,登录落 oauth+捆绑目录", async () => {
+    // 新版 ChatGPT 订阅轨(取代 legacy Codex 登录的 pi 官方方向)。两条硬保证:
+    // 1) requiresDeviceId 的 flow 登录时收到 LoginOptions.getDeviceId 且两次调用同值
+    //    (OpenAI 按它做设备指纹,临时随机=每次新设备);
+    // 2) 预置 UUID 反查命中 openai-chatgpt flow,登录后捆绑目录来自 pi "openai" 内建
+    //    目录(44 个 chat 模型,含 gpt-6 系)。
+    const CHATGPT_PROVIDER_ID = "7ff4695a-4eec-4e91-8c6a-c5b1e1c349a8";
+    const chatgptRow: Provider = {
+      id: CHATGPT_PROVIDER_ID,
+      type: "openai",
+      enabled: false,
+      name: "ChatGPT",
+      builtIn: true,
+      shortDescription: "",
+      description: "",
+      apiKey: "",
+      authMode: "oauth",
+      baseUrl: "https://api.openai.com/v1",
+      useResponseApi: true,
+      models: [],
+      balanceOption: { enabled: false, apiPath: "", resultPath: "" },
+    } as Provider;
+    setState({ settings: { ...state.settings, providers: [...state.settings.providers.filter((p) => p.id !== CHATGPT_PROVIDER_ID), chatgptRow] } } as any);
+    invalidateOauthDeviceIdCache();
+    const deviceIds: string[] = [];
+    overrideOAuthFlow("openai-chatgpt", {
+      name: "ChatGPT",
+      login: async (interaction, options) => {
+        // 复刻 pi 1.0.3 openai-chatgpt.ts 的形态:notify(auth_url) → prompt(manual_code)。
+        // 缺 getDeviceId 时 pi 会直接抛"requires a device ID"——这里显式断言拿到且稳定。
+        if (typeof options?.getDeviceId !== "function") throw new Error("test expects getDeviceId");
+        deviceIds.push(options.getDeviceId());
+        deviceIds.push(options.getDeviceId());
+        interaction.notify({ type: "auth_url", url: "https://auth.openai.com/api/accounts/authorize?...", instructions: "" });
+        const pasted = await interaction.prompt({ type: "manual_code", message: "paste redirect URL", placeholder: "http://127.0.0.1:1455/auth/callback" });
+        return { type: "oauth", access: pasted, refresh: "r", expires: 9999999999000 };
+      },
+      refresh: async () => { throw new Error("not in test"); },
+      toAuth: async (cred) => ({ apiKey: cred.access }),
+    });
+    try {
+      const result = await startLogin(CHATGPT_PROVIDER_ID);
+      if (!result.ok) throw new Error(result.error);
+      expect(resumePrompt(CHATGPT_PROVIDER_ID, "http://127.0.0.1:1455/auth/callback?code=c&client_id=ci")).toBe(true);
+      expect((await result.completion).ok).toBe(true);
+      // 同一流程内两次取值同源稳定;与 oauthDeviceId() 直读也一致(进程内单缓存)。
+      expect(deviceIds[0]).toBe(deviceIds[1]);
+      expect(deviceIds[0]).toBe(oauthDeviceId());
+      expect(deviceIds[0]).toMatch(/^[0-9a-f-]{36}$/);
+      const provider = state.settings.providers.find((p) => p.id === CHATGPT_PROVIDER_ID);
+      expect(provider?.oauth?.flow).toBe("openai-chatgpt");
+      // 捆绑目录来自 pi 内建 "openai"(getBuiltinModels 静态目录),非空且含现代 GPT。
+      expect((provider?.models ?? []).length).toBeGreaterThan(10);
+      expect(provider?.models.some((m) => m.modelId.startsWith("gpt-6"))).toBe(true);
+      // 该 flow chatCapable(缺省 true):聊天+工作区双可用,选择器不滤。
+      expect(provider?.enabled).toBe(true);
+    } finally {
+      clearOAuthFlowOverride("openai-chatgpt");
+      invalidateOauthDeviceIdCache();
+    }
   });
 });

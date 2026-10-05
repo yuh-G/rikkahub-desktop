@@ -121,6 +121,7 @@ describe("2.0.0-preview-v4 预置供应商重排迁移", () => {
     expect(state.settings.providers.map((p) => p.name)).toEqual([
       "OpenAI",
       "ChatGPT",
+      "ChatGPT (Codex)",
       "Anthropic",
       "Claude",
       "Gemini",

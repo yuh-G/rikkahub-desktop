@@ -3,11 +3,14 @@
 // 这里的声明式元数据。新增订阅供应商 = 在 OAUTH_FLOWS 登记一行 + shaping/catalog 补声明。
 
 import type { OAuthCredential } from "../../../pi/packages/ai/src/auth/types.ts";
+import type { LoginOptions } from "../../../pi/packages/ai/src/auth/types.ts";
 import type { OAuthFlowId, Provider } from "../../foundation/types";
+import { readFileSync, writeFileSync } from "node:fs";
+import { oauthDeviceIdPath } from "../../foundation/paths";
 
 export type PiOAuthAuth = {
   name: string;
-  login(interaction: any): Promise<OAuthCredential>;
+  login(interaction: any, options?: LoginOptions): Promise<OAuthCredential>;
   refresh(credential: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential>;
   toAuth(credential: OAuthCredential): Promise<{ apiKey?: string; headers?: Record<string, string>; baseUrl?: string }>;
 };
@@ -15,7 +18,7 @@ export type PiOAuthAuth = {
 export interface OAuthFlowMeta {
   id: OAuthFlowId;
   /** pi-ai load.ts 中对应的 loader 函数名。 */
-  loader: "loadOpenAICodexOAuth" | "loadKimiCodingOAuth" | "loadGitHubCopilotOAuth" | "loadXaiOAuth" | "loadAnthropicOAuth";
+  loader: "loadOpenAICodexOAuth" | "loadOpenAIChatGPTOAuth" | "loadKimiCodingOAuth" | "loadGitHubCopilotOAuth" | "loadXaiOAuth" | "loadAnthropicOAuth";
   /** 登录方式:null = 直接走流程(如 Kimi 仅设备码);数组 = 先经 select 提示让用户选。 */
   loginMethods: ReadonlyArray<{ id: string; labelKey: string }> | null;
   /** pi-ai 内置 provider id(resolveProviderAuth / 内置模型目录 / pi 引擎模型身份用)。 */
@@ -36,6 +39,9 @@ export interface OAuthFlowMeta {
    *  openai-codex 设备码/github-copilot 的则是需手抄验证码的裸地址。true 时登录事件下发
    *  autoOpenUrl,前端视同浏览器登录自动拉起;裸地址流自动打开只会把用户带到手抄输入页。 */
   deviceCodeAutoOpen?: boolean;
+  /** 该 flow 的 pi login 需要 LoginOptions.getDeviceId(稳定安装标识,见 oauthDeviceId 头注)。
+   *  目前仅 openai-chatgpt(Sign in with ChatGPT 的 agent host id);缺失时 pi 直接抛错。 */
+  requiresDeviceId?: boolean;
 }
 
 export const OAUTH_FLOWS: Record<OAuthFlowId, OAuthFlowMeta> = {
@@ -48,6 +54,18 @@ export const OAUTH_FLOWS: Record<OAuthFlowId, OAuthFlowMeta> = {
     ],
     piProviderId: "openai-codex",
     presetProviderId: "98d0557b-0700-41e5-b1d6-ee875a53ae5a", // ChatGPT(Codex 订阅)
+  },
+  "openai-chatgpt": {
+    id: "openai-chatgpt",
+    loader: "loadOpenAIChatGPTOAuth",
+    // Sign in with ChatGPT(pi 0.99 起,取代 legacy Codex 登录的新 OpenAI 订阅轨):标准
+    // api.openai.com/v1/responses 端点,无实验通道头,聊天+工作区双可用。单流浏览器授权,
+    // 回调 127.0.0.1:1455,被占时手贴重定向 URL(宿主 manual-code 通道原生兼容)。
+    loginMethods: null,
+    piProviderId: "openai",
+    presetProviderId: "7ff4695a-4eec-4e91-8c6a-c5b1e1c349a8", // ChatGPT(新版订阅登录)
+    // OpenAI 要求登录方携带稳定安装标识(urn:uuid:<uuid>)——见 oauthDeviceId() 头注。
+    requiresDeviceId: true,
   },
   "kimi-coding": {
     id: "kimi-coding",
@@ -117,6 +135,7 @@ export function clearOAuthFlowOverride(flowId: OAuthFlowId): void {
 // pi 的 load.ts 已预留 registerBundledOAuthFlowLoaders 接口给 standalone 二进制使用。
 import {
   loadOpenAICodexOAuth,
+  loadOpenAIChatGPTOAuth,
   loadKimiCodingOAuth,
   loadGitHubCopilotOAuth,
   loadXaiOAuth,
@@ -124,6 +143,7 @@ import {
   registerBundledOAuthFlowLoaders,
 } from "../../../pi/packages/ai/src/auth/oauth/load.ts";
 import { openaiCodexOAuth } from "../../../pi/packages/ai/src/auth/oauth/openai-codex.ts";
+import { openaiChatGPTOAuth } from "../../../pi/packages/ai/src/auth/oauth/openai-chatgpt.ts";
 import { kimiCodingOAuth } from "../../../pi/packages/ai/src/auth/oauth/kimi-coding.ts";
 import { githubCopilotOAuth } from "../../../pi/packages/ai/src/auth/oauth/github-copilot.ts";
 import { xaiOAuth } from "../../../pi/packages/ai/src/auth/oauth/xai.ts";
@@ -133,6 +153,7 @@ import { anthropicOAuth } from "../../../pi/packages/ai/src/auth/oauth/anthropic
 if (Bun.isStandaloneExecutable) {
   registerBundledOAuthFlowLoaders({
     openaiCodex: () => openaiCodexOAuth,
+    openaiChatGPT: () => openaiChatGPTOAuth,
     kimiCoding: () => kimiCodingOAuth,
     githubCopilot: () => githubCopilotOAuth,
     xai: () => xaiOAuth,
@@ -143,11 +164,8 @@ if (Bun.isStandaloneExecutable) {
     radius: () => {
       throw new Error("Radius OAuth not implemented in this build");
     },
-    // pi 1.0.3 新增的两个 OAuth flow:宿主未预置供应商,也不会有宿主行走到这两个键,
+    // pi 1.0.3 新增的 meta OAuth flow:宿主未预置供应商,也不会有宿主行走到这个键,
     // 声明为显式抛错——若真被调到,错误信息比静默 undefined 更可诊断。
-    openaiChatGPT: () => {
-      throw new Error("OpenAI ChatGPT OAuth not implemented in this build");
-    },
     meta: () => {
       throw new Error("Meta OAuth not implemented in this build");
     },
@@ -156,11 +174,50 @@ if (Bun.isStandaloneExecutable) {
 
 const loaderRegistry = {
   loadOpenAICodexOAuth,
+  loadOpenAIChatGPTOAuth,
   loadKimiCodingOAuth,
   loadGitHubCopilotOAuth,
   loadXaiOAuth,
   loadAnthropicOAuth,
 } as const;
+
+/** OAuth 登录方的稳定安装标识,LoginOptions.getDeviceId 的宿主实现(声明
+ *  requiresDeviceId 的 flow 由 login.ts 接线注入)。
+ *  Sign in with ChatGPT 要求每个安装带稳定的 agent host id(urn:uuid:<uuid>):OpenAI
+ *  按它做设备指纹与限额,临时随机值会让每次登录被当作新设备(可能触发风控/重复授权)。
+ *  首次登录时生成、落 pc-data/oauth-device-id.txt、此后恒返同值。刻意**不复用** analytics
+ *  的 device-id.txt:那是匿名 DAU 统计标识,与本服务的 OAuth 设备身份是两个信任域——
+ *  合并等于把统计端点与 OpenAI 风控数据串联成同一指纹,分开则互不可关联。写失败(只读
+ *  目录等)不阻断登录:本次进程内仍稳定(模块级缓存),下次登录会再试落盘。 */
+let cachedOauthDeviceId: string | null = null;
+export function oauthDeviceId(): string {
+  if (cachedOauthDeviceId) return cachedOauthDeviceId;
+  let stored = "";
+  try {
+    stored = readFileSync(oauthDeviceIdPath, "utf-8").trim();
+  } catch {
+    // 首次登录:文件不存在,走下方生成。
+  }
+  if (UUID_RE.test(stored)) {
+    cachedOauthDeviceId = stored;
+    return stored;
+  }
+  const generated = crypto.randomUUID();
+  try {
+    writeFileSync(oauthDeviceIdPath, generated);
+  } catch {
+    // 落盘尽力而为:内存缓存保证本次进程内稳定,登录仍可完成。
+  }
+  cachedOauthDeviceId = generated;
+  return generated;
+}
+
+/** 测试注入点:清掉进程内缓存并复位文件读取(验证"落盘后恒返同值")。生产代码不调。 */
+export function invalidateOauthDeviceIdCache(): void {
+  cachedOauthDeviceId = null;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** 懒加载 flow 的 pi-ai OAuthAuth 实现(首次调用时执行 loader,结果缓存)。 */
 export function loadOAuthFlow(flowId: OAuthFlowId): Promise<PiOAuthAuth> {

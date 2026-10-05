@@ -54,6 +54,10 @@ export const pendingMemoryPath = join(memoryDir, "pending_memory.json");
 
 export const deviceIdPath = join(dataDir, "device-id.txt");
 
+// OAuth 登录方(如 Sign in with ChatGPT)的稳定安装标识。与 analytics 的 device-id.txt
+// 刻意分开(两个信任域不共用指纹,见 auth/flows.ts oauthDeviceId 头注)。
+export const oauthDeviceIdPath = join(dataDir, "oauth-device-id.txt");
+
 // 启动/崩溃取证黑匣子(issue 后端无声退出)。boot-trace.ts 用"启动标记→干净退出删除→
 // 崩溃残留"机制:正常用下来 logs/ 里什么都不留,只有"上次没干净退出"才残留一份遗言。
 //   pending:本次启动的里程碑标记,Bun.serve 监听成功即删;留到下次启动 = 上次崩了。

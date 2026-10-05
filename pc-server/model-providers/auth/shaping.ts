@@ -56,6 +56,14 @@ export const OAUTH_PROVIDER_SHAPING: Record<string, ProviderShaping> = {
     streamingOnly: true,
     autoEnable: true,
   },
+  // Sign in with ChatGPT(新版订阅轨):标准 api.openai.com/v1/responses 端点,无实验通道头。
+  // 字段白名单对齐 pi openai-responses 的 isChatGPTSignIn 分支(该登录拒收的字段):
+  // max_output_tokens / temperature / prompt_cache_retention / prompt_cache_options。
+  // 工作区侧 pi 内建 client 已原生处理;这里管宿主聊天/辅助出站。
+  "openai-chatgpt": {
+    dropBodyFields: ["max_output_tokens", "temperature", "prompt_cache_retention", "prompt_cache_options"],
+    autoEnable: true,
+  },
   // Kimi Coding:Anthropic 协议,Authorization: Bearer 而非 x-api-key。
   "kimi-coding": {
     autoEnable: true,
