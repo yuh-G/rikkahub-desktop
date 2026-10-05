@@ -238,6 +238,7 @@ const ROW_ENTRIES: readonly SettingsSearchEntry[] = [
 
   // 记忆
   row("memory", "memory.write_strategy_title"),
+  row("memory", "memory.global_agents_title", { keywords: "global_agents" }),
   row("memory", "memory.global_title"),
   row("memory", "memory.global_enable"),
   row("memory", "memory.assistant_title"),

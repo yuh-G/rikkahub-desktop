@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~
 import { Input } from "~/components/ui/input";
 import { confirmDialog } from "~/stores/confirm-store";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "~/components/ui/dialog";
+import { GlobalAgentsCard } from "~/components/memory/global-agents-card";
 
 // 新增一条记忆:单行输入,Enter 或「添加」提交(输入法组字中的 Enter 不算)。
 function MemoryAddInput({ value, onChange, onSubmit, className }: {
@@ -203,6 +204,7 @@ export function MemorySection({
   return (
     <>
       <SettingsStack>
+      <GlobalAgentsCard />
       <SettingsRows>
         <SettingsRow
           label={t("settings:memory.write_strategy_title")}

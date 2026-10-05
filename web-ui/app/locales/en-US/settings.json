@@ -25,6 +25,7 @@
     "no_results": "No matching settings",
     "advanced_suffix": "Advanced settings",
     "keywords": {
+      "global_agents": "global instructions,AGENTS,workspace instructions",
       "assistants": "character,persona,agent,role",
       "providers": "API,endpoint,OpenAI,Claude,Gemini,DeepSeek,Ollama,model service",
       "web_search": "internet,online search,Tavily,Exa,Bing,SearXNG",
@@ -133,7 +134,18 @@
     "source_ai": "AI proposed",
     "delete_confirm": "Delete this memory?",
     "search_no_match": "No matching assistants",
-    "add": "Add memory"
+    "add": "Add memory",
+    "global_agents_title": "Global workspace instructions",
+    "global_agents_subtitle": "Personal instructions (AGENTS.md) applied to every workspace session: communication preferences, habitual workflows and so on. Complements memory — memory holds facts the model extracts, this is what you write yourself. Each workspace can also have its own AGENTS.md; both apply together.",
+    "global_agents_active": "Active: applies to every workspace session",
+    "global_agents_preview": "Active: {{title}}",
+    "global_agents_inactive": "Not created yet. Once created, it applies to every workspace session.",
+    "global_agents_create": "Create",
+    "global_agents_edit": "Edit",
+    "global_agents_create_hint": "Creates the global instruction file, applied to every workspace session.",
+    "global_agents_edit_hint": "Edit the global instructions. The next workspace session reads the new content.",
+    "global_agents_saved": "Global instructions saved",
+    "global_agents_failed": "Save failed, please try again"
   },
   "donate": {
     "subtitle": "If this app helps you, consider supporting it to keep it going.",

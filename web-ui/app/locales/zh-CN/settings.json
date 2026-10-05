@@ -25,6 +25,7 @@
     "no_results": "没有找到相关设置",
     "advanced_suffix": "高级设置",
     "keywords": {
+      "global_agents": "全局指令,AGENTS,工作区指引,agent 指令,全局 AGENTS",
       "assistants": "角色,人设,智能体,agent,persona",
       "providers": "API,渠道,接口,OpenAI,Claude,Gemini,DeepSeek,Ollama,模型服务",
       "web_search": "联网,网络搜索,Tavily,Exa,Bing,SearXNG",
@@ -133,7 +134,18 @@
     "source_ai": "AI 提议",
     "delete_confirm": "删除这条记忆？",
     "search_no_match": "没有匹配的助手",
-    "add": "添加记忆"
+    "add": "添加记忆",
+    "global_agents_title": "全局工作区指引",
+    "global_agents_subtitle": "对所有工作区会话生效的个人指令（AGENTS.md）：沟通偏好、习惯流程等，与记忆互补——记忆是模型提取的事实，这里是你亲写的指令。单个工作区另有自己的 AGENTS.md，两者叠加生效。",
+    "global_agents_active": "已生效：对所有工作区会话生效",
+    "global_agents_preview": "已生效：{{title}}",
+    "global_agents_inactive": "未创建。创建后对所有工作区会话生效。",
+    "global_agents_create": "创建",
+    "global_agents_edit": "编辑",
+    "global_agents_create_hint": "将创建全局指引文件，对所有工作区会话生效。",
+    "global_agents_edit_hint": "编辑全局指引。下一轮工作区会话生成即读取新内容。",
+    "global_agents_saved": "全局指引已保存",
+    "global_agents_failed": "保存失败，请重试"
   },
   "donate": {
     "subtitle": "如果这个应用对你有帮助，欢迎支持一下，让项目持续发展。",

@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-piresources-test-"));
 
-const { skillsDir } = await import("../foundation/paths");
+const { skillsDir, piAgentDir } = await import("../foundation/paths");
 const { buildPiAppendSystemPrompt, createPiSessionResources, invalidatePiPersonaSnapshots } = await import("./resources");
 const { defaultAssistant } = await import("../assistants");
 const { defaultState } = await import("../app-config/defaults");
@@ -66,17 +66,21 @@ describe("P4 资源装配", () => {
     expect(names).toEqual(["alpha-skill"]);
   });
 
-  test("AGENTS.md 面:root 内保留,祖先链与 agentDir 全局件被边界过滤", async () => {
+  test("AGENTS.md 面:全局件与 root 内文件保留,祖先链被边界过滤", async () => {
     const parent = mkdtempSync(join(tmpdir(), "rkh-res-agents-"));
     const root = join(parent, "ws");
     mkdirSync(root, { recursive: true });
     writeFileSync(join(parent, "AGENTS.md"), "ANCESTOR-INSTRUCTIONS", "utf-8");
     writeFileSync(join(root, "AGENTS.md"), "WORKSPACE-INSTRUCTIONS", "utf-8");
+    // 全局件(pi-agent/AGENTS.md,对齐 APP 2689e753 的 ~/.agents 层):用户写进我们
+    // 数据目录的指令,无条件进提示词且排在项目文件之前(pi loadProjectContextFiles 序)。
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(join(piAgentDir, "AGENTS.md"), "GLOBAL-INSTRUCTIONS", "utf-8");
 
     const { assistant, conversation } = fixture();
     const { resourceLoader } = await createPiSessionResources({ conversation, assistant, model: fakeModel, cwd: root, root });
     const files = resourceLoader.getAgentsFiles().agentsFiles;
-    expect(files.map((file) => file.content)).toEqual(["WORKSPACE-INSTRUCTIONS"]);
+    expect(files.map((file) => file.content)).toEqual(["GLOBAL-INSTRUCTIONS", "WORKSPACE-INSTRUCTIONS"]);
   });
 
   test("注入面封死:.pi/settings.json 不被读取,.pi/SYSTEM.md 不接管系统提示词", async () => {

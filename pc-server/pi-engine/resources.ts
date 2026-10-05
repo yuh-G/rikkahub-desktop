@@ -8,8 +8,10 @@
 //   .pi/settings.json 与 .pi/SYSTEM.md(resource-loader.discoverSystemPromptFile 按
 //   projectTrusted 门控)两个不可信注入面一并封死(P1 纪要遗留项)。
 // - AGENTS.md:pi 原生 loadProjectContextFiles(agentDir 全局件 + cwd 祖先链爬升),
-//   经 agentsFilesOverride 词法过滤到工作区边界内——祖先链越出 root 的文件不进提示词
-//   (提示词层与工具层同一边界纪律);全局层 v1 不做(§3.3)。
+//   经 agentsFilesOverride 词法过滤——祖先链越出 root 的文件不进提示词(提示词层与
+//   工具层同一边界纪律)。全局件(pi-agent/AGENTS.md,对齐 APP 2689e753 的
+//   ~/.agents 层)由我们单点维护、无条件放行:它是用户自己写进我们数据目录的,
+//   信任链与项目文件(用户信任门后的真实目录)同级。
 // - 人设+记忆:appendSystemPrompt 单一插槽(§3.4),内容会话级冻结(见下)。
 // - 扩展/prompt 模板/主题:v1 全关(noExtensions/noPromptTemplates/noThemes),
 //   pi 的资源面只开技能与上下文文件两类。
@@ -23,7 +25,7 @@
 // - 搜索指引/教学行:内容只随设置变(服务名/技能库路径),天然稳定。
 
 import { mkdirSync } from "node:fs";
-import { isAbsolute, resolve, sep } from "node:path";
+import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { DefaultResourceLoader } from "../../pi/packages/coding-agent/src/core/resource-loader.ts";
 import { SettingsManager } from "../../pi/packages/coding-agent/src/core/settings-manager.ts";
 import type { Assistant, Conversation, Model } from "../foundation/types";
@@ -122,6 +124,13 @@ function isWithinRoot(path: string, root: string): boolean {
   return target === rootCmp || target.startsWith(rootCmp.endsWith(sep) ? rootCmp : rootCmp + sep);
 }
 
+/** agentDir 直系文件 = 全局上下文件(pi-agent/AGENTS.md)。pi 的 loadProjectContextFiles
+ *  把它排在祖先链之前;我们放行它、只滤越界祖先——全局件的信任链是"用户写进我们
+ *  数据目录",与项目文件(用户信任门后的真实目录)同级。 */
+function isAgentDirDirectFile(path: string): boolean {
+  return dirname(resolve(path)) === resolve(piAgentDir);
+}
+
 // ---- diagnostics 上报(按内容键控:同一告警重复 reload 只报一次,内容变了复报) ----
 
 const reportedDiagnostics = new Set<string>();
@@ -187,7 +196,9 @@ export async function createPiSessionResources(options: {
       diagnostics,
     }),
     agentsFilesOverride: ({ agentsFiles }) => ({
-      agentsFiles: agentsFiles.filter((file) => isAbsolute(file.path) && isWithinRoot(file.path, root)),
+      agentsFiles: agentsFiles.filter((file) =>
+        isAbsolute(file.path) && (isAgentDirDirectFile(file.path) || isWithinRoot(file.path, root)),
+      ),
     }),
     appendSystemPrompt: buildPiAppendSystemPrompt(conversation, assistant, model, extraAppendSystemPrompt),
   });

@@ -21,6 +21,7 @@ import { getConversation } from "../../conversations";
 import { DEFAULT_PROMPT_OPTIMIZE_PROMPT, PROMPT_OPTIMIZE_OUTPUT_TOKENS } from "../../app-config/prompts";
 import { markUiActivity } from "../../app-config/analytics";
 import { conversationModelIdFor, fetchAuxiliaryText, modelExists } from "../../conversations/auxiliary";
+import { readGlobalAgentsFile, writeGlobalAgentsFile } from "../../pi-engine/global-agents";
 import { serveAIIcon } from "../../assets/icons";
 import { FONT_EXTENSIONS_SET, FONT_MIME, MAX_FONT_BYTES, fontCssName, fontExtension, isBareFileName, isFontFile, listBuiltinFonts, listCustomFonts, listSystemFonts, makeBundledFontEntry, resolveFontFile } from "../../assets/fonts";
 
@@ -59,6 +60,19 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
         return () => appClients.delete(controller);
       },
     );
+  }
+  // 全局工作区指引(pi-agent/AGENTS.md):工作区会话的跨项目用户指令层,对所有
+  // 工作区生效。读写"pi 实际加载的那个候选文件",无则模板引导创建。
+  if (path === "global-agents" && request.method === "GET") {
+    return json({ agentsFile: readGlobalAgentsFile() });
+  }
+  if (path === "global-agents" && request.method === "PUT") {
+    try {
+      const body = await readJson<{ content?: string }>(request);
+      return json({ agentsFile: writeGlobalAgentsFile(String(body.content ?? "")) });
+    } catch (err) {
+      return error(err instanceof Error ? err.message : "AGENTS.md 操作失败", 400);
+    }
   }
   // 代码块"在浏览器中打开"(桌面壳专用):WebView2 吞掉 window.open(blob:),blob URL
   // 也只在页面内有效。落盘为临时文件后交给系统默认程序(.html → 默认浏览器)。

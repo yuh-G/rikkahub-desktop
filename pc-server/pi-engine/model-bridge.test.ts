@@ -2,6 +2,7 @@
 // 订阅供应商内建身份往返(真实 pi 运行时)。
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 import { defaultSettings } from "../app-config/defaults";
 import { piAgentDir } from "../foundation/paths";
@@ -385,8 +386,10 @@ describe("createPiModelRuntime 内存注册闭环", () => {
     expect(piModel.baseUrl).toBe("https://relay.example/v1");
     expect(runtime.hasConfiguredAuth(piModel.provider)).toBe(true);
 
-    // 零落盘:客房目录整个不存在(auth 用内存存储,models 用内存 store,方案 §3.5 红线)。
-    expect(existsSync(piAgentDir)).toBe(false);
+    // 零落盘:模型/密钥面不落任何文件(auth 用内存存储,models 用内存 store,方案 §3.5 红线)。
+    // 目录本身可能存在——全局 AGENTS.md(用户指令层)合法住在客房目录,不属于运行时落盘。
+    expect(existsSync(join(piAgentDir, "auth.json"))).toBe(false);
+    expect(existsSync(join(piAgentDir, "models.json"))).toBe(false);
   });
 });
 
@@ -436,8 +439,9 @@ describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运
     expect(runtime.hasConfiguredAuth("kimi-coding")).toBe(true);
     const auth = await runtime.getAuth(piModel);
     expect(auth?.auth.apiKey ?? auth?.auth.headers?.Authorization).toContain("acc");
-    // 零落盘不变。
-    expect(existsSync(piAgentDir)).toBe(false);
+    // 零落盘不变(只看 auth/models 文件;全局 AGENTS.md 可合法住客房目录,见上)。
+    expect(existsSync(join(piAgentDir, "auth.json"))).toBe(false);
+    expect(existsSync(join(piAgentDir, "models.json"))).toBe(false);
   });
 
   it("ChatGPT:身份译成 pi 内建 openai-codex,取回 Codex 专用 api(openai-codex-responses),不是宿主形态的 openai-responses", async () => {
