@@ -137,6 +137,14 @@ if (Bun.isStandaloneExecutable) {
     radius: () => {
       throw new Error("Radius OAuth not implemented in this build");
     },
+    // pi 1.0.3 新增的两个 OAuth flow:宿主未预置供应商,也不会有宿主行走到这两个键,
+    // 声明为显式抛错——若真被调到,错误信息比静默 undefined 更可诊断。
+    openaiChatGPT: () => {
+      throw new Error("OpenAI ChatGPT OAuth not implemented in this build");
+    },
+    meta: () => {
+      throw new Error("Meta OAuth not implemented in this build");
+    },
   });
 }
 

@@ -44,16 +44,17 @@
 //   (provider 拒绝无结果的调用)。
 
 import type { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
+import type { JsonValue, Message, MessagePart, Model, ToolOutputEntry } from "../foundation/types";
 import type {
   AssistantMessage,
   ImageContent,
+  JsonObject,
   Message as PiAgentMessage,
   TextContent,
   ToolResultMessage,
   Usage,
   UserMessage,
 } from "../../pi/packages/ai/src/types.ts";
-import type { JsonValue, Message, MessagePart, Model, ToolOutputEntry } from "../foundation/types";
 import { isRecord } from "../foundation/utils";
 import { UNRESOLVED_TOOL_RESULT_TEXT, openAiToolOutput } from "../tools/format";
 import { parseDataUrl } from "../inference-engine/message-builder";
@@ -109,11 +110,15 @@ function fidelityOf(message: Message): FidelityAnnotation | null {
 
 type ToolPartView = Extract<MessagePart, { type: "tool" }>;
 
-function parseToolArguments(input: string): Record<string, unknown> {
+// pi 1.0.3 起 ToolCall.arguments 是 JsonObject(值域 JsonValue,非 unknown)。工具卡
+// input 的 JSON.parse 产物经 isRecord 守卫已是同构 record,这里只补静态收窄;解析失败
+// 或非对象落空对象——与 pi 空参调用 arguments:{} 逐字一致。
+function parseToolArguments(input: string): JsonObject {
   try {
     const parsed: unknown = JSON.parse(input || "{}");
-    return isRecord(parsed) ? (parsed as Record<string, unknown>) : {};
+    return isRecord(parsed) ? (parsed as unknown as JsonObject) : {};
   } catch {
+    // 解析失败的兜底:空参重放(与下方 isRecord=false 同道),工具身份仍可配对。
     return {};
   }
 }

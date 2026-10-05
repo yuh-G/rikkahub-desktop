@@ -9,7 +9,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { AgentSessionEvent } from "../../pi/packages/coding-agent/src/core/agent-session.ts";
-import type { AssistantMessage, AssistantMessageEvent, ToolCall, Usage } from "../../pi/packages/ai/src/types.ts";
+import type { AssistantMessage, AssistantMessageEvent, JsonObject, ToolCall, Usage } from "../../pi/packages/ai/src/types.ts";
 import type { Conversation, Message, MessageNode, ToolOutputEntry, ToolPart } from "../foundation/types";
 import type { GenerationEvent } from "../inference-engine/events";
 import { createGenerationEventApplier } from "../conversations/generation-apply";
@@ -45,7 +45,7 @@ function assistantMessage(content: AssistantMessage["content"], partial: Partial
   };
 }
 
-function toolCall(id: string, name: string, args: Record<string, unknown>): ToolCall {
+function toolCall(id: string, name: string, args: JsonObject): ToolCall {
   return { type: "toolCall", id, name, arguments: args };
 }
 

@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // target 对齐 pi 1.0.3 基线:pi 源码用 ES2024 的 v 正则标志(tui/utils.ts,非 lib
+    // 语法是 target 门控)。宿主代码不依赖 ES2024 运行时差异,Bun 全量支持。
+    "target": "ES2024",
+    // lib 对齐 pi 1.0.3 基线:findLastIndex(ES2023,agent-session.ts)等内置方法需要
+    // 对应 lib 声明。与 pi/tsconfig.base.json 的 ES2024 同源。
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     // 类型硬化收官(2026-07-24):noImplicitAny(5.4c) → strictNullChecks → strict 全开。
@@ -25,7 +29,18 @@
       "@earendil-works/pi-coding-agent": ["../pi/packages/coding-agent/src/index.ts"],
       "@earendil-works/pi-coding-agent/*": ["../pi/packages/coding-agent/src/*"],
       "@earendil-works/pi-tui": ["../pi/packages/tui/src/index.ts"],
-      "@earendil-works/pi-tui/*": ["../pi/packages/tui/src/*"]
+      "@earendil-works/pi-tui/*": ["../pi/packages/tui/src/*"],
+      // pi 1.0.3 新增包:telemetry(ai/types.ts 顶层引用)、codemode/mcp(coding-agent
+      // extensions 内部引用)。镜像 pi 根 tsconfig 的同名条目,带 ../pi/ 前缀。
+      "@earendil-works/pi-telemetry": ["../pi/packages/telemetry/src/index.ts"],
+      "@earendil-works/pi-telemetry/testing": ["../pi/packages/telemetry/src/testing/index.ts"],
+      "@earendil-works/pi-codemode": ["../pi/packages/codemode/src/index.ts"],
+      "@earendil-works/pi-codemode/declarations": ["../pi/packages/codemode/src/declarations.ts"],
+      "@earendil-works/pi-codemode/source": ["../pi/packages/codemode/src/source.ts"],
+      "@earendil-works/pi-codemode/worker": ["../pi/packages/codemode/src/runtime/worker.ts"],
+      "@earendil-works/pi-mcp": ["../pi/packages/mcp/src/index.ts"],
+      "@earendil-works/pi-mcp/oauth": ["../pi/packages/mcp/src/oauth/index.ts"],
+      "@earendil-works/pi-mcp/testing": ["../pi/packages/mcp/src/testing/index.ts"]
     },
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,

@@ -8,6 +8,8 @@ import { piAgentDir } from "../foundation/paths";
 import type { Provider } from "../foundation/types";
 import { bundledModelsFor, isOAuthProvider, OAUTH_FLOWS } from "../model-providers/auth";
 import { model, provider } from "../model-providers";
+import type { ProviderChatModelConfig } from "../../pi/packages/coding-agent/src/core/provider-composer.ts";
+import type { OpenAICompletionsCompat, ThinkingLevelMap } from "../../pi/packages/ai/src/types.ts";
 import { setState, state } from "../persistence/json-store";
 import {
   createPiModelRuntime,
@@ -20,6 +22,14 @@ import {
 
 function makeProvider(input: Parameters<typeof provider>[0]) {
   return provider({ apiKey: "sk-test", ...input });
+}
+
+/** 断言映射产物注册的是 chat 模型并取其配置(pi 1.0.3 起 ProviderModelConfig 是
+ *  chat/image/classifier 判别联合,thinkingLevelMap/compat/reasoning 只在 chat 变体上)。 */
+function chatModelOf(mapping: RegisteredMapping): ProviderChatModelConfig {
+  const entry = mapping.config.models?.[0];
+  if (!entry || (entry.type ?? "chat") !== "chat") throw new Error("expected a chat model entry");
+  return entry as ProviderChatModelConfig;
 }
 
 type RegisteredMapping = Extract<PiModelMapping, { kind: "registered" }>;
@@ -101,7 +111,7 @@ describe("mapProviderModelToPi", () => {
     for (const baseUrl of ["https://relay.example.com/v1", "https://api.moonshot.cn/v1"]) {
       const k3 = mapProviderModelToPi(makeProvider({ id: "pk", name: "P", baseUrl }), model("kimi-k3"));
       if (!k3.ok) throw new Error(k3.reason);
-      expect(k3.mapping.config.models?.[0]?.thinkingLevelMap).toEqual({
+      expect(chatModelOf(k3.mapping)?.thinkingLevelMap).toEqual({
         off: null,
         minimal: "low",
         low: "low",
@@ -110,17 +120,19 @@ describe("mapProviderModelToPi", () => {
         xhigh: "max",
         max: "max",
       });
-      expect((k3.mapping.config.models?.[0]?.compat as any)?.supportsReasoningEffort).toBe(true);
+      expect((chatModelOf(k3.mapping)?.compat as any)?.supportsReasoningEffort).toBe(true);
     }
   });
 
   it("厂商思考开关翻译(全面审查 7):方言协议 → pi thinkingFormat/supportsReasoningEffort", () => {
-    const compatOf = (baseUrl: string, modelId: string) => {
+    // compat 收窄:本用例断言的全是 openai-completions 供应商,ProviderChatModelConfig
+    // 在 Api 未定值时 compat 是五种协议 compat 的联合,thinkingFormat 等字段非联合公共。
+    const compatOf = (baseUrl: string, modelId: string): { compat?: Partial<OpenAICompletionsCompat>; thinkingLevelMap?: ThinkingLevelMap } => {
       const result = mapProviderModelToPi(makeProvider({ id: "pt", name: "P", baseUrl }), model(modelId));
       if (!result.ok) throw new Error(result.reason);
       return {
-        compat: result.mapping.config.models?.[0]?.compat as Record<string, unknown> | undefined,
-        thinkingLevelMap: result.mapping.config.models?.[0]?.thinkingLevelMap,
+        compat: chatModelOf(result.mapping)?.compat,
+        thinkingLevelMap: chatModelOf(result.mapping)?.thinkingLevelMap,
       };
     };
 
@@ -253,7 +265,7 @@ describe("mapProviderModelToPi", () => {
       model("claude-sonnet-4-5"),
     );
     if (!claude.ok) throw new Error(claude.reason);
-    expect((claude.mapping.config.models?.[0]?.compat as any)?.thinkingFormat).toBeUndefined();
+    expect((chatModelOf(claude.mapping)?.compat as any)?.thinkingFormat).toBeUndefined();
   });
 
   it("能力/模态位翻译:REASONING→reasoning,IMAGE→input 含 image", () => {
@@ -262,7 +274,7 @@ describe("mapProviderModelToPi", () => {
       model("gemini-2.5-pro"), // 工厂会推断 REASONING + IMAGE
     );
     if (!result.ok) throw new Error(result.reason);
-    const entry = result.mapping.config.models?.[0];
+    const entry = chatModelOf(result.mapping);
     expect(entry?.reasoning).toBe(true);
     expect(entry?.input).toEqual(["text", "image"]);
   });
@@ -273,7 +285,7 @@ describe("mapProviderModelToPi", () => {
     // 端点静默忽略→上限失效)。覆盖依据详见 model-bridge piCompatOverridesFor 头注。
     const compatOf = (result: ReturnType<typeof mapProviderModelToPi>) => {
       if (!result.ok) throw new Error(result.reason);
-      return result.mapping.config.models?.[0]?.compat;
+      return chatModelOf(result.mapping)?.compat;
     };
 
     // 第三方 OpenAI 兼容端点(内测环境):恒 system + 恒 max_tokens。火山方舟另带
@@ -321,8 +333,8 @@ describe("mapProviderModelToPi", () => {
       model("claude-sonnet-4-5"),
     );
     if (!claudeMapping.ok) throw new Error(claudeMapping.reason);
-    expect(claudeMapping.mapping.config.models?.[0]?.compat).toEqual({ forceAdaptiveThinking: true });
-    expect(claudeMapping.mapping.config.models?.[0]?.thinkingLevelMap).toEqual({
+    expect(chatModelOf(claudeMapping.mapping)?.compat).toEqual({ forceAdaptiveThinking: true });
+    expect(chatModelOf(claudeMapping.mapping)?.thinkingLevelMap).toEqual({
       minimal: "minimal",
       low: "low",
       medium: "medium",
@@ -512,7 +524,7 @@ describe("xhigh/max 档位放行(与聊天引擎原样透传收敛)", () => {
       reasoner,
     );
     if (!result.ok) throw new Error(result.reason);
-    expect(result.mapping.config.models?.[0]?.thinkingLevelMap).toEqual({ off: "none", xhigh: "xhigh", max: "max" });
+    expect(chatModelOf(result.mapping)?.thinkingLevelMap).toEqual({ off: "none", xhigh: "xhigh", max: "max" });
   });
 
   it("厂商专属协议不登记(effort 压制或另有收拢表,勿覆盖)", () => {
@@ -523,7 +535,7 @@ describe("xhigh/max 档位放行(与聊天引擎原样透传收敛)", () => {
       arkModel,
     );
     if (!ark.ok) throw new Error(ark.reason);
-    expect(ark.mapping.config.models?.[0]?.thinkingLevelMap).toBeUndefined();
+    expect(chatModelOf(ark.mapping)?.thinkingLevelMap).toBeUndefined();
   });
 
   it("google 协议登记 xhigh/max(vendor 扩键后预算通道精确命中注入表,compat 保持不设;off:none 对 google 无害——resolveGoogleThinkingLevel 对 off 短路,不查映射)", () => {
@@ -534,8 +546,8 @@ describe("xhigh/max 档位放行(与聊天引擎原样透传收敛)", () => {
       gm,
     );
     if (!google.ok) throw new Error(google.reason);
-    expect(google.mapping.config.models?.[0]?.thinkingLevelMap).toEqual({ off: "none", xhigh: "xhigh", max: "max" });
-    expect(google.mapping.config.models?.[0]?.compat).toBeUndefined();
+    expect(chatModelOf(google.mapping)?.thinkingLevelMap).toEqual({ off: "none", xhigh: "xhigh", max: "max" });
+    expect(chatModelOf(google.mapping)?.compat).toBeUndefined();
   });
 
   it("openai-responses 协议登记 xhigh/max(聊天引擎 reasoning.effort 原样透传,pi 侧同步放行;off:none 供 responses 的 off 兜底分支取值)", () => {
@@ -546,7 +558,7 @@ describe("xhigh/max 档位放行(与聊天引擎原样透传收敛)", () => {
       rm,
     );
     if (!responses.ok) throw new Error(responses.reason);
-    expect(responses.mapping.config.models?.[0]?.thinkingLevelMap).toEqual({ off: "none", xhigh: "xhigh", max: "max" });
+    expect(chatModelOf(responses.mapping)?.thinkingLevelMap).toEqual({ off: "none", xhigh: "xhigh", max: "max" });
   });
 });
 
