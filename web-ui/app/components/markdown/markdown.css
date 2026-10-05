@@ -104,8 +104,14 @@
 }
 
 /* Code - Inline */
-.markdown .inline-code {
+/* 连字关闭挂在本类而非 .markdown 祖先(单源,5852b98 的收口续):inline-code 是渲染器
+   自有类,消息正文/思考区/工具卡/工作台预览等所有上下文都带它,锚在祖先会漏掉
+   非 .message-markdown 的上下文。等宽栈字体(Cascadia Code 等)默认开连字,=>、!=
+   合成单字形读代码碍眼。 */
+.markdown .inline-code,
+.inline-code {
   @apply relative rounded border border-border/60 bg-muted/70 px-[0.32rem] py-[0.12rem] font-mono text-[0.92em];
+  font-feature-settings: "calt" 0, "liga" 0, "clig" 0;
 }
 
 /* Legacy Code - Block (fallback):非 CodeBlock 组件渲染的裸 pre。
@@ -118,6 +124,7 @@
 
 .markdown pre code {
   @apply bg-transparent p-0 text-sm font-mono leading-relaxed;
+  font-feature-settings: "calt" 0, "liga" 0, "clig" 0;
 }
 
 /* Code Block with Header(产品稿:圆角卡片 + 柔和抬升阴影 + 淡边框)。
@@ -149,6 +156,13 @@
 /* Code Block body */
 .code-block-content {
   @apply overflow-x-auto;
+}
+
+/* 连字关闭同 .inline-code 的收口理由:CodeBlock 被消息正文之外大量复用
+   (工具卡/思考区/工作台),锚定必须用组件自有类。 */
+.code-block-content pre,
+.code-block-content pre code {
+  font-feature-settings: "calt" 0, "liga" 0, "clig" 0;
 }
 
 /* p-3 text-sm 是全场景基线;紧凑场景(工具卡/抽屉的 HighlightedCode)经
