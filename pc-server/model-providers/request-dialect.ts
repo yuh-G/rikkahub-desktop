@@ -386,8 +386,8 @@ export function isSiliconFlowEffortModel(modelId: string): boolean {
 // low/high（minimal 收 low、medium 收 high），非 Pro（3.5 Flash 等）全值域
 // minimal/low/medium/high。口径逐值对齐 pi getThinkingLevel（含 [RIKKAHUB PATCH:
 // budget-xhigh-max] 的 xhigh/max→high），两引擎恒同。off 不在表内：Gemini 3 思考
-// 不可关，聊天引擎 off 时查 minimal 行取最少思考（pi 上游 off→high 为已知两引擎
-// 差异，改动需扩 patch，暂记录不动）。
+// 不可关，聊天引擎 off 时查 minimal 行取最少思考；工作区经 model-bridge 对
+// Gemini 3 系不登记 off 映射（pi 原生 clamp off→minimal 发 thinkingLevel，同义收口）。
 const GEMINI3_PRO_THINKING_LEVEL_BY_LEVEL = {
   minimal: "low",
   low: "low",

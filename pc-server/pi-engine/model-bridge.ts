@@ -25,6 +25,7 @@ import {
   isDashScopeEffortQwenModel,
   isKimiK3Model,
   isSiliconFlowEffortModel,
+  isThinkingLevelGeminiModel,
   isZhipuEffortModel,
   isZhipuForcedThinkingModel,
   isZhipuGlm53Model,
@@ -383,13 +384,20 @@ export function mapProviderModelToPi(provider: Provider, model: Model, limits?: 
   // getSupportedThinkingLevels 缺映射会钳 high),聊天引擎两处均原样透传:responses
   // 发 reasoning.effort=档位,google 折预算(vendor 扩键后 xhigh/max 精确命中注入表)。
   // off:none 同 reasoning-effort 协议的理由(responses 的 off 兜底分支取它显式发
-  // effort:"none";google 的 resolveGoogleThinkingLevel 对 off 短路,不消费该映射)。
+  // effort:"none");google 分 X2 两态:预算系(2.x)登记 off:"none"——pi 禁用路径发
+  // thinkingBudget:0,与聊天引擎逐字一致;Gemini 3 系(thinkingLevel 控制)登记
+  // off:null——pi 的 getSupportedThinkingLevels 对未映射的常规档位默认视为支持,
+  // 省略键拦不住 off(实测仍走禁用路径发 thinkingBudget:0,而 Gemini 3 只认
+  // thinking_level,budget 字段即 400),必须显式 null 才能让 clamp 把 off 前收
+  // minimal 发 thinkingLevel——恰与聊天引擎"off 查 minimal 行取最少思考"同义。
   const thinkingOverrides =
     api === "openai-completions"
       ? piThinkingOverridesFor(provider, model)
       : api === "anthropic-messages"
         ? piAnthropicThinkingOverrides()
-        : { thinkingLevelMap: { off: "none", xhigh: "xhigh", max: "max" } };
+        : api === "google-generative-ai" && isThinkingLevelGeminiModel(model.modelId)
+          ? { thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" } }
+          : { thinkingLevelMap: { off: "none", xhigh: "xhigh", max: "max" } };
 
   const contextWindow =
     typeof limits?.contextWindow === "number" && limits.contextWindow > 0

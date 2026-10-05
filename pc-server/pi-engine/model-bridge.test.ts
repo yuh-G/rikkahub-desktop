@@ -571,7 +571,7 @@ describe("xhigh/max 档位放行(与聊天引擎原样透传收敛)", () => {
     expect(chatModelOf(ark.mapping)?.thinkingLevelMap).toBeUndefined();
   });
 
-  it("google 协议登记 xhigh/max(vendor 扩键后预算通道精确命中注入表,compat 保持不设;off:none 对 google 无害——resolveGoogleThinkingLevel 对 off 短路,不查映射)", () => {
+  it("google 协议登记 xhigh/max(vendor 扩键后预算通道精确命中注入表,compat 保持不设;off:none 对预算系无害——禁用路径发 thinkingBudget:0,与聊天引擎逐字一致)", () => {
     const gm = model("gemini-2.5-flash", "GF");
     gm.abilities.push("REASONING");
     const google = mapProviderModelToPi(
@@ -581,6 +581,17 @@ describe("xhigh/max 档位放行(与聊天引擎原样透传收敛)", () => {
     if (!google.ok) throw new Error(google.reason);
     expect(chatModelOf(google.mapping)?.thinkingLevelMap).toEqual({ off: "none", xhigh: "xhigh", max: "max" });
     expect(chatModelOf(google.mapping)?.compat).toBeUndefined();
+  });
+
+  it("X2:Gemini 3 系(thinkingLevel 控制)登记 off:null——pi 对未映射常规档默认视为支持,省略键拦不住 off(实测走禁用路径发 thinkingBudget:0,Gemini 3 只认 thinking_level 即 400);null 才能让 clamp 前收 minimal 发 thinkingLevel,与聊天引擎「off 查 minimal 行」同义", () => {
+    const g3 = model("gemini-3-pro-preview", "G3");
+    g3.abilities.push("REASONING");
+    const mapped = mapProviderModelToPi(
+      makeProvider({ id: "p-g3", name: "G", baseUrl: "https://generativelanguage.googleapis.com/v1beta", type: "google" }),
+      g3,
+    );
+    if (!mapped.ok) throw new Error(mapped.reason);
+    expect(chatModelOf(mapped.mapping)?.thinkingLevelMap).toEqual({ off: null, xhigh: "xhigh", max: "max" });
   });
 
   it("openai-responses 协议登记 xhigh/max(聊天引擎 reasoning.effort 原样透传,pi 侧同步放行;off:none 供 responses 的 off 兜底分支取值)", () => {
