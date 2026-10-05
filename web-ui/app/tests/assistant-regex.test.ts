@@ -98,10 +98,15 @@ describe("assistant regex hardening", () => {
     const evil = `${"a".repeat(26)}b`;
     // 首跑:超预算,pattern 被拉黑(文本无匹配,原样返回)
     expect(applyAssistantRegexes(evil, a, "ASSISTANT", true)).toBe(evil);
-    // 复跑:更长的输入也不再执行该 pattern,立即返回
+    // 复跑:更长的输入也不再执行该 pattern,立即返回。慢 runner 上绝对耗时含调度噪声,
+    // 断言改相对口径——与一条被拉黑 pattern 的普通遍历同量级,而非与灾难回溯同量级。
     const longer = `${"a".repeat(40)}b`;
+    const passes = 200;
     const startedAt = performance.now();
-    expect(applyAssistantRegexes(longer, a, "ASSISTANT", true)).toBe(longer);
-    expect(performance.now() - startedAt).toBeLessThan(50);
+    for (let i = 0; i < passes; i++) {
+      expect(applyAssistantRegexes(longer, a, "ASSISTANT", true)).toBe(longer);
+    }
+    const perCallMs = (performance.now() - startedAt) / passes;
+    expect(perCallMs).toBeLessThan(5);
   });
 });
