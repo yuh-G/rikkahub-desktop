@@ -75,7 +75,13 @@ export const OAUTH_FLOWS: Record<OAuthFlowId, OAuthFlowMeta> = {
   anthropic: {
     id: "anthropic",
     loader: "loadAnthropicOAuth",
-    loginMethods: null,
+    // pi 1.0.0 起 loginAnthropic 先 select(browser / copy_code)。copy_code 是
+    // notify(auth_url) 后 prompt(manual_code,"code#state")——login.ts 的
+    // waiting_browser/manual-code 回传路径原生兼容。
+    loginMethods: [
+      { id: "browser", labelKey: "settings:providers.oauth.method.browser" },
+      { id: "copy_code", labelKey: "settings:providers.oauth.method.copy_code" },
+    ],
     piProviderId: "anthropic",
     presetProviderId: "d4f86913-80d5-45e4-84ea-3e652ac63cda", // Claude Pro/Max,P3(仅工作区)
     chatCapable: false,

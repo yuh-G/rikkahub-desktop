@@ -346,7 +346,8 @@
       "select_method": "选择登录方式",
       "method": {
         "browser": "浏览器登录（推荐）",
-        "device_code": "设备码登录（无浏览器环境）"
+        "device_code": "设备码登录（无浏览器环境）",
+        "copy_code": "复制授权码登录（无浏览器跳转）"
       },
       "waiting_browser": "请在浏览器中完成登录",
       "open_browser": "打开浏览器",

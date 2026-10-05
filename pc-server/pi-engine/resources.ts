@@ -101,7 +101,7 @@ function stableGuidanceLines(): string {
 }
 
 /** pi 会话的 appendSystemPrompt 条目(有序;pi 侧以 \n\n join 追加在引擎 Guidelines 之后、
- *  <project_context> 之前,system-prompt.ts:165 实证)。分段各有恰当冻结源,拼接结果
+ *  <project_context> 之前,system-prompt.ts:163 addendum section 实证)。分段各有恰当冻结源,拼接结果
  *  同会话内字节稳定。导出仅供测试断言冻结性。 */
 export function buildPiAppendSystemPrompt(
   conversation: Conversation,
@@ -167,6 +167,10 @@ export async function createPiSessionResources(options: {
   // overflow 自动压缩显式开启(数值与 pi 默认一致,但不再依赖库默认值漂移),
   // reserveTokens/keepRecentTokens 取 pi 默认;重试等其余会话行为仍取 pi 默认值。
   // thinkingBudgets:Google 2.x 预算通道与聊天引擎同数值(model-bridge 四键投影,方言单源)。
+  // images.autoResize:false(D4 拍板):pi 1.0 起用户 prompt 图片默认缩放并追加说明文字,
+  // 而我们的引擎上下文每轮由 context-encoder 从 SQLite 原图重建——本轮「缩放图+说明」
+  // 下轮「原图无说明」,模型前后所见不一致且该轮缓存失效。关闭后两轮逐字节一致
+  // (代价:工具结果图片也不缩放,与我们聊天引擎的图片直发口径对齐)。
   const settingsManager = SettingsManager.inMemory(
     {
       compaction: {
@@ -174,6 +178,7 @@ export async function createPiSessionResources(options: {
         ...(compactionKeepRecentTokens != null ? { keepRecentTokens: compactionKeepRecentTokens } : {}),
       },
       thinkingBudgets: { ...PI_THINKING_BUDGETS },
+      images: { autoResize: false },
     },
     { projectTrusted: false },
   );

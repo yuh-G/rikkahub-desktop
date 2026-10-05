@@ -360,4 +360,69 @@ describe("login orchestration", () => {
     await result.completion;
     expect(activeLoginEvents()).toEqual([]);
   });
+
+  test("anthropic select+copy_code: methods 用登记表 i18n 键,授权码经 manual-code 通道回传", async () => {
+    // pi 1.0.0 起 loginAnthropic 先 select(browser/copy_code)。两条硬保证:
+    // 1) select_method 帧的 methods 来自 OAUTH_FLOWS 登记(带 labelKey 供前端 t()),
+    //    不落 pi 英文 label 兜底——anthropic 没声明 loginMethods 时整帧裸英文;
+    // 2) copy_code 是 notify(auth_url)+prompt(manual_code,"code#state") 形态,宿主
+    //    waiting_browser/manual-code 回传路径原生兼容(与 browser 流同帧形)。
+    const ANTHROPIC_PROVIDER_ID = "d4f86913-80d5-45e4-84ea-3e652ac63cda";
+    const anthropicRow: Provider = {
+      id: ANTHROPIC_PROVIDER_ID,
+      type: "claude",
+      enabled: false,
+      name: "Claude",
+      builtIn: true,
+      shortDescription: "",
+      description: "",
+      apiKey: "",
+      authMode: "oauth",
+      baseUrl: "https://api.anthropic.com",
+      models: [],
+      balanceOption: { enabled: false, apiPath: "", resultPath: "" },
+    } as Provider;
+    setState({ ...state, settings: { ...state.settings, providers: [...state.settings.providers.filter((p) => p.id !== ANTHROPIC_PROVIDER_ID), anthropicRow] } } as any);
+    overrideOAuthFlow("anthropic", {
+      name: "Anthropic",
+      login: async (interaction) => {
+        // 复刻 pi 1.0.3 anthropic.ts login 的 select 形态,选 copy_code 后的流。
+        const method = await interaction.prompt({
+          type: "select",
+          message: "Select Anthropic login method:",
+          options: [
+            { id: "browser", label: "Browser login (default)" },
+            { id: "copy_code", label: "Copy code login (headless)" },
+          ],
+        } as any);
+        if (method !== "copy_code") throw new Error("test expects copy_code");
+        interaction.notify({ type: "auth_url", url: "https://platform.claude.com/oauth/code/callback", instructions: "" });
+        const pasted = await interaction.prompt({ type: "manual_code", message: "paste code#state", placeholder: "" });
+        return { type: "oauth", access: pasted, refresh: "r", expires: 9999999999000 };
+      },
+      refresh: async () => { throw new Error("not in test"); },
+      toAuth: async (cred) => ({ apiKey: cred.access }),
+    });
+    const result = await startLogin(ANTHROPIC_PROVIDER_ID);
+    if (!result.ok) throw new Error(result.error);
+    // select 帧:methods 来自登记表(browser/copy_code 双键 + labelKey),不是 pi 英文兜底。
+    const selectFrame = events.find((e) => e.phase === "select_method" && e.providerId === ANTHROPIC_PROVIDER_ID);
+    expect(selectFrame?.methods).toEqual([
+      { id: "browser", labelKey: "settings:providers.oauth.method.browser" },
+      { id: "copy_code", labelKey: "settings:providers.oauth.method.copy_code" },
+    ]);
+    // 回传 copy_code:流程进入授权码等待帧(带 authUrl,manual-code 面板可贴码)。
+    expect(resumePrompt(ANTHROPIC_PROVIDER_ID, "copy_code")).toBe(true);
+    // resolve 后 flow 协程要过一个微任务才处理完输入并发出下一帧。
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const waitingFrame = currentLoginEvent(ANTHROPIC_PROVIDER_ID);
+    expect(waitingFrame?.phase).toBe("waiting_browser");
+    expect(waitingFrame?.authUrl).toBe("https://platform.claude.com/oauth/code/callback");
+    // 贴码回传,登录成功落 oauth。
+    expect(resumePrompt(ANTHROPIC_PROVIDER_ID, "code-abc#state-xyz")).toBe(true);
+    expect((await result.completion).ok).toBe(true);
+    const provider = state.settings.providers.find((p) => p.id === ANTHROPIC_PROVIDER_ID);
+    expect(provider?.oauth?.flow).toBe("anthropic");
+    expect(provider?.oauth?.credential?.access).toBe("code-abc#state-xyz");
+  });
 });

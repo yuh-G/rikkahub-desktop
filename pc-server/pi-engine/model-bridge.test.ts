@@ -494,6 +494,39 @@ describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运
     expect(piModel.baseUrl).toBe("https://api.kimi.com/coding");
   });
 
+  it("目录标 true 的模型也强制 supportsMidConvoSystemMessages=false(D1:上下文归宿主,pi 1.0 差异 system 消息须挪回开头)", async () => {
+    // pi 目录 anthropic 六款(fable-5/opus-4-8/5/5.5/sonnet-5.5)与 codex 新 GPT 标了
+    // supportsMidConvoSystemMessages:true。宿主引擎上下文每轮由 SQLite 重建,灌注历史
+    // 无 system 消息——若不压制,pi 1.0 起提示词变更的差异 section 会留在对话末尾
+    // (人设漂到尾部/Codex instructions 落兜底句)。此处锁映射产物对两类协议都强制关。
+    const ANTHROPIC = OAUTH_FLOWS["anthropic"];
+    const anthropicRow: Provider = {
+      ...makeProvider({ id: ANTHROPIC.presetProviderId, name: "Claude", baseUrl: "https://api.anthropic.com", type: "claude", apiKey: "" }),
+      authMode: "oauth",
+      enabled: true,
+      oauth: { flow: "anthropic", credential: { type: "oauth", access: "acc", refresh: "ref", expires: 9999999999000 }, signedInAt: 1 },
+      models: bundledModelsFor("anthropic"),
+    };
+    const opus5 = anthropicRow.models.find((m) => m.modelId === "claude-opus-5")!;
+    expect(opus5).toBeDefined();
+    const mapped = mapAny(anthropicRow, opus5);
+    if (!mapped.ok) throw new Error(mapped.reason);
+    const { model: piModel } = await createPiModelRuntime(mapped.mapping);
+    expect(piModel.api).toBe("anthropic-messages");
+    expect((piModel.compat as Record<string, unknown>).supportsMidConvoSystemMessages).toBe(false);
+    // Anthropic 另关 toolAdditions 闸门(nativeToolChanges 复合条件之一)。
+    expect((piModel.compat as Record<string, unknown>).supportsMidConvoToolChanges).toBe(false);
+    // 其余内建 compat 原样保留(只叠我们不妥协的两个键)。
+    expect((piModel.compat as Record<string, unknown>).forceAdaptiveThinking).toBe(true);
+
+    const codexRow = seedSignedIn(CODEX);
+    const gpt6 = codexRow.models.find((m) => m.modelId === "gpt-6-astra")!;
+    const codexMapped = mapAny(codexRow, gpt6);
+    if (!codexMapped.ok) throw new Error(codexMapped.reason);
+    const { model: codexModel } = await createPiModelRuntime(codexMapped.mapping);
+    expect((codexModel.compat as Record<string, unknown>).supportsMidConvoSystemMessages).toBe(false);
+  });
+
   it("未登录的预置订阅供应商(无 oauth 行)仍能按固定 UUID 译出内建身份;鉴权缺失由 pi getAuth 在请求时报,不在映射期拦", async () => {
     const row = seedSignedIn(KIMI, { oauth: undefined, enabled: false });
     const mapped = mapAny(row, row.models[0]!);

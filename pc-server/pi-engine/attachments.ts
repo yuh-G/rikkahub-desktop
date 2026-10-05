@@ -1,7 +1,7 @@
 // pi-engine/attachments.ts — 用户消息附件 → pi prompt 输入(P4 附件面裁决落地)
 //
 // 裁决:pi AgentSession.prompt(text, { images }) 原生支持图片(ImageContent:
-// base64+mimeType,agent-session.ts:242),文本外的其余附件(文档/音视频占位/OCR)
+// base64+mimeType,agent-session.ts:302 PromptOptions.images),文本外的其余附件(文档/音视频占位/OCR)
 // 在聊天引擎里本就是文本化进消息——两边共用同一母本 contentPartsForApi
 // (inference-engine/message-builder):文档全文前置(issue6 长上下文语义)、模型无
 // IMAGE 能力时图片降级 OCR 文本、data URL 物化,全部原样继承,pi 面零自创口径。

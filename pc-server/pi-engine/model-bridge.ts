@@ -453,8 +453,23 @@ function resolveBuiltinPiModel(
         reasoning: mapping.template.abilities.includes("REASONING"),
         input: mapping.template.inputModalities.includes("IMAGE") ? ["text", "image"] : ["text"],
       };
-  if (Object.keys(mapping.headers).length === 0) return base;
-  return { ...base, headers: { ...base.headers, ...mapping.headers } };
+  // 上下文归宿主 ⇒ 关闭中途 system 消息(D1,pi 1.0 行为修正):pi 1.0 起系统提示词是会话
+  // 记录里的 system 消息,提示词/工具变更时在变更处追加差异 section 消息;支持中途
+  // system 的模型会把它留在对话末尾(人设/AGENTS.md/技能清单漂到尾部,Codex instructions
+  // 落成兜底句)。我们的引擎上下文每轮由宿主从 SQLite 重建(context-encoder),灌注历史里
+  // 没有 system 消息——每轮差异 = 整份提示词。强制声明 false:pi 把差异消息挪回开头
+  // (collapseSystemMessages 合成一条放最前),与 0.85.1 行为逐字一致。不是关掉 pi 的
+  // 机制,只是声明「历史 system 消息由宿主重建,不提供」;将来 §7.4 引擎状态存储把
+  // pi 每轮的 system 消息记进 SQLite 原位灌回后,再放开吃「差异补丁保缓存」的红利。
+  // Anthropic 另关 supportsMidConvoToolChanges:它是 toolAdditions 的闸门之一
+  // (anthropic-messages 的 nativeToolChanges 分支),systemMessages=false 已挡住其
+  // 主前提,这里显式压制防上游把闸门重构成复合条件。
+  const compat = { ...(base.compat as Record<string, unknown>) };
+  compat.supportsMidConvoSystemMessages = false;
+  if (base.api === "anthropic-messages") compat.supportsMidConvoToolChanges = false;
+  const withCompat = { ...base, compat: compat as PiModel<Api>["compat"] };
+  if (Object.keys(mapping.headers).length === 0) return withCompat;
+  return { ...withCompat, headers: { ...withCompat.headers, ...mapping.headers } };
 }
 
 /** 为一次工作区会话构造 pi 模型运行时:零落盘。

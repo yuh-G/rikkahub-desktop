@@ -1,7 +1,7 @@
 // pi-engine/context-encoder.test.ts — DB→pi 编码器单测(P7 会话数据统一)
 //
 // 断言面刻意选 manager.buildSessionContext().messages:这是 createAgentSession 构造点
-// 真正消费的产物(sdk.ts:188),测"pi 将看到什么",不测编码器中间形。压缩用例同理,
+// 真正消费的产物(sdk.ts:194),测"pi 将看到什么",不测编码器中间形。压缩用例同理,
 // 锁的是 pi buildContextEntries 对灌注 CompactionEntry 的真实语义。
 
 import { describe, expect, test } from "bun:test";

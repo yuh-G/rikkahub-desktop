@@ -38,7 +38,6 @@ import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import type { PiSessionResources } from "./resources";
 import { seedPiSessionFromHistory, type EngineCompactionRecord } from "./context-encoder";
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
-import { reportError } from "../observability/app-errors";
 
 export interface PiGenerationContext {
   /** 生效 provider/model(调用方经 findModel 解析,providerOverwrite 已展开)。 */
@@ -78,8 +77,8 @@ export interface PiGenerationContext {
   signal?: AbortSignal;
   /** steering 轮边界(用户问题②,对齐 Codex pending_input):生成中补发的用户消息取流。
    *  runner 在 pi 的 turn_end(当前 assistant 消息结束、其工具全部执行完)同步调用本回调,
-   *  返回的文本经 session.steer() 入 pi steering 队列——agent-loop 紧接着在「下一次 LLM
-   *  调用前」排水注入(agent-loop.ts runLoop 的 turn_end 后 getSteeringMessages)。
+   *  返回的文本经 session.agent.steer() 同步入 pi steering 队列——agent-loop 紧接着在
+   *  「下一次 LLM 调用前」排水注入(agent-loop.ts runLoop 的 turn_end 后 getSteeringMessages)。
    *  调用时刻 = 注入时刻 = 编排层做数据层分裂的时刻,三者同点;与聊天引擎工具循环的
    *  调用位、Codex 的 pending_input 排水位同构。不传 = 无 steering 能力(消息留在 FIFO
    *  队列收尾派发兜底)。回调由编排层实现(落库/队列联动在编排层,runner 零副作用)。 */
@@ -157,7 +156,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     sessionManager: manager,
     thinkingLevel: piThinkingLevelFor(ctx.reasoningLevel),
     // "builtin" 只关内建工具;customTools 经 includeAllExtensionTools 全部激活
-    // (sdk.ts:246-251 + agent-session._refreshToolRegistry,§七-3 实证)。
+    // (agent-session.ts:495 includeAllExtensionTools + _refreshToolRegistry,§七-3 实证)。
     noTools: "builtin",
     customTools: ctx.tools ?? [],
     // P4 资源统一:受控 ResourceLoader(技能白名单/AGENTS.md 边界过滤/appendSystemPrompt)
@@ -176,8 +175,14 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
     // steering 轮边界(用户问题②):turn_end = 当前 assistant 消息结束、其工具批已执行完,
-    // agent-loop 紧接着 getSteeringMessages 排水。pi 的事件分发是顺序 await 各监听器
-    // (agent.ts _emit),本回调里 steer() 入队一定先于那次排水——注入零延迟、零竞态。
+    // agent-loop 紧接着 getSteeringMessages 排水(顺序 await 各监听器后再查队列)。这里
+    // 直调 session.agent.steer({...})——同步入队(agent.ts 只 push steeringQueue),保证
+    // 「pi 查队列之前消息已在队列」。不走 session.steer():pi 1.0 起它先 await 输入钩子
+    // (agent-session._queueUserInput)再入队,而我们的 turn_end 回调不 await 它,入队被
+    // 推迟至少一个微任务——排水可能先查、消息晚到(pi 有下轮兜底不丢,但会晚一轮送达,
+    // 破坏注入时刻=分段时刻)。跳过的只有输入钩子(noExtensions 下恒等)与 "/skill:"
+    // /模板展开(会话 UX 不产生 "/" 命令形态,恒等)。接入 pi 插件后此路径会绕过插件
+    // input 钩子,届时重评(方案 §8 P1)。
     // 编排层在同一调用里完成数据层分裂(定格 ai_1 / 落 steer user / 开 ai_2 / 换绑),
     // 于是分裂时刻与 pi 注入时刻逐字同点。此前用 1s 定时器轮询,分裂落在模型仍在流式
     // 的任意时刻,ai_1 多半还是空占位(2026-09-20 用户实测 2-1)。
@@ -187,13 +192,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
       // 注入即分段:编排层已换绑落点,桥的终局文本/保真序号切到新气泡口径。
       bridge.beginSegment();
       for (const text of texts) {
-        // steer() 内部会做 skill/模板展开——expandPromptTemplates 已在 prompt 侧关闭,
-        // 展开只作用于 "/skill:" 前缀等命令形态,会话 UX 不产生该形态,恒等。
-        void session.steer(text).catch(() => {
-          // 会话已收束(dispose 竞态)时 steer 拒绝:消息已在编排层落库并出队,
-          // FIFO 兜底路径不再持有它——按注入失败上报,排查线索进错误中心。
-          reportError("provider", "info", "补发消息注入工作区会话失败(会话可能已收束)", undefined, "pi_steer_failed");
-        });
+        session.agent.steer({ role: "user", content: [{ type: "text", text }], timestamp: Date.now() });
       }
     }
   });
@@ -204,7 +203,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   try {
     if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
-    // 当模板/扩展命令拦截(agent-session.ts:1122),我们的会话 UX 不走 pi 命令面。
+    // 当模板/扩展命令拦截(agent-session.ts:1926-1931),我们的会话 UX 不走 pi 命令面。
     // runWithLlmRequestLog:本轮生成的 LLM fetch(pi SDK 内部)记入统一日志管线(日志问题 1)。
     await runWithLlmRequestLog(llmLogContextFor(ctx.provider), () =>
       session.prompt(ctx.promptText, {

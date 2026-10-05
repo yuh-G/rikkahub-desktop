@@ -346,7 +346,8 @@
       "select_method": "Choose a sign-in method",
       "method": {
         "browser": "Browser sign-in (recommended)",
-        "device_code": "Device code sign-in (headless)"
+        "device_code": "Device code sign-in (headless)",
+        "copy_code": "Copy code sign-in (no browser redirect)"
       },
       "waiting_browser": "Complete sign-in in your browser",
       "open_browser": "Open browser",
