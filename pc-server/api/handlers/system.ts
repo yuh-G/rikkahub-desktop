@@ -61,8 +61,8 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
       },
     );
   }
-  // 全局工作区指引(pi-agent/AGENTS.md):工作区会话的跨项目用户指令层,对所有
-  // 工作区生效。读写"pi 实际加载的那个候选文件",无则模板引导创建。
+  // 全局工作区指引(pc-data/AGENTS.md,引擎中立):工作区会话的跨项目用户指令层,对所有
+  // 工作区生效。读写"实际加载的那个候选文件",无则模板引导创建。
   if (path === "global-agents" && request.method === "GET") {
     return json({ agentsFile: readGlobalAgentsFile() });
   }

@@ -2,9 +2,9 @@
 //
 // 用户亲写的、对所有工作区会话生效的个人指令层(对齐 APP 2689e753 的 ~/.agents 层)。
 // 家在 pc-data/AGENTS.md——与 skills/、memory/ 平级的应用级资源,不属于任何引擎:
-// pi 引擎经 appendSystemPrompt 注入本层(resources.ts,内容只读),未来引擎直接
-// import 本模块同源消费。候选名序与 pi 的 loadContextFileFromDir 同构(首命中即
-// 生效;编辑入口读写"实际生效的那个文件",都不存在时新建标准名)。
+// pi 引擎经 agentsFilesOverride 虚拟文件注入原生上下文件管线(resources.ts,内容只读),
+// 未来引擎直接 import 本模块同源消费。候选名序与 pi 的 loadContextFileFromDir 同构
+// (首命中即生效;编辑入口读写"实际生效的那个文件",都不存在时新建标准名)。
 
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

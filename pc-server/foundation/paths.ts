@@ -28,7 +28,7 @@ export const customFontsDir = join(dataDir, "fonts");
 // 清掉残留,会话上下文每轮从会话行确定性重建(pi-engine/context-encoder)。
 export const piAgentDir = join(dataDir, "pi-agent");
 // 全局工作区指引(引擎中立:所有 agent 引擎共读的用户层指令文件,pi 经
-// appendSystemPrompt 注入,未来引擎直接 import agents/ 域同源消费)。
+// agentsFilesOverride 虚拟文件注入原生上下文件管线,未来引擎直接 import agents/ 域同源消费)。
 export const globalAgentsPath = join(dataDir, "AGENTS.md");
 export const statePath = join(dataDir, "state.json");
 // 界面 origin 接力的落脚点记录(api/origin-relay.ts 读写):只描述「这台机器上的浏览器

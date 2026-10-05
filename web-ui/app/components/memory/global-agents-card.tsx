@@ -1,7 +1,7 @@
-// components/memory/global-agents-card.tsx — 全局工作区指引(pi-agent/AGENTS.md)卡片。
+// components/memory/global-agents-card.tsx — 全局工作区指引(pc-data/AGENTS.md,引擎中立)卡片。
 // 对齐 APP 2689e753 的 ~/.agents 层:对所有工作区会话生效的用户指令(沟通偏好/习惯
 // 流程),与记忆分工互补——记忆=模型提取的用户事实,AGENTS.md=用户亲写的指令。
-// 挂在记忆页首组;编辑走弹窗(模板引导新建),保存即被 pi 引擎下一轮装配读取。
+// 挂在记忆页首组;编辑走弹窗(模板引导新建),保存即被工作区引擎下一轮装配读取。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
