@@ -156,6 +156,8 @@ const ROW_ENTRIES: readonly SettingsSearchEntry[] = [
   row("models/providers", "providers.responses_path_label", ADV),
   row("models/providers", "providers.history_reasoning_title", ADV),
   row("models/providers", "providers.prompt_cache_key_title", ADV),
+  row("models/providers", "providers.interactions_title", ADV),
+  row("models/providers", "providers.custom_headers_title", ADV),
   row("models/providers", "providers.prompt_cache_title", ADV),
   row("models/providers", "providers.cache_ttl", ADV),
   row("models/providers", "providers.balance_title", { advanced: true, keywords: "balance" }),
