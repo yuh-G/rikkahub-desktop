@@ -13,6 +13,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { cn } from "~/lib/utils";
+import { copyItemName } from "~/lib/copy-name";
 import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -20,6 +21,8 @@ import { getSettingsParam } from "~/stores/settings-dialog-store";
 import type { AssistantProfile, Settings } from "~/types";
 import {
   clone,
+  copyRowAction,
+  deleteRowAction,
   moveItem,
   numberText,
   SettingsAdvancedSection,
@@ -515,6 +518,28 @@ function LorebookEditor({
     });
     await pullSettings(onSettings);
   };
+  // 复制世界书:克隆配置(新 id、「原名 (N)」),落盘后选中新副本。条目 id 全部重分配
+  // (createLorebook 的条目有 id,克隆时旧 id 无意义)。
+  const copyLorebookById = async (targetId: string) => {
+    const target = items.find((item) => String(item.id) === targetId);
+    if (!target) return;
+    const next = clone(target);
+    next.id = createId();
+    next.name = copyItemName(textValue(target.name) || t("settings:mcp.tab.lorebook"), new Set(items.map((item) => textValue(item.name))));
+    if (Array.isArray(next.entries)) {
+      next.entries = (next.entries as Array<Record<string, unknown>>).map((entry) => ({ ...entry, id: createId() }));
+    }
+    try {
+      await api.post("settings/lorebook/detail", next);
+      await pullSettings(onSettings);
+      setSelectedId(String(next.id));
+      setDraft(clone(next));
+      autosave.reset();
+      toast.success(t("settings:mcp.copied", { name: textValue(next.name) || t("settings:mcp.tab.lorebook") }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("settings:mcp.copy_failed"));
+    }
+  };
   // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
   const removeLorebookById = async (targetId: string) => {
     const target = items.find((item) => String(item.id) === targetId);
@@ -540,7 +565,11 @@ function LorebookEditor({
       titleOf={(item) => textValue(item.name) || t("settings:mcp.tab.lorebook")}
       rowMenuOf={(item) => {
         const id = String(item.id ?? "");
-        return id ? { onDelete: () => removeLorebookById(id) } : undefined;
+        if (!id) return undefined;
+        return [
+          copyRowAction(() => copyLorebookById(id)),
+          deleteRowAction(() => removeLorebookById(id)),
+        ];
       }}
       onMove={async (from, to) => {
         const next = moveItem(items, from, to);
@@ -742,6 +771,24 @@ function PromptItemEditor({
     });
     await pullSettings(onSettings);
   };
+  // 复制模式注入:克隆配置(新 id、「原名 (N)」),落盘后选中新副本。
+  const copyInjectionById = async (targetId: string) => {
+    const target = items.find((item) => String(item.id) === targetId);
+    if (!target) return;
+    const next = clone(target);
+    next.id = createId();
+    next.name = copyItemName(textValue(target.name) || title, new Set(items.map((item) => textValue(item.name))));
+    try {
+      await api.post(savePath, next);
+      await pullSettings(onSettings);
+      setSelectedId(String(next.id));
+      setDraft(clone(next));
+      autosave.reset();
+      toast.success(t("settings:mcp.copied", { name: textValue(next.name) || title }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("settings:mcp.copy_failed"));
+    }
+  };
   // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
   const removeInjectionById = async (targetId: string) => {
     const target = items.find((item) => String(item.id) === targetId);
@@ -767,7 +814,11 @@ function PromptItemEditor({
       titleOf={(item) => textValue(item.name) || title}
       rowMenuOf={(item) => {
         const id = String(item.id ?? "");
-        return id ? { onDelete: () => removeInjectionById(id) } : undefined;
+        if (!id) return undefined;
+        return [
+          copyRowAction(() => copyInjectionById(id)),
+          deleteRowAction(() => removeInjectionById(id)),
+        ];
       }}
       onMove={async (from, to) => {
         const next = moveItem(items, from, to);

@@ -8,7 +8,7 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, Eye, EyeOff, GripVertical, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, Copy, Eye, EyeOff, GripVertical, MoreHorizontal, Plus, Trash2 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import {
   DropdownMenu,
@@ -822,17 +822,52 @@ export function SettingsDetailHeader({
   );
 }
 
+export interface SettingsRowAction {
+  key: string;
+  label: React.ReactNode;
+  icon?: React.ReactNode;
+  destructive?: boolean;
+  onSelect: () => void | Promise<void>;
+}
+
+/** 菜单项文案是组件态(label 经 i18n 需 hook),工厂只包行为,文案元素在此单源。 */
+function RowActionLabel({ i18nKey }: { i18nKey: string }) {
+  const { t } = useTranslation();
+  return <>{t(i18nKey)}</>;
+}
+
+/** 常用菜单项工厂:六页的「复制」「删除」共用同一组 icon/文案,新页零拼装。 */
+export function copyRowAction(onCopy: () => void | Promise<void>): SettingsRowAction {
+  return {
+    key: "copy",
+    label: <RowActionLabel i18nKey="settings:common.duplicate" />,
+    icon: <Copy className="size-4" />,
+    onSelect: onCopy,
+  };
+}
+
+export function deleteRowAction(onDelete: () => void | Promise<void>): SettingsRowAction {
+  return {
+    key: "delete",
+    label: <RowActionLabel i18nKey="settings:common.delete" />,
+    icon: <Trash2 className="size-4" />,
+    destructive: true,
+    onSelect: onDelete,
+  };
+}
+
 /**
- * 设置列表的一行(可排序 + 选择 + 右键/悬停「⋯」删除菜单)。
+ * 设置列表的一行(可排序 + 选择 + 右键/悬停「⋯」操作菜单)。
  *
- * 删除能力收口到行上,详情页不再放删除键——对齐主页会话列表的交互心智:
+ * 条目操作收口到行上,详情页不再放操作键——对齐主页会话列表的交互心智:
  *   - 右键任意一行 → 打开该行的操作菜单;
  *   - 悬停/聚焦某行 → 行尾浮现「⋯」钮,点开同一个菜单。
- * 两者打开的是**同一个受控 DropdownMenu**(菜单项就是「删除」),材质沿用 ds-menu。
+ * 两者打开的是**同一个受控 DropdownMenu**,材质沿用 ds-menu。actions 给「复制」「删除」
+ * 等(删除项标 destructive 并由各页自带确认);删除排在最后,破坏性操作垫底。
  *
  * `badge` 是行尾的常驻徽标(如供应商的「订阅」):常态显示徽标,悬停/聚焦/菜单打开时
- * 让位给「⋯」钮——同位互换,不并排抢位。删除走 onDelete(按本行 id,而非详情草稿),
- * 确认对话框与各页的防复活时序由调用方的 onDelete 实现;disabled 时整条不弹菜单。
+ * 让位给「⋯」钮——同位互换,不并排抢位。动作按本行 id 触发(而非详情草稿),确认
+ * 对话框与防复活时序由调用方的 onSelect 实现;disabled 时整条不弹菜单。
  *
  * 排序:拖拽把手(GripVertical)经 startRowDrag(drag-reorder.ts)驱动,移动中兄弟行
  * 平滑挤开(预览重排 + transition),松手才提交 onMove——见该文件的交互说明。
@@ -844,7 +879,7 @@ export function SettingsListRow({
   children,
   onSelect,
   onMove,
-  onDelete,
+  actions,
   badge,
 }: {
   id: string;
@@ -853,23 +888,22 @@ export function SettingsListRow({
   children: React.ReactNode;
   onSelect?: () => void;
   onMove?: (from: number, to: number) => void;
-  /** 提供则启用删除菜单(右键 + 悬停「⋯」);onDelete 内部应自行确认与落库。 */
-  onDelete?: () => void | Promise<void>;
-  /** 行尾常驻徽标(与「⋯」同位互换);不供删除菜单时也可单独用作纯展示徽标。 */
+  /** 菜单项列表;空/缺省则整行无菜单(无「⋯」钮、右键不弹)。 */
+  actions?: readonly SettingsRowAction[];
+  /** 行尾常驻徽标(与「⋯」同位互换);不供操作菜单时也可单独用作纯展示徽标。 */
   badge?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const canMove = typeof onMove === "function";
-  const canDelete = typeof onDelete === "function";
-  const showTrigger = canDelete;
-
-  const runDelete = React.useCallback(() => {
-    // 菜单先关,删除动作(通常自带确认对话框)再执行,避免菜单与对话框焦点叠压。
+  const menuItems = actions?.filter((action) => action != null) ?? [];
+  const showTrigger = menuItems.length > 0;
+  const runAction = (action: SettingsRowAction) => {
+    // 菜单先关,动作(可能自带确认对话框)再执行,避免菜单与对话框焦点叠压。
     setMenuOpen(false);
-    void onDelete?.();
-  }, [onDelete]);
+    void action.onSelect();
+  };
 
   // 徽标↔「⋯」互换的显隐:菜单打开态靠行根的 data-menu 标志兜底——徽标与「⋯」各自包了
   // span、不是兄弟,跨元素 peer 够不着;状态挂在共同祖先上,菜单开着时「⋯」不缩回、徽标让位。
@@ -888,7 +922,7 @@ export function SettingsListRow({
     >
       <div
         onContextMenu={(event) => {
-          if (!canDelete) return;
+          if (!showTrigger) return;
           event.preventDefault();
           setMenuOpen(true);
         }}
@@ -961,12 +995,18 @@ export function SettingsListRow({
         ) : null}
       </div>
 
-      {canDelete ? (
+      {showTrigger ? (
         <DropdownMenuContent side="right" align="start" className="w-44">
-          <DropdownMenuItem variant="destructive" onSelect={runDelete}>
-            <Trash2 className="size-4" />
-            <span>{t("settings:common.delete")}</span>
-          </DropdownMenuItem>
+          {menuItems.map((action) => (
+            <DropdownMenuItem
+              key={action.key}
+              variant={action.destructive ? "destructive" : undefined}
+              onSelect={() => runAction(action)}
+            >
+              {action.icon ?? null}
+              <span>{action.label}</span>
+            </DropdownMenuItem>
+          ))}
         </DropdownMenuContent>
       ) : null}
     </DropdownMenu>

@@ -59,15 +59,48 @@ describe("设置列表 SettingsListRow", () => {
     expect(SHARED).not.toContain("group-focus-within/settings-row:opacity-100");
   });
 
-  test("「至少保留一个」的列表:只剩一条时不给删除菜单(菜单在、点了却无反应即空壳)", () => {
+  test("「至少保留一个」的列表:只剩一条时不给删除项(菜单项在、点了却无反应即空壳)", () => {
     const read = (name: string) =>
       readFileSync(join(import.meta.dir, "..", "components", "settings", name), "utf8");
     expect(read("providers/index.tsx")).toContain(
-      "onDelete={settings.providers.length > 1 ? () => deleteProviderById(provider.id) : undefined}",
+      "...(settings.providers.length > 1",
+    );
+    expect(read("providers/index.tsx")).toContain(
+      "[deleteRowAction(() => deleteProviderById(provider.id))]",
     );
     expect(read("assistants.tsx")).toContain(
-      "onDelete={settings.assistants.length > 1 ? () => removeAssistantById(item.id) : undefined}",
+      "...(settings.assistants.length > 1",
     );
+    expect(read("assistants.tsx")).toContain(
+      "[deleteRowAction(() => removeAssistantById(item.id))]",
+    );
+  });
+
+  test("六页复制动作都进同一个右键/⋯菜单(菜单项顺序:复制在前、删除垫底)", () => {
+    const read = (name: string) =>
+      readFileSync(join(import.meta.dir, "..", "components", "settings", name), "utf8");
+    const pages = [
+      "assistants.tsx",
+      "providers/index.tsx",
+      "search.tsx",
+      "extensions/mcp.tsx",
+      "extensions/skills.tsx",
+      "extensions/injection.tsx",
+      "extensions/quick-messages.tsx",
+      "speech.tsx",
+    ];
+    for (const page of pages) {
+      const source = read(page);
+      expect(source).toContain("copyRowAction(");
+      // 删除是破坏性动作,永远垫底。
+      const firstCopy = source.indexOf("copyRowAction(");
+      const firstDelete = source.indexOf("deleteRowAction(");
+      expect(firstCopy).toBeGreaterThan(-1);
+      expect(firstDelete).toBeGreaterThan(firstCopy);
+    }
+    // 语音两页:TTS 系统语音(设备能力)不进复制/删除;ASR 无系统行,复制+删除全量。
+    const tts = read("speech.tsx");
+    expect(tts).toContain('provider.type === "system"');
   });
 });
 

@@ -6,12 +6,15 @@ import { toast } from "sonner";
 import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
+import { copyItemName } from "~/lib/copy-name";
 import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { AssistantProfile, Settings } from "~/types";
 import {
   clone,
+  copyRowAction,
+  deleteRowAction,
   moveItem,
   SettingsDetailFooter,
   SettingsDetailHeader,
@@ -85,6 +88,26 @@ function QuickMessageEditor({
     autosave.markDirty();
     setDraft({ ...draft, ...patch });
   };
+  // 复制快捷消息:克隆配置(新 id、「原名 (N)」),落盘后选中新副本。
+  const copyById = async (targetId: string) => {
+    const target = items.find((item) => String(item.id) === targetId);
+    if (!target) return;
+    const next = {
+      ...clone(target),
+      id: createId(),
+      title: copyItemName(textValue(target.title) || t("settings:mcp.tab.quick"), new Set(items.map((item) => textValue(item.title)))),
+    } as Record<string, unknown>;
+    try {
+      await api.post("settings/quick-message/detail", next);
+      await pullSettings(onSettings);
+      setSelectedId(String(next.id));
+      setDraft(clone(next));
+      autosave.reset();
+      toast.success(t("settings:mcp.copied", { name: textValue(next.title) || t("settings:mcp.tab.quick") }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("settings:mcp.copy_failed"));
+    }
+  };
   // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
   const removeById = async (targetId: string) => {
     const target = items.find((item) => String(item.id) === targetId);
@@ -121,7 +144,11 @@ function QuickMessageEditor({
       listHeader={bindingSelect}
       rowMenuOf={(item) => {
         const id = String(item.id ?? "");
-        return id ? { onDelete: () => removeById(id) } : undefined;
+        if (!id) return undefined;
+        return [
+          copyRowAction(() => copyById(id)),
+          deleteRowAction(() => removeById(id)),
+        ];
       }}
       onMove={async (from, to) => {
         const next = moveItem(items, from, to);

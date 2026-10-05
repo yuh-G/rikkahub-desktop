@@ -9,12 +9,16 @@ import { Button } from "~/components/ui/button";
 import { StatusBadge } from "~/components/ui/status-badge";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { getAudioPlaybackKey, playAudio, stopAudio, useAudioPlaybackKey } from "~/lib/global-audio";
+import { copyItemName } from "~/lib/copy-name";
+import { createId } from "~/lib/id";
 import { patchDisplay } from "~/lib/settings-patch";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { AsrProviderProfile, AsrProviderType, Settings, TtsProviderProfile, TtsProviderType } from "~/types";
 import {
   clone,
+  copyRowAction,
+  deleteRowAction,
   moveItem,
   SettingsAdvancedSection,
   SettingsDetailFooter,
@@ -281,6 +285,18 @@ export function TtsSection({
   }, [draft, isTestPlaying, testPlaybackKey, t]);
 
   const typeLabel = useTtsTypeLabel();
+  // 复制语音服务:克隆配置(新 id、「原名 (N)」)。系统语音是设备能力不是配置,不可复制。
+  const copyProviderById = React.useCallback(async (targetId: string) => {
+    const target = providers.find((provider) => provider.id === targetId);
+    if (!target || target.type === "system") return;
+    const next: TtsProviderProfile = {
+      ...clone(target),
+      id: createId(),
+      name: copyItemName(String(target.name ?? "") || typeLabel(target.type), new Set(providers.map((provider) => String(provider.name ?? "") || typeLabel(provider.type)))),
+    };
+    await saveProvider(next);
+    toast.success(t("settings:speech.copied", { name: next.name }));
+  }, [providers, saveProvider, t, typeLabel]);
   // 「高级设置」展开态:切换服务不收起,离开本页(重挂载)复位为收起。
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const fields = draft ? ttsFields(draft.type) : [];
@@ -324,9 +340,15 @@ export function TtsSection({
                 active={provider.id === selectedId}
                 onSelect={() => setSelectedId(provider.id)}
                 onMove={reorderProviders}
-                onDelete={
-                  provider.type === "system" ? undefined : () => removeProviderById(provider.id)
-                }
+                actions={[
+                  // 系统语音是设备能力,不可复制/删除。
+                  ...(provider.type === "system"
+                    ? []
+                    : [
+                        copyRowAction(() => copyProviderById(provider.id)),
+                        deleteRowAction(() => removeProviderById(provider.id)),
+                      ]),
+                ]}
               >
                 <ProviderListItem
                   name={provider.name}
@@ -487,6 +509,19 @@ export function AsrSection({
     [onSettings, settings],
   );
 
+  // 复制语音识别服务:克隆配置(新 id、「原名 (N)」)。
+  const copyProviderById = React.useCallback(async (targetId: string) => {
+    const target = providers.find((provider) => provider.id === targetId);
+    if (!target) return;
+    const next: AsrProviderProfile = {
+      ...clone(target),
+      id: createId(),
+      name: copyItemName(String(target.name ?? "") || asrTypeLabel(target.type), new Set(providers.map((provider) => String(provider.name ?? "") || asrTypeLabel(provider.type)))),
+    };
+    await saveProvider(next);
+    toast.success(t("settings:speech.copied", { name: next.name }));
+  }, [providers, saveProvider, t]);
+
   // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
   const removeProviderById = React.useCallback(async (targetId: string) => {
     const target = providers.find((provider) => provider.id === targetId);
@@ -535,7 +570,10 @@ export function AsrSection({
               active={provider.id === selectedId}
               onSelect={() => setSelectedId(provider.id)}
               onMove={reorderProviders}
-              onDelete={() => removeProviderById(provider.id)}
+              actions={[
+                copyRowAction(() => copyProviderById(provider.id)),
+                deleteRowAction(() => removeProviderById(provider.id)),
+              ]}
             >
               <ProviderListItem
                 name={provider.name}

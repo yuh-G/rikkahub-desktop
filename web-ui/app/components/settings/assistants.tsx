@@ -15,8 +15,17 @@ import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import { UIAvatar } from "~/components/ui/ui-avatar";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import { createId } from "~/lib/id";
 import { getModelDisplayName } from "~/lib/display";
+import { copyItemName } from "~/lib/copy-name";
 import { patchSettingsLocal, upsertById } from "~/lib/settings-patch";
 import { cn } from "~/lib/utils";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
@@ -25,6 +34,8 @@ import { confirmDialog } from "~/stores/confirm-store";
 import type { AssistantProfile, ProviderModel, Settings } from "~/types";
 import {
   clone,
+  copyRowAction,
+  deleteRowAction,
   moveItem,
   numberText,
   SettingsAdvancedRegion,
@@ -212,6 +223,50 @@ export function AssistantsSection({
     setAssistantId(created.id);
     toast.success(t("settings:assistants.added"));
   };
+  // 复制助手:独立记忆非空时先问「同时复制记忆」(对齐 APP AssistantPage 的 cloneTarget
+  // 确认框);无记忆直接克隆。名字走「原名 (N)」序号后缀(与会话 fork 同款命名纪律)。
+  const [cloneTarget, setCloneTarget] = React.useState<AssistantProfile | null>(null);
+  const [cloneMemoryCount, setCloneMemoryCount] = React.useState(0);
+  const [cloneWithMemories, setCloneWithMemories] = React.useState(false);
+  const copyAssistantById = async (targetId: string, copyMemories: boolean) => {
+    const target = settings.assistants.find((item) => item.id === targetId);
+    if (!target) return;
+    const name = copyItemName(
+      target.name || t("settings:assistants.default_name"),
+      new Set(settings.assistants.map((item) => item.name || t("settings:assistants.default_name"))),
+    );
+    try {
+      const result = await api.post<{ assistant: AssistantProfile }>("settings/assistant/copy", {
+        id: targetId,
+        name,
+        copyMemories,
+      });
+      patchSettingsLocal((current) => ({
+        assistants: upsertById(current.assistants, result.assistant),
+      }));
+      setAssistantId(result.assistant.id);
+      toast.success(t("settings:assistants.copied", { name }));
+    } catch (error) {
+      toast.error((error as Error).message || t("settings:assistants.copy_failed"));
+    }
+  };
+  const startCopyAssistant = async (targetId: string) => {
+    const target = settings.assistants.find((item) => item.id === targetId);
+    if (!target) return;
+    let memoryCount = 0;
+    try {
+      const result = await api.get<{ memories: unknown[] }>(`memory/assistant/${encodeURIComponent(targetId)}`);
+      memoryCount = result.memories?.length ?? 0;
+    } catch { /* 记忆查询失败按 0 处理(与删除路径同款兜底) */ }
+    if (memoryCount > 0) {
+      setCloneMemoryCount(memoryCount);
+      setCloneWithMemories(false);
+      setCloneTarget(target);
+      return;
+    }
+    await copyAssistantById(targetId, false);
+  };
+
   const moveAssistant = async (from: number, to: number) => {
     const assistants = moveItem(settings.assistants, from, to);
     patchSettingsLocal({ assistants });
@@ -277,8 +332,13 @@ export function AssistantsSection({
           active={item.id === draft?.id}
           onSelect={() => setAssistantId(item.id)}
           onMove={moveAssistant}
-          // 至少保留一个助手:只剩一个时不给删除菜单(否则菜单在、点了却没有反应)。
-          onDelete={settings.assistants.length > 1 ? () => removeAssistantById(item.id) : undefined}
+          actions={[
+            copyRowAction(() => startCopyAssistant(item.id)),
+            // 至少保留一个助手:只剩一个时不给删除(菜单项在、点了却没有反应)。
+            ...(settings.assistants.length > 1
+              ? [deleteRowAction(() => removeAssistantById(item.id))]
+              : []),
+          ]}
         >
           <span className="flex items-center gap-2">
             <UIAvatar size="sm" name={item.name || t("settings:assistants.default_name")} avatar={item.avatar} />
@@ -290,23 +350,62 @@ export function AssistantsSection({
   );
 
   return (
-    <SettingsSplit scroll list={list}>
-      {draft ? (
-        <AssistantEditor
-          draft={draft}
-          setDraft={setDraft}
-          patchDraft={patchDraft}
-          autosave={autosave}
-          settings={settings}
-          advancedOpen={advancedOpen}
-          onAdvancedOpenChange={setAdvancedOpen}
-        />
-      ) : (
-        <SettingsEmpty size="md">
-          {t("settings:assistants.empty")}
-        </SettingsEmpty>
-      )}
-    </SettingsSplit>
+    <>
+      <SettingsSplit scroll list={list}>
+        {draft ? (
+          <AssistantEditor
+            draft={draft}
+            setDraft={setDraft}
+            patchDraft={patchDraft}
+            autosave={autosave}
+            settings={settings}
+            advancedOpen={advancedOpen}
+            onAdvancedOpenChange={setAdvancedOpen}
+          />
+        ) : (
+          <SettingsEmpty size="md">
+            {t("settings:assistants.empty")}
+          </SettingsEmpty>
+        )}
+      </SettingsSplit>
+      {/* 复制助手的「同时复制记忆」询问:不是单纯确认/取消(confirmDialog 只有 boolean),
+          要带可勾选项,故用 Dialog(对齐 APP 的带 Checkbox 确认框)。默认不勾——记忆是
+          高个人化资产,多副本各自演化,保守起步。 */}
+      <Dialog open={cloneTarget !== null} onOpenChange={(open) => !open && setCloneTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("settings:assistants.copy_title")}</DialogTitle>
+            <DialogDescription>
+              {t("settings:assistants.copy_desc", {
+                name: cloneTarget?.name || t("settings:assistants.default_name"),
+                n: cloneMemoryCount,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <label className="flex cursor-pointer items-center gap-3 rounded-[var(--ds-radius-sm)] px-1 py-1.5 text-sm">
+            <Checkbox
+              checked={cloneWithMemories}
+              onCheckedChange={(checked) => setCloneWithMemories(checked === true)}
+            />
+            {t("settings:assistants.copy_with_memories")}
+          </label>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCloneTarget(null)}>
+              {t("common:confirm_dialog.cancel")}
+            </Button>
+            <Button
+              onClick={() => {
+                const target = cloneTarget;
+                setCloneTarget(null);
+                if (target) void copyAssistantById(target.id, cloneWithMemories);
+              }}
+            >
+              {t("common:confirm_dialog.confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

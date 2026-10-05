@@ -22,6 +22,8 @@ import { Switch } from "~/components/ui/switch";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { isBalanceResultPathValid } from "~/lib/json-expression";
+import { copyItemName } from "~/lib/copy-name";
+import { createId } from "~/lib/id";
 import { patchSettingsLocal, upsertById } from "~/lib/settings-patch";
 import { openExternal } from "~/lib/external-link";
 import { DEFAULT_BASE_URLS, type ProviderKind } from "~/lib/provider-base-urls";
@@ -31,6 +33,8 @@ import { getSettingsParam } from "~/stores/settings-dialog-store";
 import type { ProviderModel, ProviderProfile, Settings } from "~/types";
 import {
   clone,
+  copyRowAction,
+  deleteRowAction,
   moveItem,
   PasswordInput,
   SettingsAdvancedSection,
@@ -258,6 +262,31 @@ export function ProvidersSection({
     setSelectedId(next.id);
     toast.success(t("settings:providers.added"));
   };
+  // 复制供应商:克隆配置(新 id、「原名 (N)」序号后缀)。oauthStatus 是服务端安全视图、
+  // authMode=oauth 行的凭据在服务端(前端不可见也带不走)——副本一律剥成普通 apiKey 形态,
+  // 订阅登录态不克隆(登录是账号绑定,克隆一份"假已登录"只会制造疑难杂症)。
+  const copyProviderById = async (targetId: string) => {
+    const target = settings.providers.find((provider) => provider.id === targetId);
+    if (!target) return;
+    const { oauthStatus: _view, authMode: _mode, ...rest } = target;
+    const next: ProviderProfile = {
+      ...clone(rest),
+      id: createId(),
+      name: copyItemName(target.name, new Set(settings.providers.map((provider) => provider.name))),
+      enabled: false,
+      testPassed: false,
+      testPassedAt: 0,
+    };
+    try {
+      await api.post("settings/provider", next);
+      patchSettingsLocal((current) => ({ providers: upsertById(current.providers, next) }));
+      setSelectedId(next.id);
+      toast.success(t("settings:providers.copied", { name: next.name }));
+    } catch (error) {
+      toast.error((error as Error).message || t("settings:providers.copy_failed"));
+    }
+  };
+
   const moveProvider = async (from: number, to: number) => {
     const nextProviders = moveItem(settings.providers, from, to);
     patchSettingsLocal({ providers: nextProviders });
@@ -378,8 +407,13 @@ export function ProvidersSection({
               active={provider.id === draft.id}
               onSelect={() => setSelectedId(provider.id)}
               onMove={moveProvider}
-              // 至少保留一个供应商:只剩一个时不给删除菜单(否则菜单在、点了却没有反应)。
-              onDelete={settings.providers.length > 1 ? () => deleteProviderById(provider.id) : undefined}
+              actions={[
+                copyRowAction(() => copyProviderById(provider.id)),
+                // 至少保留一个供应商:只剩一个时不给删除(菜单项在、点了却没有反应)。
+                ...(settings.providers.length > 1
+                  ? [deleteRowAction(() => deleteProviderById(provider.id))]
+                  : []),
+              ]}
               badge={
                 provider.authMode === "oauth" ? (
                   <StatusBadge tone="brand">{t("settings:providers.oauth.badge")}</StatusBadge>

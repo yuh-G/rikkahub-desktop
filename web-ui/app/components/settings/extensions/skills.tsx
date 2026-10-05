@@ -18,11 +18,14 @@ import { Notice } from "~/components/ui/notice";
 import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
+import { copySkillDirName } from "~/lib/copy-name";
 import { cn } from "~/lib/utils";
 import api, { appendWebAuthQuery } from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import type { AssistantProfile, Settings } from "~/types";
 import {
+  copyRowAction,
+  deleteRowAction,
   SettingsAdvancedSection,
   SettingsDetailFooter,
   SettingsDetailHeader,
@@ -154,6 +157,24 @@ function SkillsEditor({
     await load();
     await pullSettings(onSettings);
   };
+  // 复制技能:后端整棵目录树复制(SKILL.md+随附脚本资料),目录名与 frontmatter name
+  // 同步换新(pi 命名规则禁括号,序号后缀用 "-n" 而非 "(n)")。复制的是磁盘上已落盘的
+  // 那份——编辑中未保存的改动不带过去,与删除同一语义。
+  const copySkillByName = async (skillName: string) => {
+    if (!skillName) return;
+    // 正在编辑的就是这个技能时,先把在飞编辑落盘再复制,否则复制出旧版(静默丢改动)。
+    if (selected === skillName && autosave.isDirty()) await autosave.saveNow();
+    const targetName = copySkillDirName(skillName, new Set(skills.map((skill) => skill.name)));
+    try {
+      await api.post("skills/copy", { name: skillName, targetName });
+      await load();
+      setSelected(targetName);
+      toast.success(t("settings:mcp.skill_copied", { name: targetName }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("settings:mcp.skill_copy_failed"));
+    }
+  };
+
   const importFromGitHub = async () => {
     if (!githubUrl.trim()) return;
     setImporting(true);
@@ -250,7 +271,11 @@ function SkillsEditor({
       listHeader={bindingSelect}
       rowMenuOf={(item) => {
         const name = textValue(item.name);
-        return name ? { onDelete: () => removeSkill(name) } : undefined;
+        if (!name) return undefined;
+        return [
+          copyRowAction(() => copySkillByName(name)),
+          deleteRowAction(() => removeSkill(name)),
+        ];
       }}
       renderItem={(item) => {
         const name = textValue(item.name);

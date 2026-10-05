@@ -10,7 +10,7 @@ process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-memcopy-test-
 const { setState, state } = await import("../persistence/json-store");
 // addMemory 建新组时反查 state.settings.assistants 取助手名;测试环境没有完整启动
 // 流程,喂最小 State(state 是 live binding 的命名导出,须经 setState 写)。
-setState({ ...state, settings: { assistants: [] } } as typeof state);
+setState({ ...state, settings: { assistants: [] } } as unknown as typeof state);
 
 const { memoryStore } = await import("./index");
 

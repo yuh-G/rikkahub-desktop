@@ -12,6 +12,7 @@ import { setBindingAssistant, useExtensionBindingStore } from "~/stores/extensio
 import type { AssistantProfile, Settings } from "~/types";
 import {
   type SettingsAddMenuItem,
+  type SettingsRowAction,
   SettingsEmpty,
   SettingsListAddButton,
   SettingsListRow,
@@ -198,8 +199,8 @@ export function EditorShell({
   createMenu?: readonly SettingsAddMenuItem[];
   /** 左栏列表头部(「新增」钮与列表之间):技能/快捷消息页的「作用于助手」选择器。 */
   listHeader?: React.ReactNode;
-  /** 提供则每行带右键/悬停「⋯」删除菜单;返回的回调按该行 id 删除(自带确认与落库)。 */
-  rowMenuOf?: (item: Record<string, unknown>) => { onDelete: () => void | Promise<void> } | undefined;
+  /** 提供则每行带右键/悬停「⋯」操作菜单;按该行条目返回动作列表(删除自带确认与落库)。 */
+  rowMenuOf?: (item: Record<string, unknown>) => readonly SettingsRowAction[] | undefined;
   children: React.ReactNode;
 }) {
   const { t } = useTranslation();
@@ -231,7 +232,7 @@ export function EditorShell({
                 active={rowKey === selectedId}
                 onSelect={() => onSelect(rowKey)}
                 onMove={onMove ? (from, to) => void onMove(from, to) : undefined}
-                onDelete={rowMenuOf?.(item)?.onDelete}
+                actions={rowMenuOf?.(item)}
               >
                 {renderItem ? (
                   renderItem(item)

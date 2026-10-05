@@ -15,6 +15,7 @@ import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { openExternal } from "~/lib/external-link";
 import { cn } from "~/lib/utils";
+import { copyItemName } from "~/lib/copy-name";
 import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
@@ -23,6 +24,8 @@ import type { McpHealthEntryDto, Settings } from "~/types";
 import { readMcpHeaders, toMcpHeaderPairs } from "@server/tools/mcp-headers";
 import {
   clone,
+  copyRowAction,
+  deleteRowAction,
   moveItem,
   SettingsAdvancedSection,
   SettingsDetailFooter,
@@ -321,6 +324,36 @@ function McpServerEditor({
     }
     toast.success(t("settings:mcp.server.deleted"));
   };
+  // 复制 MCP 服务器:克隆配置(新 id、「原名 (N)」)。oauth 凭据/令牌在服务端且按
+  // 服务器 id 绑定,克隆后必须清空——副本连不上时重新授权即可;连接/工具同步状态
+  // (connected/lastSyncAt/lastSyncError)是运行时派生,不带走,让副本自己同步。
+  const copyServerById = async (targetId: string) => {
+    const target = servers.find((item) => String(item.id) === targetId);
+    if (!target) return;
+    const sourceCommon = target.commonOptions as Record<string, unknown> | undefined;
+    const next = {
+      ...clone(target),
+      id: createId(),
+      commonOptions: {
+        ...(sourceCommon ?? {}),
+        name: copyItemName(mcpName(target, t("settings:mcp.server.default_name")), new Set(servers.map((item) => mcpName(item, t("settings:mcp.server.default_name"))))),
+        oauth: null,
+        connected: false,
+        lastSyncAt: null,
+        lastSyncError: "",
+      },
+    } as Record<string, unknown>;
+    try {
+      const result = await api.post<{ server: Record<string, unknown> }>("settings/mcp-server/detail", next);
+      await pullSettings(onSettings);
+      setSelectedId(String(result.server.id));
+      setDraft(clone(result.server));
+      setHeaders(headersOf(result.server.commonOptions));
+      toast.success(t("settings:mcp.server.copied", { name: textValue((result.server.commonOptions as Record<string, unknown> | undefined)?.name) }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("settings:mcp.server.copy_failed"));
+    }
+  };
   const reorder = async (from: number, to: number) => {
     const next = moveItem(servers, from, to);
     onSettings({ ...settings, mcpServers: next as unknown as Settings["mcpServers"] });
@@ -338,7 +371,11 @@ function McpServerEditor({
       titleOf={(item) => mcpName(item, t("settings:mcp.server.default_name"))}
       rowMenuOf={(item) => {
         const id = String(item.id ?? "");
-        return id ? { onDelete: () => removeServerById(id) } : undefined;
+        if (!id) return undefined;
+        return [
+          copyRowAction(() => copyServerById(id)),
+          deleteRowAction(() => removeServerById(id)),
+        ];
       }}
       renderItem={(item) => {
         const status = mcpStatusKey(item, mcpHealth[String(item.id ?? "")]);

@@ -12,6 +12,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { cn } from "~/lib/utils";
+import { copyItemName } from "~/lib/copy-name";
 import { createId } from "~/lib/id";
 import { patchSettingsLocal, upsertById } from "~/lib/settings-patch";
 import { refreshSettingsStore } from "~/lib/settings-sync";
@@ -30,6 +31,8 @@ import { resolveSearchDepth, searchDepthSpecOf } from "@server/search/service-de
 import { searchSelectionAfterDelete } from "@server/foundation/search-selection";
 import {
   clone,
+  copyRowAction,
+  deleteRowAction,
   moveItem,
   numberText,
   PasswordInput,
@@ -418,6 +421,33 @@ export function SearchSection({
       setTesting(false);
     }
   };
+  // 复制搜索服务:克隆配置(新 id、「原名 (N)」);testPassed 不随行——同 key 同端点
+  // 的副本照理也能过测,但测试结论是新条目自己的事,让用户自己点一次测试。
+  const copyServiceById = async (targetId: string) => {
+    const target = settings.searchServices.find((item) => String(item.id) === targetId);
+    if (!target) return;
+    const { testPassed: _p, testPassedAt: _t, ...rest } = target as Record<string, unknown>;
+    const next = {
+      ...clone(rest),
+      id: createId(),
+      name: copyItemName(
+        textValue(target.name) || searchServiceLabelForType(textValue(target.type)),
+        new Set(settings.searchServices.map((item) => textValue(item.name) || searchServiceLabelForType(textValue(item.type)))),
+      ),
+    } as Record<string, unknown>;
+    void api
+      .post<{ service: Record<string, unknown> }>("settings/search/service/detail", next)
+      .then((result) => {
+        // 新建只追加并打开编辑,不改对话正在用的搜索服务(与 addService 一致)。
+        patchSettingsLocal((current) => ({ searchServices: upsertById(current.searchServices, toSearchService(result.service)) }));
+        setDraft(toSearchService(result.service) as unknown as Record<string, unknown>);
+        setSelectedId(String(result.service.id));
+        setTestResult("");
+        toast.success(t("settings:search.copied", { name: textValue(next.name) }));
+      })
+      .catch((error: Error) => toast.error(error.message || t("settings:search.copy_failed")));
+  };
+
   // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
   const removeById = async (targetId: string) => {
     const target = settings.searchServices.find((item) => String(item.id) === targetId);
@@ -529,7 +559,10 @@ export function SearchSection({
               active={String(service.id) === String(draft.id)}
               onSelect={() => setSelectedId(String(service.id ?? ""))}
               onMove={moveSearchService}
-              onDelete={() => removeById(String(service.id ?? ""))}
+              actions={[
+                copyRowAction(() => copyServiceById(String(service.id ?? ""))),
+                deleteRowAction(() => removeById(String(service.id ?? ""))),
+              ]}
             >
               <span className="grid min-w-0 grid-cols-[34px_minmax(0,1fr)] items-center gap-3 text-left">
                 <AIIcon
