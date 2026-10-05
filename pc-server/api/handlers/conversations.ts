@@ -35,6 +35,7 @@ import { DEFAULT_TRANSLATION_PROMPT } from "../../app-config/prompts";
 import { attachOcrToImageParts, compressConversation, conversationModelIdFor, englishLanguageName, fetchAuxiliaryText, generateTitleForConversation, isQwenMtModel, markOcrPendingParts, modelExists, resolveFastModelId } from "../../conversations/auxiliary";
 import { compactEngineConversation, dispatchMessageQueue, generateAnswer, resolveEngineForConversation } from "../../conversations/orchestrator";
 import { deleteConversationsById, ensureConversation, findAssistant, finishInterruptedPendingToolsInConversation, hasPendingToolApproval } from "../../conversations/helpers";
+import { forkConversationTitle } from "../../conversations/fork-title";
 import { editQueuedMessage, enqueueMessage, holdMessageQueue, pauseMessageQueue, releaseMessageQueueHold, removeQueuedMessage, resumeMessageQueue, waitForQueuedReply } from "../../conversations/message-queue";
 import { pushSteeringMessage, removeSteeringMessage } from "../../conversations/steering-channel";
 import { abortGeneration, awaitingApproval, compressing, generating } from "../../conversations/generation-state";
@@ -760,7 +761,13 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       const fork: Conversation = {
         ...JSON.parse(JSON.stringify(conversation)),
         id: forkId,
-        title: conversation.title ? `${conversation.title} Fork` : "Fork",
+        // 标题「(N) 序号 + 防叠加」(对齐 APP 458c16df/95fed05e):同助手下取首个空闲
+        // 序号,源标题带 (N) 尾缀时递增而非再套。空闲判定以活库元数据为准——驻留内存的
+        // 脏标题最多滞后一次节流窗口(200ms),fork 是离散用户动作,撞名概率可忽略。
+        title: forkConversationTitle(
+          conversation.title,
+          new Set((getConversationsDb() ? listConversationMetas(getConversationsDb()!, conversation.assistantId) : []).map((meta) => meta.title)),
+        ),
         messages: forkedNodes,
         isPinned: false,
         createAt: Date.now(),
