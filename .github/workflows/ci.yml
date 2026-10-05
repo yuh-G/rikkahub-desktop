@@ -82,11 +82,11 @@ jobs:
           bun-version: '1.4.2'
 
       # web-ui 测试经 @server 别名 import pc-server 模块(speech-catalog 契约锁拉
-      # media/tts → model-providers → auth/flows → pi 的 oauth/load.ts)。pi/ 是
-      # gitignore 的本地克隆,缺它模块解析在 bun test 里炸成 unhandled error、
-      # 整个测试文件连坐跳过(2026-10-05 v5 发版 CI 红)。配方与 pc-server-checks
-      # 的 Restore pi vendor 相同;模型数据快照这里不需要(不跑 provider 目录测试),
-      # 但 bun install 要装(pi 的 oauth/load.ts 依赖 proper-lockfile 等)。
+      # media/tts → model-providers → message-builder → files/index,后者顶层
+      # import ../node_modules/mupdf/.../mupdf-wasm.wasm——文件路径解析不走 node
+      # module resolution,pc-server 的 node_modules 必须真实存在)。pi/ 同理:
+      # oauth/load.ts 等模块经 @server 链可达。两段都是 2026-10-05 v5 发版 CI 红
+      # 的实证链路,与 pc-server-checks 的 Restore pi vendor 同配方。
       - name: Restore pi vendor
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/earendil-works/pi.git pi
@@ -97,6 +97,10 @@ jobs:
           bun install
           mkdir -p packages/ai/src/providers/data
           cp ../pi-model-data/*.json ../pi-model-data/.manifest.json packages/ai/src/providers/data/
+
+      - name: Install pc-server dependencies
+        working-directory: pc-server
+        run: bun install --frozen-lockfile
 
       - name: Install web-ui dependencies
         working-directory: web-ui
