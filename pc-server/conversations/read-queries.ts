@@ -123,6 +123,15 @@ export function countConversations(db: Database): number {
   return row?.n ?? 0;
 }
 
+/** 会话记录引用的助手 id → 会话数(数据恢复页扫描用)。行内 assistant_id 恒非空
+ *  (建会话必填),无需过滤;排序按会话数降序让"恢复哪个"的优先级一目了然。 */
+export function countConversationsByAssistant(db: Database): { assistantId: string; count: number }[] {
+  const rows = db.prepare(
+    "SELECT assistant_id AS assistantId, COUNT(*) AS count FROM pc_conversation GROUP BY assistant_id ORDER BY count DESC",
+  ).all() as Array<{ assistantId: string; count: number }>;
+  return rows.map((row) => ({ assistantId: row.assistantId, count: row.count }));
+}
+
 export function conversationExistsInDb(db: Database, conversationId: string): boolean {
   return db.prepare("SELECT 1 FROM pc_conversation WHERE id = ? LIMIT 1").get(conversationId) !== null;
 }

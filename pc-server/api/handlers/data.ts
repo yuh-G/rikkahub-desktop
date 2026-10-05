@@ -32,8 +32,19 @@ import { stripAuthSecrets } from "../auth";
 import { isLoopbackRequest } from "../net-context";
 import { sseFrame } from "../sse";
 import { updateSettings } from "../../app-config";
+import { recoverMissingAssistants, scanMissingAssistants } from "../../assistants/recovery";
 
 export async function handleDataRoutes(request: Request, _url: URL, path: string): Promise<Response | null> {
+  // 数据恢复(对齐 APP b9c0d3b7,PC 落在备份与恢复页):会话引用了已删助手的,
+  // 全部会话视图都被当前助手过滤挡住——本对端点让它们重见天日。
+  // GET=扫描(只读),POST=为全部缺失助手创建占位助手(幂等,零缺失恢复 0)。
+  if (path === "data/assistant-recovery" && request.method === "GET") {
+    return json({ missing: scanMissingAssistants() });
+  }
+  if (path === "data/assistant-recovery" && request.method === "POST") {
+    const recovered = recoverMissingAssistants();
+    return json({ status: "ok", recovered, missing: scanMissingAssistants() });
+  }
   if (path === "data/webdav/config" && request.method === "POST") {
     const body = await readJson<Partial<WebDavConfig>>(request);
     const webDavConfig = normalizeWebDavConfig(body);

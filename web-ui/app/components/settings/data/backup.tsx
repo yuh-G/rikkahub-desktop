@@ -24,6 +24,7 @@ import {
 import { BackupProgress } from "~/components/settings/data/progress";
 import { S3BackupCard } from "~/components/settings/data/s3";
 import { WebDavBackupCard } from "~/components/settings/data/webdav";
+import { AssistantRecoveryCard } from "~/components/settings/data/assistant-recovery";
 
 export function BackupSection({
   settings,
@@ -354,6 +355,8 @@ export function BackupSection({
         <WebDavBackupCard config={settings.webDavConfig} chatUnsyncable={chatUnsyncable} />
         <S3BackupCard config={settings.s3Config} chatUnsyncable={chatUnsyncable} />
       </SettingsStack>
+      {/* 恢复卡自带扫描门控:无缺失时不渲染,放在栈尾不占健康用户的视野 */}
+      <AssistantRecoveryCard />
     </>
   );
 }
