@@ -2,7 +2,7 @@
 //
 // 引用计数的按会话 SSE 订阅:refCount 0→1 开流,1→0 关流(带 50ms 微延迟,容忍
 // StrictMode 双挂载的 acquire→release→acquire,避免开发模式断连重连抖动;生产无
-// 行为差异)。未来多标签页两个页签打开同一会话时共享一条流。传输被隔离在
+// 行为差异)。分栏下两个窗格打开同一会话时共享一条流。传输被隔离在
 // acquire/release 之后 —— 届时若因 WebView2 六连接预算改走多路复用通道,只动本
 // 模块,不触碰任何组件。
 //
@@ -579,7 +579,7 @@ export async function ensureFullConversationDetail(id: string): Promise<Conversa
   return next && (next.nodesOffset ?? 0) === 0 ? next : null;
 }
 
-/** React 侧订阅:挂载期间持有该会话的流(未来多标签页 = 每页签各挂一份,自动共享)。 */
+/** React 侧订阅:挂载期间持有该会话的流(分栏 = 每窗格各挂一份,同会话自动共享)。 */
 export function useConversationSubscription(id: string | null): void {
   React.useEffect(() => {
     if (!id) return;

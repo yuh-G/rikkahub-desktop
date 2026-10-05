@@ -2490,7 +2490,7 @@ function ConversationsPageInner() {
         undefined,
         { timeout: 120_000 },
       );
-      // 有活跃订阅(当前打开/未来其它页签)才需要重取,refreshConversation 对未订阅 id 空操作
+      // 有活跃订阅(本列/分栏其它列)才需要重取,refreshConversation 对未订阅 id 空操作
       refreshConversation(conversationId);
       refreshList();
     },
