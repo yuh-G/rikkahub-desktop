@@ -403,12 +403,23 @@ export async function loadState(): Promise<State> {
   openConversationsDb();
 
   // 读 state.json(旧版含 conversations / 新版瘦身 / 不存在)
-  let parsed: Partial<State>;
+  let parsed: Partial<State> | null = null;
   if (!existsSync(statePath)) {
     parsed = defaultState();
   } else {
+    // 读失败三分类(对齐 APP 70b382f5 的治本思路,PC 落在启动语义上):
+    //   ①不存在 → 全新安装,默认状态;
+    //   ②瞬时 IO 错误(Windows 反病毒/备份软件短暂锁文件的 EBUSY/EPERM 等) →
+    //     指数退避重读;三次仍失败则原样上抛——bootstrap 把启动标记为失败、/api 保持
+    //     503,重启即重试。绝不把 IO 错误当损坏回退备份:那样会把"文件好好的只是
+    //     暂时读不到"降级成最多旧一天的 daily.bak,随后首次落盘把旧状态写回,
+    //     一整天的配置变更(含新填的 API key)静默蒸发——正是安卓修复的灾难路径。
+    //   ③JSON 彻底损坏(SyntaxError) → 隔离原件后走恢复链(recovery → daily.bak →
+    //     pre-sqlite.bak),全败才回默认。
+    let text = "";
     try {
-      parsed = JSON.parse(readFileSync(statePath, "utf8")) as Partial<State>;
+      text = readStateFileWithRetry(statePath);
+      parsed = JSON.parse(text) as unknown as Partial<State>;
       // R1-2(终极补强):state.json 完好但磁盘上有更新鲜的 recovery——上次退出前落盘
       // 八连败写出的最后一笔抢救数据,不采用即静默丢弃最后一个会话期的全部变更。
       const fresher = maybeAdoptFresherRecovery(dataDir, statePath);
@@ -417,9 +428,14 @@ export async function loadState(): Promise<State> {
         parsed = fresher.state;
       }
     } catch (err) {
-      // 全面审查 1-2:state.json 损坏 → 按新鲜度走恢复链(recovery-*.json → daily.bak
-      // → pre-sqlite.bak),全部失败才回默认。原先只认化石 pre-sqlite.bak,磁盘上躺着
-      // performStateSave 兜底写出的最新 recovery 却从来无人读。
+      if (!(err instanceof SyntaxError)) throw err;
+      // 损坏原件隔离:数据目录里留 corrupt-<时间戳> 副本供排查/人工抢救
+      // (数据目录卫生已对同族只保最新一份、其余超龄 30 天清),再走恢复链。
+      try {
+        copyFileSync(statePath, `${statePath}.corrupt-${Date.now()}`);
+      } catch (quarantineErr) {
+        reportError("persistence", "warn", "损坏的设置文件备份失败,恢复继续但不留隔离副本", quarantineErr, "state_corrupt_quarantine_failed");
+      }
       console.error("[loadState] state.json 解析失败,按恢复链回退", err);
       const recovered = recoverStateFromBackups(dataDir, statePath);
       if (recovered) {
@@ -431,6 +447,10 @@ export async function loadState(): Promise<State> {
       }
     }
   }
+  // 损坏恢复链全败时 parsed 已是 defaultState;唯一 null 路径 = existsSync 竞态为真后
+  // 文件又被删掉(readStateFileWithRetry 的 ENOENT 抛出非 SyntaxError → 上面已上抛),
+  // 走不到这里——兜底一行纯粹给类型系统。
+  if (!parsed) parsed = defaultState();
 
   // 迁移 + 瘦身(首次升级)。返回 true=迁移完成(活库即权威);false=迁移失败。
   const migrated = await migrateConversationsIfNeeded(parsed);
@@ -455,6 +475,31 @@ export async function loadState(): Promise<State> {
   sweepStaleStateTempFiles(); // 1-4:此刻本进程尚未开始任何原子写,清扫安全
   sweepAgedRecoveryArchives(); // R1-2 ③:.applied 归档(已采用的 recovery)超龄 30 天清扫
   return state;
+}
+
+/** 瞬时 IO 错误的指数退避重读(100ms→200ms→400ms)。JSON.parse 的 SyntaxError
+ *  语义上是"读到了但内容坏了",原样外抛由调用方走损坏恢复链——重试帮不了它。
+ *  readFn 参数仅供回归测试注入失败序列,生产恒走 node:fs。 */
+export function readStateFileWithRetry(statePathValue: string, readFn: (path: string) => string = (p) => readFileSync(p, "utf8")): string {
+  try {
+    return readFn(statePathValue);
+  } catch (err) {
+    if (!(err instanceof Error)) throw err;
+    const transient = /EBUSY|EPERM|EACCES|EAGAIN|UNKNOWN/i.test(err.message);
+    if (!transient) throw err;
+    console.warn(`[loadState] state.json 读取失败(疑似临时占用),重试:${err.message}`);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const syncSleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+      syncSleep(100 * 2 ** (attempt - 1));
+      try {
+        return readFn(statePathValue);
+      } catch (retryErr) {
+        if (attempt === 3) throw retryErr;
+        console.warn(`[loadState] state.json 重试 ${attempt}/3 失败,继续退避`);
+      }
+    }
+    throw err; // unreachable(循环内必 return 或 throw),保类型完整
+  }
 }
 
 /** 全面审查 1-6:StoredFile.path 存绝对路径,便携布局(pc-data 随 exe)下用户移动安装目录/
