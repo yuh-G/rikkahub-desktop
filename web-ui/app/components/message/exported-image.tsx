@@ -31,6 +31,9 @@ import type {
 export interface ExportedImageProps {
   title: string;
   messages: MessageDto[];
+  /** 思考段落去留(false=图片里完全没有思考)。 */
+  includeReasoning: boolean;
+  /** 思考卡片形态:true=展开全文,false=只渲染折叠头(图标+标题+秒数)。 */
   expandReasoning: boolean;
 }
 
@@ -178,7 +181,7 @@ function toolCardLabel(tool: ToolPart, t: (k: string, p?: Record<string, unknown
 }
 
 export const ExportedImage = React.forwardRef<HTMLDivElement, ExportedImageProps>(
-  function ExportedImage({ title, messages, expandReasoning }, ref) {
+  function ExportedImage({ title, messages, includeReasoning, expandReasoning }, ref) {
     const providers = useSettingsStore((state) => state.settings?.providers);
     const displaySetting = useSettingsStore((state) => state.settings?.displaySetting);
     const { t } = useTranslation("message");
@@ -261,6 +264,7 @@ export const ExportedImage = React.forwardRef<HTMLDivElement, ExportedImageProps
             <ExportedMessage
               key={message.id}
               message={message}
+              includeReasoning={includeReasoning}
               expandReasoning={expandReasoning}
               model={findModel(message.modelId, providers)}
               prevMessage={messages[idx - 1]}
@@ -294,6 +298,7 @@ export const ExportedImage = React.forwardRef<HTMLDivElement, ExportedImageProps
 
 interface ExportedMessageProps {
   message: MessageDto;
+  includeReasoning: boolean;
   expandReasoning: boolean;
   model: ProviderModel | null;
   prevMessage?: MessageDto;
@@ -306,6 +311,7 @@ interface ExportedMessageProps {
 
 function ExportedMessage({
   message,
+  includeReasoning,
   expandReasoning,
   model,
   prevMessage,
@@ -315,7 +321,11 @@ function ExportedMessage({
   userAvatar,
   t,
 }: ExportedMessageProps) {
-  const parts = message.parts.filter(isExportable);
+  // 思考段落去留在过滤层收口(对齐安卓 options.includeReasoning 的 filterNot):
+  // include=false 时推理 part 整体不进渲染,expand 只影响保留下来卡片的形态。
+  const parts = message.parts
+    .filter(isExportable)
+    .filter((part) => includeReasoning || part.type !== "reasoning");
   // 助手在"紧跟用户提问"时显示模型名(对齐 APP showModelIcon 逻辑),连续多条助手回复只在第一条带名。
   const showModelHeader = !isUser && (!prevMessage || prevMessage.role === "USER");
   const modelName = getModelDisplayName(model?.displayName, model?.modelId) || t("chat_message.md_role_assistant");
@@ -409,11 +419,12 @@ function PartView({
   if (part.type === "text") {
     return <Markdown content={part.text} className="message-markdown" />;
   }
-  if (part.type === "reasoning" && expandReasoning) {
+  if (part.type === "reasoning") {
     return (
       <ReasoningCard
         reasoning={part.reasoning}
         seconds={reasoningSeconds(part.createdAt, part.finishedAt)}
+        expanded={expandReasoning}
         t={t}
       />
     );
@@ -501,10 +512,15 @@ function PartView({
 function ReasoningCard({
   reasoning,
   seconds,
+  expanded,
   t,
 }: {
   reasoning: string;
   seconds: number | null;
+  /** false=折叠头形态:保留"深度思考·N秒"行(图片里思考存在过的痕迹),不带正文。
+   *  对齐安卓 ExportedReasoningStep(expanded=false)——「包含思考开/展开思考关」
+   *  渲染的就是这个形态,两档开关各有真实输出。 */
+  expanded: boolean;
   t: (k: string, p?: Record<string, unknown>) => string;
 }) {
   return (
@@ -524,7 +540,7 @@ function ReasoningCard({
           alignItems: "center",
           gap: 6,
           fontWeight: 600,
-          marginBottom: 6,
+          marginBottom: expanded ? 6 : 0,
         }}
       >
         <Brain className="size-3.5 shrink-0" />
@@ -535,7 +551,7 @@ function ReasoningCard({
           </span>
         ) : null}
       </div>
-      <Markdown content={reasoning} className="message-markdown" />
+      {expanded ? <Markdown content={reasoning} className="message-markdown" /> : null}
     </div>
   );
 }

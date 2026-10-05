@@ -44,7 +44,7 @@ export function ShareExportDialog({
 }: ShareExportDialogProps) {
   const { t } = useTranslation("message");
   // 双开关(对齐 APP b2d73a65):「包含思考过程」管 Markdown 与图片的思考段落去留;
-  // 「展开思考」只影响图片里的思考卡片形态(展开全文 vs 折叠)。关掉包含时展开不可用。
+  // 「展开思考」只影响图片里思考卡片的形态(展开全文 vs 折叠头)。关掉包含时展开不可用。
   const [includeReasoning, setIncludeReasoning] = React.useState(true);
   const [expandReasoning, setExpandReasoning] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
@@ -119,7 +119,8 @@ export function ShareExportDialog({
             ref={imageRef}
             title={title}
             messages={messages}
-            expandReasoning={includeReasoning && expandReasoning}
+            includeReasoning={includeReasoning}
+            expandReasoning={expandReasoning}
           />
         </div>
       ) : null}
