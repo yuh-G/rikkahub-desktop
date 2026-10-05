@@ -4,6 +4,7 @@
 // 工具循环(function_call 归一→执行→function_result 回传)、签名保真(thought/function_call
 // 签名进 replaySteps 与工具卡 metadata)、usage 口径(total_output+total_thought)。
 import { afterAll, describe, expect, mock, test } from "bun:test";
+import type { Assistant } from "../foundation/types";
 
 // 展开真实模块只覆盖目标导出:bun 的 mock.module 跨测试文件不回收(见 tool-loop.test.ts)。
 import * as actualLogs from "../api/logs";
@@ -14,7 +15,8 @@ mock.module("../api/sse", () => ({ ...actualSse, touchStream: () => {} }));
 
 const { buildInteractionsRequestBody, interactionsThinkingLevelFor, streamInteractionsChatWithTools } = await import("./interactions");
 
-const assistant = { id: "a1", mcpServers: [], reasoningLevel: "high" } as never;
+// Assistant 形状须可被 spread(buildInteractionsRequestBody 的覆盖写法),不能用 as never。
+const assistant = { id: "a1", mcpServers: [], reasoningLevel: "high" } as unknown as Assistant;
 const providerItem = { id: "p1", name: "Gemini Test" } as never;
 
 function sse(events: unknown[]): string {

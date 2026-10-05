@@ -151,7 +151,7 @@ export function resolveCatalogKeys(catalog: ModelCatalog, host: string): string[
  *  `gpt-5.2-chat-latest` 等后缀行只有 16384,混在一起取 min 会把 gpt-5 砍到 1/8。
  *  `-` 与 `.` 双锚点防 `gpt-4` 误吞 `gpt-4o`。 */
 function limitRowTiers(
-  models: NonNullable<NonNullable<ModelCatalog[string]>["models"]>,
+  models: NonNullable<ModelCatalog[string]>["models"],
   modelId: string,
 ): [Array<{ context?: number; output?: number }>, Array<{ context?: number; output?: number }>] {
   if (!models) return [[], []];
