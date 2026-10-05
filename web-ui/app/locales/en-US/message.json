@@ -44,6 +44,7 @@
     "share_dialog_desc": "Choose an export format · {{count}} message(s)",
     "export_image": "Export as image",
     "expand_reasoning": "Expand thinking",
+    "include_reasoning": "Include thinking process",
     "export_image_btn": "Export image",
     "exporting_image": "Generating image…",
     "export_image_failed": "Failed to export image",

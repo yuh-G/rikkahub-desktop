@@ -16,6 +16,7 @@ import { ExportedImage } from "./exported-image";
 import { captureNodeAsPng } from "~/lib/capture";
 import { exportDataUrlFile, exportTextFile } from "~/lib/export-file";
 import { convertMessagesToMarkdown, safeMarkdownFilename } from "~/lib/export-markdown";
+import { cn } from "~/lib/utils";
 import type { MessageDto } from "~/types";
 
 // 导出截图时排除: code-block 的复制/下载/预览按钮 (纯交互元素, 出现在图里是噪音),
@@ -42,6 +43,9 @@ export function ShareExportDialog({
   title,
 }: ShareExportDialogProps) {
   const { t } = useTranslation("message");
+  // 双开关(对齐 APP b2d73a65):「包含思考过程」管 Markdown 与图片的思考段落去留;
+  // 「展开思考」只影响图片里的思考卡片形态(展开全文 vs 折叠)。关掉包含时展开不可用。
+  const [includeReasoning, setIncludeReasoning] = React.useState(true);
   const [expandReasoning, setExpandReasoning] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
   const [mdExporting, setMdExporting] = React.useState(false);
@@ -53,7 +57,7 @@ export function ShareExportDialog({
     const filename = safeMarkdownFilename(title || "conversation");
     try {
       // convertMessagesToMarkdown 会把每张图 fetch 成 base64 内联,图片多/大时可能要几秒
-      const content = await convertMessagesToMarkdown(messages, expandReasoning, title);
+      const content = await convertMessagesToMarkdown(messages, includeReasoning, title);
       // 域10-1:桌面壳落盘 + toast"在文件夹中显示";浏览器维持下载(编排层分流)。
       await exportTextFile(content, filename);
       onOpenChange(false);
@@ -115,7 +119,7 @@ export function ShareExportDialog({
             ref={imageRef}
             title={title}
             messages={messages}
-            expandReasoning={expandReasoning}
+            expandReasoning={includeReasoning && expandReasoning}
           />
         </div>
       ) : null}
@@ -132,6 +136,17 @@ export function ShareExportDialog({
           </DialogHeader>
 
           <div className="flex flex-col gap-3 py-2">
+            {/* 全局开关:Markdown 与图片导出都不含思考段落(对齐 APP b2d73a65)。 */}
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <span className="text-sm font-medium">
+                {t("chat_message.include_reasoning", "包含思考过程")}
+              </span>
+              <Switch
+                checked={includeReasoning}
+                onCheckedChange={setIncludeReasoning}
+              />
+            </div>
+
             <Button
               variant="outline"
               className="justify-start"
@@ -152,11 +167,17 @@ export function ShareExportDialog({
                   <ImageIcon className="size-4" />
                   {t("chat_message.export_image", "导出为图片")}
                 </div>
-                <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                <label
+                  className={cn(
+                    "flex items-center gap-2 text-sm text-muted-foreground",
+                    !includeReasoning && "pointer-events-none opacity-50",
+                  )}
+                >
                   {t("chat_message.expand_reasoning", "展开思考")}
                   <Switch
                     checked={expandReasoning}
                     onCheckedChange={setExpandReasoning}
+                    disabled={!includeReasoning}
                   />
                 </label>
               </div>
