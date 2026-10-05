@@ -66,14 +66,14 @@ describe("P4 资源装配", () => {
     expect(names).toEqual(["alpha-skill"]);
   });
 
-  test("AGENTS.md 面:项目文件按边界过滤(祖先链滤掉),全局层经 appendSystemPrompt 注入且在人设之前", async () => {
+  test("AGENTS.md 面:全局层经原生上下文件通道注入(首位),项目层按边界过滤,客房文件忽略", async () => {
     const parent = mkdtempSync(join(tmpdir(), "rkh-res-agents-"));
     const root = join(parent, "ws");
     mkdirSync(root, { recursive: true });
     writeFileSync(join(parent, "AGENTS.md"), "ANCESTOR-INSTRUCTIONS", "utf-8");
     writeFileSync(join(root, "AGENTS.md"), "WORKSPACE-INSTRUCTIONS", "utf-8");
     // 全局层:pc-data/AGENTS.md(引擎中立,本测试数据目录直系)。写进 pi-agent/ 的
-    // 任何文件都必须被忽略——客房回归纯空置,agentDir 直系件不再放行。
+    // 任何文件都必须被忽略——客房纯空置,agentDir 直系件天然被边界过滤。
     mkdirSync(piAgentDir, { recursive: true });
     writeFileSync(join(piAgentDir, "AGENTS.md"), "STALE-AGENTDIR-GLOBAL", "utf-8");
     mkdirSync(dataDir, { recursive: true });
@@ -81,18 +81,26 @@ describe("P4 资源装配", () => {
 
     const { assistant, conversation } = fixture();
     const { resourceLoader } = await createPiSessionResources({ conversation, assistant, model: fakeModel, cwd: root, root });
-    // 项目面:祖先链被边界过滤,只留 root 内的
     const files = resourceLoader.getAgentsFiles().agentsFiles;
-    expect(files.map((file) => file.content)).toEqual(["WORKSPACE-INSTRUCTIONS"]);
-    // 全局面:经 appendSystemPrompt 注入(不占 project_context 槽位),客房文件被忽略
+    // 全局 virtual file 在首位(与 pi 原生 agentDir 全局件的序一致),项目面只剩 root 内的
+    expect(files.map((file) => file.content)).toEqual(["GLOBAL-INSTRUCTIONS", "WORKSPACE-INSTRUCTIONS"]);
+    expect(files[0]!.path).toContain("AGENTS.md");
+    // 走原生通道:不占 appendSystemPrompt 插槽(那里只放我们自己的域:人设/记忆/教学)
     const append = resourceLoader.getAppendSystemPrompt().join("\n\n");
-    expect(append).toContain("GLOBAL-INSTRUCTIONS");
+    expect(append).not.toContain("GLOBAL-INSTRUCTIONS");
     expect(append).not.toContain("STALE-AGENTDIR-GLOBAL");
-    // 排序语义:全局指引在最前(pi 原生 agentDir 全局件也排在项目文件之前)
-    expect(resourceLoader.getAppendSystemPrompt()[0]).toContain("GLOBAL-INSTRUCTIONS");
     // 清扫本测试在共享路径上的落笔:客房目录必须回到不存在(model-bridge 的零落盘
     // 断言看整个目录;Bun 单进程跑全部文件,这里不删就会跨文件污染)。
     rmSync(piAgentDir, { recursive: true, force: true });
+    rmSync(join(dataDir, "AGENTS.md"), { force: true });
+  });
+
+  test("全局层未创建时:上下文件只含项目面,不注入空占位", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rkh-res-agents-none-"));
+    writeFileSync(join(root, "AGENTS.md"), "WORKSPACE-INSTRUCTIONS", "utf-8");
+    const { assistant, conversation } = fixture();
+    const { resourceLoader } = await createPiSessionResources({ conversation, assistant, model: fakeModel, cwd: root, root });
+    expect(resourceLoader.getAgentsFiles().agentsFiles.map((file) => file.content)).toEqual(["WORKSPACE-INSTRUCTIONS"]);
   });
 
   test("注入面封死:.pi/settings.json 不被读取,.pi/SYSTEM.md 不接管系统提示词", async () => {

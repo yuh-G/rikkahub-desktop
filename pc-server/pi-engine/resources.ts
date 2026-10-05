@@ -7,24 +7,28 @@
 // - 设置:SettingsManager.inMemory + projectTrusted:false——零文件 I/O,工作区里的
 //   .pi/settings.json 与 .pi/SYSTEM.md(resource-loader.discoverSystemPromptFile 按
 //   projectTrusted 门控)两个不可信注入面一并封死(P1 纪要遗留项)。
-// - AGENTS.md:项目级走 pi 原生 loadProjectContextFiles(cwd 祖先链),经
-//   agentsFilesOverride 词法过滤到工作区边界内(提示词层与工具层同一边界纪律)。
-//   全局层(pc-data/AGENTS.md,引擎中立,见 agents/global-agents.ts)经
-//   appendSystemPrompt 注入——pi 系统提示里 appendSection 恒在 <project_context>
-//   之前(system-prompt.ts 两个分支同序),「全局前、项目后」与 pi 原生 agentDir
-//   全局件的排序语义一致,但不寄存任何引擎私有目录。
-// - 人设+记忆:appendSystemPrompt 单一插槽(§3.4),内容会话级冻结(见下)。
+// - AGENTS.md(全局+项目两层,全部走 pi 原生上下文件通道):
+//   全局层(引擎中立的家 pc-data/AGENTS.md,见 agents/global-agents.ts)经
+//   agentsFilesOverride 以 virtual file 注入(SDK 官方宿主姿势,examples/sdk/
+//   07-context-files.ts 同款)——渲染进 pi 原生 <project_context>/<project_instructions>
+//   管线,与项目层同格式;上游对上下文件的任何改进(渲染/去重/权重)自动继承。
+//   项目层走 pi 原生 loadProjectContextFiles(cwd 祖先链),同一 override 里做
+//   词法过滤(越出工作区边界的祖先滤掉,提示词层与工具层同一边界纪律)。
+//   排序:全局件 unshift 在 override 输出首位 = pi 原生 agentDir 全局件的既有序。
+// - 人设+记忆:appendSystemPrompt 单一插槽(§3.4,只放我们自己的域:人设/记忆/
+//   搜索指引/教学行/注入面),内容会话级冻结(见下)。
 // - 扩展/prompt 模板/主题:v1 全关(noExtensions/noPromptTemplates/noThemes),
 //   pi 的资源面只开技能与上下文文件两类。
 //
-// 冻结纪律(§4.8/§9.2):appendSystemPrompt 同会话内必须逐字节稳定。
+// 冻结纪律(§4.8/§9.2):appendSystemPrompt 同会话内必须逐字节稳定;上下文件
+// 在 ResourceLoader.reload 时点定格(每轮生成装配一次,用户编辑下轮生效——与
+// 技能开关同语义)。
 // - 人设:renderTemplate 含时间类模板变量,渲染结果按 会话+助手+原文指纹 冻结——
 //   原文中途被改 → 指纹变 → 重渲染(与聊天引擎"改人设立即生效"同语义,破一次缓存);
 //   原文不变 → 时间变量定格在首轮。
 // - 记忆/最近会话:直接复用聊天引擎的 frozenContextBlocks(同一冻结生命周期与
 //   失效面:设置页手动改记忆 → invalidateContextSnapshots → 两个引擎同时重建)。
 // - 搜索指引/教学行:内容只随设置变(服务名/技能库路径),天然稳定。
-// - 全局指引:按内容指纹冻结(用户编辑 → 指纹变 → 下轮装配生效,与人设同语义)。
 
 import { mkdirSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
@@ -32,7 +36,7 @@ import { DefaultResourceLoader } from "../../pi/packages/coding-agent/src/core/r
 import { SettingsManager } from "../../pi/packages/coding-agent/src/core/settings-manager.ts";
 import type { Assistant, Conversation, Model } from "../foundation/types";
 import { getStringArray, renderTemplate } from "../foundation/utils";
-import { piAgentDir, skillsDir } from "../foundation/paths";
+import { piAgentDir, skillsDir, globalAgentsPath } from "../foundation/paths";
 import { readGlobalAgentsFile } from "../agents/global-agents";
 import { frozenContextBlocks } from "../inference-engine/context-snapshots";
 import { PI_THINKING_BUDGETS } from "./model-bridge";
@@ -83,28 +87,6 @@ export function invalidatePiPersonaSnapshots(): void {
   personaSnapshots.clear();
 }
 
-// ---- 全局工作区指引冻结快照(与 personaSnapshots 同套路) ----
-
-const globalAgentsSnapshots = new Map<string, string>();
-
-/** 全局指引内容按原文指纹冻结:同会话内逐字节稳定(§9.2 缓存纪律——appendSystemPrompt
- *  整段冻结,逐轮重读文件会因用户编辑中途换文,破坏提示词前缀缓存);用户编辑 →
- *  指纹变 → 下轮装配重读(与"改人设立即生效"同语义)。 */
-function frozenGlobalAgentsBlock(): string {
-  const state = readGlobalAgentsFile();
-  if (!state.exists) return "";
-  const key = Bun.hash(state.content).toString(16);
-  const hit = globalAgentsSnapshots.get(key);
-  if (hit !== undefined) return hit;
-  const block = `<global_workspace_instructions>\n${state.content}\n</global_workspace_instructions>`;
-  globalAgentsSnapshots.set(key, block);
-  if (globalAgentsSnapshots.size > MAX_SNAPSHOTS) {
-    const oldest = globalAgentsSnapshots.keys().next().value;
-    if (oldest !== undefined) globalAgentsSnapshots.delete(oldest);
-  }
-  return block;
-}
-
 // ---- appendSystemPrompt 组装 ----
 
 /** 技能安装落点教学(§3.1:模型自装资源必须落到我们的家;<available_skills> 的
@@ -129,7 +111,6 @@ export function buildPiAppendSystemPrompt(
 ): string[] {
   const [memoryBlock, recentChatsBlock] = frozenContextBlocks(assistant, conversation.id);
   return [
-    frozenGlobalAgentsBlock(),
     frozenPersona(conversation, assistant, model),
     buildSearchContext(),
     memoryBlock,
@@ -214,9 +195,19 @@ export async function createPiSessionResources(options: {
       skills: skills.filter((skill) => skill.sourceInfo?.scope !== "project" && enabledSkills.has(skill.name)),
       diagnostics,
     }),
-    agentsFilesOverride: ({ agentsFiles }) => ({
-      agentsFiles: agentsFiles.filter((file) => isAbsolute(file.path) && isWithinRoot(file.path, root)),
-    }),
+    agentsFilesOverride: ({ agentsFiles }) => {
+      // 项目层:词法边界过滤(pi 默认 agentDir 全局件不在工作区内,天然被滤)。
+      const project = agentsFiles.filter((file) => isAbsolute(file.path) && isWithinRoot(file.path, root));
+      // 全局层:virtual file 注入首位(SDK 官方宿主姿势)——渲染走 pi 原生
+      // <project_instructions> 管线,与项目层同格式;reload 时点定格,内容只在
+      // 每轮生成装配时读(用户编辑下轮生效,与技能开关同语义)。
+      const globalFile = readGlobalAgentsFile();
+      return {
+        agentsFiles: globalFile.exists
+          ? [{ path: globalAgentsPath, content: globalFile.content }, ...project]
+          : project,
+      };
+    },
     appendSystemPrompt: buildPiAppendSystemPrompt(conversation, assistant, model, extraAppendSystemPrompt),
   });
   // sdk 只对自建 loader 调 reload(sdk.ts:182-186),外部传入的必须自己加载。
