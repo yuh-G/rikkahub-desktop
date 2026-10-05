@@ -100,7 +100,7 @@ describe("vendor 补丁行为锁:streaming-args-once(流式参数只在终局解
       if (ev.type === "toolcall_delta") deltas.push(ev.delta);
       if (ev.type === "toolcall_end") finalArgs = ev.toolCall.arguments as Record<string, unknown>;
     }
-    const elapsed = performance.now();
+    const elapsed = performance.now() - started;
     // 1) 终局参数完整正确(这是补丁唯一不能破坏的硬契约)。
     expect(finalArgs).not.toBeNull();
     expect((finalArgs as Record<string, unknown>).file_path).toBe("/repo/big/file.ts");
