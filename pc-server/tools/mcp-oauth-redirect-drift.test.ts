@@ -8,6 +8,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 
 import { completeMcpOAuth, isSameLoopbackCallback, oauthStateOf, redirectUriDriftAction, startMcpOAuth } from "./mcp-oauth";
+import { handleSettingsRoutes } from "../api/handlers/settings";
 import { flushSaveState, setState, state } from "../persistence/json-store";
 import type { JsonValue, State } from "../foundation/types";
 
@@ -158,5 +159,39 @@ describe("startMcpOAuth 回调地址(全链路)", () => {
     await completeMcpOAuth({ code: "code-2", state: auth.searchParams.get("state") });
     expect(tokenForms[0]!.get("redirect_uri")).toBe(current);
     expect(storedOauth()).toMatchObject({ clientId: "c-new", redirectUri: current });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 回调地址回环归一(APP #1972):发起端点把回环主机统一写成 localhost 字面量再交给
+// startMcpOAuth——部分授权服务器前置 WAF 拦截请求体里带 IPv4 主机的 URL,127.0.0.1
+// 写法会让 DCR 403。非回环 origin 原样透传(网页部署形态)。
+// ---------------------------------------------------------------------------
+describe("oauth/start 端点的回环归一", () => {
+  async function startViaHandler(origin: string): Promise<{ authorizationUrl: string }> {
+    const url = new URL(`${origin}/api/settings/mcp-server/oauth/start`);
+    const request = new Request(url, { method: "POST", body: JSON.stringify({ serverId: "s1" }) });
+    const response = await handleSettingsRoutes(request, url, "settings/mcp-server/oauth/start");
+    if (!response || !response.ok) throw new Error(`handler returned ${response?.status}`);
+    return (await response.json()) as { authorizationUrl: string };
+  }
+
+  test("界面以 127.0.0.1 访问:DCR 注册的是 localhost 回调(不是 IPv4 主机)", async () => {
+    withServer({});
+    const { authorizationUrl } = await startViaHandler("http://127.0.0.1:8080");
+    expect(registrations).toEqual([["http://localhost:8080/api/mcp/oauth/callback"]]);
+    expect(new URL(authorizationUrl).searchParams.get("redirect_uri")).toBe("http://localhost:8080/api/mcp/oauth/callback");
+  });
+
+  test("界面以 localhost 访问:本就是字面量,逐字透传", async () => {
+    withServer({});
+    await startViaHandler("http://localhost:8080");
+    expect(registrations).toEqual([["http://localhost:8080/api/mcp/oauth/callback"]]);
+  });
+
+  test("非回环 origin(网页部署):原样透传不归一", async () => {
+    withServer({});
+    const { authorizationUrl } = await startViaHandler("https://rikka.example.com");
+    expect(new URL(authorizationUrl).searchParams.get("redirect_uri")).toBe("https://rikka.example.com/api/mcp/oauth/callback");
   });
 });

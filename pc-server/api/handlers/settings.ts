@@ -521,9 +521,14 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
   }
   // 专题9 MCP OAuth 2.1(对齐安卓 McpOAuthCoordinator):发起授权 → 浏览器完成 → 回调落盘。
   // 回调 redirect_uri 取自发起请求的 origin(本机回环,RFC 8252),DCR 注册与换码保持一致。
+  // 回环主机统一写成 localhost 字面量(APP #1972):部分授权服务器前置的 WAF 拦截请求体里
+  // 带 IPv4 主机的 URL,127.0.0.1 写法会让动态注册直接 403;服务端回环组占满 127.0.0.1 与
+  // ::1(issue #62),localhost 回调一样落回本进程。非回环部署(网页形态)不归一,origin 原样。
   if (path === "settings/mcp-server/oauth/start" && request.method === "POST") {
     const body = await readJson<{ serverId: string }>(request);
-    const redirectUri = `${url.origin}/api/mcp/oauth/callback`;
+    const origin = new URL(url.origin);
+    if (origin.hostname === "127.0.0.1" || origin.hostname === "[::1]") origin.hostname = "localhost";
+    const redirectUri = `${origin.origin}/api/mcp/oauth/callback`;
     try {
       const result = await startMcpOAuth(String(body.serverId ?? ""), redirectUri);
       return json(result);
