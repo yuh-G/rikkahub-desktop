@@ -80,6 +80,11 @@ import { EngineStatusBar } from "~/components/workspace/engine-status-bar";
 import { PaneContainerProvider } from "~/components/workspace/pane-container-context";
 import { WorkspaceEmptyState } from "~/components/workspace/workspace-empty-state";
 import { useCompressStore, useConversationCompressing } from "~/stores/compress-store";
+import {
+  useConversationEditingSession,
+  useEditingStore,
+  type EditingSession,
+} from "~/stores/editing-store";
 import { useWorkspaceStore } from "~/stores/workspace-store";
 import {
   CHAT_CONTAINER,
@@ -230,12 +235,6 @@ const TRANSLATION_LANGUAGES = [
 interface EditDraft {
   text: string;
   attachments: UIMessagePart[];
-  sourceParts: UIMessagePart[];
-  textPartIndex: number | null;
-}
-
-interface EditingSession {
-  messageId: string;
   sourceParts: UIMessagePart[];
   textPartIndex: number | null;
 }
@@ -1423,7 +1422,11 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
   // 非聚焦列永远有会话(多窗格不变量:空窗格即收起),"新对话"态只属于聚焦列。
   const paneIsHome = focused && isHomeRoute;
 
-  const [editingSession, setEditingSession] = React.useState<EditingSession | null>(null);
+  // 编辑绑定按会话键控全局存活(editing-store,与 drafts 同款):切走再切回续编辑,
+  // 发送不再静默腐化成"发新消息"。窗格本地仅留 UI 瞬态。
+  const editingSession = useConversationEditingSession(activeId);
+  const beginEdit = useEditingStore((state) => state.beginEdit);
+  const endEdit = useEditingStore((state) => state.endEdit);
   const [compressDialogOpen, setCompressDialogOpen] = React.useState(false);
   const [compressTargetTokens, setCompressTargetTokens] = React.useState(2000);
   const [compressKeepRecent, setCompressKeepRecent] = React.useState(32);
@@ -1536,10 +1539,6 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
     Boolean(activeId) && !detailLoading && !detailError && chatSuggestions.length > 0;
   const displaySuggestions = showSuggestions ? chatSuggestions : EMPTY_SUGGESTIONS;
 
-  React.useEffect(() => {
-    setEditingSession(null);
-  }, [activeId]);
-
   /** 交互改路由前先聚焦本列(fork/新建等依赖"路由同步进聚焦列"的语义)。 */
   const focusSelf = React.useCallback(() => {
     useContainerTabsStore.getState().focusPane(container, paneIndex);
@@ -1593,8 +1592,14 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
     async (messageId: string) => {
       if (!activeId) return;
       await api.delete<{ status: string }>(`conversations/${activeId}/messages/${messageId}`);
+      // 编辑目标被删:绑定成孤儿(提交会 404),连带清草稿——留着只会让下一次发送
+      // 打向已删除的消息。旧本地 state 实现同样隐式靠"切换会话清空"兜底,现在显式化。
+      if (useEditingStore.getState().byConversation[activeId]?.messageId === messageId) {
+        endEdit(activeId);
+        clearCurrentDraft();
+      }
     },
-    [activeId],
+    [activeId, clearCurrentDraft, endEdit],
   );
 
   const handleForkMessage = React.useCallback(
@@ -1645,29 +1650,29 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
       const draft = toEditDraft(message);
       if (!draft) return;
 
-      setEditingSession({
+      beginEdit(activeId, {
         messageId: message.id,
         sourceParts: draft.sourceParts,
         textPartIndex: draft.textPartIndex,
       });
       replaceDraft(draft.text, draft.attachments);
     },
-    [activeId, replaceDraft],
+    [activeId, beginEdit, replaceDraft],
   );
 
   const handleCancelEdit = React.useCallback(() => {
-    setEditingSession(null);
+    if (activeId) endEdit(activeId);
     clearCurrentDraft();
-  }, [clearCurrentDraft]);
+  }, [activeId, clearCurrentDraft, endEdit]);
 
   const handleClickSuggestion = React.useCallback(
     (suggestion: string) => {
-      if (editingSession) {
-        setEditingSession(null);
+      if (editingSession && activeId) {
+        endEdit(activeId);
       }
       if (draftKey) setDraftText(draftKey, suggestion);
     },
-    [draftKey, editingSession, setDraftText],
+    [activeId, draftKey, editingSession, endEdit, setDraftText],
   );
 
   const handleSend = React.useCallback(async () => {
@@ -1704,12 +1709,13 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
       { parts: stripEditDraftMetadata(nextParts) },
     );
 
-    setEditingSession(null);
+    endEdit(activeId);
     clearCurrentDraft();
   }, [
     activeId,
     clearCurrentDraft,
     editingSession,
+    endEdit,
     getCurrentSubmitParts,
     handleSubmit,
     refreshList,
@@ -2521,6 +2527,7 @@ function ConversationsPageInner() {
       });
       evictConversations([conversationId]);
       useContainerTabsStore.getState().forgetConversation(conversationId);
+      useEditingStore.getState().endEditMany([conversationId]);
       if (conversationId === activeId) {
         setActiveId(null);
         setHomeDraftId(createHomeDraftId());
@@ -2539,6 +2546,7 @@ function ConversationsPageInner() {
         ids: conversationIds,
       });
       evictConversations(conversationIds);
+      useEditingStore.getState().endEditMany(conversationIds);
       for (const id of conversationIds) useContainerTabsStore.getState().forgetConversation(id);
       if (activeId && conversationIds.includes(activeId)) {
         setActiveId(null);
