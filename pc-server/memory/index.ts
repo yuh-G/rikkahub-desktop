@@ -313,6 +313,21 @@ export const memoryStore = {
     return count;
   },
 
+  /** 复制某助手的所有记忆到另一助手（复制助手时按需调用）。逐条 addMemory 保留内容、
+   *  分配新 id（对齐 APP copyMemories——副本与源各自演化,不共享 id）。返回复制条数;
+   *  persist=false 供与助手落库同批的场景由调用方统一一次 persistAll。 */
+  copyAssistantMemories(fromAssistantId: string, toAssistantId: string, persist = true): number {
+    const source = this.getAssistantMemories(fromAssistantId);
+    for (const entry of source) {
+      this.addMemory(
+        { scope: "assistant", assistantId: toAssistantId, content: entry.content, source: entry.source },
+        false,
+      );
+    }
+    if (persist && source.length > 0) void this.persistAll();
+    return source.length;
+  },
+
   findEntryById(memoryId: number): MemoryEntry | undefined {
     for (const m of this.globalMemories) if (m.id === memoryId) return m;
     for (const g of this.assistantGroups) for (const m of g.memories) if (m.id === memoryId) return m;

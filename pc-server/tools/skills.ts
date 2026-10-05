@@ -1,8 +1,8 @@
 // tools/skills.ts — Skill 目录读写辅助
 // 纪律：只依赖 foundation 路径与 fs，不读写 state。
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { isRecord } from "../foundation/utils";
 import { skillsDir } from "../foundation/paths";
 import type { SkillMetadata } from "../foundation/types";
@@ -232,4 +232,30 @@ export function importSkills(skills: unknown) {
 
 export function defaultSkillContent(name = "new-skill") {
   return `---\nname: ${name}\ndescription: Describe when this skill should be used\n---\n\nWrite the skill instructions here.\n`;
+}
+
+/**
+ * 复制技能为整棵目录树(用户已拍板:随附脚本/资料可能是技能工作的一部分,只复制
+ * SKILL.md 会产出残废副本)。SKILL.md 的 frontmatter name 同步改成新目录名——
+ * 目录名与 name 不一致时聊天引擎按目录名定位会查无此人(validateSkillMetadata
+ * 的同名告警)。返回新名;源不存在/目标已存在/新名非法返回 null。
+ */
+export function copySkillTree(sourceName: string, targetName: string): string | null {
+  const source = safeSkillDir(sourceName);
+  const target = safeSkillDir(targetName);
+  if (!source || !target || !existsSync(source) || existsSync(target)) return null;
+  // 新名必须落在 pi 命名规则内(小写字母/数字/连字符,禁首尾连字符与连续连字符)——
+  // 复制出一个自带告警的技能不是用户要的。
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(targetName) || targetName.length > 64) return null;
+  cpSync(source, target, { recursive: true, filter: (src) => !basename(src).startsWith(".") });
+  const skillMd = join(target, "SKILL.md");
+  const content = existsSync(skillMd) ? readFileSync(skillMd, "utf8") : null;
+  if (content != null && content.startsWith("---")) {
+    const match = content.slice(3).match(/\r?\n---(?:\r?\n|$)/);
+    if (match && match.index !== undefined) {
+      const head = content.slice(0, 3 + match.index).replace(/^(\s*name:\s*).*$/m, `$1${targetName}`);
+      writeFileSync(skillMd, head + content.slice(3 + match.index));
+    }
+  }
+  return targetName;
 }

@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { state } from "../../persistence/json-store";
-import { defaultSkillContent, listSkillFiles, listSkillsWithDiagnostics, parseSkillFrontmatter, readSkillContent, safeSkillDir, skillMetadataFromFile } from "../../tools/skills";
+import { defaultSkillContent, copySkillTree, listSkillFiles, listSkillsWithDiagnostics, parseSkillFrontmatter, readSkillContent, safeSkillDir, skillMetadataFromFile } from "../../tools/skills";
 import { error, json, readJson } from "../request";
 import { updateSettings } from "../../app-config";
 import { importSkillFromBuffer, importSkillFromGitHub } from "../../tools/skills-import";
@@ -44,6 +44,19 @@ export async function handleSkillRoutes(request: Request, _url: URL, path: strin
     const metadata = skillMetadataFromFile(requestedName);
     if (!metadata) return error("Skill frontmatter must include name and description", 400);
     return json({ status: "ok", skill: { ...metadata, content } });
+  }
+  // 复制技能为整棵目录树(SKILL.md + 随附脚本/资料),frontmatter name 同步改新名。
+  // 新名由前端算好序号后缀传入(与各设置条目「名字(N)」同款命名纪律);服务端只验
+  // 合法性,不承担取名。
+  if (path === "skills/copy" && request.method === "POST") {
+    const body = await readJson<{ name?: string; targetName?: string }>(request);
+    const name = String(body.name ?? "").trim();
+    const targetName = String(body.targetName ?? "").trim();
+    if (!name || !targetName) return error("name and targetName are required", 400);
+    const copied = copySkillTree(name, targetName);
+    if (!copied) return error("Skill not found, target exists, or invalid target name", 400);
+    const metadata = skillMetadataFromFile(copied);
+    return json({ status: "ok", skill: { ...metadata, name: copied, content: readSkillContent(copied) } });
   }
   if (path === "skills/import-github" && request.method === "POST") {
     const body = await readJson<{ repoUrl?: string }>(request);

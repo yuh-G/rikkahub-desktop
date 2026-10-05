@@ -158,6 +158,29 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
     broadcastMemoryUpdate();
     return json({ status: "ok", assistant });
   }
+  // 复制助手:克隆配置(新 id、名字由前端算好序号后缀传入)+ 可选一并复制独立记忆。
+  // 一条端点做完两件事是刻意的原子性——拆两条会让"助手落库成功、记忆复制失败"留下
+  // 一个无声缺记忆的副本。克隆永远不携带 oauth 类凭据(助手无此面),头像 Image→Dummy
+  // (对齐 APP copyAssistant:引用同一图片文件的两份助手,删一份会连带删掉另一份的头像)。
+  if (path === "settings/assistant/copy" && request.method === "POST") {
+    const body = await readJson<{ id?: string; name?: string; copyMemories?: boolean }>(request);
+    const source = state.settings.assistants.find((item) => item.id === body.id);
+    if (!source) return error("Assistant not found", 404);
+    const copied: Assistant = {
+      ...source,
+      id: id(),
+      name: String(body.name ?? "").trim() || source.name,
+      // 头像 Image→Dummy:头像图片是文件系统实体,两份助手引用同一文件,删一份连带
+      // 删文件会让另一份头像裂图(对齐 APP copyAssistant 同款处理)。
+      avatar: source.avatar?.type === "image" ? { type: "dummy" } : source.avatar,
+    };
+    updateSettings({
+      ...state.settings,
+      assistants: [...state.settings.assistants, copied],
+    });
+    if (body.copyMemories) memoryStore.copyAssistantMemories(source.id, copied.id);
+    return json({ status: "ok", assistant: copied });
+  }
   const assistantDelete = path.match(/^settings\/assistant\/([^/]+)$/);
   if (assistantDelete && request.method === "DELETE") {
     const idValue = decodeURIComponent(assistantDelete[1]);
