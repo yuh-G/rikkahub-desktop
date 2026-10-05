@@ -81,6 +81,11 @@ export interface Provider {
   promptCacheKey?: boolean;
   testPassed?: boolean;
   testPassedAt?: number;
+  // 供应商级自定义请求头(对齐 APP #1952/ProviderSetting.customHeaders,APP 同名字段
+  // 默认空列表):对该供应商的全部请求(对话/辅助/图像/模型列表/余额/连通性测试)生效,
+  // 优先级最低——助手/模型层同名头覆盖。跨端共享字段:条目形状 {name,value} 与 APP
+  // CustomHeader 一致,备份互通零超界。
+  customHeaders?: JsonValue[];
   models: Model[];
   balanceOption: {
     enabled: boolean;

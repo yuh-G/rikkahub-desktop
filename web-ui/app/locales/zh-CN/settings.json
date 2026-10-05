@@ -236,6 +236,8 @@
     "prompt_cache_key_desc": "请求附带 prompt_cache_key 会话标识，官方 OpenAI 端点据此把同一会话路由到同一缓存分片，提高缓存命中率。部分第三方端点不识别该字段会报错，请按需开启。",
     "interactions_title": "Interactions API",
     "interactions_desc": "对话请求改走 Google 的 Interactions 接口（新一代协议，支持思考摘要、函数调用签名保真与图片输出）。默认关闭时使用标准 generateContent 接口；仅官方 Gemini 端点支持。",
+    "custom_headers_title": "自定义请求头",
+    "custom_headers_desc": "对该供应商的所有请求（对话、模型列表、余额查询等）统一附加。与助手、模型级的同名请求头冲突时，本层优先级最低。",
     "cache_ttl": "缓存时长",
     "cache_5m": "5 分钟",
     "cache_1h": "1 小时",

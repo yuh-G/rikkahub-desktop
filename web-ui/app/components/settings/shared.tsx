@@ -412,7 +412,49 @@ export interface SettingsKeyValue {
 /**
  * 可增删的键值列表(请求头等):一行一条「名称 | 值 | 删除」,标题行右侧「添加」。
  * 只管形状为 {key,value} 的视图数据,持久化形状由调用方在读写边界换算。
+ * keySuggestions:可选的常用名建议表(请求头场景)。名称输入框右侧出现下拉箭头,
+ * 点开按已输入内容过滤(无匹配展示全部),选中即整体替换——不自动补全拦截键击。
  */
+const COMMON_HEADER_NAMES = [
+  "User-Agent",
+  "HTTP-Referer",
+  "X-Title",
+  "Referer",
+  "Origin",
+  "Accept-Language",
+  "Cookie",
+  "anthropic-beta",
+  "OpenAI-Organization",
+  "OpenAI-Project",
+] as const;
+
+function filterHeaderSuggestions(input: string): string[] {
+  const keyword = input.trim().toLowerCase();
+  const matched = COMMON_HEADER_NAMES.filter(
+    (name) => name.toLowerCase().includes(keyword) && name.toLowerCase() !== keyword,
+  );
+  return matched.length > 0 ? [...matched] : [...COMMON_HEADER_NAMES];
+}
+
+function HeaderNameSuggestions({ input, onPick }: { input: string; onPick: (name: string) => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" size="icon-xs" variant="ghost" aria-label="header suggestions" title="header suggestions">
+          <ChevronDown className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-44">
+        {filterHeaderSuggestions(input).map((name) => (
+          <DropdownMenuItem key={name} onSelect={() => onPick(name)}>
+            <span className="min-w-0 flex-1 truncate font-mono text-xs">{name}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function SettingsKeyValueList({
   label,
   description,
@@ -422,6 +464,7 @@ export function SettingsKeyValueList({
   valuePlaceholder,
   emptyText,
   removeLabel,
+  keySuggestions = false,
 }: {
   label: React.ReactNode;
   description?: React.ReactNode;
@@ -431,6 +474,8 @@ export function SettingsKeyValueList({
   valuePlaceholder: string;
   emptyText: string;
   removeLabel: string;
+  /** true 时名称框带常用请求头建议下拉(对齐 APP PropertyEditor 的 SelectTextField)。 */
+  keySuggestions?: boolean;
 }) {
   const { t } = useTranslation();
   const update = (index: number, patch: Partial<SettingsKeyValue>) =>
@@ -454,12 +499,18 @@ export function SettingsKeyValueList({
         <div className="space-y-2">
           {items.map((item, index) => (
             <div key={index} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] items-center gap-2">
-              <Input
-                value={item.key}
-                onChange={(event) => update(index, { key: event.target.value })}
-                placeholder={keyPlaceholder}
-                aria-label={keyPlaceholder}
-              />
+              <div className="flex min-w-0 items-center">
+                <Input
+                  value={item.key}
+                  onChange={(event) => update(index, { key: event.target.value })}
+                  placeholder={keyPlaceholder}
+                  aria-label={keyPlaceholder}
+                  className="min-w-0"
+                />
+                {keySuggestions ? (
+                  <HeaderNameSuggestions input={item.key} onPick={(name) => update(index, { key: name })} />
+                ) : null}
+              </div>
               <Input
                 value={item.value}
                 onChange={(event) => update(index, { value: event.target.value })}

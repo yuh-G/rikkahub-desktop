@@ -236,6 +236,8 @@
     "prompt_cache_key_desc": "Attach a per-conversation prompt_cache_key so official OpenAI endpoints can route requests of the same conversation to the same cache shard, improving cache hits. Some third-party endpoints may reject this field; enable as needed.",
     "interactions_title": "Interactions API",
     "interactions_desc": "Route chat requests through Google's Interactions endpoint (next-generation protocol with thinking summaries, signed function calls, and image output). When off, the standard generateContent endpoint is used; only the official Gemini endpoint supports it.",
+    "custom_headers_title": "Custom request headers",
+    "custom_headers_desc": "Attached to every request of this provider (chat, model list, balance lookup, etc.). When the same header is also set at the assistant or model level, this provider-level value has the lowest priority.",
     "cache_ttl": "Cache duration",
     "cache_5m": "5 minutes",
     "cache_1h": "1 hour",

@@ -38,6 +38,7 @@ import {
   SettingsDetailHeader,
   SettingsField,
   SettingsGroup,
+  SettingsKeyValueList,
   SettingsRows,
   SettingsListAddButton,
   SettingsListRow,
@@ -156,6 +157,10 @@ export function ProvidersSection({
   if (!draft) return null;
   const balanceOption = balanceOptionOf(draft);
   const kind = providerKind(draft) as ProviderKind;
+  const providerHeaders = (Array.isArray(draft.customHeaders) ? draft.customHeaders : []).map((header) => ({
+    key: textValue(header?.name),
+    value: textValue(header?.value),
+  }));
 
   const patchDraft = (patch: Partial<ProviderProfile>) => {
     autosave.markDirty();
@@ -264,6 +269,7 @@ export function ProvidersSection({
   const isOauth = draft.authMode === "oauth";
   // 收起时高级区里有非默认配置就亮小圆点,免得默认折叠把用户自己的配置藏起来。
   const advancedAttention =
+    providerHeaders.some((header) => header.key.trim() !== "") ||
     (!isOauth &&
       kind === "openai" &&
       (hasCustomEndpointPath(draft) || draft.includeHistoryReasoning === false || draft.promptCacheKey === true)) ||
@@ -493,6 +499,20 @@ export function ProvidersSection({
 
           <SettingsAdvancedSection open={advancedOpen} onOpenChange={setAdvancedOpen} attention={advancedAttention}>
             <SettingsRows>
+              {/* 供应商级自定义请求头(对齐 APP #1952):全类型通用,三层链最底层。 */}
+              <div className="py-3">
+                <SettingsKeyValueList
+                  label={t("settings:providers.custom_headers_title")}
+                  description={t("settings:providers.custom_headers_desc")}
+                  items={providerHeaders}
+                  onChange={(next) => patchDraft({ customHeaders: next.map((item) => ({ name: item.key, value: item.value })) })}
+                  keyPlaceholder={t("settings:common.header_name")}
+                  valuePlaceholder={t("settings:common.header_value")}
+                  emptyText={t("settings:common.no_headers")}
+                  removeLabel={t("settings:common.delete_header")}
+                  keySuggestions
+                />
+              </div>
               {!isOauth && kind === "openai" ? (
                 // 尾缀随所选协议绑定字段(对齐安卓 ProviderConfigure):Chat Completions→
                 // chatCompletionsPath,Responses API→responsesPath。

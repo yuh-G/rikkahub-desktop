@@ -8,7 +8,7 @@ import type { Assistant, Model, Provider } from "../foundation/types";
 import { state } from "../persistence/json-store";
 import { addLog } from "../api/logs";
 import { findAssistant } from "../assistants";
-import { applyCustomBody, jsonBody, modelsEndpointFor, normalizeFetchedModels, applyRequestHeaders, providerTestCorePassed, providerTestModel, textBody } from "./index";
+import { applyCustomBody, jsonBody, modelsEndpointFor, normalizeFetchedModels, applyRequestHeaders, providerCustomHeaderRecords, providerTestCorePassed, providerTestModel, textBody } from "./index";
 import { applyShaping, bundledModelsFor, isOAuthProvider, oauthFlowFor, resolveProviderAuthForProvider } from "./auth";
 import { hostOfProvider } from "../inference-engine/message-builder";
 import { deltaReasoningContent, deltaTextContent, modelsDevCache, parseSseChunks, responseEventToDelta, upstreamHttpError } from "../inference-engine/providers";
@@ -37,10 +37,18 @@ export function endpointFor(providerItem: Provider, baseUrlOverride?: string) {
 }
 
 /** 订阅供应商的凭据解析:oauth 轨走 resolveProviderAuthForProvider(锁内刷新),
- *  apiKey 轨保持原 providerHeaders(行为逐字节不变)。返回扁平 headers 供注入。 */
+ *  apiKey 轨保持原 providerHeaders(行为逐字节不变)。返回扁平 headers 供注入。
+ *  供应商级自定义请求头(#1952 三层链的最底层)在这里叠加——models/balance 是仅有的
+ *  两条不经 applyRequestHeaders 汇聚函数的出线路,安卓的 listModels/getBalance 同样
+ *  带 providerSetting.customHeaders。 */
 async function headersForProvider(providerItem: Provider): Promise<Record<string, string>> {
   const resolved = await resolveProviderAuthForProvider(providerItem);
-  return resolved.headers;
+  const headers: Record<string, string> = { ...resolved.headers };
+  for (const header of providerCustomHeaderRecords(providerItem)) {
+    const name = String(header.name ?? header.key ?? "").trim();
+    if (name) headers[name] = String(header.value ?? "");
+  }
+  return headers;
 }
 
 /** 官方显示名填充:对未认领(displayName === modelId)的行查 models.dev 官方名。
@@ -468,6 +476,10 @@ export function providerAuthChanged(prev: Provider, next: Provider): boolean {
   const fields = ["type", "apiKey", "baseUrl", "chatCompletionsPath"] as const;
   if (fields.some((key) => String(prev[key] ?? "") !== String(next[key] ?? ""))) return true;
   if ((prev.useResponseApi === true) !== (next.useResponseApi === true)) return true;
+  // 供应商级自定义请求头参与真实请求(#1952):变了则旧测试结论不再描述当前配置。
+  // 浅比较即可——条目是 {name,value} 平面对象,编辑器整行替换。
+  const headerKey = (list: unknown) => JSON.stringify(Array.isArray(list) ? list : []);
+  if (headerKey(prev.customHeaders) !== headerKey(next.customHeaders)) return true;
   // oauth 凭据判同:注销(从有到无)或轮换(都有但 refresh 变)算变更;登录(从无到有)不算。
   const prevRefresh = prev.oauth?.credential?.refresh;
   const nextRefresh = next.oauth?.credential?.refresh;

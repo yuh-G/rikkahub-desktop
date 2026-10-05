@@ -462,6 +462,13 @@ function applySessionHeaders(
   }
 }
 
+export function providerCustomHeaderRecords(providerItem: Provider) {
+  return (Array.isArray((providerItem as { customHeaders?: unknown }).customHeaders)
+    ? (providerItem as { customHeaders: JsonValue[] }).customHeaders
+    : []
+  ).filter(isRecord);
+}
+
 export function modelCustomHeaderRecords(modelItem?: Model) {
   return (Array.isArray(modelItem?.customHeaders) ? modelItem.customHeaders : []).filter(isRecord);
 }
@@ -483,7 +490,9 @@ export function applyModelRequestHeaders(
   modelItem?: Model,
   sessionId?: string | null,
 ) {
-  for (const header of modelCustomHeaderRecords(modelItem)) {
+  // 三层链 provider < model(本函数无助手层;pi 引擎/图像生成等模型级路径)。供应商头
+  // 先铺(同名被上层覆盖),对齐安卓 ProviderSetting.mergeCustomHeaders 的优先级语义。
+  for (const header of [...providerCustomHeaderRecords(providerItem), ...modelCustomHeaderRecords(modelItem)]) {
     const name = String(header.name ?? header.key ?? "").trim();
     if (name) headers[name] = String(header.value ?? "");
   }
@@ -499,7 +508,10 @@ export function applyRequestHeaders(
   modelItem?: Model,
   sessionId?: string | null,
 ) {
-  for (const header of customHeaderRecords(assistant, modelItem)) {
+  // 三层链 provider < assistant < model(对齐安卓 #1952):供应商头是全供应商请求的
+  // 默认底座,助手/模型层的同名头覆盖它。主机特例与会话身份头仍 ??= 兜底,不覆盖任何
+  // 用户显式配置。
+  for (const header of [...providerCustomHeaderRecords(providerItem), ...customHeaderRecords(assistant, modelItem)]) {
     const name = String(header.name ?? header.key ?? "").trim();
     if (name) headers[name] = String(header.value ?? "");
   }

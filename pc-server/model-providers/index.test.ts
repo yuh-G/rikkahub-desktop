@@ -189,6 +189,50 @@ describe("会话身份头(§7.4)", () => {
   });
 });
 
+// 供应商级自定义请求头(对齐 APP #1952/mergeCustomHeaders):三层链 provider < assistant
+// < model,同名被上层覆盖;空名条目静默丢弃(安卓 toHeaders 同款过滤)。
+describe("供应商级自定义请求头(三层链)", () => {
+  const at = (baseUrl: string, customHeaders?: unknown) => ({ baseUrl, customHeaders }) as any;
+  const headers = (list: Array<[string, string]>) => list.map(([name, value]) => ({ name, value }));
+
+  it("供应商头单独存在即发出(无助手/模型头时不丢)", () => {
+    const out = applyRequestHeaders({}, {} as any, at("https://api.openai.com/v1", headers([["X-Trace", "t1"]])), {} as any);
+    expect(out["X-Trace"]).toBe("t1");
+  });
+
+  it("三层链优先级:供应商头被助手头覆盖,助手头被模型头覆盖", () => {
+    const out = applyRequestHeaders(
+      {},
+      { customHeaders: headers([["X-Lane", "assistant"], ["X-Only-Assistant", "a"]]) } as any,
+      at("https://api.openai.com/v1", headers([["X-Lane", "provider"]])),
+      { customHeaders: headers([["X-Lane", "model"]]) } as any,
+    );
+    expect(out["X-Lane"]).toBe("model");
+    expect(out["X-Only-Assistant"]).toBe("a");
+  });
+
+  it("applyModelRequestHeaders(pi/图像/辅助路径)同样供应商头 < 模型头", () => {
+    const out = applyModelRequestHeaders(
+      {},
+      at("https://api.deepseek.com/v1", headers([["X-Deep", "provider"], ["X-Shared", "provider"]])),
+      { customHeaders: headers([["X-Shared", "model"]]) } as any,
+    );
+    expect(out["X-Deep"]).toBe("provider");
+    expect(out["X-Shared"]).toBe("model");
+  });
+
+  it("空名条目丢弃;缺省字段(undefined)不炸", () => {
+    const out = applyRequestHeaders(
+      {},
+      {} as any,
+      at("https://api.openai.com/v1", [{ value: "v" }, { name: "  ", value: "v" }, { name: "X-Ok" }]),
+      {} as any,
+    );
+    expect(out["X-Ok"]).toBe("");
+    expect(Object.keys(out).every((key) => key.trim().length > 0)).toBe(true);
+  });
+});
+
 describe("订阅预置行(§6.1 贴同家 API)+ flow 元数据", () => {
   it("Claude 订阅紧跟 Anthropic 预置,且 anthropic flow chatCapable:false(仅工作区,§6 决策②)", () => {
     const providers = defaultProviders();
