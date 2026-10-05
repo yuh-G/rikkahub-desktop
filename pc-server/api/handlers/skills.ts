@@ -1,7 +1,7 @@
 // api/handlers/skills.ts — 技能路由（skills 列表/详情/文件/导入）
 // 纪律：纯搬迁自 server.ts routeApi()。
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { state } from "../../persistence/json-store";
 import { defaultSkillContent, listSkillFiles, listSkillsWithDiagnostics, parseSkillFrontmatter, readSkillContent, safeSkillDir, skillMetadataFromFile } from "../../tools/skills";
@@ -35,7 +35,12 @@ export async function handleSkillRoutes(request: Request, _url: URL, path: strin
     if (!dir) return error("Invalid skill name", 400);
     mkdirSync(dir, { recursive: true });
     const content = String(body.content ?? defaultSkillContent(requestedName));
-    writeFileSync(join(dir, "SKILL.md"), content);
+    // 原子写(对齐 APP 9f02586d):先写同目录临时文件再 rename 覆盖——写到一半失败
+    // 时原文件完好,不会出现半截 SKILL.md 让技能既在列表又加载失败。
+    const target = join(dir, "SKILL.md");
+    const temp = join(dir, ".SKILL.md.tmp");
+    writeFileSync(temp, content);
+    renameSync(temp, target);
     const metadata = skillMetadataFromFile(requestedName);
     if (!metadata) return error("Skill frontmatter must include name and description", 400);
     return json({ status: "ok", skill: { ...metadata, content } });

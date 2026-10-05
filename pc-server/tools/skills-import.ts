@@ -21,8 +21,14 @@ function parseGitHubSkillUrl(repoUrl: string): GitHubSkillInfo | null {
   };
 }
 
-async function githubJson(url: string) {
+/** GitHub Contents API 请求 + 限流/HTTP 错误的人话化。导出供回归测试注入限流响应。 */
+export async function githubJson(url: string) {
   const response = await fetchWithTimeout(url, { headers: { Accept: "application/vnd.github+json", "User-Agent": "RikkaHub-PC" } });
+  // 未登录的 GitHub API 每小时仅 60 次;超限给明确提示而不是笼统的"读取失败"
+  // (对齐 APP 9f02586d,响应体同款错误语义)。
+  if ((response.status === 403 || response.status === 429) && response.headers.get("X-RateLimit-Remaining") === "0") {
+    throw new Error("GitHub API 请求次数已达上限，请稍后再试");
+  }
   const text = await response.text();
   if (!response.ok) throw new Error(`GitHub ${response.status}: ${text.slice(0, 500) || response.statusText}`);
   return JSON.parse(text);
