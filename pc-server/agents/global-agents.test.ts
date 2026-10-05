@@ -1,4 +1,4 @@
-// pi-engine/global-agents.test.ts — 全局工作区指引(pi-agent/AGENTS.md)行为锁。
+// agents/global-agents.test.ts — 全局工作区指引(pc-data/AGENTS.md,引擎中立)行为锁。
 // 钉住:候选名序与 pi 同构(AGENTS.md 优先,CLAUDE.md 就地编辑不产生第二份)、
 // 无文件时 exists=false 带模板、写入即 exists=true 且内容往返、512KB 上限拒绝。
 // 经 *In 参数化注入隔离目录(对齐 json-store 惯例)——piAgentDir 是进程级共享单例,

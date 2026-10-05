@@ -1,18 +1,18 @@
-// pi-engine/global-agents.ts — 全局工作区指引(pi-agent/AGENTS.md,对齐 APP 2689e753
-// 的 ~/.agents 层,PC 形态落在引擎的 agentDir——pi 原生 loadProjectContextFiles 把
-// agentDir 直系上下文件排在项目文件之前,读取/优先级零适配)。
+// agents/global-agents.ts — 全局工作区指引(pc-data/AGENTS.md,引擎中立)
 //
-// 职责:文件读写 + 默认模板单一事实源 + 512KB 上限(与项目级 AGENTS.md 同限,
-// workspace/files.ts)。消费端是 pi-engine/resources.ts 的边界过滤(agentDir 直系
-// 放行)与设置页的编辑入口;chat 引擎无工作区概念,不消费本层。
+// 用户亲写的、对所有工作区会话生效的个人指令层(对齐 APP 2689e753 的 ~/.agents 层)。
+// 家在 pc-data/AGENTS.md——与 skills/、memory/ 平级的应用级资源,不属于任何引擎:
+// pi 引擎经 appendSystemPrompt 注入本层(resources.ts,内容只读),未来引擎直接
+// import 本模块同源消费。候选名序与 pi 的 loadContextFileFromDir 同构(首命中即
+// 生效;编辑入口读写"实际生效的那个文件",都不存在时新建标准名)。
 
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { piAgentDir } from "../foundation/paths";
+import { dirname, join } from "node:path";
+import { globalAgentsPath } from "../foundation/paths";
 
-/** 候选名与 pi 的 loadContextFileFromDir 同序(首命中即实际加载;编辑入口读写
- *  "pi 眼中的那个文件",都不存在时新建标准名)。 */
-const GLOBAL_CONTEXT_CANDIDATES = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"] as const;
+/** 候选名清单(pi resource-loader.loadContextFileFromDir 同序,AGENTS.override.md
+ *  除外——那是 pi 的手动遮蔽机制,不是用户编辑入口的读写对象)。 */
+export const GLOBAL_AGENTS_CANDIDATES = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"] as const;
 
 const GLOBAL_AGENTS_MAX_BYTES = 512 * 1024;
 
@@ -42,9 +42,9 @@ export interface GlobalAgentsFile {
   template: string;
 }
 
-/** 目录参数化(对齐 json-store 的 *In 系列惯例):回归测试注入隔离目录,生产恒 piAgentDir。 */
+/** 目录参数化(对齐 json-store 的 *In 系列惯例):回归测试注入隔离目录,生产恒 dataDir。 */
 function findGlobalContextFileIn(baseDir: string): string | null {
-  for (const name of GLOBAL_CONTEXT_CANDIDATES) {
+  for (const name of GLOBAL_AGENTS_CANDIDATES) {
     try {
       if (statSync(join(baseDir, name)).isFile()) return name;
     } catch {
@@ -69,17 +69,18 @@ export function writeGlobalAgentsFileIn(baseDir: string, content: string): Globa
   if (Buffer.byteLength(content, "utf-8") > GLOBAL_AGENTS_MAX_BYTES) {
     throw new Error("AGENTS.md is too large (limit 512KB)");
   }
-  // 写到 pi 实际加载的那个候选(已有 CLAUDE.md 就地编辑,不产生被遮蔽的第二份)。
+  // 写到实际生效的那个候选(已有 CLAUDE.md 就地编辑,不产生被遮蔽的第二份)。
   const fileName = findGlobalContextFileIn(baseDir) ?? "AGENTS.md";
   mkdirSync(baseDir, { recursive: true });
   writeFileSync(join(baseDir, fileName), content, "utf-8");
   return { fileName, exists: true, content, template: GLOBAL_AGENTS_TEMPLATE };
 }
 
+/** 生产读:pc-data/ 直系。 */
 export function readGlobalAgentsFile(): GlobalAgentsFile {
-  return readGlobalAgentsFileIn(piAgentDir);
+  return readGlobalAgentsFileIn(dirname(globalAgentsPath));
 }
 
 export function writeGlobalAgentsFile(content: string): GlobalAgentsFile {
-  return writeGlobalAgentsFileIn(piAgentDir, content);
+  return writeGlobalAgentsFileIn(dirname(globalAgentsPath), content);
 }

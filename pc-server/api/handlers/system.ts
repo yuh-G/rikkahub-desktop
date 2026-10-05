@@ -21,7 +21,7 @@ import { getConversation } from "../../conversations";
 import { DEFAULT_PROMPT_OPTIMIZE_PROMPT, PROMPT_OPTIMIZE_OUTPUT_TOKENS } from "../../app-config/prompts";
 import { markUiActivity } from "../../app-config/analytics";
 import { conversationModelIdFor, fetchAuxiliaryText, modelExists } from "../../conversations/auxiliary";
-import { readGlobalAgentsFile, writeGlobalAgentsFile } from "../../pi-engine/global-agents";
+import { readGlobalAgentsFile, writeGlobalAgentsFile } from "../../agents/global-agents";
 import { serveAIIcon } from "../../assets/icons";
 import { FONT_EXTENSIONS_SET, FONT_MIME, MAX_FONT_BYTES, fontCssName, fontExtension, isBareFileName, isFontFile, listBuiltinFonts, listCustomFonts, listSystemFonts, makeBundledFontEntry, resolveFontFile } from "../../assets/fonts";
 

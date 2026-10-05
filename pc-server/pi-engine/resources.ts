@@ -7,11 +7,12 @@
 // - 设置:SettingsManager.inMemory + projectTrusted:false——零文件 I/O,工作区里的
 //   .pi/settings.json 与 .pi/SYSTEM.md(resource-loader.discoverSystemPromptFile 按
 //   projectTrusted 门控)两个不可信注入面一并封死(P1 纪要遗留项)。
-// - AGENTS.md:pi 原生 loadProjectContextFiles(agentDir 全局件 + cwd 祖先链爬升),
-//   经 agentsFilesOverride 词法过滤——祖先链越出 root 的文件不进提示词(提示词层与
-//   工具层同一边界纪律)。全局件(pi-agent/AGENTS.md,对齐 APP 2689e753 的
-//   ~/.agents 层)由我们单点维护、无条件放行:它是用户自己写进我们数据目录的,
-//   信任链与项目文件(用户信任门后的真实目录)同级。
+// - AGENTS.md:项目级走 pi 原生 loadProjectContextFiles(cwd 祖先链),经
+//   agentsFilesOverride 词法过滤到工作区边界内(提示词层与工具层同一边界纪律)。
+//   全局层(pc-data/AGENTS.md,引擎中立,见 agents/global-agents.ts)经
+//   appendSystemPrompt 注入——pi 系统提示里 appendSection 恒在 <project_context>
+//   之前(system-prompt.ts 两个分支同序),「全局前、项目后」与 pi 原生 agentDir
+//   全局件的排序语义一致,但不寄存任何引擎私有目录。
 // - 人设+记忆:appendSystemPrompt 单一插槽(§3.4),内容会话级冻结(见下)。
 // - 扩展/prompt 模板/主题:v1 全关(noExtensions/noPromptTemplates/noThemes),
 //   pi 的资源面只开技能与上下文文件两类。
@@ -23,14 +24,16 @@
 // - 记忆/最近会话:直接复用聊天引擎的 frozenContextBlocks(同一冻结生命周期与
 //   失效面:设置页手动改记忆 → invalidateContextSnapshots → 两个引擎同时重建)。
 // - 搜索指引/教学行:内容只随设置变(服务名/技能库路径),天然稳定。
+// - 全局指引:按内容指纹冻结(用户编辑 → 指纹变 → 下轮装配生效,与人设同语义)。
 
 import { mkdirSync } from "node:fs";
-import { dirname, isAbsolute, resolve, sep } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 import { DefaultResourceLoader } from "../../pi/packages/coding-agent/src/core/resource-loader.ts";
 import { SettingsManager } from "../../pi/packages/coding-agent/src/core/settings-manager.ts";
 import type { Assistant, Conversation, Model } from "../foundation/types";
 import { getStringArray, renderTemplate } from "../foundation/utils";
 import { piAgentDir, skillsDir } from "../foundation/paths";
+import { readGlobalAgentsFile } from "../agents/global-agents";
 import { frozenContextBlocks } from "../inference-engine/context-snapshots";
 import { PI_THINKING_BUDGETS } from "./model-bridge";
 import { templateVariables } from "../inference-engine/message-enrichment";
@@ -80,6 +83,28 @@ export function invalidatePiPersonaSnapshots(): void {
   personaSnapshots.clear();
 }
 
+// ---- 全局工作区指引冻结快照(与 personaSnapshots 同套路) ----
+
+const globalAgentsSnapshots = new Map<string, string>();
+
+/** 全局指引内容按原文指纹冻结:同会话内逐字节稳定(§9.2 缓存纪律——appendSystemPrompt
+ *  整段冻结,逐轮重读文件会因用户编辑中途换文,破坏提示词前缀缓存);用户编辑 →
+ *  指纹变 → 下轮装配重读(与"改人设立即生效"同语义)。 */
+function frozenGlobalAgentsBlock(): string {
+  const state = readGlobalAgentsFile();
+  if (!state.exists) return "";
+  const key = Bun.hash(state.content).toString(16);
+  const hit = globalAgentsSnapshots.get(key);
+  if (hit !== undefined) return hit;
+  const block = `<global_workspace_instructions>\n${state.content}\n</global_workspace_instructions>`;
+  globalAgentsSnapshots.set(key, block);
+  if (globalAgentsSnapshots.size > MAX_SNAPSHOTS) {
+    const oldest = globalAgentsSnapshots.keys().next().value;
+    if (oldest !== undefined) globalAgentsSnapshots.delete(oldest);
+  }
+  return block;
+}
+
 // ---- appendSystemPrompt 组装 ----
 
 /** 技能安装落点教学(§3.1:模型自装资源必须落到我们的家;<available_skills> 的
@@ -104,6 +129,7 @@ export function buildPiAppendSystemPrompt(
 ): string[] {
   const [memoryBlock, recentChatsBlock] = frozenContextBlocks(assistant, conversation.id);
   return [
+    frozenGlobalAgentsBlock(),
     frozenPersona(conversation, assistant, model),
     buildSearchContext(),
     memoryBlock,
@@ -122,13 +148,6 @@ function isWithinRoot(path: string, root: string): boolean {
   const target = cmp(resolve(path));
   const rootCmp = cmp(resolve(root));
   return target === rootCmp || target.startsWith(rootCmp.endsWith(sep) ? rootCmp : rootCmp + sep);
-}
-
-/** agentDir 直系文件 = 全局上下文件(pi-agent/AGENTS.md)。pi 的 loadProjectContextFiles
- *  把它排在祖先链之前;我们放行它、只滤越界祖先——全局件的信任链是"用户写进我们
- *  数据目录",与项目文件(用户信任门后的真实目录)同级。 */
-function isAgentDirDirectFile(path: string): boolean {
-  return dirname(resolve(path)) === resolve(piAgentDir);
 }
 
 // ---- diagnostics 上报(按内容键控:同一告警重复 reload 只报一次,内容变了复报) ----
@@ -196,9 +215,7 @@ export async function createPiSessionResources(options: {
       diagnostics,
     }),
     agentsFilesOverride: ({ agentsFiles }) => ({
-      agentsFiles: agentsFiles.filter((file) =>
-        isAbsolute(file.path) && (isAgentDirDirectFile(file.path) || isWithinRoot(file.path, root)),
-      ),
+      agentsFiles: agentsFiles.filter((file) => isAbsolute(file.path) && isWithinRoot(file.path, root)),
     }),
     appendSystemPrompt: buildPiAppendSystemPrompt(conversation, assistant, model, extraAppendSystemPrompt),
   });

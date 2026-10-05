@@ -13,7 +13,7 @@ import {
   ANDROID_TTS_PROVIDER_TYPES,
 } from "../foundation/types/android-contract";
 import { isRecord, safeJsonStringify } from "../foundation/utils";
-import { dataDir, filesDir, piAgentDir, skillsDir } from "../foundation/paths";
+import { dataDir, filesDir, skillsDir } from "../foundation/paths";
 import { isWindowsReservedName } from "../foundation/windows-names";
 import { reportError } from "../observability/app-errors";
 import { tempDir } from "../foundation/platform";
@@ -946,18 +946,15 @@ export function createSettingsBackupZipToPath(targetZipPath: string, onProgress?
       mkdirSync(fontsStage, { recursive: true });
       copyDirRecursive(fontsDir, fontsStage);
     }
-    // 全局工作区指引(pi-agent 直系的上下文件,对齐 APP 2689e753 的 ~/.agents 层):
-    // 用户亲写的指令,PC→PC 迁移必须带上。只搬四个候选名,不打包整个客房目录
-    // (运行时态文件绝不进备份);候选清单与 pi/global-agents 同源,此处字面量列出
-    // 是刻意的——备份格式是冻结契约,不随运行时常量演化。
-    const piAgentStage = join(stageDir, "pi-agent");
+    // 全局工作区指引(pc-data/AGENTS.md,引擎中立,对齐 APP 2689e753 的 ~/.agents 层):
+    // 用户亲写的指令,PC→PC 迁移必须带上。只搬四个候选名(AGENTS.MD/CLAUDE.MD 大小写
+    // 变体),不扫目录;候选清单与 agents/global-agents 同源,此处字面量列出是刻意的
+    // ——备份格式是冻结契约,不随运行时常量演化。
+    const dataRootStage = stageDir;
     for (const name of ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]) {
-      const src = join(piAgentDir, name);
+      const src = join(dataDir, name);
       try {
-        if (statSync(src).isFile()) {
-          mkdirSync(piAgentStage, { recursive: true });
-          copyFileSync(src, join(piAgentStage, name));
-        }
+        if (statSync(src).isFile()) copyFileSync(src, join(dataRootStage, name));
       } catch { /* 不存在 → 跳过 */ }
     }
     onProgress?.("正在压缩...");
