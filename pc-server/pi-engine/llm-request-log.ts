@@ -1,22 +1,22 @@
-// pi-engine/llm-request-log.ts — 工作区 LLM 请求接入统一日志管线(日志问题 1)。
+// pi-engine/llm-request-log.ts — pi google 轨的 LLM 请求日志**兜底壳**。
 //
-// **T3 起主路径是通道中间件**(requestLogMiddleware,见文件尾):pi 的 streamFunction 包装
-// 器把 ctx.llmFetch 注入 StreamOptions.fetch,SDK 内部每条请求经请求通道(见
-// inference-engine/llm-transport),身份(provider)由通道 ctx 显式给出、零 ALS。
+// 背景:pi 的 google-generative-ai / google-vertex 适配器拒收自定义 fetch(§2.3 P5),
+// 其请求不经宿主 LLM 请求通道(inference-engine/llm-transport),故无法用通道中间件记日志。
+// 本文件用一层**窄**全局 fetch 壳 + AsyncLocalStorage 圈定「这条请求属于 pi 的哪个 google
+// provider」来补记,保住用户的排障面。**只记日志、不预热**——预热对 google 无意义(官方
+// Anthropic 端点专属),且本壳的存在只是为了日志不降级。
 //
-// **全局壳(installLlmRequestLogInterceptor)保留为 google 轨兜底**:pi 的
-// google-generative-ai / google-vertex 适配器拒收自定义 fetch(§2.3 P5),其请求不经通道,
-// 靠本壳(ALS 圈定 origin)补记日志以保住用户排障面;拆除条件见 CLAUDE.md pi 维护手册。
-// 聊天引擎的每条 LLM fetch 在调用点 addLog(inference-engine/providers.ts),不经本模块。
+// 拆除条件:pi 上游支持注入 fetch 后,删除本文件 + bootstrap 的安装调用 + runner 的
+// runWithProviderLog(CLAUDE.md pi 维护手册「清除冗余」条目已登记)。
 //
-// 安装顺序:在 installProxyFetchInterceptor 之后安装(包外层),计时覆盖代理与重试,
-// 记录端到端时长。流式响应口径:status/headers 到手即记(时长=响应头时间),
-// responseBody 不读(SSE 流由 pi 消费,tee 全量会翻倍内存);非 2xx 时 clone 读文本
-// (错误响应体小且非流式)。凭据脱敏由 addLog 入口统一负责(6-1:url/headers 打码)。
+// 与主路径的关系:非 google 协议的 pi 请求、以及未来所有进程内引擎的请求,都经请求通道
+// 的 requestLogMiddleware 记日志(inference-engine/request-log)——那条路无全局壳、无 ALS。
+// 本壳与它共用 recordRequest(记录语义单点),故同一份日志口径。
+//
+// 安装顺序:在 installProxyFetchInterceptor 之后安装(包外层),计时覆盖代理与重试。
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { addLog } from "../api/logs";
-import type { LlmMiddleware } from "../inference-engine/llm-transport";
+import { recordRequest } from "../inference-engine/request-log";
 
 export type LlmLogContext = {
   providerId: string;
@@ -28,7 +28,7 @@ export type LlmLogContext = {
 
 const als = new AsyncLocalStorage<LlmLogContext>();
 
-/** runner 侧入口:把一次生成(prompt/compact)包进日志上下文。 */
+/** runner 侧入口:把一次生成(prompt/compact)包进日志上下文(仅 google 轨调用)。 */
 export function runWithLlmRequestLog<T>(context: LlmLogContext | null, fn: () => T): T {
   if (!context) return fn();
   return als.run(context, fn);
@@ -43,65 +43,11 @@ export function llmLogContextFor(provider: { id: string; name: string; baseUrl: 
   }
 }
 
-const RESPONSE_BODY_LIMIT = 2000;
-
-/** 记录一条 LLM 请求到统一日志管线(日志壳与通道中间件共用,语义单点)。
- *  status/headers 到手即记(流式时长=响应头时间),非 2xx clone 读错误体(小且非流式),
- *  reject 记 status 0。凭据脱敏由 addLog 入口统一负责(6-1:url/headers 打码)。 */
-function recordRequest(
-  identity: { providerId: string; providerName: string },
-  url: string,
-  method: string,
-  requestBody: string | undefined,
-  started: number,
-  promise: Promise<Response>,
-): void {
-  void promise.then(
-    async (response) => {
-      let errorBody: string | undefined;
-      if (!response.ok) {
-        try {
-          errorBody = (await response.clone().text()).slice(0, RESPONSE_BODY_LIMIT);
-        } catch {
-          // 读失败不影响日志主体。
-        }
-      }
-      addLog({
-        providerId: identity.providerId,
-        providerName: identity.providerName,
-        url,
-        ok: response.ok,
-        status: response.status,
-        kind: "provider:agent",
-        durationMs: Date.now() - started,
-        method,
-        requestBody,
-        responseHeaders: Object.fromEntries(response.headers.entries()),
-        ...(errorBody !== undefined ? { responseBody: errorBody, error: errorBody } : {}),
-      });
-    },
-    (err: unknown) => {
-      addLog({
-        providerId: identity.providerId,
-        providerName: identity.providerName,
-        url,
-        ok: false,
-        status: 0,
-        kind: "provider:agent",
-        durationMs: Date.now() - started,
-        method,
-        requestBody,
-        error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
-      });
-    },
-  );
-}
-
 let installed = false;
 
-/** 安装工作区 LLM 日志壳(幂等)。必须晚于 installProxyFetchInterceptor。
- *  **T3 起仅 pi google 轨使用**(该轨适配器拒收自定义 fetch,请求不经通道);其余协议
- *  经 requestLogMiddleware 记日志。拆除条件:上游支持注入 fetch 后删除(见 CLAUDE.md)。 */
+/** 安装 pi google 轨的 LLM 日志壳(幂等)。必须晚于 installProxyFetchInterceptor。
+ *  仅当请求处于本壳的 ALS 上下文内、且 URL 以该 provider 的 origin 开头时才记
+ *  (ALS 圈定「属于 pi google 轨的哪次生成」,origin 圈定「确实打到该端点」)。 */
 export function installLlmRequestLogInterceptor(): void {
   if (installed) return;
   installed = true;
@@ -119,22 +65,3 @@ export function installLlmRequestLogInterceptor(): void {
     return promise;
   } as typeof fetch;
 }
-
-/** 通道中间件形态(T2 新增;T3 起为 pi 的实际路径,替代上面的全局壳)。
- *  与壳的两点差异,都是「收敛」带来的:①**无 origin 过滤**——通道只承载 LLM 请求,
- *  工具/搜索/MCP 的 fetch 根本不经通道(原 origin 匹配只是为在全局壳里排除别家主机);
- *  ②**无 ALS**——身份(provider)由通道在调用时显式传入的 ctx 给出。kind 恒 provider:agent
- *  (warm 用途由组装点保证不挂本中间件,见 T4 llmMiddlewaresFor)。 */
-export const requestLogMiddleware: LlmMiddleware = async (req, ctx, next) => {
-  const started = Date.now();
-  const promise = next(req);
-  recordRequest(
-    { providerId: ctx.provider.id, providerName: ctx.provider.name },
-    req.url,
-    req.method,
-    req.body,
-    started,
-    promise,
-  );
-  return promise;
-};

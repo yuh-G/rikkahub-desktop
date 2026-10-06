@@ -11,8 +11,8 @@
 //     关=不发(修复 S6:pi 的 Responses/completions 此前恒发,绕过了开关)。
 //  4. 会话 id 稳定化:同一会话第二轮请求的 prompt_cache_key/会话 id 与第一轮相同
 //     (此前 pi 每轮随机 uuidv7,同会话永远打不进同一缓存分片)。
-//  5. T3 通道注入:pi 生成的 LLM fetch 真的经 ctx.llmFetch 通道出线(传一条可观察到调用
-//     的 fetch 作为通道,断言它被 pi 调到了——这是「请求通道接线成立」的终极锁);
+//  5. T3/T4 通道注入:pi 生成的 LLM fetch 真的经 ctx.llmFetchFor 下发的通道出线(传一条
+//     可观察到调用的 fetch 作为通道,断言它被 pi 调到了——这是「请求通道接线成立」的终极锁);
 //     google 轨不注入(否则 pi 抛 "Custom fetch is not supported")。
 //
 // Anthropic 轨用假 SSE 服务器直驱 runPiGeneration(注册轨,真实 createAgentSession);
@@ -115,8 +115,8 @@ async function runPiTurn(providerFixture: Provider, conversationId: string): Pro
     history: [] as Message[],
     promptText: "你好",
     sink: (event) => events.push(event),
-    // T3:LLM 请求通道直用全局 fetch——本用例的假 SSE 服务器就是上游,请求经它出线。
-    llmFetch: fetch,
+    // T4:LLM 请求通道工厂直用全局 fetch——本用例的假 SSE 服务器就是上游,请求经它出线。
+    llmFetchFor: () => fetch,
   });
   return result.text;
 }
@@ -246,7 +246,7 @@ describe("OpenAI 格式 prompt_cache_key(策略开关 + 会话 id 稳定化)", (
       history: [] as Message[],
       promptText: "你好",
       sink: () => {},
-      llmFetch: fetch, // T3:LLM 请求通道(测试直用全局 fetch,假上游即落点)
+      llmFetchFor: () => fetch, // T4:LLM 请求通道工厂(测试直用全局 fetch,假上游即落点)
     });
   }
 
@@ -269,7 +269,7 @@ describe("OpenAI 格式 prompt_cache_key(策略开关 + 会话 id 稳定化)", (
       history: [message("USER", [{ type: "text", text: "第一轮" }])] as Message[],
       promptText: "第二轮",
       sink: () => {},
-      llmFetch: fetch, // T3:LLM 请求通道
+      llmFetchFor: () => fetch, // T4:LLM 请求通道工厂
     });
     // 两个请求:键都发、值都是会话 id(此前 pi 每轮随机 uuidv7,同会话永远打不进
     // 同一缓存分片——稳定化后跨轮同值)。
@@ -281,10 +281,10 @@ describe("OpenAI 格式 prompt_cache_key(策略开关 + 会话 id 稳定化)", (
   });
 });
 
-// ---- 5) T3 通道注入:pi 的 LLM fetch 真的经 ctx.llmFetch ----
+// ---- 5) T3/T4 通道注入:pi 的 LLM fetch 真的经 ctx.llmFetchFor ----
 
-describe("T3 请求通道注入(pi streamFunction 包装)", () => {
-  test("pi 生成的每条请求经 ctx.llmFetch 通道出线(可观察 fetch 被调用)", async () => {
+describe("T3/T4 请求通道注入(pi streamFunction 包装)", () => {
+  test("pi 生成的每条请求经 ctx.llmFetchFor 返回的通道出线(可观察 fetch 被调用)", async () => {
     // 通道即 pi 的唯一 LLM 出口:传一条会记录调用的 fetch 作通道,断言 pi 用它发了请求。
     // 这是「请求通道接线成立」的终极集成锁——若 streamFunction 包装失效(上游重构 /
     // 补丁丢失),请求会回到 globalThis.fetch,此断言先红。
@@ -305,7 +305,7 @@ describe("T3 请求通道注入(pi streamFunction 包装)", () => {
       history: [] as Message[],
       promptText: "你好",
       sink: () => {},
-      llmFetch: observing,
+      llmFetchFor: () => observing,
     });
     expect(channelCalls.length).toBeGreaterThanOrEqual(1);
     expect(channelCalls[0]).toContain("/v1/messages");

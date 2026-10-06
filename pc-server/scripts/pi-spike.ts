@@ -61,7 +61,7 @@ async function main(): Promise<void> {
 			history: [],
 			promptText: "Say hello",
 			sink: apply,
-			llmFetch: fetch, // T3:LLM 请求通道(冒烟直用全局 fetch)
+			llmFetchFor: () => fetch, // T4:LLM 请求通道工厂(冒烟直用全局 fetch)
 		});
 		console.log("[pi-spike] turn1 text:", JSON.stringify(first.text), "degraded:", first.degradedMessageIds);
 		console.log("[pi-spike] turn1 parts:", JSON.stringify(assistantMessage.parts));
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
 			history: [user1, asst1],
 			promptText: "And again",
 			sink: apply,
-			llmFetch: fetch, // T3:LLM 请求通道
+			llmFetchFor: () => fetch, // T4:LLM 请求通道工厂
 		});
 		console.log("[pi-spike] turn2 text:", JSON.stringify(second.text));
 		const secondRequest = server.requests[1] as { messages?: unknown[] };

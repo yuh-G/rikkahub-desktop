@@ -1,15 +1,16 @@
 // inference-engine/llm-transport.ts — LLM 请求通道(T 阶段 §4.1/§4.2,两引擎统一出口)。
 //
 // 定位:进程内引擎(聊天 / pi / 未来 deepseek-harness 等)的**唯一** LLM 出口。引擎只调
-// ctx.llmFetch(url, init),不再各自往 globalThis.fetch 上叠猴补丁;引擎级关注点(请求
-// 日志、缓存预热捕获、将来的插件钩子)以**有序中间件**形式挂在通道上,拿到的永远是
-// 「规范化后的结构化请求」——不再猜 URL/头/body 形状、不再靠 AsyncLocalStorage 推断
-// 「这个请求属于谁」。
+// 组装点下发的通道(ctx.llmFetchFor(provider) 的返回值),不再各自往 globalThis.fetch 上叠
+// 猴补丁;引擎级关注点(请求日志、缓存预热捕获、将来的插件钩子)以**有序中间件**形式挂在
+// 通道上,拿到的永远是「规范化后的结构化请求」——不再猜 URL/头/body 形状、不再靠
+// AsyncLocalStorage 推断「这个请求属于谁」。
 //
 // 两层分工(架构边界,勿越界):
-//   ┌ 引擎层:  ctx.llmFetch(url, init)             ← 显式参数,不是全局
-//   ├ 通道层:  createLlmFetch(ctx, middlewares)    ← 本模块;入口规范化一次 → 中间件链
-//   └ 基础设施: globalThis.fetch(url字符串, init)  ← foundation/net.ts 唯一一层
+//   ┌ 引擎层:  ctx.llmFetchFor(provider)(url, init) ← 显式参数,不是全局
+//   ├ 通道层:  createLlmFetch(ctx, middlewares)      ← 本模块;入口规范化一次 → 中间件链
+//   │          (挂哪些中间件由 engines/llm-middlewares 唯一组装点按 adapter 声明推导)
+//   └ 基础设施: globalThis.fetch(url字符串, init)    ← foundation/net.ts 唯一一层
 //               (代理 / UA / timeout:0 / SSE identity——管**所有**出站请求,不只 LLM,全局是对的位置)
 //
 // 为什么这么分(替代 C2 的 fetch 猴补丁栈):
@@ -87,7 +88,7 @@ export async function normalizeLlmRequest(
   return { url, method, headers, body, rawBody, signal };
 }
 
-/** 组装一条 LLM 请求通道(编排层在每次生成 / 压缩入口调用一次,见 T4 llmMiddlewaresFor)。
+/** 组装一条 LLM 请求通道(生产侧唯一调用方:engines/llm-middlewares 的 engineLlmFetchFor)。
  *
  *  中间件**有序**:数组前项在外层(先见到请求),后项在内层(先见到响应)——与 fetch 拦截器
  *  「后装者在外」相反,这里按人类直觉「数组顺序 = 请求经过顺序」。

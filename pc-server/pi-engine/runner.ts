@@ -46,11 +46,12 @@ export interface PiGenerationContext {
   /** 生效 provider/model(调用方经 findModel 解析,providerOverwrite 已展开)。 */
   provider: Provider;
   model: Model;
-  /** LLM 请求通道(T3):pi SDK 内部发出的每条请求经此出口——请求日志 / 缓存预热捕获作为
-   *  有序中间件挂在其上,身份(会话/供应商/用途)由组装点显式给出,不再叠全局 fetch 壳。
-   *  组装点见编排层(llmMiddlewaresFor)。pi 内建 google 适配器拒收自定义 fetch(§2.3 P5),
-   *  包装器按 provider.type 判定不注入(见 runPiGeneration 内 withLlmFetch 头注)。 */
-  llmFetch: LlmFetch;
+  /** LLM 请求通道工厂(T4):pi SDK 内部发出的每条请求经此出口——请求日志 / 缓存预热
+   *  捕获作为有序中间件挂在其上,身份(会话/供应商/用途)由组装点显式给出。**本 runner 只
+   *  以自身 provider 取一次通道**(ctx.llmFetchFor(ctx.provider)),工厂形态留给「供应商
+   *  在调用时才定」的压缩路径(见 EngineRunContext.llmFetchFor)。pi 内建 google 适配器
+   *  拒收自定义 fetch(§2.3 P5),包装器按 provider.type 判定不注入(见 withLlmFetch 头注)。 */
+  llmFetchFor: (provider: Provider) => LlmFetch;
   /** 模型极限(P5:orchestrator 从 models.dev/助手配置取值;不传用 model-bridge 保守默认)。
    *  contextWindow 决定 pi 自动压缩阈值(contextWindow - reserveTokens),必须尽量真实。 */
   modelLimits?: PiModelLimits;
@@ -172,7 +173,7 @@ export function piInjectsLlmFetch(provider: Provider): boolean {
 
 /** 把 LLM 请求通道注入 pi 的 streamFunction 包装器公共件(生成与手动压缩都用)。
  *
- *  - `options?.fetch ?? ctx.llmFetch` 语义与 C1 的 cacheRetention 同款:pi 内部显式给的
+ *  - `options?.fetch ?? 通道` 语义与 C1 的 cacheRetention 同款:pi 内部显式给的
  *    fetch 不覆盖(对称于 compaction 自带的 cacheRetention:"none")。
  *  - **google 例外**(见 piInjectsLlmFetch):不注入时,pi google 轨的请求日志由一层窄全局
  *    壳兜底(runner 的 runWithProviderLog + bootstrap 的 installLlmRequestLogInterceptor,
@@ -246,8 +247,9 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   const wrappedStreamFn: StreamFn = (model_, context, options) =>
     innerStreamFn(model_, context, { ...options, cacheRetention: options?.cacheRetention ?? cacheRetention });
   // T3:同一包装器上再叠 LLM 通道注入(fetch)。包装后的函数本身就是 StreamFn,故直接把
-  // 通道注入叠在策略包装外层(顺序无关:两者读/写 options 的不同字段)。
-  session.agent.streamFunction = withLlmFetch(wrappedStreamFn, ctx.provider, ctx.llmFetch);
+  // 通道注入叠在策略包装外层(顺序无关:两者读/写 options 的不同字段)。本 runner 只以
+  // 自身 provider 取通道——压缩路径的「调用时供应商」由 runPiCompaction 侧负责。
+  session.agent.streamFunction = withLlmFetch(wrappedStreamFn, ctx.provider, ctx.llmFetchFor(ctx.provider));
 
   // steering 一次吸收全部:与聊天引擎 steerBoundary 整批排水、Codex pending_input
   // split_off(0) 同语义——多条插话 = 多个 user 气泡 + 一个 ai_2,不按轮次逐条滴灌。
@@ -286,7 +288,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
     // 当模板/扩展命令拦截(agent-session.ts:1926-1931),我们的会话 UX 不走 pi 命令面。
-    // T3:本轮生成的 LLM fetch(pi SDK 内部)经 ctx.llmFetch 通道记入统一日志管线(见
+    // T3:本轮生成的 LLM fetch(pi SDK 内部)经通道记入统一日志管线(见
     // streamFunction 包装);google 轨不经通道,由 runWithProviderLog 的窄壳兜底补记。
     await runWithProviderLog(ctx.provider, () =>
       session.prompt(ctx.promptText, {
@@ -324,8 +326,8 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
 export interface PiCompactionContext {
   provider: Provider;
   model: Model;
-  /** LLM 请求通道(T3;同 PiGenerationContext.llmFetch)——压缩摘要请求走它记日志。 */
-  llmFetch: LlmFetch;
+  /** LLM 请求通道工厂(T4;同 PiGenerationContext.llmFetchFor)——压缩摘要请求走它记日志。 */
+  llmFetchFor: (provider: Provider) => LlmFetch;
   /** 助手思考强度(同 PiGenerationContext.reasoningLevel;压缩摘要与主会话同档,勿分叉)。 */
   reasoningLevel?: string | null;
   modelLimits?: PiModelLimits;
@@ -417,8 +419,8 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
 
   // T3:压缩摘要请求经同一 LLM 通道记日志(P3:压缩走 this.agent.streamFunction,与主循环
   // 同注入点)。压缩自带 cacheRetention:"none"(compaction.ts completeSummarization),
-  // 不经我们的策略包装面,故这里只叠通道注入。
-  session.agent.streamFunction = withLlmFetch(session.agent.streamFunction, ctx.provider, ctx.llmFetch);
+  // 不经我们的策略包装面,故这里只叠通道注入。以 ctx.provider(调用方传入的最终供应商)取通道。
+  session.agent.streamFunction = withLlmFetch(session.agent.streamFunction, ctx.provider, ctx.llmFetchFor(ctx.provider));
 
   const bridge = createPiEventBridge();
   const unsubscribe = session.subscribe((event) => {

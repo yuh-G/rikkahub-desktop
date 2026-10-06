@@ -55,15 +55,7 @@ export function cacheWarmingDelayMs(ttlMs: number): number | undefined {
   return Math.max(1, Math.floor(Math.min(ttlMs * 0.9, ttlMs - 10_000)));
 }
 
-// ── 捕获身份 ───────────────────────────────────────────────────────
-
-/** 预热捕获的身份(通道中间件在调用时构造):conversationId 定界停止条件(生成结束/
- *  会话删除),provider 携带策略与端点身份。T3 起不再有全局 ALS —— 身份由组装点经
- *  LlmCallContext **显式**给出,「这请求属于谁」不再靠环境推断(§2.2 根因)。 */
-export interface CacheWarmingContext {
-  conversationId: string;
-  provider: Provider;
-}
+// ── 供应商门控 ─────────────────────────────────────────────────────
 
 /** 端点门控:仅官方 Anthropic 主机(订阅轨 flow 锁死同端点)。第三方 Anthropic 兼容
  *  端点(中转站)的 cache_control/TTL 语义不受我们控制——多数容忍字段但自行缓存,
@@ -71,6 +63,13 @@ export interface CacheWarmingContext {
 export function isWarmingEligibleEndpoint(provider: Provider): boolean {
   if (provider.type !== "claude") return false;
   return hostOfProvider(provider) === "api.anthropic.com";
+}
+
+/** 供应商侧的预热资格(唯一定义):用户策略开(promptCachePolicyFor 单源,订阅行恒开)
+ *  且是官方端点。引擎侧资格(host + run-and-suspend)由组装点 engines/llm-middlewares 的
+ *  warmingEligible 叠加;本中间件自身也调用它做纵深防御——两处共用这一个谓词,规则不复写。 */
+export function isProviderWarmable(provider: Provider): boolean {
+  return promptCachePolicyFor(provider).warming && isWarmingEligibleEndpoint(provider);
 }
 
 /** 预算式 thinking 的 budget_tokens 由 max_tokens 推导,重放(改 max_tokens:1)会
@@ -301,30 +300,26 @@ function bodyHasCacheControl(body: Record<string, unknown>): boolean {
 }
 
 /** 从规范化后的 LlmRequest 捕获一个可重放请求、建立/覆盖保温计划(cacheWarmCaptureMiddleware
- *  内部实现)。providerId/Name 由调用方给出。 */
-function captureRequest(
-  ctx: CacheWarmingContext,
-  req: LlmRequest,
-  providerId: string,
-  providerName: string,
-): void {
+ *  内部实现)。身份(会话/供应商)由通道 ctx 显式给出——conversationId 定界停止条件
+ *  (生成结束/会话删除),provider 携带策略、端点身份与记账用 id/name。 */
+function captureRequest(conversationId: string, provider: Provider, req: LlmRequest): void {
   if (!/\/v1\/messages(\?|$)/.test(req.url)) return; // 同会话 Anthropic 端点上 count_tokens 等其他路径不该被捕获
   if (req.method.toUpperCase() !== "POST" || req.body === undefined) return;
   const body = safeJsonParse(req.body);
   if (!isRecord(body)) return;
   if (!isAnthropicReplayable(body)) return;
   if (!bodyHasCacheControl(body)) return;
-  const proven = provenTokens.get(ctx.conversationId) ?? 0;
+  const proven = provenTokens.get(conversationId) ?? 0;
   if (proven < MIN_CACHEABLE_PROMPT_TOKENS && estimatePromptTokensFromBody(body) < MIN_CACHEABLE_PROMPT_TOKENS) return;
-  const ttlMs = ANTHROPIC_TTL_SECONDS[promptCachePolicyFor(ctx.provider).anthropicTtl] * 1000;
+  const ttlMs = ANTHROPIC_TTL_SECONDS[promptCachePolicyFor(provider).anthropicTtl] * 1000;
   if (cacheWarmingDelayMs(ttlMs) === undefined) return;
   // 新请求覆盖旧计划(旧 timer 必须清,防双热)。
-  const old = plans.get(ctx.conversationId);
+  const old = plans.get(conversationId);
   if (old?.timer) warmingScheduler.clear(old.timer);
-  plans.set(ctx.conversationId, {
-    conversationId: ctx.conversationId,
-    providerId,
-    providerName,
+  plans.set(conversationId, {
+    conversationId,
+    providerId: provider.id,
+    providerName: provider.name,
     request: {
       url: req.url,
       // req.headers 已是 Headers 实例(通道入口规范化),取 Record 快照。
@@ -338,16 +333,17 @@ function captureRequest(
     nextWarmAt: 0,
     timer: undefined,
   });
-  schedule(plans.get(ctx.conversationId)!);
+  schedule(plans.get(conversationId)!);
 }
 
 /** 通道中间件(T2 起;T3 起为 pi 的实际路径):读规范化后的 LlmRequest,身份由通道在
- *  调用时显式传入的 ctx 给出,不再靠 ALS 推断「这请求属于谁」。purpose 由组装点保证
- *  (见编排器 piSessionLlmFetch):本中间件只在 generation 用途下挂入,故此处不再自检。 */
+ *  调用时显式传入的 ctx 给出,不再靠 ALS 推断「这请求属于谁」。是否挂入、挂在哪个用途下,
+ *  由组装点 engines/llm-middlewares 的 warmingEligible 推导决定(T4:host + run-and-suspend +
+ *  策略开 + 官方端点,且仅 generation 用途)。下方门控与组装点同源(promptCachePolicyFor /
+ *  isWarmingEligibleEndpoint),作为纵深防御保留:中间件被直接挂进任意通道(测试/将来插件)
+ *  时也不会对不合格端点误捕获。 */
 export const cacheWarmCaptureMiddleware: LlmMiddleware = async (req, ctx, next) => {
   const { provider, conversationId } = ctx;
-  if (conversationId && provider.type === "claude" && promptCachePolicyFor(provider).warming && isWarmingEligibleEndpoint(provider)) {
-    captureRequest({ conversationId, provider }, req, provider.id, provider.name);
-  }
+  if (conversationId && isProviderWarmable(provider)) captureRequest(conversationId, provider, req);
   return next(req);
 };

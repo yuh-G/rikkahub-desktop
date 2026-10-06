@@ -9,9 +9,10 @@ import * as actualLogs from "../api/logs";
 const logged: Array<Record<string, unknown>> = [];
 mock.module("../api/logs", () => ({ ...actualLogs, addLog: (entry: Record<string, unknown>) => logged.push(entry) }));
 
-const { installLlmRequestLogInterceptor, llmLogContextFor, requestLogMiddleware, runWithLlmRequestLog } =
+const { installLlmRequestLogInterceptor, llmLogContextFor, runWithLlmRequestLog } =
   await import("./llm-request-log");
 const { createLlmFetch } = await import("../inference-engine/llm-transport");
+const { requestLogMiddleware } = await import("../inference-engine/request-log");
 const { provider } = await import("../model-providers");
 import type { LlmCallContext } from "../inference-engine/llm-transport";
 

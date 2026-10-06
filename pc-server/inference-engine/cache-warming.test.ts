@@ -222,9 +222,9 @@ describe("C2 预热门控(策略单源 + 端点身份)", () => {
   });
 
   test("引擎声明分派已由组装点承担:未挂中间件的通道零捕获(chat 引擎不预热的结构保证)", async () => {
-    // T3:预热的「哪些引擎参与」不再靠 adapter.cacheWarming 声明 → 是否把
-    // cacheWarmCaptureMiddleware 挂进通道,是组装点 piSessionLlmFetch 的决定(pi 专有)。
-    // 未挂中间件的通道(等价 chat 引擎的通道)对官方端点长请求也零捕获、零重放。
+    // T4:预热的「哪些引擎参与」由组装点 engines/llm-middlewares 推导(host + run-and-suspend
+    // + 供应商可预热,见 llm-middlewares.test 的真值表)——chat 是 pause-resume,其通道不挂
+    // cacheWarmCaptureMiddleware。未挂中间件的通道对官方端点长请求也零捕获、零重放。
     const bare = createLlmFetch(
       { engine: "chat", provider: anthropicProviderFixture(), conversationId: "conv-bare", purpose: "generation" },
       [],
@@ -450,7 +450,7 @@ describe("F1/B1:请求头形状——Headers 实例(真实 SDK 形态)也能捕�
 
   test("真实 SDK 全链(pi 0.129 同款入口):SDK 发请求 → 通道捕获 → 重放带 x-api-key(B1 的终极形态)", async () => {
     const { default: Anthropic } = await import("../../pi/node_modules/@anthropic-ai/sdk/index.js");
-    // T3:SDK 的自定义 fetch 直接注入**通道**(pi 侧 withLlmFetch 就是把 ctx.llmFetch 塞进
+    // T3:SDK 的自定义 fetch 直接注入**通道**(pi 侧 withLlmFetch 就是把组装点下发的通道塞进
     // StreamOptions.fetch,SDK 用它发每条请求)——捕获在通道入口据规范化后的 Headers 完成。
     const channel = warmingFetch(anthropicProviderFixture(), "conv-sdk");
     const client = new Anthropic({ apiKey: "sk-real-sdk", baseURL: "https://api.anthropic.com/v1", maxRetries: 0, fetch: channel });
@@ -493,7 +493,7 @@ describe("F2/B2:重放不落回捕获/日志(结构上不可能——重放走 g
     // T3 生产形态:pi 生成通道 = [requestLogMiddleware, cacheWarmCaptureMiddleware]。
     // 主请求记 1 条 provider:agent;重放走 globalThis.fetch(不经通道)→ 不记 provider:agent,
     // 只有服务自身的 provider:cache-warm。B2 的「重放被自己再捕获/双记」结构上消除。
-    const { requestLogMiddleware } = await import("../pi-engine/llm-request-log");
+    const { requestLogMiddleware } = await import("./request-log");
     const channel = createLlmFetch(
       { engine: "pi", provider: anthropicProviderFixture(), conversationId: "conv-pi", purpose: "generation" },
       [requestLogMiddleware, cacheWarmCaptureMiddleware],

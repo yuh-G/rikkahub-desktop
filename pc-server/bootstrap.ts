@@ -31,7 +31,7 @@ export async function bootstrap(): Promise<void> {
   //    锁定,之后改代理不生效。就绪前 /api 全部 503,不会有业务出站请求先行。
   installProxyFetchInterceptor(() => state.settings.proxyConfig);
   // 2b) 工作区 LLM 日志壳(日志问题 1)。T3 起 pi 的请求日志改走 LLM 请求通道中间件
-  //     (runner 的 streamFunction 包装注入 ctx.llmFetch),不再依赖本壳。**本壳保留仅为
+  //     (runner 的 streamFunction 包装注入组装点下发的通道),不再依赖本壳。**本壳保留仅为
   //     pi 的 google 轨**:pi 的 google 适配器拒收自定义 fetch(§2.3 P5),该轨请求不经
   //     通道,靠本壳(ALS + origin)补记日志以保住用户排障面。其余协议经通道记日志,与本
   //     壳零交集(壳只在 pi google 轨的 ALS 内生效,其余上下文直通)。

@@ -16,6 +16,7 @@
 
 import type { Assistant, Conversation, Model, Provider } from "../foundation/types";
 import type { GenerationEventSink, GenerationTarget, ToolExecutor } from "../inference-engine/events";
+import type { LlmFetch } from "../inference-engine/llm-transport";
 import type { WorkspaceRuntime } from "../workspace/runtime";
 import { createChatAdapter } from "./chat-adapter";
 import { createPiAdapter } from "./pi-adapter";
@@ -43,19 +44,21 @@ export type EngineResumeSemantics = "pause-resume" | "run-and-suspend";
  *  引擎的真实调用)。 */
 export type EngineSteeringSupport = "boundary" | "none";
 
-/** 缓存预热能力声明(C1,与 §7.1 其余声明会师于 P1;T3 起由请求通道组装取代——见下)。
- *  - "host":进程内引擎、LLM 请求走宿主请求通道——C2 宿主预热服务经通道中间件捕获/重放。
- *  - "engine-native":子进程引擎,请求不经宿主通道,只能把开关翻译进引擎自身配置
- *    (dsh 的 llm-pi-ai provider 配置);宿主不做跨进程预热(刻意架构边界,方案 §5.7-④)。
- *  - "none":引擎无缓存概念或明确不参与。
+/** 引擎传输形态声明(§4.3;描述**事实**,不驱动运行时——运行时策略在组装点
+ *  engines/llm-middlewares 按本声明分派,取代 fcdd0cf 的 `cacheWarming` 能力声明)。
+ *  - `{ mode: "host"; requestLog }`:进程内引擎,LLM 请求全部经宿主请求通道
+ *    (ctx.llmFetchFor)。`requestLog` 说明日志从哪来:
+ *      · `"transport"`——引擎在 SDK 内部发请求(如 pi),只能在通道层记;
+ *      · `"call-site"`——引擎在调用点自记(如聊天引擎,带响应体与轮次 kind,信息更全)。
+ *  - `{ mode: "external" }`:子进程引擎(如 dsh),请求不经宿主进程,只能把策略
+ *    (缓存开关等)翻译进引擎自身配置;宿主不为其建通道、不预热(架构边界 §5.7-④)。
  *
- *  **T3 起本声明不再驱动运行时**:预热改由「组装点的通道装配」决定——pi 生成路径在
- *  `piSessionLlmFetch` 里挂 `cacheWarmCaptureMiddleware`(该路径本就是 run-and-suspend =
- *  生成在等待审批/长工具中仍存活 = 预热主价值场景);聊天引擎不走该装配故不预热(D-T2 由
- *  结构自动成立,不再靠特例声明)。T4 会把本声明重整为描述事实的 `transport`
- *  (见方案 §4.3),届时 `宿主预热 ⇔ transport.mode==="host" && resumeSemantics===
- *  "run-and-suspend" && policy.warming && 官方端点`。 */
-export type EngineCacheWarming = "host" | "engine-native" | "none";
+ *  预热不再声明,而是**推导**(见 engines/llm-middlewares 的 warmingEligible):
+ *  `宿主预热 ⇔ transport.mode==="host" && resumeSemantics==="run-and-suspend" && policy.warming
+ *  && 官方端点`——D-T2「聊天引擎不预热」由此自动成立(聊天是 pause-resume),不靠特例。 */
+export type EngineTransport =
+  | { readonly mode: "host"; readonly requestLog: "transport" | "call-site" }
+  | { readonly mode: "external" };
 
 /** 引擎无关的生成输入包(编排器入口一次性装配,贯穿本次生成)。 */
 export interface EngineRunContext {
@@ -68,6 +71,14 @@ export interface EngineRunContext {
   model: Model;
   /** 工具执行闭包(协调器注入,内部已挂生成级 signal 与部分输出回写)。 */
   executeTool: ToolExecutor;
+  /** LLM 请求通道工厂:引擎在真正发起调用的那一刻调用 `llmFetchFor(provider)`,拿到
+   *  「以该供应商为身份」的通道。**为什么是工厂而非预绑定 fetch**:一条通道的身份 =
+   *  (引擎, 供应商, 会话, 用途),供应商在压缩路径可能与会话不同(摘要模型),预绑定会把
+   *  日志/预热门控归错供应商。组装策略(挂哪些中间件)由编排层单点决定(engines/
+   *  llm-middlewares),引擎只负责「在正确的时刻以正确的供应商取通道」。
+   *  聊天引擎的请求在调用点直接 fetch+addLog(transport.requestLog==="call-site"),
+   *  本函数对其返回空中间件链通道,现无消费方——留给 P 阶段插件需拦截聊天引擎请求时接入。 */
+  llmFetchFor: (provider: Provider) => LlmFetch;
   /** steering 轮边界(用户问题②,对齐 Codex pending_input):声明 steering:"boundary" 的引擎
    *  在「即将构建下一模型请求之前」调用,取「生成中补发」的用户消息文本(协调器已同步
    *  落库、换绑落点并通知 FIFO 队列移除)。返回空数组 = 无注入。声明 "none" 的引擎收不到
@@ -90,6 +101,10 @@ export interface EngineCompactContext {
   summarizer: { provider: Provider; model: Model };
   /** 用户附加指示(compress 框的 additionalPrompt)。 */
   customInstructions: string;
+  /** LLM 请求通道工厂(见 EngineRunContext.llmFetchFor)。压缩的特殊性:摘要模型
+   *  (summarizer.provider)常与会话供应商不同,且引擎可能自行回退会话供应商——
+   *  引擎在**实际调用前**以最终供应商取通道,日志归属恒与真实请求一致。 */
+  llmFetchFor: (provider: Provider) => LlmFetch;
 }
 
 /** 引擎原生压缩的产出(展示/日志用途)。压缩记录落库(conversation.engineCompactions)
@@ -107,8 +122,8 @@ export interface EngineAdapter {
   matches(conversation: Conversation, assistant: Assistant): boolean;
   readonly resumeSemantics: EngineResumeSemantics;
   readonly steering: EngineSteeringSupport;
-  /** 缓存预热能力(见 EngineCacheWarming):chat/pi 均为进程内 + globalThis.fetch = "host"。 */
-  readonly cacheWarming: EngineCacheWarming;
+  /** 传输形态(见 EngineTransport):进程内引擎声明 host + 日志来源;子进程引擎声明 external。 */
+  readonly transport: EngineTransport;
   /** 驱动一次生成,经 sink 发出 GenerationEvent,返回最终文本(steer 分裂后为当前段口径)。 */
   run(ctx: EngineRunContext, sink: GenerationEventSink, signal?: AbortSignal): Promise<string>;
   /** 可选能力:引擎原生压缩(压引擎记忆,UI 历史不动)。每个引擎的压缩机制独立设计
