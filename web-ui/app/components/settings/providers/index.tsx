@@ -302,7 +302,7 @@ export function ProvidersSection({
     (!isOauth &&
       kind === "openai" &&
       (hasCustomEndpointPath(draft) || draft.includeHistoryReasoning === false || draft.promptCacheKey === true)) ||
-    (!isOauth && kind === "claude" && draft.promptCaching === true) ||
+    (!isOauth && kind === "claude" && (draft.promptCaching === true || draft.promptCacheWarming === false)) ||
     (!isOauth && kind === "google" && draft.useInteractionsApi === true) ||
     balanceOption.enabled === true;
   const getKeyUrl = providerGetKeyUrl(textValue(draft.baseUrl));
@@ -609,6 +609,14 @@ export function ProvidersSection({
                     </SettingsField>
                   ) : null}
                 </SettingsSwitchRow>
+              ) : null}
+              {!isOauth && kind === "claude" && draft.promptCaching === true ? (
+                <SettingsSwitchRow
+                  label={t("settings:providers.prompt_cache_warming_title")}
+                  description={t("settings:providers.prompt_cache_warming_desc")}
+                  checked={draft.promptCacheWarming !== false}
+                  onCheckedChange={(promptCacheWarming) => patchDraft({ promptCacheWarming })}
+                />
               ) : null}
               <SettingsSwitchRow
                 label={t("settings:providers.balance_title")}
