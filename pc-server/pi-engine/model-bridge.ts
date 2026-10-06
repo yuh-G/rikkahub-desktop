@@ -82,7 +82,7 @@ const DEFAULT_CONTEXT_WINDOW = 128_000;
 // 这是与聊天引擎的已知结构性差异(那边在用户未配置时省略该字段)。既然省不掉,数值就
 // 必须来自单源,否则就是 2026-09-09 GLM-5.3 1210 报障的形态。
 
-/** 调用方可注入的模型极限。**上限必须已经是最终值**——orchestrator 经
+/** 调用方可注入的模型极限。**上限必须已经是最终值**——pi-engine/assembly 经
  *  model-providers/model-limits 的 requiredOutputCap 取(与聊天引擎 Claude 分支同一函数,
  *  已含"目录脏行剔除 + 用户配置优先 + 收进窗口"),本模块只做纯映射,不二次加工:
  *  同一配置下两引擎必须发出同一个数,单源之外再加一层就是新的分歧源。 */
@@ -403,7 +403,7 @@ export function mapProviderModelToPi(provider: Provider, model: Model, limits?: 
     typeof limits?.contextWindow === "number" && limits.contextWindow > 0
       ? limits.contextWindow
       : DEFAULT_CONTEXT_WINDOW;
-  // 上限由调用方经 limits 注入(orchestrator 走 model-providers/model-limits 的
+  // 上限由调用方经 limits 注入(pi-engine/assembly 走 model-providers/model-limits 的
   // requiredOutputCap——与聊天引擎 Claude 分支同一个函数,已含"目录脏行剔除 + 收进窗口")。
   // 本模块不再二次钳制:那会让同一配置下两引擎发出不同的数(单源之外再加一层就是新的
   // 分歧源)。不传 limits 的路径(单测/冒烟)落方言兜底。

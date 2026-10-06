@@ -84,11 +84,7 @@ describe("warmingEligible — 预热推导真值表(§4.3 预热不声明,而是
 
 describe("注册表契约:每个 adapter 必须声明 transport(新引擎漏声明即红)", () => {
   function buildRegistry(): EngineAdapter[] {
-    return createEngineRegistry({
-      chatRun: async () => "",
-      piRun: async () => "",
-      piCompact: async () => ({ summary: "", tokensBefore: 0, estimatedTokensAfter: null }),
-    });
+    return createEngineRegistry({ chatRun: async () => "" });
   }
 
   test("全部注册 adapter 声明合法 transport;进程内两引擎的事实声明", () => {

@@ -340,6 +340,26 @@ export interface Conversation {
   engineCompactions?: JsonValue[] | null;
 }
 
+/** 引擎压缩记录(Conversation.engineCompactions 的元素契约;解析/落库见
+ *  conversations/engine-compactions)。引擎中立:任何原生压缩引擎读写同一结构。 */
+export interface EngineCompactionRecord {
+  /** 切点:从这条消息(含)起保留原文,之前的历史被 summary 取代。 */
+  cutMessageId: string;
+  summary: string;
+  tokensBefore: number;
+  createdAt?: string;
+}
+
+/** 引擎本轮捕获的压缩产物(待落库)。 */
+export interface CapturedEngineCompaction {
+  /** 切点(首个保留原文的 DB 消息 id)。null = 切点落在本轮(prompt 之后)——
+   *  本轮消息尚未入库,落库时按"外收拢"取当前尾消息 id(只多保不少保,
+   *  下一轮编码器按"切点在场"自校验生效)。 */
+  cutMessageId: string | null;
+  summary: string;
+  tokensBefore: number;
+}
+
 // ----- 工作区(agent 模式)领域模型 -----
 
 export type WorkspaceType = "managed" | "folder";

@@ -23,7 +23,7 @@ export type ModelCallErrorAnnotation = {
 };
 
 /** 压缩发生点标记:压缩完成时打在"当时的最新一条消息"上(对话模式 auxiliary.ts /
- *  工作区 orchestrator applyCapturedEngineCompactions)。前端据此在该消息下方渲染
+ *  引擎原生压缩 conversations/engine-compactions applyCapturedEngineCompactions)。前端据此在该消息下方渲染
  *  "上下文已压缩"分割线——锚定用户发起压缩的位置,线上的会话已被压缩处理。
  *  PC 特有注解,安卓导出时过滤(backup/export.ts PC_ONLY_ANNOTATION_TYPES)。 */
 export type CompactionBoundaryAnnotation = {

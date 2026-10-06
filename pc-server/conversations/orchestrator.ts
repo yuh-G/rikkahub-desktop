@@ -49,7 +49,7 @@ import {
   streamGoogleChatWithTools,
 } from "../inference-engine/providers";
 import { buildInteractionsRequestBody, streamInteractionsChatWithTools } from "../inference-engine/interactions";
-import { contextWindowFor, requiredOutputCap } from "../model-providers/model-limits";
+import { requiredOutputCap } from "../model-providers/model-limits";
 import {
   finishReasoningParts,
   finishToolParts,
@@ -62,27 +62,16 @@ import { createGenerationEventApplier } from "./generation-apply";
 import { apiToolCallFromPart, toolExecutionErrorPayload, toolResultTextForApi } from "../tools/format";
 import { conversationFunctionTools } from "../tools/bound";
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
-import type { WorkspaceRuntime } from "../workspace/runtime";
 import {
   createEngineRegistry,
   resolveEngine,
   type EngineAdapter,
-  type EngineCompactContext,
-  type EngineCompactionResult,
   type EngineKind,
   type EngineRunContext,
 } from "../engines";
-import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCompaction, runPiGeneration, type CapturedEngineCompaction } from "../pi-engine/runner";
-import { mapProviderModelToPi } from "../pi-engine/model-bridge";
-import { createPiWorkspaceTools } from "../pi-engine/workspace-tools";
-import { createPiGeneralTools } from "../pi-engine/general-tools";
-import { createPiSessionResources } from "../pi-engine/resources";
-import { piPromptInputFromParts } from "../pi-engine/attachments";
-import { effectiveEngineCompaction, type EngineCompactionRecord } from "../pi-engine/context-encoder";
-import { encodableMessages, enrichMessages, applyTemplateToMessage } from "../inference-engine/message-enrichment";
 import { applyOutputTransforms } from "../assistants";
 import { TITLE_CHARACTER_LIMIT } from "../app-config/prompts";
-import { flushConvDirtyNow, getConversation, getConversationsDb, markConversationRowDirty, markMessageNodeDirty, persistConversation, scheduleThrottledConvFlush, selectedConversationMessages } from "./index";
+import { flushConvDirtyNow, getConversation, getConversationsDb, markMessageNodeDirty, persistConversation, scheduleThrottledConvFlush } from "./index";
 import { checkoutConversation, releaseConversation } from "./working-set";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
@@ -101,7 +90,7 @@ import {
   hasResumableToolParts,
   toolApprovalType,
 } from "./helpers";
-import { generateSuggestionsForConversation, generateTitleForConversation, limitAuxiliaryText, markCompactionBoundary, modelExists, resolvePostGenerationModelIds, shouldAutoGenerateTitle } from "./auxiliary";
+import { generateSuggestionsForConversation, generateTitleForConversation, limitAuxiliaryText, modelExists, resolvePostGenerationModelIds, shouldAutoGenerateTitle } from "./auxiliary";
 
 /** 生成入口一次性解析的配置快照（P1-4）。流式生成横跨多个 await 点，用户中途改配置
  *  （换模型/改工具集/删助手）时，updateSettings 会整体替换 state.settings——持有入口
@@ -730,164 +719,9 @@ async function runPostGenerationTasks(conversationId: string, snapshot: Conversa
   }
 }
 
-/** pi 模型极限取值(P5 统计与压缩对齐):contextWindow 从 models.dev 查真实窗口
- *  (决定 pi 自动压缩阈值),maxTokens 走 requiredOutputCap —— 与聊天引擎 Claude 分支
- *  **同一个函数**,不是"同源口径"的口头约定。pi 的模型配置要求必须给出 maxTokens
- *  (它会恒发上限字段),所以这里同样属于"协议逼我给数"的场合。 */
-function piModelLimitsFor(provider: Provider, model: Model, assistant: Assistant) {
-  return {
-    contextWindow: contextWindowFor(modelsDevCache, provider, model.modelId),
-    maxTokens: requiredOutputCap(modelsDevCache, provider, model.modelId, assistant.maxTokens),
-  };
-}
-
-/** P7:conversation.engineCompactions(DB 任意 JSON)→ 编码器契约。宽容校验:
- *  坏条目丢弃而不是整列作废(与列解析"损坏回 null"同哲学)。 */
-function parseEngineCompactions(raw: JsonValue[] | null | undefined): EngineCompactionRecord[] {
-  const records: EngineCompactionRecord[] = [];
-  for (const item of raw ?? []) {
-    if (!isRecord(item)) continue;
-    if (typeof item.cutMessageId !== "string" || typeof item.summary !== "string") continue;
-    const record: EngineCompactionRecord = {
-      cutMessageId: item.cutMessageId,
-      summary: item.summary,
-      tokensBefore: typeof item.tokensBefore === "number" ? item.tokensBefore : 0,
-    };
-    if (typeof item.createdAt === "string") record.createdAt = item.createdAt;
-    records.push(record);
-  }
-  return records;
-}
-
-/** P7:本轮压缩产物落 conversation.engineCompactions。cutMessageId 为 null(pi 自动压缩
- *  的切点可能落在本轮 prompt 之后,而本轮消息尚未入库)按"外收拢"落当前尾消息
- *  id——只多保不少保,下一轮编码器按"切点在场"自校验生效。 */
-function applyCapturedEngineCompactions(conversation: Conversation, captured: CapturedEngineCompaction[]): void {
-  if (!captured.length) return;
-  const tail = selectedConversationMessages(conversation).at(-1);
-  const records = parseEngineCompactions(conversation.engineCompactions);
-  for (const item of captured) {
-    const cutMessageId = item.cutMessageId ?? tail?.id;
-    if (!cutMessageId) continue; // 无任何消息可挂靠(理论不可达):丢记录好过写错切点
-    records.push({
-      cutMessageId,
-      summary: item.summary,
-      tokensBefore: item.tokensBefore,
-      createdAt: new Date().toISOString(),
-    });
-  }
-  conversation.engineCompactions = records as unknown as JsonValue[];
-  // 压缩发生点外显:分割线锚定"压缩时刻的最新消息"(自动/手动压缩同点生效)。
-  markCompactionBoundary(conversation);
-  markConversationRowDirty(conversation.id);
-  scheduleThrottledConvFlush();
-}
-
-/** pi 引擎生成装配(P3 路由 + P4 资源统一 + P7 会话数据统一 + P8/P9 注入面统一)。
- *  T1 起收敛为 pi adapter 的 run 实现:输入是引擎无关 EngineRunContext + pi 专属
- *  piRuntime(由 adapter 在 matches() 判定后透传)。
- *  - prompt 输入取末 USER 节点选中消息(P4 附件面:文档/OCR 文本化与聊天引擎同母本,
- *    图片走 pi 原生 images 通道);prompt 文本经消息模板渲染(四件套之一);
- *  - 引擎上下文 = 编码器从富化后的选中路径历史(不含本轮 prompt 消息)确定性重建,
- *    压缩记录从 conversation.engineCompactions 进同一灌注——重新生成/编辑重发/分支切换
- *    天然生效(UI 选中路径就是引擎记忆,所见即所记);
- *  - 消息富化 = enrichMessages(四件套共享层):模板/时间提醒/lorebook+模式注入/
- *    窗口化(滞回截断 ∨ 压缩切点锚,P9)——聊天位注入/时间提醒随富化全序列(含
- *    合成行)灌进 pi 引擎,与聊天引擎逐字同生效;合成行由 syntheticIds 标出,编码器
- *    挡在切点映射/退化诊断外;系统位注入经 appendSystemPrompt 进 pi 系统面;
- *  - 工具面 = 七个工作区工具 + 通用工具/MCP 桥(P4),审批全部内化在工具 execute;
- *  - 资源面 = createPiSessionResources(技能白名单/AGENTS.md 边界过滤/人设+记忆冻结
- *    appendSystemPrompt/受控 settings)。 */
-async function runPiWorkspaceGeneration(
-  ctx: EngineRunContext & { piRuntime: WorkspaceRuntime | null },
-  sink: GenerationEventSink,
-  signal?: AbortSignal,
-): Promise<string> {
-  const { conversation, target } = ctx;
-  const runtime = ctx.piRuntime;
-  if (!runtime) {
-    // 路由不变式:resolveEngine 选中 pi 时 matches() 已确认工作区可用。此处为防御兜底
-    // (adapter WeakMap 透传被回收的极端情况)——不可达于正常路径,报错好过静默走错引擎。
-    throw new Error("pi 引擎被选中但工作区运行时不可用(路由判定与执行不一致)。");
-  }
-  const deps = { assistant: ctx.assistant, providerItem: ctx.provider, selectedModel: ctx.model };
-  const lastUserNode = [...conversation.messages]
-    .reverse()
-    .find((node) => (node.messages[node.selectIndex] ?? node.messages[0])?.role === "USER");
-  const promptMessage = lastUserNode ? (lastUserNode.messages[lastUserNode.selectIndex] ?? lastUserNode.messages[0]) : null;
-  // prompt 文本先经消息模板渲染(与历史消息同一富化口径),再走附件文本化。
-  const template = deps.assistant.messageTemplate?.trim() || "{{ message }}";
-  const templatedPromptParts = promptMessage
-    ? applyTemplateToMessage(promptMessage, template, "user", deps.assistant, deps.selectedModel)
-    : [];
-  const promptInput = promptMessage
-    ? piPromptInputFromParts(templatedPromptParts, deps.selectedModel)
-    : { text: "", images: [] };
-  if (!promptInput.text && !promptInput.images.length) {
-    // 无文本且无图片输入直接走失败分支给出人话。
-    throw new Error("工作区会话缺少可发送的用户消息内容,无法驱动工作区引擎。");
-  }
-
-  // 四件套富化(P9 灌注统一):历史消息(不含本轮 prompt)经共享层裁决;压缩切点
-  // (effectiveEngineCompaction 单源判定)作为富化窗口锚——注入行/提醒恒在窗口内、恒在
-  // 切点之后:既进模型视野,又永不落进被摘要吸收的旧历史。富化全序列(含合成行)
-  // 进引擎,每轮从 DB 原文重新裁决,DB 零沉淀。
-  const historySource = selectedConversationMessages(conversation).filter((msg) => msg.id !== promptMessage?.id);
-  const compactionRecords = parseEngineCompactions(conversation.engineCompactions);
-  const cut = effectiveEngineCompaction(compactionRecords, historySource, deps.selectedModel);
-  const enriched = enrichMessages(historySource, {
-    conversation,
-    assistant: deps.assistant,
-    model: deps.selectedModel,
-    windowStartMessageId: cut?.cutMessageId,
-  });
-
-  // 系统位注入(before/after_system_prompt)经 appendSystemPrompt 进 pi 系统面——
-  // 与人设/记忆/搜索指引同一插槽,位置在 pi Guidelines 之后、project_context 之前。
-  const systemInjection = [enriched.systemInjectionBefore, enriched.systemInjectionAfter].filter(Boolean).join("\n");
-  const resources = await createPiSessionResources({
-    conversation,
-    assistant: deps.assistant,
-    model: deps.selectedModel,
-    cwd: runtime.cwd,
-    root: runtime.root,
-    extraAppendSystemPrompt: systemInjection ? [systemInjection] : undefined,
-  });
-
-  const result = await runPiGeneration({
-    provider: deps.providerItem,
-    model: deps.selectedModel,
-    // T4:LLM 请求通道工厂——SDK 内部每条请求经此出口(日志 + 预热捕获中间件,由
-    // engines/llm-middlewares 按 adapter.transport 推导装配)。runner 以自身 provider 取通道。
-    llmFetchFor: ctx.llmFetchFor,
-    modelLimits: piModelLimitsFor(deps.providerItem, deps.selectedModel, deps.assistant),
-    // 思考强度与聊天引擎同源(助手设置);pi 档位翻译见 model-bridge piThinkingLevelFor。
-    reasoningLevel: deps.assistant.reasoningLevel,
-    conversationId: conversation.id,
-    cwd: runtime.cwd,
-    history: enriched.messages,
-    syntheticIds: enriched.syntheticIds,
-    compactions: compactionRecords,
-    promptText: promptInput.text,
-    images: promptInput.images,
-    resources,
-    tools: [
-      ...createPiWorkspaceTools({ conversation, assistant: deps.assistant, sink }),
-      ...createPiGeneralTools({ conversation, assistant: deps.assistant, sink, target, model: deps.selectedModel }),
-    ],
-    sink,
-    signal,
-    // steering 轮边界(用户问题②):编排层同一回调直通 pi runner,在 pi turn_end 同步
-    // 调用(落库/队列联动/分裂在 steerBoundary,runner 只拿文本喂 session.steer)。
-    onSteerBoundary: ctx.onSteerBoundary,
-  });
-  applyCapturedEngineCompactions(conversation, result.capturedCompactions);
-  return result.text;
-}
-
-/** 引擎注册表(T1):编排器把各引擎的生成/压缩实现注入 adapter 工厂。pi 在前(工作区
- *  可用即接管),chat 兜底。新增引擎在此注册一行,runGeneration/续跑语义/压缩路由/
- *  审批旁路判定无需再改。 */
+/** 引擎注册表(T1;T5 起各引擎实现在 engines/index createEngineRegistry 内直接接线):
+ *  编排器只注入聊天引擎实现(它依赖本模块私有的生成态),对其余引擎零认知。新增引擎
+ *  在 createEngineRegistry 注册一行,runGeneration/续跑语义/压缩路由/审批旁路判定无需再改。 */
 const ENGINE_REGISTRY = createEngineRegistry({
   chatRun: (ctx, sink, signal) =>
     callProviderStreaming(ctx.conversation, ctx.target, {
@@ -900,8 +734,6 @@ const ENGINE_REGISTRY = createEngineRegistry({
       // callProviderStreaming 不再从可能已被替换的 state.settings 重新解析。
       snapshot: { assistant: ctx.assistant, provider: ctx.provider, model: ctx.model },
     }),
-  piRun: (ctx, sink, signal) => runPiWorkspaceGeneration(ctx, sink, signal),
-  piCompact: (ctx, sink, signal) => runPiWorkspaceCompaction(ctx, sink, signal),
 });
 
 /** 纯生成逻辑：经引擎注册表分发到命中 adapter,由 sink 发出生成事件。
@@ -916,82 +748,6 @@ async function runGeneration(
   // T1:布尔路由退役——引擎选择已收敛为 resolveEngine 选出的 adapter.run。pi 专属
   // 决策(piRuntime)由 pi adapter 在 matches()/run() 内部携带,不再污染本层。
   return deps.adapter.run(deps, sink, signal);
-}
-
-/** pi 引擎压缩装配(P5 原生 compaction + P7 产物落 engineCompactions)。压缩路由收编:
- *  收敛为 pi adapter 的 compact 实现——路由判定(工作区可用)已由 matches() 承担,
- *  本函数只管驱动;engine_status 经调用方注入的 sink 直通,广播与终局清条不在此层。
- *  压缩的对象是"模型实际看到的消息":与生成路径同一富化裁决(模板/提醒/注入),
- *  但合成消息经 encodableMessages 剥回纯真实行(P9)——手动压缩是用户策展行为,
- *  摘要只覆盖真实对话;注入是配置不是对话,时间提醒只描述节奏,均不进摘要。
- *  窗口锚照常生效:切点前的历史已被上一轮摘要吸收,压缩对象从切点起即可。 */
-async function runPiWorkspaceCompaction(
-  ctx: EngineCompactContext & { piRuntime: WorkspaceRuntime | null },
-  sink: GenerationEventSink,
-  signal?: AbortSignal,
-): Promise<EngineCompactionResult> {
-  const { conversation, assistant } = ctx;
-  const runtime = ctx.piRuntime;
-  if (!runtime) {
-    // 路由不变式:resolveEngine 选中 pi 时 matches() 已确认工作区可用。此处为防御兜底
-    // (与 runPiWorkspaceGeneration 同一防御)——不可达于正常路径,报错好过静默走错引擎。
-    throw new Error("pi 引擎被选中但工作区运行时不可用(路由判定与执行不一致)。");
-  }
-  const compactionRecords = parseEngineCompactions(conversation.engineCompactions);
-  const cut = effectiveEngineCompaction(compactionRecords, selectedConversationMessages(conversation), ctx.model);
-  const enriched = enrichMessages(selectedConversationMessages(conversation), {
-    conversation,
-    assistant,
-    model: ctx.model,
-    windowStartMessageId: cut?.cutMessageId,
-  });
-  const history = encodableMessages(enriched.messages, enriched.syntheticIds);
-  const systemInjection = [enriched.systemInjectionBefore, enriched.systemInjectionAfter].filter(Boolean).join("\n");
-  const resources = await createPiSessionResources({
-    conversation,
-    assistant,
-    model: ctx.model,
-    cwd: runtime.cwd,
-    root: runtime.root,
-    extraAppendSystemPrompt: systemInjection ? [systemInjection] : undefined,
-    // 手动压缩门槛/保留窗口调低(中文 chars/4 低估问题,rationale 见 runner.ts 常量)。
-    compactionKeepRecentTokens: MANUAL_COMPACT_KEEP_RECENT_TOKENS,
-  });
-  // 摘要模型:公共压缩模型优先(ctx.summarizer,装配点已决策),pi 映射不进(自定义
-  // 补全路径的 openai 型服务商等)则回退会话模型——公共设置是偏好不是硬约束,
-  // 压缩必须总能进行,回退留 warn 让用户知情。注意窗口锚定/富化裁决(上方 cut/
-  // enriched)仍按 ctx.model:压缩对象是"会话模型实际看到的消息",与生成路径同一
-  // 视角,勿随摘要模型漂移。
-  let summarizer = ctx.summarizer;
-  if (summarizer.model.id !== ctx.model.id && !mapProviderModelToPi(summarizer.provider, summarizer.model).ok) {
-    reportError(
-      "provider",
-      "warn",
-      `压缩模型 ${summarizer.model.displayName || summarizer.model.modelId} 无法在工作区引擎使用,本次压缩改用会话模型`,
-      undefined,
-      "compact_summarizer_fallback",
-    );
-    summarizer = { provider: ctx.provider, model: ctx.model };
-  }
-  const result = await runPiCompaction({
-    provider: summarizer.provider,
-    model: summarizer.model,
-    // T4:压缩摘要请求经同一 LLM 通道工厂记日志(compaction 用途:不挂预热捕获中间件)。
-    llmFetchFor: ctx.llmFetchFor,
-    modelLimits: piModelLimitsFor(summarizer.provider, summarizer.model, assistant),
-    reasoningLevel: assistant.reasoningLevel,
-    conversationId: conversation.id,
-    cwd: runtime.cwd,
-    history,
-    compactions: compactionRecords,
-    resources,
-    customInstructions: ctx.customInstructions,
-    signal,
-    sink,
-  });
-  // 产物落库是引擎注入实现的义务——与生成路径的压缩捕获同一落点、同一 helper。
-  applyCapturedEngineCompactions(conversation, [result.compaction]);
-  return result;
 }
 
 /** 引擎原生压缩入口(压缩路由收编:经注册表分发,与生成路由同源)。返回 null =

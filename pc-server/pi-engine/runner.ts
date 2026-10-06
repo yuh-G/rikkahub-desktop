@@ -15,7 +15,7 @@
 // 会话↔jsonl 文件关联。pi 自动压缩发生在 prompt 内部,结果捕获为
 // capturedCompactions(firstKeptEntryId 反查灌注映射回到 DB 消息 id),由调用方落
 // conversation.engineCompactions——下一轮经编码器 appendCompaction 重放,语义逐字等价。
-// P9 灌注统一:history 是富化全序列(含合成行,orchestrator 以压缩切点为富化窗口
+// P9 灌注统一:history 是富化全序列(含合成行,pi-engine/assembly 以压缩切点为富化窗口
 // 锚),聊天位注入/时间提醒在工作区会话与聊天引擎逐字同生效。
 //
 // P3 工具面:noTools:"builtin"——pi 内建 read/bash/edit/write 一律不启用(它们绕开
@@ -29,7 +29,7 @@ import type { ToolDefinition } from "../../pi/packages/coding-agent/src/core/ext
 import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
 import type { StreamFn } from "../../pi/packages/agent/src/types.ts";
 import type { GenerationEventSink } from "../inference-engine/events";
-import type { Message, Model, Provider } from "../foundation/types";
+import type { CapturedEngineCompaction, EngineCompactionRecord, Message, Model, Provider } from "../foundation/types";
 import { piAgentDir } from "../foundation/paths";
 import { CodedError } from "../foundation/errors";
 import { promptCachePolicyFor } from "../model-providers/prompt-cache";
@@ -39,7 +39,7 @@ import { llmLogContextFor, runWithLlmRequestLog } from "./llm-request-log";
 import { createPiEventBridge } from "./event-bridge";
 import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import type { PiSessionResources } from "./resources";
-import { seedPiSessionFromHistory, type EngineCompactionRecord } from "./context-encoder";
+import { seedPiSessionFromHistory } from "./context-encoder";
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
 
 export interface PiGenerationContext {
@@ -52,7 +52,7 @@ export interface PiGenerationContext {
    *  在调用时才定」的压缩路径(见 EngineRunContext.llmFetchFor)。pi 内建 google 适配器
    *  拒收自定义 fetch(§2.3 P5),包装器按 provider.type 判定不注入(见 withLlmFetch 头注)。 */
   llmFetchFor: (provider: Provider) => LlmFetch;
-  /** 模型极限(P5:orchestrator 从 models.dev/助手配置取值;不传用 model-bridge 保守默认)。
+  /** 模型极限(P5:pi-engine/assembly 从 models.dev/助手配置取值;不传用 model-bridge 保守默认)。
    *  contextWindow 决定 pi 自动压缩阈值(contextWindow - reserveTokens),必须尽量真实。 */
   modelLimits?: PiModelLimits;
   /** 助手思考强度(assistant.reasoningLevel 原值;经 piThinkingLevelFor 译成 pi 档位:
@@ -92,17 +92,6 @@ export interface PiGenerationContext {
    *  调用位、Codex 的 pending_input 排水位同构。不传 = 无 steering 能力(消息留在 FIFO
    *  队列收尾派发兜底)。回调由编排层实现(落库/队列联动在编排层,runner 零副作用)。 */
   onSteerBoundary?: () => string[];
-}
-
-/** 压缩产物的 DB 侧映射(runner 返回;orchestrator 负责落 conversation.engineCompactions)。
- *  引擎中性(T3):结构与引擎无关,任何 run-and-suspend 引擎的压缩捕获都用它。 */
-export interface CapturedEngineCompaction {
-  /** 切点(首个保留原文的 DB 消息 id)。null = 切点落在本轮(prompt 之后)——
-   *  本轮消息尚未入库,调用方按"外收拢"落为当前尾消息 id(只多保不少保,
-   *  下一轮编码器按"切点在场"自校验生效)。 */
-  cutMessageId: string | null;
-  summary: string;
-  tokensBefore: number;
 }
 
 /** pi 的 cacheRetention(策略单源翻译,C1)。anthropicCaching 关 = "none"(工作区请求

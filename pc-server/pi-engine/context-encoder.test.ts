@@ -9,7 +9,8 @@ import { describe, expect, test } from "bun:test";
 import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
 import type { JsonValue, Message, Model, ToolPart } from "../foundation/types";
 import { message } from "../foundation/utils";
-import { effectiveEngineCompaction, seedPiSessionFromHistory, type EngineCompactionRecord } from "./context-encoder";
+import { effectiveEngineCompaction, seedPiSessionFromHistory } from "./context-encoder";
+import type { EngineCompactionRecord } from "../foundation/types";
 
 const model = { modelId: "test-model", inputModalities: ["TEXT", "IMAGE"] } as unknown as Model;
 

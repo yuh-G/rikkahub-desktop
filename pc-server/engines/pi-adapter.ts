@@ -1,7 +1,7 @@
 // engines/pi-adapter.ts — pi 工作区引擎适配器(T1 收敛,行为零变化)
 //
-// 把既有的 runPiWorkspaceGeneration(pi 代理循环 + 上下文灌注 + 工具/资源装配)收敛为
-// 一个 EngineAdapter。matches() 收编原 orchestrator.ts:711 的「工作区三道闸」能力判定
+// 把 pi 的装配实现(pi-engine/assembly:runPiWorkspaceGeneration / runPiWorkspaceCompaction)
+// 收敛为一个 EngineAdapter。matches() 收编「工作区三道闸」能力判定
 // (workspaceRuntimeForConversation):工作区可用即由 pi 接管,不可用则放行给兜底引擎。
 //
 // runtime 透传:matches() 已算出 WorkspaceRuntime,run()/compact() 还需要它(cwd/root
@@ -10,10 +10,21 @@
 // 兜底(防御弱引用被回收的极端情况),双重来源取同一判定函数,结果天然一致。
 
 import type { Assistant, Conversation } from "../foundation/types";
+import type { GenerationEventSink } from "../inference-engine/events";
 import { workspaceRuntimeForConversation, type WorkspaceRuntime } from "../workspace/runtime";
-import type { EngineAdapter, EngineCompactContext, EngineRunContext, PiCompactFn, PiRunFn } from "./index";
+import type { EngineAdapter, EngineCompactContext, EngineCompactionResult, EngineRunContext } from "./index";
 
-export function createPiAdapter(impl: { run: PiRunFn; compact: PiCompactFn }): EngineAdapter {
+/** pi 专属输入:引擎无关输入包 + adapter 透传的工作区 runtime(matches() 判定产物)。
+ *  这是 pi 私有形状,只在 adapter 与其装配实现之间流动,不进公共契约(engines/index)。 */
+export type PiRunContext = EngineRunContext & { piRuntime: WorkspaceRuntime | null };
+export type PiCompactContext = EngineCompactContext & { piRuntime: WorkspaceRuntime | null };
+
+export interface PiEngineImpl {
+  run(ctx: PiRunContext, sink: GenerationEventSink, signal?: AbortSignal): Promise<string>;
+  compact(ctx: PiCompactContext, sink: GenerationEventSink, signal?: AbortSignal): Promise<EngineCompactionResult>;
+}
+
+export function createPiAdapter(impl: PiEngineImpl): EngineAdapter {
   const runtimeByConversation = new WeakMap<Conversation, WorkspaceRuntime>();
   const runtimeFor = (conversation: Conversation): WorkspaceRuntime | null =>
     runtimeByConversation.get(conversation) ?? workspaceRuntimeForConversation(conversation);
@@ -33,19 +44,11 @@ export function createPiAdapter(impl: { run: PiRunFn; compact: PiCompactFn }): E
     // 进程内引擎、请求在 pi SDK 内部发出 → 经宿主请求通道(只能在通道层记日志)。
     transport: { mode: "host", requestLog: "transport" },
     run(ctx, sink, signal) {
-      const withRuntime: EngineRunContext & { piRuntime: WorkspaceRuntime | null } = {
-        ...ctx,
-        piRuntime: runtimeFor(ctx.conversation),
-      };
-      return impl.run(withRuntime, sink, signal);
+      return impl.run({ ...ctx, piRuntime: runtimeFor(ctx.conversation) }, sink, signal);
     },
-    // pi 原生压缩(session.compact):压引擎记忆,产物由注入实现落 engineCompactions。
+    // pi 原生压缩(session.compact):压引擎记忆,产物由装配实现落 engineCompactions。
     compact(ctx, sink, signal) {
-      const withRuntime: EngineCompactContext & { piRuntime: WorkspaceRuntime | null } = {
-        ...ctx,
-        piRuntime: runtimeFor(ctx.conversation),
-      };
-      return impl.compact(withRuntime, sink, signal);
+      return impl.compact({ ...ctx, piRuntime: runtimeFor(ctx.conversation) }, sink, signal);
     },
   };
 }
