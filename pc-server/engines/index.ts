@@ -49,7 +49,10 @@ export type EngineSteeringSupport = "boundary" | "none";
  *  - "engine-native":子进程引擎,请求不经宿主 fetch,只能把开关翻译进引擎自身配置
  *    (dsh 的 llm-pi-ai provider 配置);宿主不做跨进程预热(刻意架构边界,方案 §5.7-④)。
  *  - "none":引擎无缓存概念或明确不参与。
- *  必填:新引擎必须显式声明,预热服务据此分派而不是靠引擎 id 猜。 */
+ *  必填:新引擎必须显式声明。**这是编排层的分派依据**——generateAnswer 用它决定是否
+ *  建立宿主预热上下文(orchestrator: cacheWarmingContextFor(adapter, provider,
+ *  conversationId)):"host" 且策略/端点合格才建,"engine-native"/"none" 恒 null(即使
+ *  该引擎 run() 内有宿主侧 fetch 也不捕获,防引擎自热 + 宿主重放双热)。 */
 export type EngineCacheWarming = "host" | "engine-native" | "none";
 
 /** 引擎无关的生成输入包(编排器入口一次性装配,贯穿本次生成)。 */

@@ -1135,8 +1135,11 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
   conversation.updateAt = Date.now();
   broadcastNodeUpdate(conversation, assistantNode);
   // C2 预热上下文:整个生成期包进 ALS(fetch 层捕获壳据此圈定本会话的 Anthropic 请求)。
-  // 策略关/端点不合格时为 null(壳直通零开销);生成结束在 finally 统一停(见下)。
-  const warmingContext = cacheWarmingContextFor(picked.provider, conversation.id);
+  // 分派读 adapter.cacheWarming 声明(接口注释承诺的"据此分派"):"host" 才可能建立,
+  // 子进程(engine-native)/不参与(none)引擎即使 run() 内有宿主侧 fetch 也不捕获——
+  // 防引擎自热 + 宿主重放双热。策略关/端点不合格时为 null(壳直通零开销);生成结束
+  // 在 finally 统一停(见下)。
+  const warmingContext = cacheWarmingContextFor(adapter.cacheWarming, picked.provider, conversation.id);
   try {
     if (resumingApprovedTools) {
       await resumeApprovedToolParts(conversation, assistant, currentMessage, assistantNode, false, controller.signal);

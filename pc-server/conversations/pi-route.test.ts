@@ -352,7 +352,8 @@ describe("引擎判定单源(审批旁路/压缩路由收编)", () => {
     // 协调器据此下发回调;声明改成 "none" 会让编排层不再下发,补发退化为收尾派发。
     expect(piAdapter.steering).toBe("boundary");
     // 缓存预热能力声明(C1):两引擎都是进程内 + globalThis.fetch → 宿主预热服务("host")
-    // 可捕获重放;C2 上线后预热服务据此分派,子进程引擎届时声明 engine-native/none。
+    // 可捕获重放。编排层以此为分派依据(cacheWarmingContextFor 首参):非 "host" 引擎
+    // (子进程 engine-native / 不参与 none)恒不建立预热上下文,防引擎自热+宿主重放双热。
     expect(piAdapter.cacheWarming).toBe("host");
 
     const chatAdapter = resolveEngineForConversation(seedConversation(null));

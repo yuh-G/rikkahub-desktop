@@ -37,6 +37,7 @@ import type { Provider } from "../foundation/types";
 import { safeJsonParse } from "../foundation/utils";
 import { reportError } from "../observability/app-errors";
 import { promptCachePolicyFor } from "../model-providers/prompt-cache";
+import type { EngineCacheWarming } from "../engines";
 import { hostOfProvider } from "./message-builder";
 
 /** Anthropic 官方提示缓存 TTL(秒)。来源:Anthropic 官方文档 prompt-caching 页
@@ -73,8 +74,16 @@ export function runWithCacheWarming<T>(context: CacheWarmingContext | null, fn: 
   return als.run(context, fn);
 }
 
-/** 从 provider 判定本轮生成是否要建立预热上下文(编排层入口调用;策略单源消费)。 */
-export function cacheWarmingContextFor(provider: Provider, conversationId: string): CacheWarmingContext | null {
+/** 从 provider 判定本轮生成是否要建立预热上下文(编排层入口调用;策略单源消费)。
+ *  cacheWarming 是 EngineAdapter 的能力声明(分派依据):非 "host" 引擎(子进程
+ *  engine-native / 不参与 none)恒 null——即使其 run() 内有宿主侧 fetch 也不捕获,
+ *  防引擎自热 + 宿主重放双热。 */
+export function cacheWarmingContextFor(
+  cacheWarming: EngineCacheWarming,
+  provider: Provider,
+  conversationId: string,
+): CacheWarmingContext | null {
+  if (cacheWarming !== "host") return null;
   const policy = promptCachePolicyFor(provider);
   if (!policy.warming) return null;
   if (!isWarmingEligibleEndpoint(provider)) return null;

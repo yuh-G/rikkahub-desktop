@@ -139,7 +139,7 @@ async function fireAnthropicRequest(
   conversationId: string,
   body: Record<string, unknown> = LONG_BODY,
 ) {
-  await runWithCacheWarming(cacheWarmingContextFor(ctxProvider, conversationId), () =>
+  await runWithCacheWarming(cacheWarmingContextFor("host", ctxProvider, conversationId), () =>
     fetch(`https://api.anthropic.com/v1/messages?beta=true`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": "sk-test" },
@@ -166,17 +166,33 @@ describe("C2 预热门控(策略单源 + 端点身份)", () => {
   });
 
   test("策略关(promptCacheWarming:false 或 promptCaching 关):上下文为 null,fetch 壳透传零捕获", async () => {
-    expect(cacheWarmingContextFor(anthropicProviderFixture({ promptCacheWarming: false }), "c1")).toBeNull();
-    expect(cacheWarmingContextFor(anthropicProviderFixture({ promptCaching: false }), "c1")).toBeNull();
+    expect(cacheWarmingContextFor("host", anthropicProviderFixture({ promptCacheWarming: false }), "c1")).toBeNull();
+    expect(cacheWarmingContextFor("host", anthropicProviderFixture({ promptCaching: false }), "c1")).toBeNull();
     await fireAnthropicRequest(anthropicProviderFixture({ promptCacheWarming: false }), "conv-gate-off");
     await flushAsync();
     // 捕获面:fetchCalls 只含原始请求(1 = 主请求,0 = 重放)
     expect(fetchCalls.length).toBe(1);
   });
 
+  test("引擎声明分派:engine-native / none 即使策略全开、端点官方也不建立上下文——run() 内的宿主侧 fetch 不被捕获,防双热", async () => {
+    const officialProvider = anthropicProviderFixture();
+    expect(cacheWarmingContextFor("engine-native", officialProvider, "c1")).toBeNull();
+    expect(cacheWarmingContextFor("none", officialProvider, "c1")).toBeNull();
+    // fetch 面验证:非 host 引擎在宿主进程内发出的 Anthropic 请求,捕获壳直通、零重放。
+    await runWithCacheWarming(cacheWarmingContextFor("engine-native", officialProvider, "conv-engine-native"), () =>
+      fetch(`https://api.anthropic.com/v1/messages?beta=true`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": "sk-test" },
+        body: JSON.stringify(LONG_BODY),
+      }),
+    );
+    await flushAsync();
+    expect(fetchCalls.length).toBe(1);
+  });
+
   test("订阅 Claude 行(oauth)策略恒开 → 上下文建立(与 D10 联动)", () => {
     const subscriptionRow = anthropicProviderFixture({ authMode: "oauth", promptCaching: undefined });
-    expect(cacheWarmingContextFor(subscriptionRow, "c1")).not.toBeNull();
+    expect(cacheWarmingContextFor("host", subscriptionRow, "c1")).not.toBeNull();
   });
 
   test("端点门控:第三方 Anthropic 兼容端点即使策略开也不捕获", async () => {
