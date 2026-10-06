@@ -15,6 +15,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { addLog } from "../api/logs";
+import type { LlmMiddleware } from "../inference-engine/llm-transport";
 
 export type LlmLogContext = {
   providerId: string;
@@ -43,6 +44,58 @@ export function llmLogContextFor(provider: { id: string; name: string; baseUrl: 
 
 const RESPONSE_BODY_LIMIT = 2000;
 
+/** 记录一条 LLM 请求到统一日志管线(日志壳与通道中间件共用,语义单点)。
+ *  status/headers 到手即记(流式时长=响应头时间),非 2xx clone 读错误体(小且非流式),
+ *  reject 记 status 0。凭据脱敏由 addLog 入口统一负责(6-1:url/headers 打码)。 */
+function recordRequest(
+  identity: { providerId: string; providerName: string },
+  url: string,
+  method: string,
+  requestBody: string | undefined,
+  started: number,
+  promise: Promise<Response>,
+): void {
+  void promise.then(
+    async (response) => {
+      let errorBody: string | undefined;
+      if (!response.ok) {
+        try {
+          errorBody = (await response.clone().text()).slice(0, RESPONSE_BODY_LIMIT);
+        } catch {
+          // 读失败不影响日志主体。
+        }
+      }
+      addLog({
+        providerId: identity.providerId,
+        providerName: identity.providerName,
+        url,
+        ok: response.ok,
+        status: response.status,
+        kind: "provider:agent",
+        durationMs: Date.now() - started,
+        method,
+        requestBody,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        ...(errorBody !== undefined ? { responseBody: errorBody, error: errorBody } : {}),
+      });
+    },
+    (err: unknown) => {
+      addLog({
+        providerId: identity.providerId,
+        providerName: identity.providerName,
+        url,
+        ok: false,
+        status: 0,
+        kind: "provider:agent",
+        durationMs: Date.now() - started,
+        method,
+        requestBody,
+        error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      });
+    },
+  );
+}
+
 let installed = false;
 
 /** 安装工作区 LLM 日志壳(幂等)。必须晚于 installProxyFetchInterceptor。 */
@@ -55,49 +108,30 @@ export function installLlmRequestLogInterceptor(): void {
     if (!ctx) return inner(input, init);
     const target = typeof input === "string" ? input : input instanceof URL ? input.href : input instanceof Request ? input.url : "";
     if (!target.startsWith(ctx.origin)) return inner(input, init);
-    const started = Date.now();
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
     const requestBody = typeof init?.body === "string" ? init.body : undefined;
+    const started = Date.now();
     const promise = inner(input, init);
-    void promise.then(
-      async (response) => {
-        let errorBody: string | undefined;
-        if (!response.ok) {
-          try {
-            errorBody = (await response.clone().text()).slice(0, RESPONSE_BODY_LIMIT);
-          } catch {
-            // 读失败不影响日志主体。
-          }
-        }
-        addLog({
-          providerId: ctx.providerId,
-          providerName: ctx.providerName,
-          url: target,
-          ok: response.ok,
-          status: response.status,
-          kind: "provider:agent",
-          durationMs: Date.now() - started,
-          method,
-          requestBody,
-          responseHeaders: Object.fromEntries(response.headers.entries()),
-          ...(errorBody !== undefined ? { responseBody: errorBody, error: errorBody } : {}),
-        });
-      },
-      (err: unknown) => {
-        addLog({
-          providerId: ctx.providerId,
-          providerName: ctx.providerName,
-          url: target,
-          ok: false,
-          status: 0,
-          kind: "provider:agent",
-          durationMs: Date.now() - started,
-          method,
-          requestBody,
-          error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
-        });
-      },
-    );
+    recordRequest(ctx, target, method, requestBody, started, promise);
     return promise;
   } as typeof fetch;
 }
+
+/** 通道中间件形态(T2 新增;T3 起为 pi 的实际路径,替代上面的全局壳)。
+ *  与壳的两点差异,都是「收敛」带来的:①**无 origin 过滤**——通道只承载 LLM 请求,
+ *  工具/搜索/MCP 的 fetch 根本不经通道(原 origin 匹配只是为在全局壳里排除别家主机);
+ *  ②**无 ALS**——身份(provider)由通道在调用时显式传入的 ctx 给出。kind 恒 provider:agent
+ *  (warm 用途由组装点保证不挂本中间件,见 T4 llmMiddlewaresFor)。 */
+export const requestLogMiddleware: LlmMiddleware = async (req, ctx, next) => {
+  const started = Date.now();
+  const promise = next(req);
+  recordRequest(
+    { providerId: ctx.provider.id, providerName: ctx.provider.name },
+    req.url,
+    req.method,
+    req.body,
+    started,
+    promise,
+  );
+  return promise;
+};

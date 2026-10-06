@@ -39,6 +39,7 @@ import { reportError } from "../observability/app-errors";
 import { promptCachePolicyFor } from "../model-providers/prompt-cache";
 import type { EngineCacheWarming } from "../engines";
 import { hostOfProvider } from "./message-builder";
+import { type LlmMiddleware, type LlmRequest } from "./llm-transport";
 
 /** Anthropic 官方提示缓存 TTL(秒)。来源:Anthropic 官方文档 prompt-caching 页
  *  (5 分钟 / 1 小时两档,命中即重置);与 pi 目录 promptCache 同值。第三方兼容端点
@@ -134,7 +135,11 @@ export const warmingScheduler = {
   },
 };
 
-/** 捕获到的可重放请求(url + headers + body 三元组,取自真实出站请求)。 */
+/** 捕获到的可重放请求(url + headers + body 三元组,取自真实出站请求)。
+ *  headers 存 Record:来自规范化后的 Headers(LlmRequest.headers),`Object.fromEntries`
+ *  即得全部键值(键名小写,HTTP 头大小写无关;Anthropic 请求无多值头,Record 足够)。
+ *  旧实现直接 `{...init.headers}` 展开——真实 SDK 传 Headers 实例时展开得 {}、重放丢
+ *  鉴权头(F 阶段 B1);经 Headers 构造规范化后此坑结构性消除。 */
 interface CapturedWarmRequest {
   url: string;
   headers: Record<string, string>;
@@ -329,32 +334,60 @@ function bodyHasCacheControl(body: Record<string, unknown>): boolean {
 
 let installed = false;
 
-/** 安装预热捕获壳(幂等)。必须晚于 installProxyFetchInterceptor。只捕获 Anthropic
- *  /v1/messages 流式请求(生成主链路形态;非流式辅助调用无 ALS 上下文天然不进)。
- *  工具循环的后续轮(同一 ALS 上下文内)会覆盖旧计划并重置计时——保温对象永远是
- *  「最新上下文」(pi 的 CacheWarmer.start 同语义)。 */
+/** 安装预热捕获壳(幂等)。必须晚于 installProxyFetchInterceptor。**过渡形态**:T3
+ *  接线后 pi 走 createLlmFetch 中间件,此全局壳随之删除。当前它把 fetch 层(requestLog
+ *  壳内层)的调用**先规范化**成 LlmRequest 再交给同一份 captureRequest —— 从此捕获不
+ *  再有「形状猜测」:无论引擎 SDK 给的是普通对象还是 Headers 实例,规范化一次即统一
+ *  (F1/B1 的根因在此结构性消除)。
+ *
+ *  **已知限制**:Request 对象输入的 body 这里是同步读不到的(读流是异步的),故凡以
+ *  Request 对象形态发起的请求不被捕获——现状成立(两引擎的 LLM fetch 都传 (url, init)),
+ *  且这是过渡软限,随 T3 删壳一同消失。 */
 export function installCacheWarmingInterceptor(): void {
   if (installed) return;
   installed = true;
   const inner = globalThis.fetch;
   globalThis.fetch = function (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) {
     const ctx = als.getStore();
-    if (ctx) {
-      const target = typeof input === "string" ? input : input instanceof URL ? input.href : input instanceof Request ? input.url : "";
-      if (
-        /\/v1\/messages(\?|$)/.test(target) &&
-        (init?.method ?? "POST").toUpperCase() === "POST" &&
-        typeof init?.body === "string"
-      ) {
-        captureRequest(ctx, target, init as { body: string; headers?: HeadersInit });
-      }
+    if (!ctx) return inner(input, init);
+    const target = typeof input === "string" ? input : input instanceof URL ? input.href : input instanceof Request ? input.url : "";
+    // 只捕获 Anthropic /v1/messages 的字符串体 POST(生成主链路形态)。Request 对象输入
+    // 的 body 读不到(读流是异步的),与旧行为一致地跳过——两引擎的 LLM fetch 都传
+    // (url, init);这是过渡软限,随 T3 删壳一同消失。
+    if (
+      typeof init?.body === "string" &&
+      /\/v1\/messages(\?|$)/.test(target) &&
+      (init?.method ?? "POST").toUpperCase() === "POST"
+    ) {
+      captureRequest(
+        ctx,
+        {
+          url: target,
+          method: "POST",
+          headers: new Headers(init.headers),
+          body: init.body,
+          rawBody: init.body,
+          signal: init.signal ?? null,
+        },
+        ctx.provider.id,
+        ctx.provider.name,
+      );
     }
     return inner(input, init);
   } as typeof fetch;
 }
 
-function captureRequest(ctx: CacheWarmingContext, url: string, init: { body: string; headers?: HeadersInit }): void {
-  const body = safeJsonParse(init.body);
+/** 从规范化后的 LlmRequest 捕获一个可重放请求、建立/覆盖保温计划(通道中间件与过渡壳
+ *  共用,语义单点)。providerId/Name 由调用方给出——壳取 ALS 上下文、中间件取显式 ctx。 */
+function captureRequest(
+  ctx: CacheWarmingContext,
+  req: LlmRequest,
+  providerId: string,
+  providerName: string,
+): void {
+  if (!/\/v1\/messages(\?|$)/.test(req.url)) return; // 同会话 Anthropic 端点上 count_tokens 等其他路径不该被捕获
+  if (req.method.toUpperCase() !== "POST" || req.body === undefined) return;
+  const body = safeJsonParse(req.body);
   if (!isRecord(body)) return;
   if (!isAnthropicReplayable(body)) return;
   if (!bodyHasCacheControl(body)) return;
@@ -367,14 +400,12 @@ function captureRequest(ctx: CacheWarmingContext, url: string, init: { body: str
   if (old?.timer) warmingScheduler.clear(old.timer);
   plans.set(ctx.conversationId, {
     conversationId: ctx.conversationId,
-    providerId: ctx.provider.id,
-    providerName: ctx.provider.name,
+    providerId,
+    providerName,
     request: {
-      url,
-      // 头规范化必须经 Headers 构造:真实 SDK(Anthropic 0.129)给 fetch 的 init.headers 是
-      // Headers 实例,`{...instance}` 展开是 {}——重放会丢全部鉴权头直接 401(F 阶段 B1)。
-      // Headers 把键名转小写,HTTP 头大小写无关,重放无副作用。
-      headers: Object.fromEntries(new Headers(init.headers).entries()),
+      url: req.url,
+      // req.headers 已是 Headers 实例(通道入口规范化),取 Record 快照。
+      headers: Object.fromEntries(req.headers.entries()),
       body,
       capturedAt: warmingClock.now(),
     },
@@ -386,3 +417,14 @@ function captureRequest(ctx: CacheWarmingContext, url: string, init: { body: str
   });
   schedule(plans.get(ctx.conversationId)!);
 }
+
+/** 通道中间件形态(T2 新增;T3 起为 pi 的实际路径,替代上面的全局壳):读规范化后的
+ *  LlmRequest,身份由通道在调用时显式传入的 ctx 给出,不再靠 ALS 推断「这请求属于谁」。
+ *  purpose 由组装点保证(见 T4):本中间件只在 generation 用途下挂入,故此处不再自检。 */
+export const cacheWarmCaptureMiddleware: LlmMiddleware = async (req, ctx, next) => {
+  const { provider, conversationId } = ctx;
+  if (conversationId && provider.type === "claude" && promptCachePolicyFor(provider).warming && isWarmingEligibleEndpoint(provider)) {
+    captureRequest({ conversationId, provider }, req, provider.id, provider.name);
+  }
+  return next(req);
+};

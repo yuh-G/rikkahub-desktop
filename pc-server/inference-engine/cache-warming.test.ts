@@ -32,6 +32,7 @@ const logged: Array<Record<string, unknown>> = [];
 mock.module("../api/logs", () => ({ ...actualLogs, addLog: (entry: Record<string, unknown>) => logged.push(entry) }));
 
 const {
+  cacheWarmCaptureMiddleware,
   cacheWarmingContextFor,
   cacheWarmingDelayMs,
   discardCacheWarmingState,
@@ -45,6 +46,8 @@ const {
   warmingClock,
   warmingScheduler,
 } = await import("./cache-warming");
+const { createLlmFetch } = await import("./llm-transport");
+import type { LlmCallContext } from "./llm-transport";
 const { provider } = await import("../model-providers");
 
 // ---- fake fetch(拦截器 inner)----
@@ -514,5 +517,66 @@ describe("F3/B3:保温日志不进 stats 计数器(锁在同目录 api/logs.stat
     await flushAsync();
     expect(fetchCalls.length).toBe(2); // 主请求 + 1 次重放确实发生了
     expect(logged.some((l) => l.kind === "provider:cache-warm")).toBe(true); // 日志列表照常可见
+  });
+});
+
+// ---- T2:通道中间件形态(T3 起为 pi 的实际路径,替代上面的全局壳) ----
+
+describe("T2 通道中间件:cacheWarmCaptureMiddleware", () => {
+  function warmingCtx(conversationId: string | null, overrides: Record<string, unknown> = {}): LlmCallContext {
+    return {
+      engine: "pi",
+      provider: anthropicProviderFixture(overrides),
+      conversationId,
+      purpose: "generation",
+    };
+  }
+
+  test("经 createLlmFetch 发捕获请求:建立计划并调度重放(headers 实例形态也捕获)", async () => {
+    noteCacheUsage("conv-mw", { promptTokens: 9000, cachedTokens: 8500 });
+    const fetchFn = createLlmFetch(warmingCtx("conv-mw"), [cacheWarmCaptureMiddleware]);
+    await fetchFn("https://api.anthropic.com/v1/messages?beta=true", {
+      method: "POST",
+      headers: new Headers({ "content-type": "application/json", "x-api-key": "sk-mw", "anthropic-version": "2023-06-01" }),
+      body: JSON.stringify(LONG_BODY),
+    });
+    await flushAsync();
+    expect(fetchCalls.length).toBe(2); // 主请求 + 重放
+    const replay = fetchCalls[1]!;
+    const headers = replay.init?.headers as Record<string, string>;
+    expect(headers["x-api-key"]).toBe("sk-mw"); // B1 类根除:规范化后鉴权头在
+    expect((JSON.parse(String(replay.init?.body)) as Record<string, unknown>).max_tokens).toBe(1);
+  });
+
+  test("策略关 / 第三方端点 / 无会话:不捕获(中间件透传零重放)", async () => {
+    for (const ctx of [
+      warmingCtx("c1", { promptCacheWarming: false }),
+      warmingCtx("c1", { baseUrl: "https://relay.example.com/v1" }),
+      warmingCtx(null),
+    ]) {
+      fetchCalls.length = 0;
+      const fetchFn = createLlmFetch(ctx, [cacheWarmCaptureMiddleware]);
+      await fetchFn("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": "sk" },
+        body: JSON.stringify(LONG_BODY),
+      });
+      await flushAsync();
+      expect(fetchCalls.length).toBe(1);
+    }
+  });
+
+  test("捕获不依赖 ALS 环境(本用例全程不入 runWithCacheWarming):显式身份替代环境推断", async () => {
+    // 这是 T2 的核心架构收益锁:旧的全局壳靠 als.getStore() 猜「这请求属于谁」,新通道
+    // 由调用方显式给 ctx。此处无任何 ALS 上下文,捕获与重放照常发生——环境退场。
+    noteCacheUsage("conv-noals", { promptTokens: 9000, cachedTokens: 8500 });
+    const fetchFn = createLlmFetch(warmingCtx("conv-noals"), [cacheWarmCaptureMiddleware]);
+    await fetchFn("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": "sk" },
+      body: JSON.stringify(LONG_BODY),
+    });
+    await flushAsync();
+    expect(fetchCalls.length).toBe(2); // 主请求 + 重放,全程无 ALS
   });
 });

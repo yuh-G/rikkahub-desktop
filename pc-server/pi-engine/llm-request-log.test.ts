@@ -9,7 +9,11 @@ import * as actualLogs from "../api/logs";
 const logged: Array<Record<string, unknown>> = [];
 mock.module("../api/logs", () => ({ ...actualLogs, addLog: (entry: Record<string, unknown>) => logged.push(entry) }));
 
-const { installLlmRequestLogInterceptor, llmLogContextFor, runWithLlmRequestLog } = await import("./llm-request-log");
+const { installLlmRequestLogInterceptor, llmLogContextFor, requestLogMiddleware, runWithLlmRequestLog } =
+  await import("./llm-request-log");
+const { createLlmFetch } = await import("../inference-engine/llm-transport");
+const { provider } = await import("../model-providers");
+import type { LlmCallContext } from "../inference-engine/llm-transport";
 
 // fake inner fetch:按 URL 决定响应形态。装拦截器前替换,拦截器闭包捕获它为 inner。
 let fakeResponder: (url: string) => Response | Promise<Response> = () => new Response("ok", { status: 200 });
@@ -118,5 +122,74 @@ describe("工作区 LLM 请求日志壳", () => {
     await flushLogs();
     expect(logged.length).toBe(1);
     expect(logged[0].url).toBe("https://api.example.com/v1/messages");
+  });
+});
+
+// ---- T2:通道中间件形态(替代全局壳) ----
+describe("requestLogMiddleware(请求通道形态,无 ALS / 无 origin 过滤)", () => {
+  const callCtx: LlmCallContext = {
+    engine: "pi",
+    provider: provider({ id: "p1", name: "测试供应商", baseUrl: "https://api.example.com/v1", apiKey: "k" }),
+    conversationId: "c1",
+    purpose: "generation",
+  };
+
+  test("经 createLlmFetch 发请求:记一条 kind=provider:agent(含请求体/响应头/时长)", async () => {
+    logged.length = 0;
+    fakeResponder = () => new Response("stream...", { status: 200, headers: { "content-type": "text/event-stream" } });
+    const fetchFn = createLlmFetch(callCtx, [requestLogMiddleware]);
+    await fetchFn("https://any.host/v1/chat/completions", { method: "POST", body: '{"model":"m1"}' });
+    await flushLogs();
+    expect(logged.length).toBe(1);
+    expect(logged[0]).toMatchObject({
+      providerId: "p1",
+      providerName: "测试供应商",
+      url: "https://any.host/v1/chat/completions",
+      ok: true,
+      status: 200,
+      kind: "provider:agent",
+      method: "POST",
+      requestBody: '{"model":"m1"}',
+    });
+    expect(typeof logged[0].durationMs).toBe("number");
+    // 无 origin 过滤:通道只承载 LLM 请求,任何主机都记(不像旧壳按 origin 排除)。
+  });
+
+  test("非 2xx:记错误体与 error 字段", async () => {
+    logged.length = 0;
+    fakeResponder = () => new Response('{"error":{"message":"quota exceeded"}}', { status: 429 });
+    const fetchFn = createLlmFetch(callCtx, [requestLogMiddleware]);
+    await fetchFn("https://any.host/v1/messages", { method: "POST", body: "{}" });
+    await flushLogs();
+    expect(logged.length).toBe(1);
+    expect(logged[0]).toMatchObject({ ok: false, status: 429 });
+    expect(String(logged[0].responseBody)).toContain("quota exceeded");
+  });
+
+  test("网络异常(reject):ok=false status=0,promise 语义不变(照常抛给引擎)", async () => {
+    logged.length = 0;
+    fakeResponder = () => {
+      throw new Error("connect ECONNREFUSED");
+    };
+    const fetchFn = createLlmFetch(callCtx, [requestLogMiddleware]);
+    await expect(fetchFn("https://any.host/v1/x", { method: "POST" })).rejects.toThrow("ECONNREFUSED");
+    await flushLogs();
+    expect(logged.length).toBe(1);
+    expect(logged[0]).toMatchObject({ ok: false, status: 0 });
+    expect(String(logged[0].error)).toContain("ECONNREFUSED");
+  });
+
+  test("Headers 实例头形状可被正确处理(B1 类根除:规范化在通道入口完成)", async () => {
+    logged.length = 0;
+    fakeResponder = () => new Response("ok", { status: 200 });
+    const fetchFn = createLlmFetch(callCtx, [requestLogMiddleware]);
+    await fetchFn("https://any.host/v1/messages", {
+      method: "POST",
+      headers: new Headers({ "x-api-key": "sk-real" }),
+      body: "{}",
+    });
+    await flushLogs();
+    expect(logged.length).toBe(1);
+    expect(logged[0].url).toBe("https://any.host/v1/messages");
   });
 });
