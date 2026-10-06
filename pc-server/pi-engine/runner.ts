@@ -33,6 +33,7 @@ import type { Message, Model, Provider } from "../foundation/types";
 import { piAgentDir } from "../foundation/paths";
 import { CodedError } from "../foundation/errors";
 import { promptCachePolicyFor } from "../model-providers/prompt-cache";
+import type { LlmFetch } from "../inference-engine/llm-transport";
 import { createPiModelRuntime, mapProviderModelToPi, piThinkingLevelFor, type PiModelLimits } from "./model-bridge";
 import { llmLogContextFor, runWithLlmRequestLog } from "./llm-request-log";
 import { createPiEventBridge } from "./event-bridge";
@@ -45,6 +46,11 @@ export interface PiGenerationContext {
   /** 生效 provider/model(调用方经 findModel 解析,providerOverwrite 已展开)。 */
   provider: Provider;
   model: Model;
+  /** LLM 请求通道(T3):pi SDK 内部发出的每条请求经此出口——请求日志 / 缓存预热捕获作为
+   *  有序中间件挂在其上,身份(会话/供应商/用途)由组装点显式给出,不再叠全局 fetch 壳。
+   *  组装点见编排层(llmMiddlewaresFor)。pi 内建 google 适配器拒收自定义 fetch(§2.3 P5),
+   *  包装器按 provider.type 判定不注入(见 runPiGeneration 内 withLlmFetch 头注)。 */
+  llmFetch: LlmFetch;
   /** 模型极限(P5:orchestrator 从 models.dev/助手配置取值;不传用 model-bridge 保守默认)。
    *  contextWindow 决定 pi 自动压缩阈值(contextWindow - reserveTokens),必须尽量真实。 */
   modelLimits?: PiModelLimits;
@@ -157,6 +163,38 @@ function captureRoundCompactions(
   return captured;
 }
 
+/** pi 是否可注入自定义 fetch = 是否非 google 轨(§2.3 P5:pi 的 google-generative-ai /
+ *  google-vertex 适配器收到非全局 fetch 直接抛 "Custom fetch is not supported")。
+ *  单点判定,StreamFn 包装与测试共用;将来 pi 支持 google 注入或新增同类协议,只改这里。 */
+export function piInjectsLlmFetch(provider: Provider): boolean {
+  return provider.type !== "google";
+}
+
+/** 把 LLM 请求通道注入 pi 的 streamFunction 包装器公共件(生成与手动压缩都用)。
+ *
+ *  - `options?.fetch ?? ctx.llmFetch` 语义与 C1 的 cacheRetention 同款:pi 内部显式给的
+ *    fetch 不覆盖(对称于 compaction 自带的 cacheRetention:"none")。
+ *  - **google 例外**(见 piInjectsLlmFetch):不注入时,pi google 轨的请求日志由一层窄全局
+ *    壳兜底(runner 的 runWithProviderLog + bootstrap 的 installLlmRequestLogInterceptor,
+ *    「上游支持注入 fetch 后删除」)。
+ *  - 这是 pi 官方公开扩展点(session.agent.streamFunction),非补丁;上游若重构流路径,
+ *    失效形态是"请求不经通道"(回到全局 fetch),集成锁(cache-retention / pi-route)先红。 */
+function withLlmFetch(streamFn: StreamFn, provider: Provider, llmFetch: LlmFetch): StreamFn {
+  if (!piInjectsLlmFetch(provider)) return streamFn;
+  return (model, context, options) =>
+    streamFn(model, context, { ...options, fetch: options?.fetch ?? llmFetch });
+}
+
+/** google 例外的日志兜底(§2.3 P5,决策 b):pi 的 google 适配器拒收自定义 fetch,其请求
+ *  不经 LLM 通道,故**只在 pi google 轨**用这层窄全局日志壳补记——只记日志、不预热。
+ *  其余协议经 withLlmFetch 走通道记日志,不走这里(零双记)。
+ *  拆除条件:上游支持注入 fetch 后,随 installLlmRequestLogInterceptor 一并删除
+ *  (CLAUDE.md pi 维护手册「清除冗余」条目已登记)。 */
+function runWithProviderLog<T>(provider: Provider, fn: () => T): T {
+  if (provider.type !== "google") return fn();
+  return runWithLlmRequestLog(llmLogContextFor(provider), fn);
+}
+
 export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
   if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
   const mapped = mapProviderModelToPi(ctx.provider, ctx.model, ctx.modelLimits, ctx.conversationId);
@@ -207,7 +245,9 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   const innerStreamFn = session.agent.streamFunction;
   const wrappedStreamFn: StreamFn = (model_, context, options) =>
     innerStreamFn(model_, context, { ...options, cacheRetention: options?.cacheRetention ?? cacheRetention });
-  session.agent.streamFunction = wrappedStreamFn;
+  // T3:同一包装器上再叠 LLM 通道注入(fetch)。包装后的函数本身就是 StreamFn,故直接把
+  // 通道注入叠在策略包装外层(顺序无关:两者读/写 options 的不同字段)。
+  session.agent.streamFunction = withLlmFetch(wrappedStreamFn, ctx.provider, ctx.llmFetch);
 
   // steering 一次吸收全部:与聊天引擎 steerBoundary 整批排水、Codex pending_input
   // split_off(0) 同语义——多条插话 = 多个 user 气泡 + 一个 ai_2,不按轮次逐条滴灌。
@@ -246,8 +286,9 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
     // 当模板/扩展命令拦截(agent-session.ts:1926-1931),我们的会话 UX 不走 pi 命令面。
-    // runWithLlmRequestLog:本轮生成的 LLM fetch(pi SDK 内部)记入统一日志管线(日志问题 1)。
-    await runWithLlmRequestLog(llmLogContextFor(ctx.provider), () =>
+    // T3:本轮生成的 LLM fetch(pi SDK 内部)经 ctx.llmFetch 通道记入统一日志管线(见
+    // streamFunction 包装);google 轨不经通道,由 runWithProviderLog 的窄壳兜底补记。
+    await runWithProviderLog(ctx.provider, () =>
       session.prompt(ctx.promptText, {
         expandPromptTemplates: false,
         ...(ctx.images?.length ? { images: ctx.images } : {}),
@@ -283,6 +324,8 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
 export interface PiCompactionContext {
   provider: Provider;
   model: Model;
+  /** LLM 请求通道(T3;同 PiGenerationContext.llmFetch)——压缩摘要请求走它记日志。 */
+  llmFetch: LlmFetch;
   /** 助手思考强度(同 PiGenerationContext.reasoningLevel;压缩摘要与主会话同档,勿分叉)。 */
   reasoningLevel?: string | null;
   modelLimits?: PiModelLimits;
@@ -372,6 +415,11 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
       : {}),
   });
 
+  // T3:压缩摘要请求经同一 LLM 通道记日志(P3:压缩走 this.agent.streamFunction,与主循环
+  // 同注入点)。压缩自带 cacheRetention:"none"(compaction.ts completeSummarization),
+  // 不经我们的策略包装面,故这里只叠通道注入。
+  session.agent.streamFunction = withLlmFetch(session.agent.streamFunction, ctx.provider, ctx.llmFetch);
+
   const bridge = createPiEventBridge();
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
@@ -382,7 +430,7 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
   ctx.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     if (ctx.signal?.aborted) throw new DOMException("Compaction cancelled", "AbortError");
-    const result = await runWithLlmRequestLog(llmLogContextFor(ctx.provider), () =>
+    const result = await runWithProviderLog(ctx.provider, () =>
       session.compact(ctx.customInstructions?.trim() || undefined),
     );
     const captured = captureRoundCompactions(manager, seededEntryIds, seeded.entryIdsByMessageId).at(-1);

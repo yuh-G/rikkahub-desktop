@@ -1,12 +1,13 @@
 // pi-engine/llm-request-log.ts — 工作区 LLM 请求接入统一日志管线(日志问题 1)。
 //
-// 聊天引擎的每条 LLM fetch 在调用点 addLog(inference-engine/providers.ts);pi 引擎的
-// fetch 发生在 pi SDK 内部(openai-completions/anthropic-messages 等),零补丁原则不改
-// pi——在全局 fetch 外再包一层"日志壳":runner 以 AsyncLocalStorage 圈定"本次生成的
-// LLM 目标 origin",壳内只记录打到该 origin 的请求。精准性依据:
-//   - 工具执行(搜索/抓取/MCP)虽在同一异步树内,但打的是别家主机,且各自管线已有
-//     addLog(kind: search:*/mcp:*)——origin 不匹配即透传,零双记。
-//   - 聊天引擎的 fetch 不在本 ALS 上下文内,不受影响(它有自己的调用点日志)。
+// **T3 起主路径是通道中间件**(requestLogMiddleware,见文件尾):pi 的 streamFunction 包装
+// 器把 ctx.llmFetch 注入 StreamOptions.fetch,SDK 内部每条请求经请求通道(见
+// inference-engine/llm-transport),身份(provider)由通道 ctx 显式给出、零 ALS。
+//
+// **全局壳(installLlmRequestLogInterceptor)保留为 google 轨兜底**:pi 的
+// google-generative-ai / google-vertex 适配器拒收自定义 fetch(§2.3 P5),其请求不经通道,
+// 靠本壳(ALS 圈定 origin)补记日志以保住用户排障面;拆除条件见 CLAUDE.md pi 维护手册。
+// 聊天引擎的每条 LLM fetch 在调用点 addLog(inference-engine/providers.ts),不经本模块。
 //
 // 安装顺序:在 installProxyFetchInterceptor 之后安装(包外层),计时覆盖代理与重试,
 // 记录端到端时长。流式响应口径:status/headers 到手即记(时长=响应头时间),
@@ -98,7 +99,9 @@ function recordRequest(
 
 let installed = false;
 
-/** 安装工作区 LLM 日志壳(幂等)。必须晚于 installProxyFetchInterceptor。 */
+/** 安装工作区 LLM 日志壳(幂等)。必须晚于 installProxyFetchInterceptor。
+ *  **T3 起仅 pi google 轨使用**(该轨适配器拒收自定义 fetch,请求不经通道);其余协议
+ *  经 requestLogMiddleware 记日志。拆除条件:上游支持注入 fetch 后删除(见 CLAUDE.md)。 */
 export function installLlmRequestLogInterceptor(): void {
   if (installed) return;
   installed = true;

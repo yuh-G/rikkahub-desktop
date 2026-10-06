@@ -62,6 +62,9 @@ function testContext(conversationId: string, promptText: string, extras: Partial
       promptText,
       sink: (event: GenerationEvent) => events.push(event),
       ...extras,
+      // T3:LLM 请求通道必填(置于 extras 之后,保证类型非可选)——测试直接用全局 fetch
+      // (不打 api.anthropic.com,预热不触发)。
+      llmFetch: fetch,
     },
   };
 }
@@ -118,6 +121,8 @@ describe("pi runner 集成(P7 统一会话数据)", () => {
       cwd,
       history: [user1, asst1],
       sink: (event: GenerationEvent) => events.push(event),
+      // T3:压缩也走 LLM 请求通道(测试直用全局 fetch)。
+      llmFetch: fetch,
     });
 
     expect(result.summary).toContain("手动压缩摘要");

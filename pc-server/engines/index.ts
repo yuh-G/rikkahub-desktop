@@ -43,16 +43,18 @@ export type EngineResumeSemantics = "pause-resume" | "run-and-suspend";
  *  引擎的真实调用)。 */
 export type EngineSteeringSupport = "boundary" | "none";
 
-/** 缓存预热能力声明(C1,与 §7.1 其余声明会师于 P1):
- *  - "host":进程内引擎、LLM 请求走 globalThis.fetch——C2 宿主预热服务经 fetch 层
- *    捕获/重放,引擎零感知自动纳入。
- *  - "engine-native":子进程引擎,请求不经宿主 fetch,只能把开关翻译进引擎自身配置
+/** 缓存预热能力声明(C1,与 §7.1 其余声明会师于 P1;T3 起由请求通道组装取代——见下)。
+ *  - "host":进程内引擎、LLM 请求走宿主请求通道——C2 宿主预热服务经通道中间件捕获/重放。
+ *  - "engine-native":子进程引擎,请求不经宿主通道,只能把开关翻译进引擎自身配置
  *    (dsh 的 llm-pi-ai provider 配置);宿主不做跨进程预热(刻意架构边界,方案 §5.7-④)。
  *  - "none":引擎无缓存概念或明确不参与。
- *  必填:新引擎必须显式声明。**这是编排层的分派依据**——generateAnswer 用它决定是否
- *  建立宿主预热上下文(orchestrator: cacheWarmingContextFor(adapter, provider,
- *  conversationId)):"host" 且策略/端点合格才建,"engine-native"/"none" 恒 null(即使
- *  该引擎 run() 内有宿主侧 fetch 也不捕获,防引擎自热 + 宿主重放双热)。 */
+ *
+ *  **T3 起本声明不再驱动运行时**:预热改由「组装点的通道装配」决定——pi 生成路径在
+ *  `piSessionLlmFetch` 里挂 `cacheWarmCaptureMiddleware`(该路径本就是 run-and-suspend =
+ *  生成在等待审批/长工具中仍存活 = 预热主价值场景);聊天引擎不走该装配故不预热(D-T2 由
+ *  结构自动成立,不再靠特例声明)。T4 会把本声明重整为描述事实的 `transport`
+ *  (见方案 §4.3),届时 `宿主预热 ⇔ transport.mode==="host" && resumeSemantics===
+ *  "run-and-suspend" && policy.warming && 官方端点`。 */
 export type EngineCacheWarming = "host" | "engine-native" | "none";
 
 /** 引擎无关的生成输入包(编排器入口一次性装配,贯穿本次生成)。 */

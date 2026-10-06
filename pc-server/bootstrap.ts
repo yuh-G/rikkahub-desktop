@@ -11,7 +11,6 @@
 
 import { applyEffectiveProxy, installProxyFetchInterceptor, primeSystemProxyCache } from "./foundation/net";
 import { installLlmRequestLogInterceptor } from "./pi-engine/llm-request-log";
-import { installCacheWarmingInterceptor } from "./inference-engine/cache-warming";
 import { setStartupPhase } from "./foundation/startup-gate";
 import { saveState, setState, state } from "./persistence/json-store";
 import { loadState } from "./persistence/state-load";
@@ -31,12 +30,13 @@ export async function bootstrap(): Promise<void> {
   // 2) 代理拦截器:必须在首次出站 fetch 之前安装,否则首个请求会触发 Bun 的 env 快照
   //    锁定,之后改代理不生效。就绪前 /api 全部 503,不会有业务出站请求先行。
   installProxyFetchInterceptor(() => state.settings.proxyConfig);
-  // 2b) 工作区 LLM 日志壳(日志问题 1):包在代理拦截器外层(后安装者先执行),pi SDK 内部的
-  //     LLM fetch 经 AsyncLocalStorage 上下文记入统一日志管线,与聊天引擎同一套 addLog。
+  // 2b) 工作区 LLM 日志壳(日志问题 1)。T3 起 pi 的请求日志改走 LLM 请求通道中间件
+  //     (runner 的 streamFunction 包装注入 ctx.llmFetch),不再依赖本壳。**本壳保留仅为
+  //     pi 的 google 轨**:pi 的 google 适配器拒收自定义 fetch(§2.3 P5),该轨请求不经
+  //     通道,靠本壳(ALS + origin)补记日志以保住用户排障面。其余协议经通道记日志,与本
+  //     壳零交集(壳只在 pi google 轨的 ALS 内生效,其余上下文直通)。
+  //     拆除条件:上游支持注入 fetch 后,连同 runner 的 runWithProviderLog 一并删除。
   installLlmRequestLogInterceptor();
-  // 2c) 提示缓存预热捕获壳(C2):与日志壳同款 ALS 模式、同安装位。捕获两引擎的
-  //     Anthropic /v1/messages 请求,生成期超过 TTL 前自动重放保温;策略单源门控。
-  installCacheWarmingInterceptor();
   // R1-7:系统代理探测(reg query/gsettings)已全异步化,拦截器 per-request 只读缓存。
   // 这里预热一次,保证首个业务出站请求就能拿到正确的系统代理(之后 TTL 过期走
   // "陈值即用 + 后台刷新",事件循环永不被 spawn 阻塞)。

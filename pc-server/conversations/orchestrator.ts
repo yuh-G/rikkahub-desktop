@@ -86,7 +86,9 @@ import { flushConvDirtyNow, getConversation, getConversationsDb, markConversatio
 import { checkoutConversation, releaseConversation } from "./working-set";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
-import { cacheWarmingContextFor, noteCacheUsage, runWithCacheWarming, stopCacheWarming } from "../inference-engine/cache-warming";
+import { cacheWarmCaptureMiddleware, noteCacheUsage, stopCacheWarming } from "../inference-engine/cache-warming";
+import { createLlmFetch, type LlmCallContext, type LlmFetch, type LlmMiddleware } from "../inference-engine/llm-transport";
+import { requestLogMiddleware } from "../pi-engine/llm-request-log";
 import { abortGeneration, abortReasonOf, awaitingApproval, compressing, generating } from "./generation-state";
 import { deliverQueuedReply, holdMessageQueue, isQueueHeldByInterrupt, isQueuePaused, notifyQueuedGenerationDispatched, pauseMessageQueue, queueSnapshotFor, removeQueuedMessage, setOnQueuedGenerationDispatched, shiftNextQueued } from "./message-queue";
 import { clearSteeringChannel, drainSteeringMessages } from "./steering-channel";
@@ -782,6 +784,29 @@ function applyCapturedEngineCompactions(conversation: Conversation, captured: Ca
   scheduleThrottledConvFlush();
 }
 
+/** 组装 pi 会话的 LLM 请求通道(T3):把「请求日志」与「缓存预热捕获」两个中间件按序挂上,
+ *  身份(供应商/会话/用途)显式给出——pi SDK 内部发出的每条请求经此出口,同一份中间件
+ *  语义服务所有引擎(引擎无关)。数组顺序 = 请求经过顺序(前项在外层先见请求)。
+ *
+ *  - **请求日志**:pi 恒挂(SDK 内部发请求,只能在通道层记;聊天引擎的日志在调用点,信息更全)。
+ *  - **缓存预热捕获**:pi 工作区恒是 run-and-suspend(生成在等待审批/长工具中仍存活)= 预热
+ *    主价值场景,故 generation 用途恒挂;compaction 不挂(压缩请求自带 cacheRetention:"none",
+ *    重放无意义);warm 用途走空链(重放不挂任何中间件 → 「重放被自己捕获」结构上不可能)。
+ *    端点/策略门控在中间件内部自检(cacheWarmCaptureMiddleware 前的 warming 判定)。
+ *
+ *  google 例外(§2.3 P5):pi 的 google 适配器拒收自定义 fetch,故该轨请求不经本通道、
+ *  由 bootstrap 的窄全局日志壳兜底——此处照常返回通道,注入与否由带 `withLlmFetch` 的
+ *  streamFunction 包装器按 provider.type 决定(runner 单点判定)。 */
+function piSessionLlmFetch(
+  provider: Provider,
+  conversationId: string,
+  purpose: LlmCallContext["purpose"],
+): LlmFetch {
+  const middlewares: LlmMiddleware[] = [requestLogMiddleware];
+  if (purpose === "generation") middlewares.push(cacheWarmCaptureMiddleware);
+  return createLlmFetch({ engine: "pi", provider, conversationId, purpose }, middlewares);
+}
+
 /** pi 引擎生成装配(P3 路由 + P4 资源统一 + P7 会话数据统一 + P8/P9 注入面统一)。
  *  T1 起收敛为 pi adapter 的 run 实现:输入是引擎无关 EngineRunContext + pi 专属
  *  piRuntime(由 adapter 在 matches() 判定后透传)。
@@ -856,6 +881,8 @@ async function runPiWorkspaceGeneration(
   const result = await runPiGeneration({
     provider: deps.providerItem,
     model: deps.selectedModel,
+    // T3:LLM 请求通道——SDK 内部每条请求经此出口(日志 + 预热捕获中间件)。
+    llmFetch: piSessionLlmFetch(deps.providerItem, conversation.id, "generation"),
     modelLimits: piModelLimitsFor(deps.providerItem, deps.selectedModel, deps.assistant),
     // 思考强度与聊天引擎同源(助手设置);pi 档位翻译见 model-bridge piThinkingLevelFor。
     reasoningLevel: deps.assistant.reasoningLevel,
@@ -972,6 +999,8 @@ async function runPiWorkspaceCompaction(
   const result = await runPiCompaction({
     provider: summarizer.provider,
     model: summarizer.model,
+    // T3:压缩摘要请求经同一 LLM 通道记日志(compaction 用途:不挂预热捕获)。
+    llmFetch: piSessionLlmFetch(summarizer.provider, conversation.id, "compaction"),
     modelLimits: piModelLimitsFor(summarizer.provider, summarizer.model, assistant),
     reasoningLevel: assistant.reasoningLevel,
     conversationId: conversation.id,
@@ -1134,12 +1163,6 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
   }
   conversation.updateAt = Date.now();
   broadcastNodeUpdate(conversation, assistantNode);
-  // C2 预热上下文:整个生成期包进 ALS(fetch 层捕获壳据此圈定本会话的 Anthropic 请求)。
-  // 分派读 adapter.cacheWarming 声明(接口注释承诺的"据此分派"):"host" 才可能建立,
-  // 子进程(engine-native)/不参与(none)引擎即使 run() 内有宿主侧 fetch 也不捕获——
-  // 防引擎自热 + 宿主重放双热。策略关/端点不合格时为 null(壳直通零开销);生成结束
-  // 在 finally 统一停(见下)。
-  const warmingContext = cacheWarmingContextFor(adapter.cacheWarming, picked.provider, conversation.id);
   try {
     if (resumingApprovedTools) {
       await resumeApprovedToolParts(conversation, assistant, currentMessage, assistantNode, false, controller.signal);
@@ -1187,26 +1210,24 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
       if (event.kind === "usage") noteCacheUsage(conversation.id, event.usage);
       applyEvent(event);
     };
-    const content = await runWithCacheWarming(warmingContext, () =>
-      runGeneration(
-        {
-          conversation,
-          target: session,
-          assistant,
-          provider: picked.provider,
-          model: picked.model,
-          executeTool,
-          // steering 轮边界(用户问题②):唯一装配点。聊天引擎在工具循环轮边界与最终轮调用;
-          // pi 引擎在 turn_end 调用;未来引擎在「即将构建下一模型请求前」调用同一回调即自动
-          // 继承分裂能力(收口当前节点、落库 steer user、新开 continuation 节点并换绑)。
-          // 声明 steering:"none" 的引擎不下发——排水即分裂,不能注入的引擎不该有机会排水;
-          // 其补发留在队列由收尾派发兜底。
-          ...(adapter.steering === "boundary" ? { onSteerBoundary: () => steerBoundary(conversation.id, session) } : {}),
-          adapter,
-        },
-        sink,
-        controller.signal,
-      ),
+    const content = await runGeneration(
+      {
+        conversation,
+        target: session,
+        assistant,
+        provider: picked.provider,
+        model: picked.model,
+        executeTool,
+        // steering 轮边界(用户问题②):唯一装配点。聊天引擎在工具循环轮边界与最终轮调用;
+        // pi 引擎在 turn_end 调用;未来引擎在「即将构建下一模型请求前」调用同一回调即自动
+        // 继承分裂能力(收口当前节点、落库 steer user、新开 continuation 节点并换绑)。
+        // 声明 steering:"none" 的引擎不下发——排水即分裂,不能注入的引擎不该有机会排水;
+        // 其补发留在队列由收尾派发兜底。
+        ...(adapter.steering === "boundary" ? { onSteerBoundary: () => steerBoundary(conversation.id, session) } : {}),
+        adapter,
+      },
+      sink,
+      controller.signal,
     );
     if (controller.signal.aborted) throw new DOMException("Generation stopped", "AbortError");
     if (adapter.resumeSemantics === "pause-resume" && hasPendingToolApproval(session.message)) {

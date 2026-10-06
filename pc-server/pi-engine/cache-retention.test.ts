@@ -11,6 +11,9 @@
 //     关=不发(修复 S6:pi 的 Responses/completions 此前恒发,绕过了开关)。
 //  4. 会话 id 稳定化:同一会话第二轮请求的 prompt_cache_key/会话 id 与第一轮相同
 //     (此前 pi 每轮随机 uuidv7,同会话永远打不进同一缓存分片)。
+//  5. T3 通道注入:pi 生成的 LLM fetch 真的经 ctx.llmFetch 通道出线(传一条可观察到调用
+//     的 fetch 作为通道,断言它被 pi 调到了——这是「请求通道接线成立」的终极锁);
+//     google 轨不注入(否则 pi 抛 "Custom fetch is not supported")。
 //
 // Anthropic 轨用假 SSE 服务器直驱 runPiGeneration(注册轨,真实 createAgentSession);
 // 聊天引擎侧用纯函数构建体(claudeSystemContent/claudeToolsFromOpenAiMessages 同款
@@ -27,7 +30,8 @@ import type { GenerationEvent } from "../inference-engine/events";
 import type { Message, Provider } from "../foundation/types";
 import { message } from "../foundation/utils";
 import { model, provider } from "../model-providers";
-import { runPiGeneration } from "./runner";
+import { runPiGeneration, piInjectsLlmFetch } from "./runner";
+import { createLlmFetch } from "../inference-engine/llm-transport";
 import { claudeSystemContent, claudeToolsFromOpenAiTools } from "../inference-engine/message-builder";
 
 /** 单轮纯文本回答的 anthropic SSE 剧本(与聊天引擎 claude-loop.test 同格式)。
@@ -111,6 +115,8 @@ async function runPiTurn(providerFixture: Provider, conversationId: string): Pro
     history: [] as Message[],
     promptText: "你好",
     sink: (event) => events.push(event),
+    // T3:LLM 请求通道直用全局 fetch——本用例的假 SSE 服务器就是上游,请求经它出线。
+    llmFetch: fetch,
   });
   return result.text;
 }
@@ -240,6 +246,7 @@ describe("OpenAI 格式 prompt_cache_key(策略开关 + 会话 id 稳定化)", (
       history: [] as Message[],
       promptText: "你好",
       sink: () => {},
+      llmFetch: fetch, // T3:LLM 请求通道(测试直用全局 fetch,假上游即落点)
     });
   }
 
@@ -262,6 +269,7 @@ describe("OpenAI 格式 prompt_cache_key(策略开关 + 会话 id 稳定化)", (
       history: [message("USER", [{ type: "text", text: "第一轮" }])] as Message[],
       promptText: "第二轮",
       sink: () => {},
+      llmFetch: fetch, // T3:LLM 请求通道
     });
     // 两个请求:键都发、值都是会话 id(此前 pi 每轮随机 uuidv7,同会话永远打不进
     // 同一缓存分片——稳定化后跨轮同值)。
@@ -270,5 +278,44 @@ describe("OpenAI 格式 prompt_cache_key(策略开关 + 会话 id 稳定化)", (
     for (const request of mine) {
       expect(request.prompt_cache_key).toBe(conversationId);
     }
+  });
+});
+
+// ---- 5) T3 通道注入:pi 的 LLM fetch 真的经 ctx.llmFetch ----
+
+describe("T3 请求通道注入(pi streamFunction 包装)", () => {
+  test("pi 生成的每条请求经 ctx.llmFetch 通道出线(可观察 fetch 被调用)", async () => {
+    // 通道即 pi 的唯一 LLM 出口:传一条会记录调用的 fetch 作通道,断言 pi 用它发了请求。
+    // 这是「请求通道接线成立」的终极集成锁——若 streamFunction 包装失效(上游重构 /
+    // 补丁丢失),请求会回到 globalThis.fetch,此断言先红。
+    const channelCalls: string[] = [];
+    const channel = createLlmFetch(
+      { engine: "pi", provider: claudeProviderFixture({ promptCaching: false }), conversationId: "conv-channel", purpose: "generation" },
+      [],
+    );
+    const observing: typeof fetch = (async (input, init) => {
+      channelCalls.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return channel(input, init);
+    }) as typeof fetch;
+    await runPiGeneration({
+      provider: claudeProviderFixture({ promptCaching: false }),
+      model: fakeClaudeModel,
+      conversationId: "conv-channel",
+      cwd,
+      history: [] as Message[],
+      promptText: "你好",
+      sink: () => {},
+      llmFetch: observing,
+    });
+    expect(channelCalls.length).toBeGreaterThanOrEqual(1);
+    expect(channelCalls[0]).toContain("/v1/messages");
+  });
+
+  test("pi 内建模型(含不支持自定义 fetch 的 google 轨)不注入通道;anthropic/openai 注入", () => {
+    // P5:google 两个适配器拒收自定义 fetch → 不注入(否则 pi 抛 "Custom fetch is not
+    // supported");其余协议一律注入。
+    expect(piInjectsLlmFetch(provider({ id: "g", name: "G", baseUrl: "https://generativelanguage.googleapis.com/v1beta", apiKey: "k", type: "google" }))).toBe(false);
+    expect(piInjectsLlmFetch(provider({ id: "c", name: "C", baseUrl: "https://api.anthropic.com/v1", apiKey: "k", type: "claude" }))).toBe(true);
+    expect(piInjectsLlmFetch(provider({ id: "o", name: "O", baseUrl: "https://api.openai.com/v1", apiKey: "k", type: "openai" }))).toBe(true);
   });
 });

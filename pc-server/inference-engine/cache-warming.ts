@@ -4,10 +4,11 @@
 // 要全价重写(Anthropic 写入还加收 25% 溢价)。本服务在条目过期前自动重放一次原请求
 // (max_tokens:1,非流式)——命中即把计时器重置回满,代价≈一次缓存读(原价 10%)+1 token。
 //
-// 架构定位(多引擎统一管理):
-//   - 捕获在 **fetch 层**(AsyncLocalStorage「生成上下文」,与 llm-request-log 同款模式):
-//     任何进程内引擎(聊天/pi/未来引擎)的 Anthropic 请求走 globalThis.fetch 即被覆盖,
-//     引擎侧零代码。EngineAdapter.cacheWarming="host" 是这一事实的声明面。
+// 架构定位(多引擎统一管理,T3 起):
+//   - 捕获在 **LLM 请求通道**(inference-engine/llm-transport 的 cacheWarmCaptureMiddleware):
+//     组装点把本中间件挂在「主生成用途」的通道上,身份(会话/供应商)由 LlmCallContext
+//     **显式**给出,引擎侧零代码、无全局猴补丁、无 ALS。旧「fetch 层捕获」形态(B1 形状
+//     猜测 / B2 重放被自己捕获)已随 T3 删除——重放走「空中间件链」,结构上不可能再捕获。
 //   - 策略来自 promptCachePolicyFor 单源(C1):warming 关 = 不捕获不重放,与「Claude
 //     提示缓存」开关联动;订阅 Claude 行缓存恒开 ⇒ 预热恒开,同源继承。
 //   - 启用条件数据驱动(比 pi 更保守,防对不识缓存的端点白烧钱):仅官方 Anthropic 主机
@@ -28,16 +29,12 @@
 //     空闲期保温(pi "idle" 模式,15% 续聊概率)不做。
 //   - 记账:重放进请求日志(kind=provider:cache-warm),**不进** stats 计数器、不进消息
 //     usage——它是保温动作不是用户对话。
-//
-// 安装顺序:与 llm-request-log 相同——在 installProxyFetchInterceptor 之后安装(包外层)。
 
-import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import { addLog } from "../api/logs";
 import type { Provider } from "../foundation/types";
 import { safeJsonParse } from "../foundation/utils";
 import { reportError } from "../observability/app-errors";
 import { promptCachePolicyFor } from "../model-providers/prompt-cache";
-import type { EngineCacheWarming } from "../engines";
 import { hostOfProvider } from "./message-builder";
 import { type LlmMiddleware, type LlmRequest } from "./llm-transport";
 
@@ -58,46 +55,14 @@ export function cacheWarmingDelayMs(ttlMs: number): number | undefined {
   return Math.max(1, Math.floor(Math.min(ttlMs * 0.9, ttlMs - 10_000)));
 }
 
-// ── 生成上下文 ALS ─────────────────────────────────────────────────
+// ── 捕获身份 ───────────────────────────────────────────────────────
 
-/** 编排层在每次 generateAnswer 外层进入的预热上下文。conversationId 定界停止条件
- *  (生成结束/会话删除),provider 携带策略与端点身份。 */
+/** 预热捕获的身份(通道中间件在调用时构造):conversationId 定界停止条件(生成结束/
+ *  会话删除),provider 携带策略与端点身份。T3 起不再有全局 ALS —— 身份由组装点经
+ *  LlmCallContext **显式**给出,「这请求属于谁」不再靠环境推断(§2.2 根因)。 */
 export interface CacheWarmingContext {
   conversationId: string;
   provider: Provider;
-}
-
-const als = new AsyncLocalStorage<CacheWarmingContext>();
-
-/** 脱离一切环境上下文的执行器:绑定在模块加载(空上下文)时点,调用时不在任何
- *  AsyncLocalStorage 的 store 内。用途:schedule 的定时器回调里发出的重放 fetch 不能
- *  落回捕获时的预热 ALS(Bun 的 ALS 随 setTimeout 传播)——否则重放被自己的捕获壳
- *  重新圈住,新计划重置 startedAt,1 小时硬上限永远到不了(F 阶段 B2)。也同时脱离
- *  pi 请求日志的 ALS(重放不该再记一条 provider:agent)。不用 als.exit:它只退出
- *  单个 store,嵌套两层 ALS(pi 日志壳在预热壳内)时漏掉另一层。T 阶段删 ALS 后
- *  此执行器随之中间件化,此处是现行结构内的止血修。 */
-const runDetached = AsyncResource.bind(<T>(fn: () => T): T => fn());
-
-/** 编排层入口:把一次生成包进预热上下文(策略关/端点不合格时传 null 免记)。 */
-export function runWithCacheWarming<T>(context: CacheWarmingContext | null, fn: () => T): T {
-  if (!context) return fn();
-  return als.run(context, fn);
-}
-
-/** 从 provider 判定本轮生成是否要建立预热上下文(编排层入口调用;策略单源消费)。
- *  cacheWarming 是 EngineAdapter 的能力声明(分派依据):非 "host" 引擎(子进程
- *  engine-native / 不参与 none)恒 null——即使其 run() 内有宿主侧 fetch 也不捕获,
- *  防引擎自热 + 宿主重放双热。 */
-export function cacheWarmingContextFor(
-  cacheWarming: EngineCacheWarming,
-  provider: Provider,
-  conversationId: string,
-): CacheWarmingContext | null {
-  if (cacheWarming !== "host") return null;
-  const policy = promptCachePolicyFor(provider);
-  if (!policy.warming) return null;
-  if (!isWarmingEligibleEndpoint(provider)) return null;
-  return { conversationId, provider };
 }
 
 /** 端点门控:仅官方 Anthropic 主机(订阅轨 flow 锁死同端点)。第三方 Anthropic 兼容
@@ -280,7 +245,10 @@ function schedule(plan: WarmingPlan): void {
     plans.delete(plan.conversationId);
     return;
   }
-  plan.timer = runDetached(() => warmingScheduler.set(() => void refresh(plan), Math.max(0, plan.nextWarmAt - warmingClock.now())));
+  // 重放走「空中间件链」的通道(warm 用途),结构上不可能再被 captureWarmCaptureMiddleware
+  // 捕获——F 阶段 B2(重放被自己的捕获壳圈住致 1h 硬上限失效)由此根除,无需 runDetached
+  // 的环境脱离(T3 已无预热 ALS;仅存的 pi 日志 ALS 只在 google 轨生效,与 claude 预热无交集)。
+  plan.timer = warmingScheduler.set(() => void refresh(plan), Math.max(0, plan.nextWarmAt - warmingClock.now()));
 }
 
 /** 从捕获的请求体粗估 prompt 规模(兜底通道:usage 尚未回报缓存证明时,拦「prompt
@@ -332,53 +300,8 @@ function bodyHasCacheControl(body: Record<string, unknown>): boolean {
   return false;
 }
 
-let installed = false;
-
-/** 安装预热捕获壳(幂等)。必须晚于 installProxyFetchInterceptor。**过渡形态**:T3
- *  接线后 pi 走 createLlmFetch 中间件,此全局壳随之删除。当前它把 fetch 层(requestLog
- *  壳内层)的调用**先规范化**成 LlmRequest 再交给同一份 captureRequest —— 从此捕获不
- *  再有「形状猜测」:无论引擎 SDK 给的是普通对象还是 Headers 实例,规范化一次即统一
- *  (F1/B1 的根因在此结构性消除)。
- *
- *  **已知限制**:Request 对象输入的 body 这里是同步读不到的(读流是异步的),故凡以
- *  Request 对象形态发起的请求不被捕获——现状成立(两引擎的 LLM fetch 都传 (url, init)),
- *  且这是过渡软限,随 T3 删壳一同消失。 */
-export function installCacheWarmingInterceptor(): void {
-  if (installed) return;
-  installed = true;
-  const inner = globalThis.fetch;
-  globalThis.fetch = function (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) {
-    const ctx = als.getStore();
-    if (!ctx) return inner(input, init);
-    const target = typeof input === "string" ? input : input instanceof URL ? input.href : input instanceof Request ? input.url : "";
-    // 只捕获 Anthropic /v1/messages 的字符串体 POST(生成主链路形态)。Request 对象输入
-    // 的 body 读不到(读流是异步的),与旧行为一致地跳过——两引擎的 LLM fetch 都传
-    // (url, init);这是过渡软限,随 T3 删壳一同消失。
-    if (
-      typeof init?.body === "string" &&
-      /\/v1\/messages(\?|$)/.test(target) &&
-      (init?.method ?? "POST").toUpperCase() === "POST"
-    ) {
-      captureRequest(
-        ctx,
-        {
-          url: target,
-          method: "POST",
-          headers: new Headers(init.headers),
-          body: init.body,
-          rawBody: init.body,
-          signal: init.signal ?? null,
-        },
-        ctx.provider.id,
-        ctx.provider.name,
-      );
-    }
-    return inner(input, init);
-  } as typeof fetch;
-}
-
-/** 从规范化后的 LlmRequest 捕获一个可重放请求、建立/覆盖保温计划(通道中间件与过渡壳
- *  共用,语义单点)。providerId/Name 由调用方给出——壳取 ALS 上下文、中间件取显式 ctx。 */
+/** 从规范化后的 LlmRequest 捕获一个可重放请求、建立/覆盖保温计划(cacheWarmCaptureMiddleware
+ *  内部实现)。providerId/Name 由调用方给出。 */
 function captureRequest(
   ctx: CacheWarmingContext,
   req: LlmRequest,
@@ -418,9 +341,9 @@ function captureRequest(
   schedule(plans.get(ctx.conversationId)!);
 }
 
-/** 通道中间件形态(T2 新增;T3 起为 pi 的实际路径,替代上面的全局壳):读规范化后的
- *  LlmRequest,身份由通道在调用时显式传入的 ctx 给出,不再靠 ALS 推断「这请求属于谁」。
- *  purpose 由组装点保证(见 T4):本中间件只在 generation 用途下挂入,故此处不再自检。 */
+/** 通道中间件(T2 起;T3 起为 pi 的实际路径):读规范化后的 LlmRequest,身份由通道在
+ *  调用时显式传入的 ctx 给出,不再靠 ALS 推断「这请求属于谁」。purpose 由组装点保证
+ *  (见编排器 piSessionLlmFetch):本中间件只在 generation 用途下挂入,故此处不再自检。 */
 export const cacheWarmCaptureMiddleware: LlmMiddleware = async (req, ctx, next) => {
   const { provider, conversationId } = ctx;
   if (conversationId && provider.type === "claude" && promptCachePolicyFor(provider).warming && isWarmingEligibleEndpoint(provider)) {
