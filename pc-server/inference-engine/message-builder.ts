@@ -28,6 +28,7 @@ import {
   SILICONFLOW_THINKING_MODELS,
   ZHIPU_GLM53_EFFORT_BY_LEVEL,
 } from "../model-providers/request-dialect";
+import { promptCachePolicyFor } from "../model-providers/prompt-cache";
 import { fallbackDocumentText, readExtractedTextSync } from "../files/index";
 import { ensureExtractedTextAsync } from "../files/extraction";
 import { UNRESOLVED_TOOL_RESULT_TEXT, parseToolInput, toolArgumentsJson, toolResultTextForApi } from "../tools/format";
@@ -162,7 +163,8 @@ export function claudeContentFromApiContent(content: any) {
 export function claudeCacheControlEphemeral(providerItem: Provider) {
   return {
     type: "ephemeral",
-    ...(providerItem.promptCacheTtl === "1h" ? { ttl: "1h" } : {}),
+    // TTL 从策略单源读(= promptCacheTtl 归一化,5m 缺省;C1 起不直读 provider 字段)。
+    ...(promptCachePolicyFor(providerItem).anthropicTtl === "1h" ? { ttl: "1h" } : {}),
   };
 }
 
@@ -257,9 +259,9 @@ export function claudeSystemContent(system: unknown, providerItem: Provider) {
   const text = String(system ?? "").trim();
   if (!text) return undefined;
   // 对齐安卓 ClaudeProvider.buildMessageRequest：system 始终以 text block 数组发送
-  // （无缓存时也用数组，避免部分第三方代理只认数组格式）；开启 promptCaching 时
-  // 在最后一个 block 上加 cache_control。
-  if (providerItem.promptCaching === true) return withClaudeCacheOnLastBlock(text, providerItem);
+  // （无缓存时也用数组，避免部分第三方代理只认数组格式）；策略开缓存时
+  // 在最后一个 block 上加 cache_control(C1 起读策略单源,订阅行规则随之生效)。
+  if (promptCachePolicyFor(providerItem).anthropicCaching) return withClaudeCacheOnLastBlock(text, providerItem);
   return [claudeTextBlock(text)];
 }
 
@@ -306,7 +308,7 @@ export function claudeMessagesFromApiMessages(messages: ApiMessage[], providerIt
     }
   }
 
-  if (providerItem.promptCaching !== true) return mergedItems;
+  if (!promptCachePolicyFor(providerItem).anthropicCaching) return mergedItems;
 
   const realUserIndices = mergedItems
     .map((item, index) => {
@@ -335,7 +337,7 @@ export function claudeToolsFromOpenAiTools(tools: any[], providerItem: Provider)
         name,
         description: String(fn.description ?? ""),
         input_schema: isRecord(fn.parameters) ? fn.parameters : { type: "object", properties: {} },
-        ...(providerItem.promptCaching === true && index === tools.length - 1
+        ...(promptCachePolicyFor(providerItem).anthropicCaching && index === tools.length - 1
           ? { cache_control: claudeCacheControlEphemeral(providerItem) }
           : {}),
       };

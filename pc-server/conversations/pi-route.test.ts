@@ -351,12 +351,16 @@ describe("引擎判定单源(审批旁路/压缩路由收编)", () => {
     // steering 能力声明:两个引擎都在真边界调 onSteerBoundary(pi=turn_end,chat=工具轮/最终轮),
     // 协调器据此下发回调;声明改成 "none" 会让编排层不再下发,补发退化为收尾派发。
     expect(piAdapter.steering).toBe("boundary");
+    // 缓存预热能力声明(C1):两引擎都是进程内 + globalThis.fetch → 宿主预热服务("host")
+    // 可捕获重放;C2 上线后预热服务据此分派,子进程引擎届时声明 engine-native/none。
+    expect(piAdapter.cacheWarming).toBe("host");
 
     const chatAdapter = resolveEngineForConversation(seedConversation(null));
     expect(chatAdapter.kind).toBe("chat");
     expect(chatAdapter.resumeSemantics).toBe("pause-resume");
     expect(chatAdapter.compact).toBeUndefined();
     expect(chatAdapter.steering).toBe("boundary");
+    expect(chatAdapter.cacheWarming).toBe("host");
   }, 30_000);
 
   test("compactEngineConversation:普通会话回落(null),工作区会话穿透到 pi 压缩驱动", async () => {

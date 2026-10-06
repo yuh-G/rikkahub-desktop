@@ -230,11 +230,17 @@ export function mergeClaudeUsage(
   const mergedPrompt = promptTokens > 0 ? promptTokens : ((prev as any)?.promptTokens ?? 0);
   const mergedCompletion =
     completionTokens > 0 ? completionTokens : ((prev as any)?.completionTokens ?? 0);
+  // 缓存写入量:同样"新值>0 才采用"——message_delta 只带 output,不能把 message_start
+  // 已知的写入量清零。C2 预热「值得预热」判定的数据源(cacheWriteTokens 已在
+  // cacheCreation 里并入 promptTokens,此字段纯增量信息,不改变既有计量)。
+  const mergedCacheWrite =
+    cacheCreation > 0 ? cacheCreation : ((prev as any)?.cacheWriteTokens ?? 0);
   return {
     promptTokens: mergedPrompt,
     completionTokens: mergedCompletion,
     totalTokens: mergedPrompt + mergedCompletion,
     cachedTokens: cacheRead > 0 ? cacheRead : ((prev as any)?.cachedTokens ?? 0),
+    ...(mergedCacheWrite > 0 ? { cacheWriteTokens: mergedCacheWrite } : {}),
   };
 }
 

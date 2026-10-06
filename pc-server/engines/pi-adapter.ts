@@ -30,6 +30,9 @@ export function createPiAdapter(impl: { run: PiRunFn; compact: PiCompactFn }): E
     resumeSemantics: "run-and-suspend",
     // runner 在 pi turn_end 调用 onSteerBoundary,文本经 session.steer() 入 pi steering 队列。
     steering: "boundary",
+    // 进程内引擎、LLM fetch 走 globalThis.fetch → C2 宿主预热服务可捕获重放(pi 自带
+    // CacheWarmer 由受控 settings 关闭,预热权统一在宿主)。
+    cacheWarming: "host",
     run(ctx, sink, signal) {
       const withRuntime: EngineRunContext & { piRuntime: WorkspaceRuntime | null } = {
         ...ctx,

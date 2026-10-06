@@ -27,10 +27,12 @@ import { createAgentSession } from "../../pi/packages/coding-agent/src/core/sdk.
 
 import type { ToolDefinition } from "../../pi/packages/coding-agent/src/core/extensions/types.ts";
 import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
+import type { StreamFn } from "../../pi/packages/agent/src/types.ts";
 import type { GenerationEventSink } from "../inference-engine/events";
 import type { Message, Model, Provider } from "../foundation/types";
 import { piAgentDir } from "../foundation/paths";
 import { CodedError } from "../foundation/errors";
+import { promptCachePolicyFor } from "../model-providers/prompt-cache";
 import { createPiModelRuntime, mapProviderModelToPi, piThinkingLevelFor, type PiModelLimits } from "./model-bridge";
 import { llmLogContextFor, runWithLlmRequestLog } from "./llm-request-log";
 import { createPiEventBridge } from "./event-bridge";
@@ -96,6 +98,34 @@ export interface CapturedEngineCompaction {
   tokensBefore: number;
 }
 
+/** pi 的 cacheRetention(策略单源翻译,C1)。anthropicCaching 关 = "none"(工作区请求
+ *  随「Claude 提示缓存」开关逐字收敛,修复 S6:此前 pi 默认 short 恒打 cache_control);
+ *  开则 TTL 决定 short/long。OpenAI 格式:openaiCacheKey 开 = "short"(pi 会话 id 已
+ *  稳定成 conversationId,Responses/completions 由此发 prompt_cache_key 做缓存路由)、
+ *  关 = "none"。其他协议(google)pi 原生不消费该值,给 none 亦无副作用。
+ *  订阅 Claude 行恒开规则住在策略函数里(model-providers/prompt-cache),本翻译层
+ *  零业务规则——未来引擎照此翻译即可继承同款语义。 */
+function piCacheRetentionFor(provider: Provider): "none" | "short" | "long" {
+  const policy = promptCachePolicyFor(provider);
+  if (provider.type === "claude") {
+    if (!policy.anthropicCaching) return "none";
+    return policy.anthropicTtl === "1h" ? "long" : "short";
+  }
+  if (provider.type === "openai") return policy.openaiCacheKey ? "short" : "none";
+  return "none";
+}
+
+/** 会话组装公共件:每轮生成的 pi SessionManager 用 conversationId 作会话 id——
+ *  pi 的 prompt_cache_key(Responses/completions 的缓存路由键)与 OpenRouter 亲和头
+ *  都读它,稳定 id 让缓存路由跨轮命中(此前每轮随机 uuidv7,同会话永远打不进同一
+ *  缓存分片)。与 §7.4 会话身份头同一值:「缓存路由身份」与「限流分桶身份」统一为
+ *  会话 id。会话 id 须过 pi 的字符白名单(字母数字与 -_.),宿主会话 id 是 uuid,
+ *  天然合法;防御性替换非白名单字符(断言形状,不发明新 id)。 */
+function piSessionManagerFor(cwd: string, conversationId: string): SessionManager {
+  const safeId = conversationId.replace(/[^A-Za-z0-9._-]/g, "_") || "session";
+  return SessionManager.inMemory(cwd, { id: safeId });
+}
+
 export interface PiGenerationResult {
   /** 全程 assistant 可见文本(镜像聊天引擎 allContent 口径:trim,空则占位)。 */
   text: string;
@@ -137,8 +167,9 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   // 兼作存量自愈:内测期已产生的残留在用户下次使用该工作区时自动消失。
   sweepWorkspaceReservedNameArtifacts(ctx.cwd);
 
-  // P7:引擎上下文从 SQLite 历史每轮重建,inMemory 会话零文件生命周期。
-  const manager = SessionManager.inMemory(ctx.cwd);
+  // P7:引擎上下文从 SQLite 历史每轮重建,inMemory 会话零文件生命周期。会话 id 用
+  // conversationId(piSessionManagerFor:缓存路由/亲和头跨轮稳定)。
+  const manager = piSessionManagerFor(ctx.cwd, ctx.conversationId);
   const seeded = seedPiSessionFromHistory({
     manager,
     history: ctx.history,
@@ -166,6 +197,17 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
       ? { resourceLoader: ctx.resources.resourceLoader, settingsManager: ctx.resources.settingsManager }
       : {}),
   });
+
+  // C1 缓存策略注入:包一层 streamFunction 把策略翻译的 cacheRetention 塞进 options
+  // (sdk 的 buildRequestOptions 以 ...options 透传)。`?? 策略值` 语义 = 显式值优先:
+  // pi 压缩/摘要请求自带 cacheRetention:"none"(compaction.ts completeSummarization),
+  // 包装器不得覆盖。这是 pi 官方公开扩展点(proxy 流同款),非补丁;上游若重构
+  // streamFn 内部结构,失效形态是"回到 pi 默认 short",行为锁测试会先红。
+  const cacheRetention = piCacheRetentionFor(ctx.provider);
+  const innerStreamFn = session.agent.streamFunction;
+  const wrappedStreamFn: StreamFn = (model_, context, options) =>
+    innerStreamFn(model_, context, { ...options, cacheRetention: options?.cacheRetention ?? cacheRetention });
+  session.agent.streamFunction = wrappedStreamFn;
 
   // steering 一次吸收全部:与聊天引擎 steerBoundary 整批排水、Codex pending_input
   // split_off(0) 同语义——多条插话 = 多个 user 气泡 + 一个 ai_2,不按轮次逐条滴灌。
@@ -304,7 +346,9 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
   if (!mapped.ok) throw new Error(`该模型无法在工作区引擎使用：${mapped.reason}`);
   const { runtime, model } = await createPiModelRuntime(mapped.mapping);
 
-  const manager = SessionManager.inMemory(ctx.cwd);
+  // 会话 id 同生成路径(piSessionManagerFor);压缩请求自带的 cacheRetention:"none"
+  // 在 pi 内部(completeSummarization),不经我们的包装面,天然不受策略影响。
+  const manager = piSessionManagerFor(ctx.cwd, ctx.conversationId);
   const seeded = seedPiSessionFromHistory({
     manager,
     history: ctx.history,

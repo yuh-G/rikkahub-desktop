@@ -1,7 +1,9 @@
 // 专题11-P1-3 回归网:缓存命中字段多方言解析(对齐安卓 #1576)与 usage 合并语义
 // (新值>0 才覆盖)。防止"后到的 usage 事件缺字段把已知命中数清零"回潮。
+// C1:cacheWriteTokens(Anthropic cache_creation_input_tokens 的落库镜像,C2 预热
+// 「值得预热」判定的数据源)同语义锁定。
 import { describe, expect, test } from "bun:test";
-import { appendUsageFromRaw } from "./providers";
+import { appendUsageFromRaw, mergeClaudeUsage } from "./providers";
 import { mergeTokenUsage } from "./tool-loop";
 import { message } from "../foundation/utils";
 
@@ -76,6 +78,35 @@ describe("usage 合并语义(新值>0 才覆盖)", () => {
     expect((kept as Record<string, number>).generationMs).toBe(1200);
     // 两侧都没有 → 不虚构字段(旧数据形状不变,前端按缺省回退全程)。
     expect("generationMs" in (mergeTokenUsage({ ...base }, { ...base }) as object)).toBe(false);
+  });
+
+  test("mergeTokenUsage:cacheWriteTokens 同款新值>0 才覆盖(C1:跨轮保留已知写入量)", () => {
+    const base = { promptTokens: 1, completionTokens: 2, totalTokens: 3, cachedTokens: 0 };
+    // 后到缺该字段(OpenAI 轨/pi 轮缺报)不清零上一轮已知写入量。
+    const kept = mergeTokenUsage({ ...base, cacheWriteTokens: 4096 }, { ...base });
+    expect((kept as Record<string, number>).cacheWriteTokens).toBe(4096);
+    // 新值>0 覆盖;恒零不虚构字段(非 Anthropic 格式零值不发键)。
+    const updated = mergeTokenUsage({ ...base, cacheWriteTokens: 4096 }, { ...base, cacheWriteTokens: 8192 });
+    expect((updated as Record<string, number>).cacheWriteTokens).toBe(8192);
+    expect("cacheWriteTokens" in (mergeTokenUsage({ ...base }, { ...base }) as object)).toBe(false);
+  });
+});
+
+describe("mergeClaudeUsage:cacheWriteTokens(C1)", () => {
+  test("message_start 的 cache_creation_input_tokens 落 cacheWriteTokens;message_delta 缺该字段不清零", () => {
+    const first = mergeClaudeUsage(
+      { input_tokens: 10, cache_read_input_tokens: 5, cache_creation_input_tokens: 2000, output_tokens: 1 },
+      undefined,
+    );
+    expect(first).toMatchObject({ promptTokens: 2015, cachedTokens: 5, cacheWriteTokens: 2000 });
+    // message_delta 只带 output_tokens(anthropic 语义)——写入量保留。
+    const second = mergeClaudeUsage({ output_tokens: 30 }, first);
+    expect(second).toMatchObject({ promptTokens: 2015, completionTokens: 30, cacheWriteTokens: 2000 });
+  });
+
+  test("无缓存写入时不发字段(旧数据形状不变)", () => {
+    const usage = mergeClaudeUsage({ input_tokens: 10, output_tokens: 5 }, undefined);
+    expect(usage).toEqual({ promptTokens: 10, completionTokens: 5, totalTokens: 15, cachedTokens: 0 });
   });
 });
 

@@ -43,6 +43,15 @@ export type EngineResumeSemantics = "pause-resume" | "run-and-suspend";
  *  引擎的真实调用)。 */
 export type EngineSteeringSupport = "boundary" | "none";
 
+/** 缓存预热能力声明(C1,与 §7.1 其余声明会师于 P1):
+ *  - "host":进程内引擎、LLM 请求走 globalThis.fetch——C2 宿主预热服务经 fetch 层
+ *    捕获/重放,引擎零感知自动纳入。
+ *  - "engine-native":子进程引擎,请求不经宿主 fetch,只能把开关翻译进引擎自身配置
+ *    (dsh 的 llm-pi-ai provider 配置);宿主不做跨进程预热(刻意架构边界,方案 §5.7-④)。
+ *  - "none":引擎无缓存概念或明确不参与。
+ *  必填:新引擎必须显式声明,预热服务据此分派而不是靠引擎 id 猜。 */
+export type EngineCacheWarming = "host" | "engine-native" | "none";
+
 /** 引擎无关的生成输入包(编排器入口一次性装配,贯穿本次生成)。 */
 export interface EngineRunContext {
   conversation: Conversation;
@@ -93,6 +102,8 @@ export interface EngineAdapter {
   matches(conversation: Conversation, assistant: Assistant): boolean;
   readonly resumeSemantics: EngineResumeSemantics;
   readonly steering: EngineSteeringSupport;
+  /** 缓存预热能力(见 EngineCacheWarming):chat/pi 均为进程内 + globalThis.fetch = "host"。 */
+  readonly cacheWarming: EngineCacheWarming;
   /** 驱动一次生成,经 sink 发出 GenerationEvent,返回最终文本(steer 分裂后为当前段口径)。 */
   run(ctx: EngineRunContext, sink: GenerationEventSink, signal?: AbortSignal): Promise<string>;
   /** 可选能力:引擎原生压缩(压引擎记忆,UI 历史不动)。每个引擎的压缩机制独立设计

@@ -14,6 +14,7 @@ import { applyCustomBody, applyRequestHeaders, findModel } from "../model-provid
 import { resolveProviderAuthForProvider, applyShaping } from "../model-providers/auth";
 import { endpointFor } from "../model-providers/checks";
 import { openAiMaxTokensField, reasoningLevelNormalized } from "../model-providers/request-dialect";
+import { promptCachePolicyFor } from "../model-providers/prompt-cache";
 import {
   claudeCacheControlEphemeral,
   claudeMessagesFromApiMessages,
@@ -241,8 +242,8 @@ export async function callProvider(
       system: claudeSystemContent(systemContent, providerItem),
       messages: claudeMessagesFromApiMessages(messages, providerItem),
       // 顶层 cache_control: 让 Anthropic 自动管理缓存断点
-      // 对齐安卓 ClaudeProvider.kt:275-278 (commit d2e52106)
-      ...(providerItem.promptCaching === true
+      // 对齐安卓 ClaudeProvider.kt:275-278 (commit d2e52106);C1 起读策略单源。
+      ...(promptCachePolicyFor(providerItem).anthropicCaching
         ? { cache_control: claudeCacheControlEphemeral(providerItem) }
         : {}),
       ...(assistant.temperature != null && !reasoningActive ? { temperature: assistant.temperature } : {}),
@@ -280,7 +281,7 @@ export async function callProvider(
       ...(assistant.maxTokens != null ? { max_output_tokens: assistant.maxTokens } : {}),
       ...(reasoning ? { reasoning } : {}),
       ...(include ? { include } : {}),
-      ...(providerItem.promptCacheKey === true ? { prompt_cache_key: conversation.id } : {}),
+      ...(promptCachePolicyFor(providerItem).openaiCacheKey ? { prompt_cache_key: conversation.id } : {}),
       tools: [
         ...functionTools.map(responseApiFunctionTool),
         ...builtInTools,
@@ -304,7 +305,7 @@ export async function callProvider(
     ...reasoningPayloadForProvider(providerItem, picked.model, assistant.reasoningLevel),
     tools: tools.length ? tools : undefined,
     tool_choice: tools.length ? "auto" : undefined,
-    ...(providerItem.promptCacheKey === true ? { prompt_cache_key: conversation.id } : {}),
+    ...(promptCachePolicyFor(providerItem).openaiCacheKey ? { prompt_cache_key: conversation.id } : {}),
     ...(openRouterSessionId ? { session_id: openRouterSessionId } : {}),
   };
   return fetchOpenAiText(url, headers, applyCustomBody(shaped(body), assistant, picked.model), providerItem, assistant, signal, hooks);
@@ -397,7 +398,7 @@ export async function callProviderStreaming(
       ...(assistant.maxTokens != null ? { max_output_tokens: assistant.maxTokens } : {}),
       ...(reasoning ? { reasoning } : {}),
       ...(include ? { include } : {}),
-      ...(providerItem.promptCacheKey === true ? { prompt_cache_key: conversation.id } : {}),
+      ...(promptCachePolicyFor(providerItem).openaiCacheKey ? { prompt_cache_key: conversation.id } : {}),
       tools: responseTools.length ? responseTools : undefined,
     }), assistant, picked.model);
     // 订阅供应商整形:Codex 需 include reasoning.encrypted_content、不识别 max_output_tokens。
@@ -415,7 +416,7 @@ export async function callProviderStreaming(
     ...reasoningPayloadForProvider(providerItem, picked.model, assistant.reasoningLevel),
     tools: tools.length ? tools : undefined,
     tool_choice: tools.length ? "auto" : undefined,
-    ...(providerItem.promptCacheKey === true ? { prompt_cache_key: conversation.id } : {}),
+    ...(promptCachePolicyFor(providerItem).openaiCacheKey ? { prompt_cache_key: conversation.id } : {}),
     ...(openRouterSessionId ? { session_id: openRouterSessionId } : {}),
     stream: true,
     stream_options: hostOfProvider(providerItem) === "api.mistral.ai" ? undefined : { include_usage: true },

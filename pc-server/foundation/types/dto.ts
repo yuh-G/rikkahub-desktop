@@ -50,6 +50,11 @@ export type TokenUsage = {
   completionTokens: number;
   cachedTokens: number;
   totalTokens: number;
+  /** 上一轮缓存写入量(Anthropic cache_creation_input_tokens;pi 侧 cacheWrite 含 1h
+   *  细分)。C2 宿主预热「值得预热」判定的数据源(证明该端点确实在缓存)。可选——
+   *  仅 Anthropic 格式回报,其余协议缺省;前端统计页按 key 取值,未知 key 无感;
+   *  安卓导出整体忽略 usage(JsonValue),零跨端风险。 */
+  cacheWriteTokens?: number;
   /** true = 本地字数折算的估算值(厂商未回报 usage,见 conversations/helpers.ts ensureUsage);
    *  统计页命中率分母与前端上下文用量条均排除估算记录。 */
   estimated?: boolean;

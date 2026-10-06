@@ -81,6 +81,11 @@ export interface Provider {
   includeHistoryReasoning?: boolean;
   promptCaching?: boolean;
   promptCacheTtl?: "5m" | "1h";
+  // 缓存预热(PC 独有,C2 宿主预热服务消费):长时间工具运行/等待审批时在缓存过期前
+  // 自动发保温请求。语义 !== false 即开——旧数据与 APP 导入缺失该字段时跟随默认开,
+  // 仅 anthropicCaching 开启时有意义(见 model-providers/prompt-cache.ts 策略单源)。
+  // to-android 备份导出剥离(backup/export.ts stripPcOnly,安卓无此字段)。
+  promptCacheWarming?: boolean;
   // 专题12:OpenAI 系请求附带 prompt_cache_key=会话ID,官方端据此把同一会话路由到
   // 同一缓存分片提高命中率(codex 同款)。第三方兼容端可能不识别该字段报 400,
   // 故做成 provider 级开关,默认关。

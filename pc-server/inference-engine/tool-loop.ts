@@ -41,11 +41,15 @@ export function mergeTokenUsage(prev: Message["usage"], next: Message["usage"]):
   const contextLimit = nextRec.contextLimit !== undefined ? nextRec.contextLimit : prevRec.contextLimit;
   // generationMs 单调累计(骨架每轮发的都是至今总和),新值>0 覆盖语义天然正确。
   const generationMs = pick("generationMs");
+  // cacheWriteTokens 同款"新值>0 才覆盖"——多轮工具循环里后续轮缺该字段时保留
+  // 上一轮已知的缓存写入量(C2 预热判定跨轮可用)。
+  const cacheWriteTokens = pick("cacheWriteTokens");
   return {
     promptTokens: pick("promptTokens"),
     completionTokens: pick("completionTokens"),
     totalTokens: pick("totalTokens"),
     cachedTokens: pick("cachedTokens"),
+    ...(cacheWriteTokens > 0 ? { cacheWriteTokens } : {}),
     ...(contextLimit !== undefined ? { contextLimit: contextLimit as number | null } : {}),
     ...(generationMs > 0 ? { generationMs } : {}),
   };

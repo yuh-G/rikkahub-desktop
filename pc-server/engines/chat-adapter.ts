@@ -19,6 +19,8 @@ export function createChatAdapter(chatRun: ChatRunFn): EngineAdapter {
     resumeSemantics: "pause-resume",
     // 工具循环骨架在工具轮边界与最终轮调用 onSteerBoundary(inference-engine/tool-loop absorbSteering)。
     steering: "boundary",
+    // 进程内引擎、LLM fetch 走 globalThis.fetch → C2 宿主预热服务可捕获重放。
+    cacheWarming: "host",
     run(ctx, sink, signal) {
       return chatRun(ctx, sink, signal);
     },

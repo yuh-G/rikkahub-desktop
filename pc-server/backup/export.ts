@@ -260,10 +260,15 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     // 同「未填 key」。pc-backup(PC→PC)不剥,跨机恢复带上(免重登,与 apiKey 同策略)。
     if (Array.isArray(copy.providers)) {
       copy.providers = copy.providers.map((p: any) => {
-        if (!isRecord(p) || (p.authMode === undefined && p.oauth === undefined)) return p;
+        if (!isRecord(p)) return p;
         const stripped = { ...p };
-        delete stripped.authMode;
-        delete stripped.oauth;
+        if (p.authMode !== undefined || p.oauth !== undefined) {
+          delete stripped.authMode;
+          delete stripped.oauth;
+        }
+        // promptCacheWarming 是 PC-only 缓存预热开关(C1 加字段):安卓 Provider 无此概念,
+        // 按纪律剥离最稳(方案 §5.6);pc-backup 保留,APP→PC 导入缺失即默认开。
+        delete stripped.promptCacheWarming;
         return stripped;
       });
     }
