@@ -25,20 +25,23 @@ jobs:
       # 一并打包;缺了 bun build 报 Could not resolve)。pi 的 bun.lock 是
       # lockfileVersion 1,Bun 1.4.0 会迁移它,故不能用 --frozen-lockfile。
       # packages/ai/src/providers/data/ 是构建期生成物、git 不跟踪。模型数据走
-      # pi-model-data/ 快照(host 仓库 tracked,与下方 pin 的基线严格配对)——不跑
-      # generate-models:它先删全部 *.models.ts 分片再按 models.dev 当天状态重建,
-      # 第三方数据漂移(2026-09-21 kimi-for-coding 被摘除)会让分片删后无人重建,
-      # server.ts 全图解析直接崩(当日 CI 19 红 + Linux 发版构建失败,全是它)。
+      # pi-model-data/ 快照(host 仓库 tracked,42 个分片,与下方 pin 的基线严格
+      # 配对)——不跑 generate-models:它按 models.dev 当天实时状态生成,不可复现
+      # (2026-09-21 kimi-for-coding 被摘除当日 CI 19 红)。快照在升级时按 nix pin
+      # (pi/nix/model-catalog.json 的 revision)从 pi.dev API 离线 hydrate 生成,
+      # 逐字节可复现,流程见 CLAUDE.md 维护手册第 3 步。check-model-data 守卫:
+      # 分片/manifest 不一致会让内建目录静默变空,粘贴后立即校验。
       - name: Restore pi vendor
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/earendil-works/pi.git pi
           cd pi
-          git checkout d981de1229ef899957bbe968bc8dcda02a21f477
+          git checkout d78dc83d633229d12f8b79631384c4c2717c399f
           git reset --hard
           git apply ../pi-patches/*.patch
           bun install
           mkdir -p packages/ai/src/providers/data
           cp ../pi-model-data/*.json ../pi-model-data/.manifest.json packages/ai/src/providers/data/
+          bun packages/ai/scripts/check-model-data.ts
 
       - name: Install pc-server dependencies
         working-directory: pc-server
@@ -91,12 +94,13 @@ jobs:
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/earendil-works/pi.git pi
           cd pi
-          git checkout d981de1229ef899957bbe968bc8dcda02a21f477
+          git checkout d78dc83d633229d12f8b79631384c4c2717c399f
           git reset --hard
           git apply ../pi-patches/*.patch
           bun install
           mkdir -p packages/ai/src/providers/data
           cp ../pi-model-data/*.json ../pi-model-data/.manifest.json packages/ai/src/providers/data/
+          bun packages/ai/scripts/check-model-data.ts
 
       - name: Install pc-server dependencies
         working-directory: pc-server

@@ -53,15 +53,13 @@ RUN bun run build
 # --no-install-recommends 防止 bookworm-slim 带 ca-certificates 缺失导致 https clone 失败。
 # 装 pi 自己的依赖(proper-lockfile/typebox/openai 等,bun build 会把它们一并打包)。
 #
-# 模型数据走 pi-model-data/ 快照(host 仓库 tracked,与 Dockerfile 的 pi pin 配对),
-# 不跑 generate-models:上游生成器是破坏性的(先删全部 *.models.ts 分片再按
-# models.dev 【当天】状态重建)——第三方数据漂移(实测 2026-09:kimi-for-coding 被
-# models.dev 摘除)会让 tracked 分片被删后无人重建,或聚合器引用的 data/*.json
-# 缺失,bun build 解析 import 即失败:每次构建都在赌 models.dev 的实时状态。
-# 快照 = 本地 pi/(pin 基线 + 补丁)生成的 data/ 原样拷贝,与 39 个 tracked 分片
-# 严格配对,构建从此可复现。pi 升级换基线时:本地 pi 重跑 bun run generate-models
-# (它产出与新版分片配对的 data/),再刷新本目录快照(升级流程第 2 步刷新 patches
-# 的同款时机)。
+# 模型数据走 pi-model-data/ 快照(host 仓库 tracked,42 个分片,与下方 pin 的基线
+# 严格配对),不跑 generate-models:它按 models.dev【当天】实时状态生成,不可复现
+# (实测 2026-09:kimi-for-coding 被摘除让发版构建直接失败)。快照在升级时按 nix
+# pin(pi/nix/model-catalog.json 的 revision)从 pi.dev API 离线 hydrate 生成,
+# 逐字节可复现,流程见 CLAUDE.md 维护手册第 3 步。
+# check-model-data 守卫(builder 镜像只有 bun,该脚本 bun 可直接跑,已验证):
+# 分片/manifest 不一致会让内建目录静默变空,粘贴后立即校验。
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
@@ -70,12 +68,13 @@ COPY pi-patches/ ./pi-patches/
 COPY pi-model-data/ ./pi-model-data/
 RUN git clone --filter=blob:none --no-checkout https://github.com/earendil-works/pi.git pi && \
     cd pi && \
-    git checkout d981de1229ef899957bbe968bc8dcda02a21f477 && \
+    git checkout d78dc83d633229d12f8b79631384c4c2717c399f && \
     git reset --hard && \
     git apply ../pi-patches/*.patch && \
     bun install && \
     mkdir -p packages/ai/src/providers/data && \
-    cp ../pi-model-data/*.json ../pi-model-data/.manifest.json packages/ai/src/providers/data/
+    cp ../pi-model-data/*.json ../pi-model-data/.manifest.json packages/ai/src/providers/data/ && \
+    bun packages/ai/scripts/check-model-data.ts
 
 # Compile server — cross-compile to match the runtime platform.
 # Lay out a separate /build/pc-server subtree so we don't mix the pc-server lockfile
