@@ -296,6 +296,9 @@ const REGISTERED_OUTPUT_CAP_FILES: ReadonlySet<string> = new Set([
   // 方言事实单源:OUTPUT_LIMIT_FACTS 登记表(一手文档上限)+ DEFAULT_OUTPUT_TOKENS 兜底常量。
   // 它是 model-limits 的取值来源之一(登记优先于目录),自身即单源的一部分。
   "model-providers/request-dialect.ts",
+  // C2 缓存保温重放:恒 max_tokens:1(保温请求不产出内容,1 是协议最小合法值,不是
+  // 模型上限决策——原请求的上限已由捕获时点决定,重放只压输出)。
+  "inference-engine/cache-warming.ts",
 ]);
 
 /** 线上字段判别符:出现即意味着"这里在决定发给模型的输出上限"。 */

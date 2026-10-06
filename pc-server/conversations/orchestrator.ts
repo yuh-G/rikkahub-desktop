@@ -86,6 +86,7 @@ import { flushConvDirtyNow, getConversation, getConversationsDb, markConversatio
 import { checkoutConversation, releaseConversation } from "./working-set";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
+import { cacheWarmingContextFor, noteCacheUsage, runWithCacheWarming, stopCacheWarming } from "../inference-engine/cache-warming";
 import { abortGeneration, abortReasonOf, awaitingApproval, compressing, generating } from "./generation-state";
 import { deliverQueuedReply, holdMessageQueue, isQueueHeldByInterrupt, isQueuePaused, notifyQueuedGenerationDispatched, pauseMessageQueue, queueSnapshotFor, removeQueuedMessage, setOnQueuedGenerationDispatched, shiftNextQueued } from "./message-queue";
 import { clearSteeringChannel, drainSteeringMessages } from "./steering-channel";
@@ -1133,6 +1134,9 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
   }
   conversation.updateAt = Date.now();
   broadcastNodeUpdate(conversation, assistantNode);
+  // C2 预热上下文:整个生成期包进 ALS(fetch 层捕获壳据此圈定本会话的 Anthropic 请求)。
+  // 策略关/端点不合格时为 null(壳直通零开销);生成结束在 finally 统一停(见下)。
+  const warmingContext = cacheWarmingContextFor(picked.provider, conversation.id);
   try {
     if (resumingApprovedTools) {
       await resumeApprovedToolParts(conversation, assistant, currentMessage, assistantNode, false, controller.signal);
@@ -1175,26 +1179,31 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
         broadcastEngineStatus(conversation.id, event.status);
         return;
       }
+      // C2 预热「值得预热」证明:usage 事件镜像(缓存读过/写过即证端点在缓存)。
+      // 两引擎的 usage 都走本 sink(聊天引擎 tool-loop、pi event-bridge),单点覆盖。
+      if (event.kind === "usage") noteCacheUsage(conversation.id, event.usage);
       applyEvent(event);
     };
-    const content = await runGeneration(
-      {
-        conversation,
-        target: session,
-        assistant,
-        provider: picked.provider,
-        model: picked.model,
-        executeTool,
-        // steering 轮边界(用户问题②):唯一装配点。聊天引擎在工具循环轮边界与最终轮调用;
-        // pi 引擎在 turn_end 调用;未来引擎在「即将构建下一模型请求前」调用同一回调即自动
-        // 继承分裂能力(收口当前节点、落库 steer user、新开 continuation 节点并换绑)。
-        // 声明 steering:"none" 的引擎不下发——排水即分裂,不能注入的引擎不该有机会排水;
-        // 其补发留在队列由收尾派发兜底。
-        ...(adapter.steering === "boundary" ? { onSteerBoundary: () => steerBoundary(conversation.id, session) } : {}),
-        adapter,
-      },
-      sink,
-      controller.signal,
+    const content = await runWithCacheWarming(warmingContext, () =>
+      runGeneration(
+        {
+          conversation,
+          target: session,
+          assistant,
+          provider: picked.provider,
+          model: picked.model,
+          executeTool,
+          // steering 轮边界(用户问题②):唯一装配点。聊天引擎在工具循环轮边界与最终轮调用;
+          // pi 引擎在 turn_end 调用;未来引擎在「即将构建下一模型请求前」调用同一回调即自动
+          // 继承分裂能力(收口当前节点、落库 steer user、新开 continuation 节点并换绑)。
+          // 声明 steering:"none" 的引擎不下发——排水即分裂,不能注入的引擎不该有机会排水;
+          // 其补发留在队列由收尾派发兜底。
+          ...(adapter.steering === "boundary" ? { onSteerBoundary: () => steerBoundary(conversation.id, session) } : {}),
+          adapter,
+        },
+        sink,
+        controller.signal,
+      ),
     );
     if (controller.signal.aborted) throw new DOMException("Generation stopped", "AbortError");
     if (adapter.resumeSemantics === "pause-resume" && hasPendingToolApproval(session.message)) {
@@ -1283,6 +1292,10 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
       session.message.annotations.push({ type: "model_call_error", message: failureText });
     });
   } finally {
+    // C2:第一期只做 streaming 模式——生成结束(四条出口路径的共同收尾)即停保温。
+    // 等 pi 工具审批挂起时 generating 仍在册、本函数未到 finally,保温恰好覆盖
+    // 「等待审批超 TTL」这一主价值场景。会话删除路径另有 discardCacheWarmingState。
+    stopCacheWarming(conversation.id);
     // 语音模式回复通道兜底:成功路径已交付;走到 finally 仍未交付 = 本条排队生成以
     // abort/失败/被接管收尾(均无可播报回复),交付 null 让语音模式跳过播报、直接重开麦。
     const replySourceId = queuedGenerationSource.get(conversation.id);
