@@ -351,9 +351,10 @@ describe("引擎判定单源(审批旁路/压缩路由收编)", () => {
     // steering 能力声明:两个引擎都在真边界调 onSteerBoundary(pi=turn_end,chat=工具轮/最终轮),
     // 协调器据此下发回调;声明改成 "none" 会让编排层不再下发,补发退化为收尾派发。
     expect(piAdapter.steering).toBe("boundary");
-    // 缓存预热能力声明(C1):两引擎都是进程内 + globalThis.fetch → 宿主预热服务("host")
-    // 可捕获重放。编排层以此为分派依据(cacheWarmingContextFor 首参):非 "host" 引擎
-    // (子进程 engine-native / 不参与 none)恒不建立预热上下文,防引擎自热+宿主重放双热。
+    // 缓存预热能力声明(C1):预热价值场景=「生成在等待(审批/长工具)中仍然活着」,
+    // 即 run-and-suspend。pi 工作区轨 → "host"(宿主捕获重放);chat 是 pause-resume,
+    // 遇审批即结束本轮、无等待期可保温 → "none"(D-T2,编排层 cacheWarmingContextFor
+    // 首参据此恒不建上下文)。子进程 engine-native 同为 "none",防引擎自热+宿主重放双热。
     expect(piAdapter.cacheWarming).toBe("host");
 
     const chatAdapter = resolveEngineForConversation(seedConversation(null));
@@ -361,7 +362,7 @@ describe("引擎判定单源(审批旁路/压缩路由收编)", () => {
     expect(chatAdapter.resumeSemantics).toBe("pause-resume");
     expect(chatAdapter.compact).toBeUndefined();
     expect(chatAdapter.steering).toBe("boundary");
-    expect(chatAdapter.cacheWarming).toBe("host");
+    expect(chatAdapter.cacheWarming).toBe("none");
   }, 30_000);
 
   test("compactEngineConversation:普通会话回落(null),工作区会话穿透到 pi 压缩驱动", async () => {

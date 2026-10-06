@@ -248,7 +248,7 @@
     "prompt_cache_title": "Claude prompt caching",
     "prompt_cache_desc": "When enabled, adds cache_control to the system prompt and the second-to-last user message to reuse Anthropic's prompt cache.",
     "prompt_cache_warming_title": "Cache warming",
-    "prompt_cache_warming_desc": "During long tool runs or approval waits, automatically send a keep-warm request that outputs just 1 token before the cache expires, avoiding a full-price context rewrite. Warm requests are billed as cache reads (about one tenth of normal input price), appear in the request log, and only run against the official Anthropic endpoint.",
+    "prompt_cache_warming_desc": "In workspace sessions, during long tool runs or approval waits, automatically send a keep-warm request that outputs just 1 token before the cache expires, avoiding a full-price context rewrite. Warm requests are billed as cache reads (about one tenth of normal input price), appear in the request log, and only run against the official Anthropic endpoint.",
     "prompt_cache_key_title": "Prompt cache routing",
     "prompt_cache_key_desc": "Attach a per-conversation prompt_cache_key so official OpenAI endpoints can route requests of the same conversation to the same cache shard, improving cache hits. Some third-party endpoints may reject this field; enable as needed.",
     "interactions_title": "Interactions API",

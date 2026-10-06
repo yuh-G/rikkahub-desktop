@@ -31,7 +31,7 @@
 //
 // 安装顺序:与 llm-request-log 相同——在 installProxyFetchInterceptor 之后安装(包外层)。
 
-import { AsyncLocalStorage } from "node:async_hooks";
+import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import { addLog } from "../api/logs";
 import type { Provider } from "../foundation/types";
 import { safeJsonParse } from "../foundation/utils";
@@ -67,6 +67,15 @@ export interface CacheWarmingContext {
 }
 
 const als = new AsyncLocalStorage<CacheWarmingContext>();
+
+/** 脱离一切环境上下文的执行器:绑定在模块加载(空上下文)时点,调用时不在任何
+ *  AsyncLocalStorage 的 store 内。用途:schedule 的定时器回调里发出的重放 fetch 不能
+ *  落回捕获时的预热 ALS(Bun 的 ALS 随 setTimeout 传播)——否则重放被自己的捕获壳
+ *  重新圈住,新计划重置 startedAt,1 小时硬上限永远到不了(F 阶段 B2)。也同时脱离
+ *  pi 请求日志的 ALS(重放不该再记一条 provider:agent)。不用 als.exit:它只退出
+ *  单个 store,嵌套两层 ALS(pi 日志壳在预热壳内)时漏掉另一层。T 阶段删 ALS 后
+ *  此执行器随之中间件化,此处是现行结构内的止血修。 */
+const runDetached = AsyncResource.bind(<T>(fn: () => T): T => fn());
 
 /** 编排层入口:把一次生成包进预热上下文(策略关/端点不合格时传 null 免记)。 */
 export function runWithCacheWarming<T>(context: CacheWarmingContext | null, fn: () => T): T {
@@ -266,7 +275,7 @@ function schedule(plan: WarmingPlan): void {
     plans.delete(plan.conversationId);
     return;
   }
-  plan.timer = warmingScheduler.set(() => void refresh(plan), Math.max(0, plan.nextWarmAt - warmingClock.now()));
+  plan.timer = runDetached(() => warmingScheduler.set(() => void refresh(plan), Math.max(0, plan.nextWarmAt - warmingClock.now())));
 }
 
 /** 从捕获的请求体粗估 prompt 规模(兜底通道:usage 尚未回报缓存证明时,拦「prompt
@@ -337,14 +346,14 @@ export function installCacheWarmingInterceptor(): void {
         (init?.method ?? "POST").toUpperCase() === "POST" &&
         typeof init?.body === "string"
       ) {
-        captureRequest(ctx, target, init as { body: string; headers?: Record<string, string> });
+        captureRequest(ctx, target, init as { body: string; headers?: HeadersInit });
       }
     }
     return inner(input, init);
   } as typeof fetch;
 }
 
-function captureRequest(ctx: CacheWarmingContext, url: string, init: { body: string; headers?: Record<string, string> }): void {
+function captureRequest(ctx: CacheWarmingContext, url: string, init: { body: string; headers?: HeadersInit }): void {
   const body = safeJsonParse(init.body);
   if (!isRecord(body)) return;
   if (!isAnthropicReplayable(body)) return;
@@ -362,7 +371,10 @@ function captureRequest(ctx: CacheWarmingContext, url: string, init: { body: str
     providerName: ctx.provider.name,
     request: {
       url,
-      headers: typeof init.headers === "object" && init.headers != null ? { ...init.headers } : {},
+      // 头规范化必须经 Headers 构造:真实 SDK(Anthropic 0.129)给 fetch 的 init.headers 是
+      // Headers 实例,`{...instance}` 展开是 {}——重放会丢全部鉴权头直接 401(F 阶段 B1)。
+      // Headers 把键名转小写,HTTP 头大小写无关,重放无副作用。
+      headers: Object.fromEntries(new Headers(init.headers).entries()),
       body,
       capturedAt: warmingClock.now(),
     },

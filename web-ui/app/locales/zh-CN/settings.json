@@ -248,7 +248,7 @@
     "prompt_cache_title": "Claude 提示缓存",
     "prompt_cache_desc": "开启后会给系统提示词和倒数第二条用户消息添加 cache_control，复用 Anthropic 的提示缓存。",
     "prompt_cache_warming_title": "缓存保温",
-    "prompt_cache_warming_desc": "长时间工具运行或等待审批时，在缓存过期前自动发送一个仅输出 1 token 的保温请求，避免上下文全价重算。保温按缓存读取计费（约为正常输入的十分之一），记录在请求日志，仅官方 Anthropic 端点生效。",
+    "prompt_cache_warming_desc": "工作区会话长时间运行工具或等待审批时，在缓存过期前自动发送一个仅输出 1 token 的保温请求，避免上下文全价重算。保温按缓存读取计费（约为正常输入的十分之一），记录在请求日志，仅官方 Anthropic 端点生效。",
     "prompt_cache_key_title": "提示缓存路由",
     "prompt_cache_key_desc": "请求附带 prompt_cache_key 会话标识，官方 OpenAI 端点据此把同一会话路由到同一缓存分片，提高缓存命中率。部分第三方端点不识别该字段会报错，请按需开启。",
     "interactions_title": "Interactions API",

@@ -19,8 +19,10 @@ export function createChatAdapter(chatRun: ChatRunFn): EngineAdapter {
     resumeSemantics: "pause-resume",
     // 工具循环骨架在工具轮边界与最终轮调用 onSteerBoundary(inference-engine/tool-loop absorbSteering)。
     steering: "boundary",
-    // 进程内引擎、LLM fetch 走 globalThis.fetch → C2 宿主预热服务可捕获重放。
-    cacheWarming: "host",
+    // 聊天引擎不预热(D-T2):pause-resume 语义遇审批即结束本轮生成,finally 立即
+    // stopCacheWarming——「生成在等待中仍然活着」的主价值场景根本不存在,单轮内
+    // 长工具运行也罕见,捕获纯属白记。预热对象只剩 pi 工作区轨(run-and-suspend)。
+    cacheWarming: "none",
     run(ctx, sink, signal) {
       return chatRun(ctx, sink, signal);
     },

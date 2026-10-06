@@ -11,6 +11,15 @@
 //     硬上限 → 不再重放;新请求覆盖旧计划并重置计时。
 //  6. 重放安全:预算式 thinking(type:"enabled")不捕获;失败重放停止计划并 info 上报。
 //
+// F 阶段(2026-10-06)追加四条回归锁(修复前的探针复现,方案 §5):
+//  7. 头形状:B1——真实 SDK(Anthropic 0.129)传 Headers 实例,捕获必须经 Headers
+//     规范化,重放才带鉴权头(前提锁:用真 SDK 断言它确实传 Headers 实例)。
+//  8. 重放不被自己的捕获壳再圈住:B2——定时器回调必须脱离 ALS 上下文,否则重放
+//     触发新捕获、startedAt 重置,1 小时硬上限永远到不了;也脱离 pi 日志壳
+//     (不双记 provider:agent)。硬上限改为「恰好 13 次重放 + 恰好 13 次调度」强断言。
+//  9. 保温日志不进 stats 计数器(B3),但日志列表照常可见。
+// 10. 聊天引擎声明 cacheWarming:"none"(契约断言在 pi-route.test.ts)。
+//
 // 驱动方式:fake inner fetch(拦截器闭包捕获)+ 受控 warmingClock + 立即调度器
 // (llm-request-log.test 同款纪律:全局 fetch 替换只收进 beforeAll/afterAll 执行窗口,
 // 不 patch 全局 Date/setTimeout——bun test 同进程,全局 mock 会污染别的文件)。
@@ -68,6 +77,9 @@ let firesLeftThisFlush = 0;
 /** 测试代数:afterEach 递增,旧代调度器的退避重挂链就地消亡——否则残留链会在下个
  *  用例的 flush 窗口里抢走名额,把"该发的重放"挤成不发(跨用例污染)。 */
 let schedulerGeneration = 0;
+/** 调度器 set 调用计数(F2 锁):捕获调度 1 次 + 每次成功重放重排 1 次。若重放被
+ *  自己的捕获壳再圈住,会多出捕获调度——计数溢出即红。 */
+let schedulerSetCalls = 0;
 
 beforeAll(() => {
   realFetch = globalThis.fetch;
@@ -75,6 +87,7 @@ beforeAll(() => {
   realClockNow = warmingClock.now;
   warmingClock.now = () => nowMs;
   warmingScheduler.set = (fn: () => void, ms: number) => {
+    schedulerSetCalls += 1;
     const generation = schedulerGeneration;
     const arm = (delay: number): ReturnType<typeof setTimeout> =>
       originalSchedulerSet(() => {
@@ -93,9 +106,11 @@ beforeAll(() => {
     let handle = arm(0);
     return handle;
   };
+  // pi 日志壳也装上(在预热壳之后=外层,与生产 bootstrap 顺序一致):F2 的"重放不被
+  // pi 日志壳双记"用例要在两层 ALS 叠加的真实环境里跑。这里不装真壳(幂等 installer
+  // 会定死跨文件链序),用同款 ALS 判定语义的测试侧包装替代(见 piLogDoubleRecordProbe)。
   installCacheWarmingInterceptor(); // 闭包捕获 fakeFetch 为 inner(幂等,进程内一次)
-});
-afterAll(() => {
+});afterAll(() => {
   globalThis.fetch = realFetch;
   warmingClock.now = realClockNow;
   warmingScheduler.set = originalSchedulerSet;
@@ -108,6 +123,7 @@ afterEach(() => {
   logged.length = 0;
   nowMs = 1_000_000;
   scheduleOvershootMs = 0;
+  schedulerSetCalls = 0;
   fetchResponder = () => new Response("{}", { status: 200 });
 });
 
@@ -143,6 +159,23 @@ async function fireAnthropicRequest(
     fetch(`https://api.anthropic.com/v1/messages?beta=true`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": "sk-test" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+/** 同上,但请求头用 Headers 实例——pi 轨的真实形态(pi 的 fetch 调用由
+ *  @anthropic-ai/sdk 发起,SDK 的 buildHeaders 给 init.headers 的是 Headers 实例,
+ *  不是普通对象)。F 阶段 B1 的回归锁靠它:捕获若走 `{...spread}` 展开会得空对象。 */
+async function fireAnthropicRequestWithHeadersInstance(
+  ctxProvider: ReturnType<typeof anthropicProviderFixture>,
+  conversationId: string,
+  body: Record<string, unknown> = LONG_BODY,
+) {
+  await runWithCacheWarming(cacheWarmingContextFor("host", ctxProvider, conversationId), () =>
+    fetch(`https://api.anthropic.com/v1/messages?beta=true`, {
+      method: "POST",
+      headers: new Headers({ "content-type": "application/json", "x-api-key": "sk-test", "anthropic-version": "2023-06-01" }),
       body: JSON.stringify(body),
     }),
   );
@@ -364,5 +397,122 @@ describe("C2 重放安全谓词", () => {
     await fireAnthropicRequest(anthropicProviderFixture(), "conv-budget", budgetBody);
     await flushAsync();
     expect(fetchCalls.length).toBe(1);
+  });
+});
+
+// ---- 7) F 阶段回归锁(2026-10-06 三 bug 修复前的探针复现) ----
+
+describe("F1/B1:请求头形状——Headers 实例(真实 SDK 形态)也能捕获并带鉴权重放", () => {
+  test("前提锁:pi 用的 @anthropic-ai/sdk 0.129 传给 fetch 的 init.headers 确实是 Headers 实例(前提漂移即红)", async () => {
+    const { default: Anthropic } = await import("../../pi/node_modules/@anthropic-ai/sdk/index.js");
+    let headersShape: unknown;
+    const sdkFetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      headersShape = init?.headers;
+      return new Response(JSON.stringify({ id: "msg_1", type: "message", role: "assistant", content: [], model: "m", stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    // fetch 只在客户端构造处注入(0.129 的 RequestOptions 不透传 fetch,实测)。
+    const client = new Anthropic({ apiKey: "sk-test", baseURL: "https://api.anthropic.com/v1", maxRetries: 0, fetch: sdkFetch });
+    await client.messages.create({ model: "claude-fake-5", max_tokens: 8, messages: [{ role: "user", content: "hi" }] });
+    // 这条前提是 F1 修法的根基:若 SDK 某天改传普通对象,F1 的 Headers 构造仍然
+    // 正确(Headers 构造兼容普通对象),此断言红只是提醒复核,不是行为破。
+    expect(headersShape).toBeInstanceOf(Headers);
+  }, 30_000);
+
+  test("Headers 实例形态的捕获:重放头齐全(x-api-key/anthropic-version/content-type),键转小写无碍", async () => {
+    noteCacheUsage("conv-headers", { promptTokens: 9000, cachedTokens: 8500 });
+    await fireAnthropicRequestWithHeadersInstance(anthropicProviderFixture(), "conv-headers");
+    await flushAsync();
+    expect(fetchCalls.length).toBe(2);
+    const replay = fetchCalls[1]!;
+    const headers = replay.init?.headers as Record<string, string>;
+    expect(headers["x-api-key"]).toBe("sk-test");
+    expect(headers["anthropic-version"]).toBe("2023-06-01");
+    expect(headers["content-type"]).toBe("application/json");
+  });
+
+  test("真实 SDK 全链(pi 0.129 同款入口):SDK 发请求 → 捕获 → 重放带 x-api-key(B1 的终极形态)", async () => {
+    const { default: Anthropic } = await import("../../pi/node_modules/@anthropic-ai/sdk/index.js");
+    const sdkFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      // 走被测链路:经 globalThis.fetch(已被捕获壳接管,fakeFetch 为 inner),并包进
+      // 预热 ALS——模拟 runner 里 SDK 的真实执行环境(generateAnswer 外层建立的上下文)。
+      return runWithCacheWarming(cacheWarmingContextFor("host", anthropicProviderFixture(), "conv-sdk"), () =>
+        globalThis.fetch(input as Parameters<typeof fetch>[0], init),
+      );
+    }) as typeof fetch;
+    const client = new Anthropic({ apiKey: "sk-real-sdk", baseURL: "https://api.anthropic.com/v1", maxRetries: 0, fetch: sdkFetch });
+    noteCacheUsage("conv-sdk", { promptTokens: 9000, cachedTokens: 8500 });
+    await client.messages
+      .create({
+        model: "claude-fake-5",
+        max_tokens: 8,
+        stream: true,
+        system: [{ type: "text", text: "S".repeat(20_000), cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: [{ type: "text", text: "你好".repeat(500) }] }],
+      })
+      .asResponse(); // 流式形态:主链路同款(捕获壳只认 stream body 的字符串 POST)
+    await flushAsync();
+    expect(fetchCalls.length).toBeGreaterThanOrEqual(2);
+    const replay = fetchCalls.find((c) => c.url.includes("/v1/messages") && JSON.parse(String(c.init?.body)).max_tokens === 1);
+    expect(replay).toBeDefined();
+    const headers = replay!.init?.headers as Record<string, string>;
+    expect(headers["x-api-key"]).toBe("sk-real-sdk");
+  }, 30_000);
+});
+
+describe("F2/B2:重放脱离捕获上下文——硬上限真停 + 不被 pi 日志壳双记", () => {
+  test("1 小时硬上限:恰好 13 次重放、恰好 13 次调度(重放被再捕获则两数都会溢出)", async () => {
+    noteCacheUsage("conv-hardcap", { promptTokens: 9000, cachedTokens: 8500 });
+    await fireAnthropicRequest(anthropicProviderFixture(), "conv-hardcap");
+    // 5m TTL 档:delay=270s,拍点 270s×n;第 13 拍 3510s 成功后重排 3780s>3600s 被拒,
+    // 计划终止。若 B2 复发(重放再捕获),每拍都建新计划、startedAt 重置,拍数会 >13。
+    for (let i = 0; i < 20 && fetchCalls.length < 14; i += 1) await flushAsync();
+    expect(fetchCalls.length).toBe(14); // 主请求 1 + 重放 13
+    await flushAsync();
+    await flushAsync();
+    expect(fetchCalls.length).toBe(14); // 终局:第 14 拍不再存在
+    // 调度次数同口径:捕获 1 + 前 12 次重放后重排 12 + 第 13 次重放后重排(被拒)不设
+    // 定时器……被拒分支在设 timer 之前 return,故 set 恰好 13。
+    expect(schedulerSetCalls).toBe(13);
+  }, 60_000);
+
+  test("pi 日志 ALS 内的捕获:重放不双记 provider:agent(只有主请求 1 条)", async () => {
+    // pi 日志壳的幂等 installer 会定死跨文件链序(与 llm-request-log.test 的闭包
+    // 冲突),且其模块不导出 store 读取口。这里用自建 ALS 镜像壳判定(语义=生产壳:
+    // 「ALS 上下文内打到目标 origin 的请求才记」),垫在预热壳外层同位。
+    // runDetached 脱离的是"所有环境上下文",自建 ALS 与生产 ALS 同为 AsyncLocalStorage,
+    // 脱离语义逐字一致——此镜像对 F2 的覆盖是忠实的。
+    const { AsyncLocalStorage: TestALS } = await import("node:async_hooks");
+    const logAls = new TestALS<{ providerName: string }>();
+    const logStore: string[] = [];
+    const innerWarming = globalThis.fetch; // 预热壳(包着 fakeFetch)
+    const piLogProbe = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const response = await innerWarming(input, init); // 先走内层(捕获/发包照常)
+      const ctx = logAls.getStore();
+      if (ctx && url.startsWith("https://api.anthropic.com")) logStore.push(ctx.providerName);
+      return response;
+    }) as typeof fetch;
+    globalThis.fetch = piLogProbe;
+    try {
+      noteCacheUsage("conv-pi", { promptTokens: 9000, cachedTokens: 8500 });
+      await logAls.run({ providerName: "Warming Claude" }, () => fireAnthropicRequest(anthropicProviderFixture(), "conv-pi"));
+      await flushAsync();
+    } finally {
+      globalThis.fetch = innerWarming;
+    }
+    // 主请求 1 条(日志 ALS 内)+ 重放 0 条(runDetached 脱离,ALS store 为空)+ 服务
+    // 记账 provider:cache-warm 1 条。若 F2 失效:重放落回日志 ALS → logStore=2 条。
+    expect(logStore.length).toBe(1);
+    expect(logged.filter((l) => l.kind === "provider:cache-warm").length).toBe(1);
+  });
+});
+
+describe("F3/B3:保温日志不进 stats 计数器(锁在同目录 api/logs.stats-exempt.test.ts)", () => {
+  test("重放确实发出且日志条目存在(kind=provider:cache-warm)——计数豁免断言在姐妹文件", async () => {
+    noteCacheUsage("conv-stats", { promptTokens: 9000, cachedTokens: 8500 });
+    await fireAnthropicRequest(anthropicProviderFixture(), "conv-stats");
+    await flushAsync();
+    expect(fetchCalls.length).toBe(2); // 主请求 + 1 次重放确实发生了
+    expect(logged.some((l) => l.kind === "provider:cache-warm")).toBe(true); // 日志列表照常可见
   });
 });

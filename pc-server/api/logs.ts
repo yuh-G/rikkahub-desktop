@@ -106,8 +106,13 @@ export function sanitizeLogUrl(url: string): string {
   }
 }
 
+/** 不进 stats 计数的日志 kind:保温重放是宿主的保温动作,不是用户对话——灌进
+ *  请求总数/供应商成功数会把统计页掺水(每 4.5 分钟一条),但日志列表照常可见
+ *  (用户要能看到保温请求确实发了)。新增同类"系统自动作"日志时在此登记。 */
+const STATS_EXEMPT_KINDS = new Set(["provider:cache-warm"]);
+
 export function addLog(input: Omit<RequestLog, "id" | "at">) {
-  bumpStatsCounters(state.stats, input);
+  if (!STATS_EXEMPT_KINDS.has(input.kind ?? "")) bumpStatsCounters(state.stats, input);
   const entry: RequestLog = { id: id(), at: Date.now(), ...input, url: sanitizeLogUrl(input.url) };
   if (entry.requestHeaders) entry.requestHeaders = sanitizeLogHeaders(entry.requestHeaders);
   if (entry.responseHeaders) entry.responseHeaders = sanitizeLogHeaders(entry.responseHeaders);
