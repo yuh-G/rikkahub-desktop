@@ -566,6 +566,44 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+/// Windows 10 上无边框窗口的黑边修复。
+///
+/// `tauri.conf.json` 用 `decorations: false` + `shadow: true` 拿 DWM 原生投影。tao 为了让
+/// DWM 肯画阴影,内部保留 `WS_CAPTION | WS_THICKFRAME`,再在 `WM_NCCALCSIZE` 里把客户区
+/// 缩回去 —— 顶部 inset 为 0,左/右/下三边保留边框厚度。Windows 11 会用
+/// `DWMWA_BORDER_COLOR` 把那条边框重绘成浅色(外加圆角),视觉上融入背景;Windows 10
+/// 没有这个 API,边框就以 DWM 默认深色画出来,表现为窗口左、下、右三边各一条黑线。
+///
+/// 因此按 build 号分流:Windows 11(22000+)保留原生阴影和圆角,Windows 10 关掉阴影
+/// —— 代价是失去系统投影,换来边缘干净。
+///
+/// 上游:https://github.com/tauri-apps/tauri/issues/13134
+#[cfg(windows)]
+fn apply_windows_10_shadow_workaround(window: &tauri::WebviewWindow) {
+    /// Windows 11 的首个 build 号。低于它即 Windows 10 及更早。
+    const WINDOWS_11_BUILD: u64 = 22000;
+
+    // 取不到版本号时保守地当作 Windows 10:黑边是明确的视觉缺陷,缺阴影只是少一层
+    // 立体感,两害相权取其轻。
+    let is_windows_10 = windows_build_number().is_none_or(|build| build < WINDOWS_11_BUILD);
+    if is_windows_10 {
+        // 失败只影响外观(黑边仍在),不影响功能,故不向上传播。
+        let _ = window.set_shadow(false);
+    }
+}
+
+/// 当前 Windows 的 build 号(如 19045、22631)。取不到时返回 None。
+///
+/// 走 `tauri_plugin_os::version()`,它内部用 `RtlGetVersion` 而非 `GetVersionEx`——
+/// 后者受进程 manifest 影响,未声明 Win10 兼容时会谎报 6.2,本应用恰好不能依赖它。
+#[cfg(windows)]
+fn windows_build_number() -> Option<u64> {
+    match tauri_plugin_os::version() {
+        tauri_plugin_os::Version::Semantic(_, _, build) => Some(build),
+        _ => None,
+    }
+}
+
 /// issue12: Renders a crisp tray icon for the current display scale. Windows sizes tray
 /// icons at 16px x DPI scale (24px at 150%, 20px at 125%); feeding the 32px default window
 /// icon makes the OS stretch it with a low-quality filter - visibly blurry next to other
@@ -761,6 +799,9 @@ pub fn run() {
             // 恢复到隐藏窗口上,此刻再显示——首帧即上次几何,消除"默认大小闪现→跳到
             // 记忆大小"的割裂。放在 setup 最前,保持"启动即见窗"的原有体验。
             if let Some(window) = handle.get_webview_window("main") {
+                // 必须在 show() 之前:窗口一旦可见,黑边就已经画上,之后再改会看到一次闪烁。
+                #[cfg(windows)]
+                apply_windows_10_shadow_workaround(&window);
                 let _ = window.show();
             }
 
