@@ -108,6 +108,37 @@ describe("promptCaching=true", () => {
     }
   });
 
+  test("历史图片在缓存断点投影后仍是 Claude image block", () => {
+    const imageData = "AQID";
+    const imageMessage: ApiMessage = {
+      role: "user",
+      content: [{
+        type: "image_url",
+        image_url: { url: `data:image/jpeg;base64,${imageData}` },
+      }],
+    };
+    const messages = claudeMessagesFromApiMessages(
+      [imageMessage, assistantMsg("a1"), userMsg("q2")],
+      cachingOn,
+    );
+    const cachedImage = messages[0].content[0];
+
+    expect(cachedImage).toEqual({
+      type: "image",
+      source: { type: "base64", media_type: "image/jpeg", data: imageData },
+      cache_control: { type: "ephemeral" },
+    });
+
+    const uncachedImage = claudeMessagesFromApiMessages(
+      [imageMessage, assistantMsg("a1"), userMsg("q2")],
+      cachingOff,
+    )[0].content[0];
+    expect(uncachedImage).toEqual({
+      type: "image",
+      source: { type: "base64", media_type: "image/jpeg", data: imageData },
+    });
+  });
+
   test("只有一条真实 user 消息时 messages 里不打任何断点", () => {
     const messages = claudeMessagesFromApiMessages([userMsg("q1")], cachingOn);
     expect(cacheMarks(messages[0].content)).toEqual([null]);

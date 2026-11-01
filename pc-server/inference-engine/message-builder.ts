@@ -242,8 +242,7 @@ export function claudeToolResultBlock(toolMessage: ApiMessage) {
 }
 
 
-export function withClaudeCacheOnLastBlock(content: any, providerItem: Provider) {
-  const blocks = claudeContentBlocks(content);
+export function withClaudeCacheOnLastBlock(blocks: Record<string, unknown>[], providerItem: Provider) {
   if (blocks.length === 0) return blocks;
   return blocks.map((block, index) =>
     index === blocks.length - 1 && isRecord(block)
@@ -259,7 +258,7 @@ export function claudeSystemContent(system: unknown, providerItem: Provider) {
   // 对齐安卓 ClaudeProvider.buildMessageRequest：system 始终以 text block 数组发送
   // （无缓存时也用数组，避免部分第三方代理只认数组格式）；开启 promptCaching 时
   // 在最后一个 block 上加 cache_control。
-  if (providerItem.promptCaching === true) return withClaudeCacheOnLastBlock(text, providerItem);
+  if (providerItem.promptCaching === true) return withClaudeCacheOnLastBlock(claudeContentBlocks(text), providerItem);
   return [claudeTextBlock(text)];
 }
 
