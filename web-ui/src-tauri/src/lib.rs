@@ -569,13 +569,16 @@ fn show_main_window(app: &AppHandle) {
 /// Windows 10 上无边框窗口的黑边修复。
 ///
 /// `tauri.conf.json` 用 `decorations: false` + `shadow: true` 拿 DWM 原生投影。tao 为了让
-/// DWM 肯画阴影,内部保留 `WS_CAPTION | WS_THICKFRAME`,再在 `WM_NCCALCSIZE` 里把客户区
-/// 缩回去 —— 顶部 inset 为 0,左/右/下三边保留边框厚度。Windows 11 会用
-/// `DWMWA_BORDER_COLOR` 把那条边框重绘成浅色(外加圆角),视觉上融入背景;Windows 10
-/// 没有这个 API,边框就以 DWM 默认深色画出来,表现为窗口左、下、右三边各一条黑线。
+/// DWM 肯画阴影,内部保留 `WS_CAPTION | WS_THICKFRAME`,再在 `WM_NCCALCSIZE` 里按
+/// `calculate_insets_for_dpi` 缩小客户区 —— 顶部 inset 在 Win10 为 0,左/右/下三边各减去
+/// 一条边框厚度。缩掉的区域于是成为真正的非客户区,由 DWM 按边框色绘制。
 ///
-/// 因此按 build 号分流:Windows 11(22000+)保留原生阴影和圆角,Windows 10 关掉阴影
-/// —— 代价是失去系统投影,换来边缘干净。
+/// 两个系统的差别只在颜色:Windows 11 的 DWM 默认把边框画成接近主题的浅色,观感上融入
+/// 背景;Windows 10 按默认深色画,就成了窗口左、右、下三边的黑线。tao 和 Tauri 都没有
+/// 调用过 `DWMWA_BORDER_COLOR`,应用层无法直接改这条边框的颜色。
+///
+/// 因此按 build 号分流:Windows 10 及更早关掉阴影,`WM_NCCALCSIZE` 不再走 insets 分支,
+/// 三条边并入客户区,黑边消失 —— 代价是失去系统投影。Windows 11 不动,那里边框不显眼。
 ///
 /// 上游:https://github.com/tauri-apps/tauri/issues/13134
 #[cfg(windows)]
