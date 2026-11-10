@@ -9,6 +9,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isInstallTelemetryEnabled } from "../../pi/packages/coding-agent/src/core/telemetry.ts";
 
 process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-piresources-test-"));
 
@@ -116,6 +117,18 @@ describe("P4 资源装配", () => {
     // systemPrompt 未被项目文件接管 → pi 走内建默认(loader 返回 undefined)。
     expect(resourceLoader.getSystemPrompt()).toBeUndefined();
     expect(resourceLoader.getAppendSystemPrompt().join("\n")).not.toContain("HIJACKED");
+  });
+
+  test("受控设置显式钉住 pi 1.5.1 改了默认值的项:预热 streaming、不带 pi 归属头", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rkh-res-defaults-"));
+    const { assistant, conversation } = fixture();
+    const { settingsManager } = await createPiSessionResources({ conversation, assistant, model: fakeModel, cwd: root, root });
+    // pi 1.5.1 默认 idle(运行之间保温 30 分钟);我们每轮 dispose,钉回 1.0.3 的 streaming。
+    expect(settingsManager.getCacheWarmingMode()).toBe("streaming");
+    // 关闭后 SDK 的 client identity 不带 attribution(OpenRouter/NVIDIA/opencode 归属头)。
+    // 第二参显式传 undefined:不让测试机的 PI_TELEMETRY 环境变量左右断言。
+    expect(isInstallTelemetryEnabled(settingsManager, undefined)).toBe(false);
+    expect(settingsManager.getImageAutoResize()).toBe(false);
   });
 
   test("appendSystemPrompt 冻结:时间模板变量同会话字节稳定;人设原文变更立即生效", async () => {

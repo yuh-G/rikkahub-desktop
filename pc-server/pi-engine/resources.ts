@@ -171,6 +171,12 @@ export async function createPiSessionResources(options: {
   // 而我们的引擎上下文每轮由 context-encoder 从 SQLite 原图重建——本轮「缩放图+说明」
   // 下轮「原图无说明」,模型前后所见不一致且该轮缓存失效。关闭后两轮逐字节一致
   // (代价:工具结果图片也不缩放,与我们聊天引擎的图片直发口径对齐)。
+  // cacheWarming:"streaming"(pi 1.5.1 起默认 idle,运行之间最长保温 30 分钟):显式钉回 1.0.3
+  // 语义。runner 每轮结束即 dispose(会取消预热),idle 档在我们这里几乎不生效,不如说死;
+  // 预热归属在方案 P2.3 的 ModelGrant 缓存策略里重定。
+  // enableInstallTelemetry:false:SDK 路径下它只决定 pi 的归属头(client-identity.ts:关闭则
+  // attribution 为 null,OpenRouter/NVIDIA/opencode 不再收到 pi 的归属头);pi 的版本 ping
+  // 只在 CLI 交互模式跑,与我们无关。
   const settingsManager = SettingsManager.inMemory(
     {
       compaction: {
@@ -179,6 +185,8 @@ export async function createPiSessionResources(options: {
       },
       thinkingBudgets: { ...PI_THINKING_BUDGETS },
       images: { autoResize: false },
+      cacheWarming: "streaming",
+      enableInstallTelemetry: false,
     },
     { projectTrusted: false },
   );
