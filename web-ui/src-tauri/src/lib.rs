@@ -566,32 +566,70 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
-/// Windows 10 上无边框窗口的黑边修复。
+/// Windows 10 上移除 tao 的无边框阴影模拟,再通过 DWM 单独恢复原生投影。
 ///
-/// `tauri.conf.json` 用 `decorations: false` + `shadow: true` 拿 DWM 原生投影。tao 为了让
-/// DWM 肯画阴影,内部保留 `WS_CAPTION | WS_THICKFRAME`,再在 `WM_NCCALCSIZE` 里按
-/// `calculate_insets_for_dpi` 缩小客户区 —— 顶部 inset 在 Win10 为 0,左/右/下三边各减去
-/// 一条边框厚度。缩掉的区域于是成为真正的非客户区,由 DWM 按边框色绘制。
+/// tao 的 `shadow: true` 会留下左/右/下三条非客户区边框。先用 `set_shadow(false)`
+/// 让客户区覆盖整个窗口,同时让 Tauri 的拖拽辅助窗口接管四边缩放;随后向客户区延伸
+/// 1 个物理像素的 DWM frame 来承载投影。这些细线位于 WebView2 下方,无需为其留白。
+/// 顶部保持 0,沿用上游无可见边框方案。Win10 不支持 `DWMWA_BORDER_COLOR`,不调用它。
 ///
-/// 两个系统的差别只在颜色:Windows 11 的 DWM 默认把边框画成接近主题的浅色,观感上融入
-/// 背景;Windows 10 按默认深色画,就成了窗口左、右、下三边的黑线。tao 和 Tauri 都没有
-/// 调用过 `DWMWA_BORDER_COLOR`,应用层无法直接改这条边框的颜色。
-///
-/// 因此按 build 号分流:Windows 10 及更早关掉阴影,`WM_NCCALCSIZE` 不再走 insets 分支,
-/// 三条边并入客户区,黑边消失 —— 代价是失去系统投影。Windows 11 不动,那里边框不显眼。
-///
-/// 上游:https://github.com/tauri-apps/tauri/issues/13134
+/// 仅在 setup 主线程、show() 之前调用。Windows 11 沿用现有行为;DWM 调用失败时
+/// 保留无黑边、无投影的旧修复,并输出诊断。
+/// 参考:https://github.com/tauri-apps/tauri/pull/16192
+///      https://github.com/tauri-apps/tauri/issues/16304
 #[cfg(windows)]
 fn apply_windows_10_shadow_workaround(window: &tauri::WebviewWindow) {
+    use windows::Win32::{
+        Foundation::HWND,
+        Graphics::Dwm::{
+            DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMNCRP_ENABLED,
+            DWMWA_NCRENDERING_POLICY,
+        },
+        UI::Controls::MARGINS,
+    };
+
     /// Windows 11 的首个 build 号。低于它即 Windows 10 及更早。
     const WINDOWS_11_BUILD: u64 = 22000;
 
-    // 取不到版本号时保守地当作 Windows 10:黑边是明确的视觉缺陷,缺阴影只是少一层
-    // 立体感,两害相权取其轻。
+    // 取不到版本号时沿用旧修复的策略,优先移除黑边。
     let is_windows_10 = windows_build_number().is_none_or(|build| build < WINDOWS_11_BUILD);
-    if is_windows_10 {
-        // 失败只影响外观(黑边仍在),不影响功能,故不向上传播。
-        let _ = window.set_shadow(false);
+    if !is_windows_10 {
+        return;
+    }
+
+    if let Err(error) = window.set_shadow(false) {
+        eprintln!("Failed to disable tao's undecorated frame: {error}");
+        return;
+    }
+    let hwnd = match window.hwnd() {
+        // Tauri 使用 windows 0.61,本应用使用 0.62;通过原始指针转换句柄包装类型。
+        Ok(hwnd) => HWND(hwnd.0),
+        Err(error) => {
+            eprintln!("Failed to get the window handle for the DWM shadow: {error}");
+            return;
+        }
+    };
+    let policy = DWMNCRP_ENABLED.0;
+    let margins = MARGINS {
+        cxLeftWidth: 1,
+        cxRightWidth: 1,
+        cyTopHeight: 0,
+        cyBottomHeight: 1,
+    };
+
+    // SAFETY: hwnd 属于仍存活的主窗口;policy 和 margins 的类型、大小与 DWM API
+    // 要求一致,指针在同步调用期间有效。此函数在窗口所属的 setup 主线程上运行。
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY,
+            &policy as *const _ as *const std::ffi::c_void,
+            std::mem::size_of_val(&policy) as u32,
+        )
+        .and_then(|()| DwmExtendFrameIntoClientArea(hwnd, &margins))
+    };
+    if let Err(error) = result {
+        eprintln!("Failed to restore the Windows 10 DWM shadow: {error}");
     }
 }
 
