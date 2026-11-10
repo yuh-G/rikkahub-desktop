@@ -18,30 +18,11 @@ import type { Assistant, Conversation, Model, Provider } from "../foundation/typ
 import type { GenerationEventSink, GenerationTarget, ToolExecutor } from "../inference-engine/events";
 import type { WorkspaceRuntime } from "../workspace/runtime";
 import { createChatAdapter } from "./chat-adapter";
+import type { EngineKind, EngineResumeSemantics, EngineSteeringSupport } from "./contract";
 import { createPiAdapter } from "./pi-adapter";
 
-/** 引擎种类(开放枚举)。新增引擎 = 追加一个字面量 + 一个 adapter + 注册一行。 */
-export type EngineKind = "chat" | "pi" | "dsh" | "codex" | "claude-code" | (string & {});
-
-/** 审批续跑语义(替代 orchestrator.ts 写死的 `!piRuntime` 二选一):
- *  - "pause-resume":聊天引擎——待审批工具整批暂停生成,用户逐卡批准后重触发续跑
- *    (resumeApprovedToolParts + hasPendingToolApproval 收尾)。
- *  - "run-and-suspend":pi 引擎——生成保持在跑,单个工具调用挂起等待审批门放行
- *    (approval-gate 汇合),不重触发整轮。
- *  子进程引擎届时按其审批模型声明。 */
-export type EngineResumeSemantics = "pause-resume" | "run-and-suspend";
-
-/** steering 能力声明(生成中补发的用户消息如何送达模型):
- *  - "boundary":引擎在「即将构建下一模型请求之前」调用 ctx.onSteerBoundary(),把返回文本
- *    作为 user turn 喂给模型(聊天引擎 = 工具轮边界 + 最终轮;pi = turn_end)。协调器在同一
- *    调用里完成数据层分裂(定格当前节点 / 落库 steer user / 新开 continuation 节点 / 换绑落点),
- *    引擎经 ctx.target 活视图自动跟随。
- *  - "none":引擎无注入位点(单次不透明请求等)。协调器不下发回调,补发消息留在 FIFO 队列由
- *    收尾派发兜底——视觉序仍是 [ai_1, user_2, ai_2],只是晚到生成结束;按构造优雅降级,
- *    不会出现半吸收状态。
- *  必填:新引擎接入时必须显式选择,忘了调回调不会静默丢能力(契约测试锁每个 "boundary"
- *  引擎的真实调用)。 */
-export type EngineSteeringSupport = "boundary" | "none";
+// 三个能力枚举的定义已迁到契约(engines/contract.ts);旧形状在 P2.7 删除前经这里转出。
+export type { EngineKind, EngineResumeSemantics, EngineSteeringSupport };
 
 /** 引擎无关的生成输入包(编排器入口一次性装配,贯穿本次生成)。 */
 export interface EngineRunContext {
