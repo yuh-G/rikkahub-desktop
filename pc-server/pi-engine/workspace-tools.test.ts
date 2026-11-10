@@ -30,6 +30,15 @@ const ourTools = {
   ls: (await import("../workspace/tools/ls")).createLsTool,
 };
 const pi = await import("../../pi/packages/coding-agent/src/core/sdk.ts");
+const piPromptContributions: Record<string, { snippet: string; guidelines: readonly string[] }> = {
+  read: (await import("../../pi/packages/coding-agent/src/core/tools/read.ts")).readToolSystemPromptContribution,
+  bash: (await import("../../pi/packages/coding-agent/src/core/tools/bash.ts")).bashToolSystemPromptContribution,
+  edit: (await import("../../pi/packages/coding-agent/src/core/tools/edit.ts")).editToolSystemPromptContribution,
+  write: (await import("../../pi/packages/coding-agent/src/core/tools/write.ts")).writeToolSystemPromptContribution,
+  grep: (await import("../../pi/packages/coding-agent/src/core/tools/grep.ts")).grepToolSystemPromptContribution,
+  find: (await import("../../pi/packages/coding-agent/src/core/tools/find.ts")).findToolSystemPromptContribution,
+  ls: (await import("../../pi/packages/coding-agent/src/core/tools/ls.ts")).lsToolSystemPromptContribution,
+};
 import type { GenerationEvent } from "../inference-engine/events";
 
 const db = conversations.openConversationsDb();
@@ -153,6 +162,19 @@ describe("契约对照(pi 升级回归门)", () => {
       expect(tool.label).toBe(tool.name);
       if (tool.name === "edit") expect(typeof tool.prepareArguments).toBe("function");
       else expect(tool.prepareArguments).toBeUndefined();
+    }
+  });
+
+  test("promptSnippet/promptGuidelines 逐字镜像 pi 各工具的 SystemPromptContribution 常量(bash 不镜像 PI_* 条目)", () => {
+    const workspace = ws.createWorkspace({ type: "managed", name: "prompt-mirror" });
+    const conversation = bindConversation(workspace.id);
+    const tools = createPiWorkspaceTools({ conversation, assistant: fakeAssistant, sink: makeSink().sink });
+    for (const tool of tools) {
+      const contribution = piPromptContributions[tool.name];
+      expect(contribution).toBeDefined();
+      expect(tool.promptSnippet).toBe(contribution!.snippet);
+      const expectedGuidelines = tool.name === "bash" || contribution!.guidelines.length === 0 ? undefined : [...contribution!.guidelines];
+      expect(tool.promptGuidelines).toEqual(expectedGuidelines);
     }
   });
 });

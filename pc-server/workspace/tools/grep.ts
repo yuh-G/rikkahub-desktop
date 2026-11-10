@@ -74,7 +74,11 @@ const GREP_SCHEMA = {
   properties: {
     pattern: { type: "string", description: "Search pattern (regex or literal string)" },
     path: { type: "string", description: "Directory or file to search (default: current directory)" },
-    glob: { type: "string", description: "Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'" },
+    glob: {
+      type: "string",
+      description:
+        "Filter files by glob pattern, relative to path, e.g. '*.ts', 'src/**/*.ts' or '**/*.spec.ts'. A pattern without '/' matches file names at any depth",
+    },
     ignoreCase: { type: "boolean", description: "Case-insensitive search (default: false)" },
     literal: { type: "boolean", description: "Treat pattern as literal string instead of regex (default: false)" },
     context: { type: "number", description: "Number of lines to show before and after each match (default: 0)" },

@@ -16,8 +16,9 @@
 // sequential 即整批顺序(agent-loop.ts:422)——审批卡"执行到哪个弹哪个"的节奏、
 // bash 输出不交错、与聊天引擎顺序执行心智,三者都靠它。
 //
-// 参数校验:pi 对 JSON Schema(非 TypeBox)参数走 coerceWithJsonSchema 官方分支
-// (pi/packages/ai/src/utils/validation.ts:283),我们的 OpenAI 形状 schema 原样可用;
+// 参数校验:pi 1.5 起所有工具参数经 pi-schema 校验(ai/src/utils/validation.ts 的
+// compile(schema, { coerce: true })),JSON Schema 与 TypeBox 同一条路径并做宽松转换
+// (数字字符串→数字、单值→数组);我们的 OpenAI 形状 schema 原样可用。
 // edit 与 pi 原版一样挂 prepareArguments,legacy 形状(顶层 oldText/JSON 字符串 edits)
 // 在校验前修复。
 
@@ -34,29 +35,28 @@ import { gateToolApproval } from "../inference-engine/approval-flow";
 type PiToolParameters = ToolDefinition["parameters"];
 type PiToolResult = Awaited<ReturnType<ToolDefinition["execute"]>>;
 
-/** pi 内建工具的 Available tools 一行摘要,逐字镜像(来源 file:line 见各行尾)。 */
+/** pi 内建工具的 Available tools 一行摘要,逐字镜像 pi 各工具的
+ *  `<name>ToolSystemPromptContribution.snippet`(coding-agent/src/core/tools/*.ts)。 */
 const PROMPT_SNIPPETS: Record<WorkspaceToolName, string> = {
-  read: "Read file contents", // tools/read.ts:213
-  bash: "Execute bash commands (ls, grep, find, etc.)", // tools/bash.ts:328
-  edit: "Make precise file edits with exact text replacement, including multiple disjoint edits in one call", // tools/edit.ts:297
-  write: "Create or overwrite files", // tools/write.ts:191
-  grep: "Search file contents for patterns (respects .gitignore)", // tools/grep.ts:132
-  find: "Find files by glob pattern (respects .gitignore)", // tools/find.ts:118
-  ls: "List directory contents", // tools/ls.ts:104
+  read: "Read file contents",
+  bash: "Execute bash commands (ls, grep, find, etc.)",
+  edit: "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
+  write: "Create or overwrite files",
+  grep: "Search file contents for patterns (respects .gitignore)",
+  find: "Find files by glob pattern (respects .gitignore)",
+  ls: "List directory contents",
 };
 
-/** pi 内建工具的 Guidelines 追加条目,逐字镜像。bash 的 PI_* 环境变量条目不镜像
- *  (它以 exposeSessionEnvironment 为前提,我们不暴露 pi 会话环境变量);grep/find/ls
- *  与 pi 一致无条目。 */
+/** pi 内建工具的 Guidelines 追加条目,逐字镜像 `<name>ToolSystemPromptContribution.guidelines`。
+ *  bash 的 PI_* 环境变量条目不镜像(它以 exposeSessionEnvironment 为前提,我们不暴露 pi 会话
+ *  环境变量);grep/find/ls 与 pi 一致无条目。两张表由 workspace-tools.test.ts 对照 pi 常量锁定。 */
 const PROMPT_GUIDELINES: Partial<Record<WorkspaceToolName, string[]>> = {
-  read: ["Use read to examine files instead of cat or sed."], // tools/read.ts:214
-  write: ["Use write only for new files or complete rewrites."], // tools/write.ts:192
+  read: ["Use read to examine files instead of cat or sed."],
+  write: ["Use write only for new files or complete rewrites."],
   edit: [
-    "Use edit for precise changes (edits[].oldText must match exactly)",
-    "When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls",
-    "Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
-    "Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.",
-  ], // tools/edit.ts:299-304
+    "Use edit for targeted changes. Batch changes to one file in a single call.",
+    "Each edits[].oldText must exactly and uniquely match the original file. Keep matches short and non-overlapping; merge nearby changes without including large unchanged regions.",
+  ],
 };
 
 export interface PiWorkspaceToolsContext {
