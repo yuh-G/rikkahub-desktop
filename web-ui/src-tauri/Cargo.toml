@@ -37,9 +37,11 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
   "Win32_Foundation",
+  "Win32_Graphics_Dwm",
   "Win32_Security",
   "Win32_System_JobObjects",
   "Win32_System_Threading",
+  "Win32_UI_Controls",
 ] }
 
 [profile.release]

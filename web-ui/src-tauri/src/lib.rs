@@ -566,6 +566,85 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+/// Windows 10 上移除 tao 的无边框阴影模拟,再通过 DWM 单独恢复原生投影。
+///
+/// tao 的 `shadow: true` 会留下左/右/下三条非客户区边框。先用 `set_shadow(false)`
+/// 让客户区覆盖整个窗口,同时让 Tauri 的拖拽辅助窗口接管四边缩放;随后向客户区延伸
+/// 1 个物理像素的 DWM frame 来承载投影。这些细线位于 WebView2 下方,无需为其留白。
+/// 顶部保持 0,沿用上游无可见边框方案。Win10 不支持 `DWMWA_BORDER_COLOR`,不调用它。
+///
+/// 仅在 setup 主线程、show() 之前调用。Windows 11 沿用现有行为;DWM 调用失败时
+/// 保留无黑边、无投影的旧修复,并输出诊断。
+/// 参考:https://github.com/tauri-apps/tauri/pull/16192
+///      https://github.com/tauri-apps/tauri/issues/16304
+#[cfg(windows)]
+fn apply_windows_10_shadow_workaround(window: &tauri::WebviewWindow) {
+    use windows::Win32::{
+        Foundation::HWND,
+        Graphics::Dwm::{
+            DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMNCRP_ENABLED,
+            DWMWA_NCRENDERING_POLICY,
+        },
+        UI::Controls::MARGINS,
+    };
+
+    /// Windows 11 的首个 build 号。低于它即 Windows 10 及更早。
+    const WINDOWS_11_BUILD: u64 = 22000;
+
+    // 取不到版本号时沿用旧修复的策略,优先移除黑边。
+    let is_windows_10 = windows_build_number().is_none_or(|build| build < WINDOWS_11_BUILD);
+    if !is_windows_10 {
+        return;
+    }
+
+    if let Err(error) = window.set_shadow(false) {
+        eprintln!("Failed to disable tao's undecorated frame: {error}");
+        return;
+    }
+    let hwnd = match window.hwnd() {
+        // Tauri 使用 windows 0.61,本应用使用 0.62;通过原始指针转换句柄包装类型。
+        Ok(hwnd) => HWND(hwnd.0),
+        Err(error) => {
+            eprintln!("Failed to get the window handle for the DWM shadow: {error}");
+            return;
+        }
+    };
+    let policy = DWMNCRP_ENABLED.0;
+    let margins = MARGINS {
+        cxLeftWidth: 1,
+        cxRightWidth: 1,
+        cyTopHeight: 0,
+        cyBottomHeight: 1,
+    };
+
+    // SAFETY: hwnd 属于仍存活的主窗口;policy 和 margins 的类型、大小与 DWM API
+    // 要求一致,指针在同步调用期间有效。此函数在窗口所属的 setup 主线程上运行。
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY,
+            &policy as *const _ as *const std::ffi::c_void,
+            std::mem::size_of_val(&policy) as u32,
+        )
+        .and_then(|()| DwmExtendFrameIntoClientArea(hwnd, &margins))
+    };
+    if let Err(error) = result {
+        eprintln!("Failed to restore the Windows 10 DWM shadow: {error}");
+    }
+}
+
+/// 当前 Windows 的 build 号(如 19045、22631)。取不到时返回 None。
+///
+/// 走 `tauri_plugin_os::version()`,它内部用 `RtlGetVersion` 而非 `GetVersionEx`——
+/// 后者受进程 manifest 影响,未声明 Win10 兼容时会谎报 6.2,本应用恰好不能依赖它。
+#[cfg(windows)]
+fn windows_build_number() -> Option<u64> {
+    match tauri_plugin_os::version() {
+        tauri_plugin_os::Version::Semantic(_, _, build) => Some(build),
+        _ => None,
+    }
+}
+
 /// issue12: Renders a crisp tray icon for the current display scale. Windows sizes tray
 /// icons at 16px x DPI scale (24px at 150%, 20px at 125%); feeding the 32px default window
 /// icon makes the OS stretch it with a low-quality filter - visibly blurry next to other
@@ -761,6 +840,9 @@ pub fn run() {
             // 恢复到隐藏窗口上,此刻再显示——首帧即上次几何,消除"默认大小闪现→跳到
             // 记忆大小"的割裂。放在 setup 最前,保持"启动即见窗"的原有体验。
             if let Some(window) = handle.get_webview_window("main") {
+                // 必须在 show() 之前:窗口一旦可见,黑边就已经画上,之后再改会看到一次闪烁。
+                #[cfg(windows)]
+                apply_windows_10_shadow_workaround(&window);
                 let _ = window.show();
             }
 
