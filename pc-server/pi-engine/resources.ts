@@ -101,7 +101,7 @@ function stableGuidanceLines(): string {
 }
 
 /** pi 会话的 appendSystemPrompt 条目(有序;pi 侧以 \n\n join 追加在引擎 Guidelines 之后、
- *  <project_context> 之前,system-prompt.ts:163 addendum section 实证)。分段各有恰当冻结源,拼接结果
+ *  <project_context> 之前,system-prompt.ts 的 promptSections.addendum 实证)。分段各有恰当冻结源,拼接结果
  *  同会话内字节稳定。导出仅供测试断言冻结性。 */
 export function buildPiAppendSystemPrompt(
   conversation: Conversation,
@@ -223,7 +223,7 @@ export async function createPiSessionResources(options: {
     },
     appendSystemPrompt: buildPiAppendSystemPrompt(conversation, assistant, model, extraAppendSystemPrompt),
   });
-  // sdk 只对自建 loader 调 reload(sdk.ts:182-186),外部传入的必须自己加载。
+  // sdk 只对自建 loader 调 reload(sdk.ts createAgentSession),外部传入的必须自己加载。
   await resourceLoader.reload();
 
   // 技能校验告警面向用户在设置页内联展示(api/handlers/skills 的独立校验);这里只把

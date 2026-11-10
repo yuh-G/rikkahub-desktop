@@ -3,7 +3,7 @@
 // 定位:SQLite 是两种模式共用的唯一事实源。每轮把"UI 可见的选中路径历史"经
 // message-enrichment 富化(模板/提醒/注入/截断)后,确定性重建为 pi 引擎消息,
 // 灌入 SessionManager.inMemory(),由 createAgentSession 在构造点消费
-// (sdk.ts:194 buildSessionContext,与 jsonl 恢复走同一内部路径)。UI 编辑/重生成/
+// (sdk.ts 里的 sessionManager.buildSessionContext(),与 jsonl 恢复走同一内部路径)。UI 编辑/重生成/
 // fork 从此真正改写引擎记忆——所见即所记,双表征的"引擎只追加、UI 可截断"容忍
 // 分叉消失。
 //
@@ -378,7 +378,7 @@ function encodeUser(message: Message, model: Model): UserMessage | null {
   if (!input.text && !input.images.length) return null; // 与生成入口同一拒发条件
   const content: (TextContent | ImageContent)[] = [{ type: "text", text: input.text }];
   content.push(...input.images);
-  // 形状逐字复刻 agent-session.ts:2033-2036 的 prompt 装配(text 块恒在首位,图片后置)
+  // 形状逐字复刻 agent-session.ts _startRun 的 prompt 装配(text 块恒在首位,图片后置)
   return { role: "user", content, timestamp: timestampOf(message) };
 }
 

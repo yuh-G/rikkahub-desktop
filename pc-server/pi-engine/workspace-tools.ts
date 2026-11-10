@@ -12,9 +12,9 @@
 // 与聊天引擎同一判定函数)→ 生命周期(挂卡/等待/放行/拒绝/中止收敛)在共享状态机
 // approval-flow.gateToolApproval 里,与 MCP 桥/通用工具(general-tools)同一份。
 //
-// executionMode 全部 "sequential":pi 默认并行执行工具批(agent.ts:230),批内任一
-// sequential 即整批顺序(agent-loop.ts:422)——审批卡"执行到哪个弹哪个"的节奏、
-// bash 输出不交错、与聊天引擎顺序执行心智,三者都靠它。
+// executionMode 全部 "sequential":pi 默认并行执行工具批(agent.ts 的 toolExecution 默认
+// "parallel"),批内任一 sequential 即整批顺序(agent-loop.ts 的 hasSequentialToolCall)——
+// 审批卡"执行到哪个弹哪个"的节奏、bash 输出不交错、与聊天引擎顺序执行心智,三者都靠它。
 //
 // 参数校验:pi 1.5 起所有工具参数经 pi-schema 校验(ai/src/utils/validation.ts 的
 // compile(schema, { coerce: true })),JSON Schema 与 TypeBox 同一条路径并做宽松转换

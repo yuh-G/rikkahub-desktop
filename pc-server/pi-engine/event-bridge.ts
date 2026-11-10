@@ -4,8 +4,8 @@
 // 无广播),产出交给与聊天引擎同源的应用器(conversations/generation-apply.ts)——
 // parts 形状、touchStream 落库/合帧广播、幂等规则由那里统一保证,写入面零新增。
 //
-// 映射字典(方案 §4.5,对照 pi/packages/agent/src/types.ts:422 AgentEvent 与
-// coding-agent/src/core/agent-session.ts:139 AgentSessionEvent 全联合校准):
+// 映射字典(方案 §4.5,对照 pi/packages/agent/src/types.ts 的 AgentEvent 与
+// coding-agent/src/core/agent-session.ts 的 AgentSessionEvent 全联合校准):
 //   message_update.text_delta      → text_delta
 //   message_update.thinking_delta  → reasoning_delta
 //   message_update.toolcall_start/delta/end → tool_call_created(id/name 齐备即建卡,

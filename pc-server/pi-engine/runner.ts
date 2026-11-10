@@ -156,7 +156,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     sessionManager: manager,
     thinkingLevel: piThinkingLevelFor(ctx.reasoningLevel),
     // "builtin" 只关内建工具;customTools 经 includeAllExtensionTools 全部激活
-    // (agent-session.ts:495 includeAllExtensionTools + _refreshToolRegistry,§七-3 实证)。
+    // (agent-session.ts 的 includeAllExtensionTools + _refreshToolRegistry,§七-3 实证)。
     noTools: "builtin",
     customTools: ctx.tools ?? [],
     // P4 资源统一:受控 ResourceLoader(技能白名单/AGENTS.md 边界过滤/appendSystemPrompt)
@@ -203,7 +203,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   try {
     if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
-    // 当模板/扩展命令拦截(agent-session.ts:1926-1931),我们的会话 UX 不走 pi 命令面。
+    // 当模板/扩展命令拦截(agent-session.ts prompt() 的 expandPromptTemplates 分支),我们的会话 UX 不走 pi 命令面。
     // runWithLlmRequestLog:本轮生成的 LLM fetch(pi SDK 内部)记入统一日志管线(日志问题 1)。
     await runWithLlmRequestLog(llmLogContextFor(ctx.provider), () =>
       session.prompt(ctx.promptText, {
