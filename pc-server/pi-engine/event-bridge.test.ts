@@ -290,7 +290,7 @@ describe("pi 事件桥:纯映射", () => {
       { type: "message_start", message: assistantMessage([]) },
       { type: "turn_end", message: assistantMessage([]), toolResults: [] },
       { type: "agent_end", messages: [], willRetry: false },
-      { type: "agent_settled" },
+      { type: "agent_settled", aborted: false },
       { type: "queue_update", steering: [], followUp: [] },
       { type: "session_info_changed", name: undefined },
       { type: "thinking_level_changed", level: "off" },
