@@ -428,7 +428,7 @@ describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运
   beforeEach(() => setState({ settings: structuredClone(defaultSettings()) } as any));
   afterEach(() => setState({ ...state, settings: { ...state.settings, providers: [] } } as any));
 
-  it("Kimi Code:身份译成 pi 内建 kimi-coding,取回内建 k3(anthropic-messages + 官方 coding 端点),鉴权由我们的 store 供给", async () => {
+  it("Kimi Code:身份译成 pi 内建 kimi-coding,取回内建 k3(pi 1.3 起为 openai-completions + 官方 coding/v1 端点),鉴权由我们的 store 供给", async () => {
     const row = seedSignedIn(KIMI);
     const k3 = row.models.find((m) => m.modelId === "k3")!;
     const mapped = mapAny(row, k3, undefined, "conv-ws");
@@ -439,10 +439,11 @@ describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运
     const { runtime, model: piModel } = await createPiModelRuntime(mapped.mapping);
     expect(piModel.provider).toBe("kimi-coding");
     expect(piModel.id).toBe("k3");
-    expect(piModel.api).toBe("anthropic-messages");
-    expect(piModel.baseUrl).toBe("https://api.kimi.com/coding");
+    expect(piModel.api).toBe("openai-completions");
+    expect(piModel.baseUrl).toBe("https://api.kimi.com/coding/v1");
     // 内建定义为权威:上游维护的 compat/档位表原样保留,不被宿主覆盖。
-    expect((piModel.compat as Record<string, unknown> | undefined)?.forceAdaptiveThinking).toBe(true);
+    expect((piModel.compat as Record<string, unknown> | undefined)?.requiresReasoningContentOnAssistantMessages).toBe(true);
+    expect(piModel.thinkingLevelMap?.max).toBe("max");
     // 宿主只叠加自己独有的东西:会话身份头(§7.4)。
     expect(piModel.headers?.["X-Session-ID"]).toBe("conv-ws");
     // 凭证来自宿主 state(经 createPiCredentialStore 的 pi id → flow → 行 反查)。
@@ -490,8 +491,8 @@ describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运
     expect(piModel.id).toBe("k4-preview");
     expect(piModel.name).toBe("Kimi K4 Preview");
     expect(piModel.reasoning).toBe(true);
-    expect(piModel.api).toBe("anthropic-messages");
-    expect(piModel.baseUrl).toBe("https://api.kimi.com/coding");
+    expect(piModel.api).toBe("openai-completions");
+    expect(piModel.baseUrl).toBe("https://api.kimi.com/coding/v1");
   });
 
   it("目录标 true 的模型也强制 supportsMidConvoSystemMessages=false(D1:上下文归宿主,pi 1.0 差异 system 消息须挪回开头)", async () => {
@@ -516,7 +517,10 @@ describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运
     expect((piModel.compat as Record<string, unknown>).supportsMidConvoSystemMessages).toBe(false);
     // Anthropic 另关 toolAdditions 闸门(nativeToolChanges 复合条件之一)。
     expect((piModel.compat as Record<string, unknown>).supportsMidConvoToolChanges).toBe(false);
-    // 其余内建 compat 原样保留(只叠我们不妥协的两个键)。
+    // pi 1.5.1 message threads 对 Claude 订阅轨默认开(provider=anthropic + api.anthropic.com),宿主关。
+    expect(piModel.provider).toBe("anthropic");
+    expect((piModel.compat as Record<string, unknown>).supportsMessageThreads).toBe(false);
+    // 其余内建 compat 原样保留(只叠我们不妥协的键)。
     expect((piModel.compat as Record<string, unknown>).forceAdaptiveThinking).toBe(true);
 
     const codexRow = seedSignedIn(CODEX);

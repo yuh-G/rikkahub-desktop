@@ -472,9 +472,17 @@ function resolveBuiltinPiModel(
   // Anthropic 另关 supportsMidConvoToolChanges:它是 toolAdditions 的闸门之一
   // (anthropic-messages 的 nativeToolChanges 分支),systemMessages=false 已挡住其
   // 主前提,这里显式压制防上游把闸门重构成复合条件。
+  // Anthropic 还关 supportsMessageThreads(pi 1.5.1 新增,provider=anthropic 且端点在
+  // api.anthropic.com 时默认开,即 Claude 订阅轨):开启后带 sessionId 的请求只发新增消息,由
+  // 服务端续接。我们每轮新建会话、随机 session id,线程只能在一轮的工具循环内续接,收益有限,
+  // 却多一个 beta 头和一份服务端状态;保持与 1.0.3 一致的全量请求。会话 id 稳定后(方案
+  // P3.3)再评估放开。
   const compat = { ...(base.compat as Record<string, unknown>) };
   compat.supportsMidConvoSystemMessages = false;
-  if (base.api === "anthropic-messages") compat.supportsMidConvoToolChanges = false;
+  if (base.api === "anthropic-messages") {
+    compat.supportsMidConvoToolChanges = false;
+    compat.supportsMessageThreads = false;
+  }
   const withCompat = { ...base, compat: compat as PiModel<Api>["compat"] };
   if (Object.keys(mapping.headers).length === 0) return withCompat;
   return { ...withCompat, headers: { ...withCompat.headers, ...mapping.headers } };
