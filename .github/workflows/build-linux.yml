@@ -42,7 +42,7 @@ jobs:
       # 一并打包;缺了 bun build 报 Could not resolve)。pi 的 bun.lock 是
       # lockfileVersion 1,Bun 1.4.0 会迁移它,故不能用 --frozen-lockfile。
       # packages/ai/src/providers/data/ 是构建期生成物、git 不跟踪。模型数据走
-      # pi-model-data/ 快照(host 仓库 tracked,42 个分片,与下方 pin 的基线严格
+      # pi-model-data/ 快照(host 仓库 tracked,43 个分片,与下方 pin 的基线严格
       # 配对)——不跑 generate-models:它按 models.dev 当天实时状态生成,不可复现
       # (2026-09-21 kimi-for-coding 被摘除当日发版构建失败)。快照在升级时按 nix
       # pin 离线 hydrate 生成,流程见 CLAUDE.md 维护手册第 3 步。check-model-data
@@ -51,7 +51,7 @@ jobs:
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/earendil-works/pi.git pi
           cd pi
-          git checkout d78dc83d633229d12f8b79631384c4c2717c399f
+          git checkout dd30101cfc5b0609411dd80b6f93adbc14db14cf
           git reset --hard
           git apply ../pi-patches/*.patch
           bun install

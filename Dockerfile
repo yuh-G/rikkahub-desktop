@@ -53,7 +53,7 @@ RUN bun run build
 # --no-install-recommends 防止 bookworm-slim 带 ca-certificates 缺失导致 https clone 失败。
 # 装 pi 自己的依赖(proper-lockfile/typebox/openai 等,bun build 会把它们一并打包)。
 #
-# 模型数据走 pi-model-data/ 快照(host 仓库 tracked,42 个分片,与下方 pin 的基线
+# 模型数据走 pi-model-data/ 快照(host 仓库 tracked,43 个分片,与下方 pin 的基线
 # 严格配对),不跑 generate-models:它按 models.dev【当天】实时状态生成,不可复现
 # (实测 2026-09:kimi-for-coding 被摘除让发版构建直接失败)。快照在升级时按 nix
 # pin(pi/nix/model-catalog.json 的 revision)从 pi.dev API 离线 hydrate 生成,
@@ -68,7 +68,7 @@ COPY pi-patches/ ./pi-patches/
 COPY pi-model-data/ ./pi-model-data/
 RUN git clone --filter=blob:none --no-checkout https://github.com/earendil-works/pi.git pi && \
     cd pi && \
-    git checkout d78dc83d633229d12f8b79631384c4c2717c399f && \
+    git checkout dd30101cfc5b0609411dd80b6f93adbc14db14cf && \
     git reset --hard && \
     git apply ../pi-patches/*.patch && \
     bun install && \
