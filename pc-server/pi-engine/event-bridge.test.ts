@@ -14,7 +14,7 @@ import type { Conversation, Message, MessageNode, ToolOutputEntry, ToolPart } fr
 import type { GenerationEvent } from "../inference-engine/events";
 import { createGenerationEventApplier } from "../conversations/generation-apply";
 import { message } from "../foundation/utils";
-import { clearAppErrors, recentAppErrors } from "../observability/app-errors";
+import type { EngineErrorReport } from "../engines/contract";
 import { createPiEventBridge, mapPiToolContent, mapPiUsage } from "./event-bridge";
 
 // ----- pi 事件样本工厂(形状由 vendored pi 类型编译期锁定)-----
@@ -323,24 +323,25 @@ describe("pi 事件桥:纯映射", () => {
   });
 
   test("压缩失败(pi 0.84.2 compaction_end.errorMessage)→ 自动压缩上报;手动/成功/中止不上报", () => {
-    clearAppErrors();
-    const bridge = createPiEventBridge();
-    // 自动压缩(threshold/overflow)失败:状态条照常清除,同时把 errorMessage 上报进错误中心
-    // (severity error;用户不知情,压缩没发生=后续可能上下文溢出,必须知道)。
+    const reports: EngineErrorReport[] = [];
+    const bridge = createPiEventBridge({ report: (report) => void reports.push(report) });
+    // 自动压缩(threshold/overflow)失败:状态条照常清除,同时把 errorMessage 经 host.report
+    // 上报进错误中心(severity error;用户不知情,压缩没发生=后续可能上下文溢出,必须知道)。
     expect(
       bridge.handle({ type: "compaction_end", reason: "threshold", result: undefined, aborted: false, willRetry: false, errorMessage: "Compaction failed: boom" }),
     ).toEqual([{ kind: "engine_status", status: { busy: false } }]);
-    const errs = recentAppErrors();
-    expect(errs.some((e) => e.domain === "pi-engine" && e.severity === "error" && e.message.includes("压缩失败"))).toBe(true);
+    expect(reports).toEqual([
+      { domain: "pi-engine", severity: "error", message: "会话上下文压缩失败,继续对话可能超出模型上下文窗口", detail: "Compaction failed: boom" },
+    ]);
     // 手动压缩(manual)失败不上报:HTTP 错误路径已给人话 toast(runner PI_COMPACT_ERROR_TEXT
     // 映射),再报即同一失败双 toast(内测反馈:/compact 小会话必报"记忆还很小"时弹两条)。
-    clearAppErrors();
+    reports.length = 0;
     bridge.handle({ type: "compaction_end", reason: "manual", result: undefined, aborted: false, willRetry: false, errorMessage: "Compaction failed: Nothing to compact (session too small)" });
-    expect(recentAppErrors().filter((e) => e.domain === "pi-engine")).toHaveLength(0);
+    expect(reports).toHaveLength(0);
     // 成功(有 result)与中止(aborted,errorMessage 为 undefined)均不上报。
     bridge.handle({ type: "compaction_end", reason: "manual", result: { summary: "s", firstKeptEntryId: "e", tokensBefore: 1, estimatedTokensAfter: 1, usage: undefined, details: undefined } as never, aborted: false, willRetry: false });
     bridge.handle({ type: "compaction_end", reason: "manual", result: undefined, aborted: true, willRetry: false });
-    expect(recentAppErrors().filter((e) => e.domain === "pi-engine")).toHaveLength(0);
+    expect(reports).toHaveLength(0);
   });
 
   test("mapPiUsage/mapPiToolContent 口径", () => {

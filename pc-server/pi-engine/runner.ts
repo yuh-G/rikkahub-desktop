@@ -33,12 +33,17 @@ import { CodedError } from "../foundation/errors";
 import { createPiModelRuntime, mapGrantToPi, piThinkingLevelFor, type SubscriptionCredentialSource } from "./model-bridge";
 import { llmLogContextFor, runWithLlmRequestLog } from "./llm-request-log";
 import { createPiEventBridge } from "./event-bridge";
-import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import type { PiSessionResources } from "./resources";
-import type { AppToolSpec, CapturedEngineCompaction, EngineCompactionRecord, ModelGrant, PromptInput } from "../engines/contract";
+import type {
+  AppToolSpec,
+  CapturedEngineCompaction,
+  EngineCompactionRecord,
+  EngineErrorReport,
+  ModelGrant,
+  PromptInput,
+} from "../engines/contract";
 import { createPiAppTools, type PiAppToolCaller } from "./app-tools";
 import { seedPiSessionFromHistory } from "./context-encoder";
-import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
 
 export interface PiGenerationContext {
   /** 本轮模型授权(应用侧 engines/model-grant 组装:上限/请求头已是终值)。limits.contextWindow
@@ -49,7 +54,7 @@ export interface PiGenerationContext {
   /** 助手思考强度(assistant.reasoningLevel 原值;经 piThinkingLevelFor 译成 pi 档位:
    *  off→off、六档直传、auto/未知→medium)。不传=medium(纯测试/冒烟场景)。 */
   reasoningLevel?: string | null;
-  /** 会话身份(审批等待者清扫的归属键;引擎上下文与身份无关,纯由 history 决定)。 */
+  /** 会话身份(引擎上下文与身份无关,纯由 history 决定)。 */
   conversationId: string;
   /** 会话工作目录(工作区边界内的绝对路径)。 */
   cwd: string;
@@ -76,6 +81,8 @@ export interface PiGenerationContext {
   tools?: AppToolSpec[];
   /** 应用工具调用口(生产 = host.tools.call:审批/执行/实体化在应用侧)。 */
   callTool?: PiAppToolCaller;
+  /** 诊断出口(生产 = host.report;自动压缩失败等经它进应用错误中心)。 */
+  report?: (report: EngineErrorReport) => void;
   /** 生成事件下沉(生产侧 = conversations/generation-apply 的应用器)。 */
   sink: GenerationEventSink;
   signal?: AbortSignal;
@@ -126,10 +133,6 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   if (!mapped.ok) throw new Error(`该模型无法在工作区引擎使用：${mapped.reason}`);
   const { runtime, model } = await createPiModelRuntime(mapped.mapping, ctx.credentialSource);
 
-  // 问题4(2.0.0 内测):每轮生成前清扫工作区根的 Windows 保留设备名残留(nul 等)——
-  // 兼作存量自愈:内测期已产生的残留在用户下次使用该工作区时自动消失。
-  sweepWorkspaceReservedNameArtifacts(ctx.cwd);
-
   // P7:引擎上下文从 SQLite 历史每轮重建,inMemory 会话零文件生命周期。
   const manager = SessionManager.inMemory(ctx.cwd);
   const seeded = seedPiSessionFromHistory({
@@ -165,7 +168,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   // split_off(0) 同语义——多条插话 = 多个 user 气泡 + 一个 ai_2,不按轮次逐条滴灌。
   session.agent.steeringMode = "all";
 
-  const bridge = createPiEventBridge();
+  const bridge = createPiEventBridge({ report: ctx.report });
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
     // steering 轮边界(用户问题②):turn_end = 当前 assistant 消息结束、其工具批已执行完,
@@ -209,9 +212,6 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     ctx.signal?.removeEventListener("abort", onAbort);
     unsubscribe();
     session.dispose();
-    // 审批等待者兜底清扫:正常路径下等待者随用户决定/中止即刻注销,这里只防实现
-    // 疏漏把 execute 的 Promise 泄漏成永久悬挂(approval-gate 头注)。
-    clearToolApprovalWaiters(ctx.conversationId);
   }
 
   const capturedCompactions = captureRoundCompactions(manager, seededEntryIds, seeded.entryIdsByMessageId);
@@ -250,6 +250,7 @@ export interface PiCompactionContext {
   customInstructions?: string;
   /** 生成事件下沉:压缩路径只产 engine_status(压缩中/摘要重试),经桥同一映射。 */
   sink: GenerationEventSink;
+  report?: (report: EngineErrorReport) => void;
   signal?: AbortSignal;
 }
 
@@ -324,7 +325,7 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
       : {}),
   });
 
-  const bridge = createPiEventBridge();
+  const bridge = createPiEventBridge({ report: ctx.report });
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
   });

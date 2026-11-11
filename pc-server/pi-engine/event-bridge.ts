@@ -40,7 +40,7 @@ import type {
 } from "../../pi/packages/ai/src/types.ts";
 import type { EngineFidelityBlock, GenerationEvent } from "../inference-engine/events";
 import type { JsonValue, ToolOutputEntry } from "../foundation/types";
-import { reportError } from "../observability/app-errors";
+import type { EngineErrorReport } from "../engines/contract";
 
 /** pi Usage → 我们的 TokenUsage(conversations/helpers ensureUsage 同形)。
  *  口径:promptTokens 含缓存读写(对齐 OpenAI prompt_tokens 语义);cachedTokens=cacheRead。
@@ -153,8 +153,8 @@ interface ToolCardState {
 }
 
 /** 有状态映射桥:一次生成一个实例。状态只服务于关联(卡去重/参数累计/输出通道仲裁),
- *  不持有任何外部资源。 */
-export function createPiEventBridge() {
+ *  不持有任何外部资源。report 是诊断出口(生产 = host.report)。 */
+export function createPiEventBridge(options: { report?: (report: EngineErrorReport) => void } = {}) {
   const cards = new Map<string, ToolCardState>();
   /** message_update 流式工具块:contentIndex → toolCallId(建卡后参数增量寻址用)。 */
   const streamingToolByIndex = new Map<number, string>();
@@ -351,7 +351,12 @@ export function createPiEventBridge() {
         // 失败重复打扰;threshold/overflow = 生成期间自动压缩,用户不知情,失败必须上报
         // (压缩没发生=后续可能上下文溢出)。
         if (event.errorMessage && event.reason !== "manual") {
-          reportError("pi-engine", "error", "会话上下文压缩失败,继续对话可能超出模型上下文窗口", event.errorMessage);
+          options.report?.({
+            domain: "pi-engine",
+            severity: "error",
+            message: "会话上下文压缩失败,继续对话可能超出模型上下文窗口",
+            detail: event.errorMessage,
+          });
         }
         return [{ kind: "engine_status", status: { busy: false } }];
       }

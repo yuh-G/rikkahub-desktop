@@ -76,6 +76,8 @@ import { mapGrantToPi } from "../pi-engine/model-bridge";
 import { modelGrantFor } from "../engines/model-grant";
 import { freshSubscriptionCredential } from "../model-providers/auth/resolve";
 import { appToolSpecsFor, createAppToolCaller } from "../engines/app-tools";
+import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
+import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
 import { createPiSessionResources } from "../pi-engine/resources";
 import { buildEngineInstructions } from "../engines/instructions";
 import { reportEngineError } from "../engines/host";
@@ -838,6 +840,10 @@ async function runPiWorkspaceGeneration(
     report: reportEngineError,
   });
 
+  // 问题4(2.0.0 内测):每轮生成前清扫工作区根的 Windows 保留设备名残留(nul 等)——
+  // 兼作存量自愈:内测期已产生的残留在用户下次使用该工作区时自动消失。
+  sweepWorkspaceReservedNameArtifacts(runtime.cwd);
+
   const result = await runPiGeneration({
     ...piGrantFor(deps.providerItem, deps.selectedModel, deps.assistant, conversation.id),
     // 思考强度与聊天引擎同源(助手设置);pi 档位翻译见 model-bridge piThinkingLevelFor。
@@ -852,11 +858,16 @@ async function runPiWorkspaceGeneration(
     images: promptInput.images,
     resources,
     ...appToolsFor({ conversation, assistant: deps.assistant, sink, target, model: deps.selectedModel, signal }),
+    report: reportEngineError,
     sink,
     signal,
     // steering 轮边界(用户问题②):编排层同一回调直通 pi runner,在 pi turn_end 同步
     // 调用(落库/队列联动/分裂在 steerBoundary,runner 只拿文本喂 session.steer)。
     onSteerBoundary: ctx.onSteerBoundary,
+  }).finally(() => {
+    // 审批等待者兜底清扫:正常路径下等待者随用户决定/中止即刻注销,这里只防实现疏漏把
+    // 在途工具调用泄漏成永久悬挂(approval-gate 头注)。等待者由应用侧工具面登记,清扫归应用。
+    clearToolApprovalWaiters(conversation.id);
   });
   applyCapturedEngineCompactions(conversation, result.capturedCompactions);
   return result.text;
@@ -962,6 +973,7 @@ async function runPiWorkspaceCompaction(
     customInstructions: ctx.customInstructions,
     signal,
     sink,
+    report: reportEngineError,
   });
   // 产物落库是引擎注入实现的义务——与生成路径的压缩捕获同一落点、同一 helper。
   applyCapturedEngineCompactions(conversation, [result.compaction]);
