@@ -69,6 +69,10 @@ jobs:
         working-directory: pc-server
         run: bun run smoke:backup-roundtrip
 
+      - name: Run engine contract smoke
+        working-directory: pc-server
+        run: bun run smoke:engine-contract
+
       - name: Check version consistency
         working-directory: pc-server
         run: bun run scripts/check-version-sync.ts
