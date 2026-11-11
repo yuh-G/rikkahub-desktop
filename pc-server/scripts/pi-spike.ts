@@ -15,6 +15,7 @@ const { message } = await import("../foundation/utils");
 const { model, provider } = await import("../model-providers");
 const { createGenerationEventApplier } = await import("../conversations/generation-apply");
 const { runPiGeneration } = await import("../pi-engine/runner");
+const { modelGrantFor } = await import("../engines/model-grant");
 const { userInputsFor } = await import("../inference-engine/prompt-input");
 const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
 
@@ -55,8 +56,7 @@ async function main(): Promise<void> {
 		const apply = createGenerationEventApplier({ conversation, node, message: assistantMessage });
 
 		const first = await runPiGeneration({
-			provider: ourProvider,
-			model: ourModel,
+			grant: modelGrantFor(ourProvider, ourModel, null, conversation.id)!,
 			conversationId: conversation.id,
 			cwd,
 			history: [],
@@ -80,8 +80,7 @@ async function main(): Promise<void> {
 		const user1 = message("USER", [{ type: "text", text: "Say hello" }]);
 		const asst1 = message("ASSISTANT", [{ type: "text", text: FAKE_REPLY }]);
 		const second = await runPiGeneration({
-			provider: ourProvider,
-			model: ourModel,
+			grant: modelGrantFor(ourProvider, ourModel, null, conversation.id)!,
 			conversationId: conversation.id,
 			cwd,
 			history: [user1, asst1],

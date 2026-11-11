@@ -22,6 +22,7 @@ import { message } from "../foundation/utils";
 import { model, provider } from "../model-providers";
 import { userInputsFor } from "../inference-engine/prompt-input";
 import { runPiCompaction, runPiGeneration } from "./runner";
+import { modelGrantFor } from "../engines/model-grant";
 import { startFakeOpenAiSse, type FakeOpenAiSseServer } from "../test-utils/fake-openai-sse";
 
 const PROVIDER_ID = "00000000-0000-4000-8000-000000000002";
@@ -55,8 +56,7 @@ function testContext(conversationId: string, promptText: string, extras: Partial
   return {
     events,
     ctx: {
-      provider: ourProvider,
-      model: ourModel,
+      grant: modelGrantFor(ourProvider, ourModel, null, conversationId)!,
       conversationId,
       cwd,
       history: [] as Message[],
@@ -114,8 +114,7 @@ describe("pi runner 集成(P7 统一会话数据)", () => {
     const ourProvider = provider({ id: PROVIDER_ID, name: "Runner Test Provider", baseUrl: server.baseUrl, apiKey: "sk-test" });
     const ourModel = model("fake-model", "Runner Test Model");
     const result = await runPiCompaction({
-      provider: ourProvider,
-      model: ourModel,
+      grant: modelGrantFor(ourProvider, ourModel, null, "conv-runner-manual")!,
       conversationId: "conv-runner-manual",
       cwd,
       history: [user1, asst1],

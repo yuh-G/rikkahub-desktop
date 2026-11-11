@@ -48,7 +48,7 @@ import {
   streamGoogleChatWithTools,
 } from "../inference-engine/providers";
 import { buildInteractionsRequestBody, streamInteractionsChatWithTools } from "../inference-engine/interactions";
-import { contextWindowFor, requiredOutputCap } from "../model-providers/model-limits";
+import { requiredOutputCap } from "../model-providers/model-limits";
 import {
   finishReasoningParts,
   finishToolParts,
@@ -72,14 +72,16 @@ import {
   type EngineRunContext,
 } from "../engines";
 import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCompaction, runPiGeneration } from "../pi-engine/runner";
-import { mapProviderModelToPi } from "../pi-engine/model-bridge";
+import { mapGrantToPi } from "../pi-engine/model-bridge";
+import { modelGrantFor } from "../engines/model-grant";
+import { freshSubscriptionCredential } from "../model-providers/auth/resolve";
 import { createPiWorkspaceTools } from "../pi-engine/workspace-tools";
 import { createPiGeneralTools } from "../pi-engine/general-tools";
 import { createPiSessionResources } from "../pi-engine/resources";
 import { buildEngineInstructions } from "../engines/instructions";
 import { reportEngineError } from "../engines/host";
 import { promptInputFromParts, userInputsFor } from "../inference-engine/prompt-input";
-import type { CapturedEngineCompaction } from "../engines/contract";
+import type { CapturedEngineCompaction, SubscriptionCredential } from "../engines/contract";
 import { effectiveEngineCompaction, parseEngineCompactions } from "./engine-compactions";
 import { encodableMessages, enrichMessages, applyTemplateToMessage } from "../inference-engine/message-enrichment";
 import { applyOutputTransforms } from "../assistants";
@@ -730,15 +732,12 @@ async function runPostGenerationTasks(conversationId: string, snapshot: Conversa
   }
 }
 
-/** pi 模型极限取值(P5 统计与压缩对齐):contextWindow 从 models.dev 查真实窗口
- *  (决定 pi 自动压缩阈值),maxTokens 走 requiredOutputCap —— 与聊天引擎 Claude 分支
- *  **同一个函数**,不是"同源口径"的口头约定。pi 的模型配置要求必须给出 maxTokens
- *  (它会恒发上限字段),所以这里同样属于"协议逼我给数"的场合。 */
-function piModelLimitsFor(provider: Provider, model: Model, assistant: Assistant) {
-  return {
-    contextWindow: contextWindowFor(modelsDevCache, provider, model.modelId),
-    maxTokens: requiredOutputCap(modelsDevCache, provider, model.modelId, assistant.maxTokens),
-  };
+/** 工作区引擎的模型授权(engines/model-grant:上限走 requiredOutputCap 单源、请求头走
+ *  applyModelRequestHeaders,与聊天引擎同一组函数)+ 订阅令牌取用口(应用侧锁内刷新)。 */
+function piGrantFor(provider: Provider, model: Model, assistant: Assistant, conversationId: string) {
+  const grant = modelGrantFor(provider, model, assistant, conversationId);
+  if (!grant) throw new Error(`provider 类型 ${provider.type} 无法在工作区引擎使用`);
+  return { grant, credentialSource: () => freshSubscriptionCredential(provider) as Promise<SubscriptionCredential> };
 }
 
 /** P7:本轮压缩产物落 conversation.engineCompactions。cutMessageId 为 null(pi 自动压缩
@@ -835,9 +834,7 @@ async function runPiWorkspaceGeneration(
   });
 
   const result = await runPiGeneration({
-    provider: deps.providerItem,
-    model: deps.selectedModel,
-    modelLimits: piModelLimitsFor(deps.providerItem, deps.selectedModel, deps.assistant),
+    ...piGrantFor(deps.providerItem, deps.selectedModel, deps.assistant, conversation.id),
     // 思考强度与聊天引擎同源(助手设置);pi 档位翻译见 model-bridge piThinkingLevelFor。
     reasoningLevel: deps.assistant.reasoningLevel,
     conversationId: conversation.id,
@@ -939,7 +936,8 @@ async function runPiWorkspaceCompaction(
   // enriched)仍按 ctx.model:压缩对象是"会话模型实际看到的消息",与生成路径同一
   // 视角,勿随摘要模型漂移。
   let summarizer = ctx.summarizer;
-  if (summarizer.model.id !== ctx.model.id && !mapProviderModelToPi(summarizer.provider, summarizer.model).ok) {
+  let summarizerGrant = piGrantFor(summarizer.provider, summarizer.model, assistant, conversation.id);
+  if (summarizer.model.id !== ctx.model.id && !mapGrantToPi(summarizerGrant.grant).ok) {
     reportError(
       "provider",
       "warn",
@@ -948,11 +946,10 @@ async function runPiWorkspaceCompaction(
       "compact_summarizer_fallback",
     );
     summarizer = { provider: ctx.provider, model: ctx.model };
+    summarizerGrant = piGrantFor(summarizer.provider, summarizer.model, assistant, conversation.id);
   }
   const result = await runPiCompaction({
-    provider: summarizer.provider,
-    model: summarizer.model,
-    modelLimits: piModelLimitsFor(summarizer.provider, summarizer.model, assistant),
+    ...summarizerGrant,
     reasoningLevel: assistant.reasoningLevel,
     conversationId: conversation.id,
     cwd: runtime.cwd,

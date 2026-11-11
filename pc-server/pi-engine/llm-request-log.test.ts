@@ -40,12 +40,12 @@ async function flushLogs(): Promise<void> {
 
 describe("工作区 LLM 请求日志壳", () => {
   test("llmLogContextFor:提取 origin;非法 baseUrl 返回 null(该轮不记不炸)", () => {
-    expect(llmLogContextFor({ id: "a", name: "n", baseUrl: "https://api.moonshot.cn/v1" })).toEqual({
+    expect(llmLogContextFor({ providerId: "a", providerName: "n", baseUrl: "https://api.moonshot.cn/v1" })).toEqual({
       providerId: "a",
       providerName: "n",
       origin: "https://api.moonshot.cn",
     });
-    expect(llmLogContextFor({ id: "a", name: "n", baseUrl: "not-a-url" })).toBeNull();
+    expect(llmLogContextFor({ providerId: "a", providerName: "n", baseUrl: "not-a-url" })).toBeNull();
   });
 
   test("上下文内 + origin 匹配:LLM 请求记入管线(kind=provider:agent,含请求体与时长)", async () => {

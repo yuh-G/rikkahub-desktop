@@ -114,10 +114,11 @@ export interface EngineInstructions {
 export type ModelProtocol = "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
 
 /** 凭据:API Key 直接给;订阅登录只给流程标识,令牌每次请求前经 host.models.credential 取
- *  (刷新只在应用侧发生)。flow 为 null = 订阅供应商未登记授权流程(引擎按映射失败处理)。 */
+ *  (刷新只在应用侧发生)。flow 为 null = 订阅供应商未登记授权流程(引擎按映射失败处理);
+ *  signedIn 是本轮开始时的登录状态(未登录时引擎不去要令牌,按「无凭据」报错)。 */
 export type ModelCredential =
   | { kind: "api-key"; apiKey: string }
-  | { kind: "subscription"; flow: OAuthFlowId | null };
+  | { kind: "subscription"; flow: OAuthFlowId | null; signedIn: boolean };
 
 /** 这一轮该用的模型。数值与请求头都是应用侧的最终值(上限走 requiredOutputCap 单源,请求头
  *  已含供应商/模型自定义头、主机特例与会话身份头),引擎只翻译成自己的请求选项,不二次加工。 */

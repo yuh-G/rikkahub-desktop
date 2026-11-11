@@ -21,6 +21,7 @@ const { workspaceRuntimeForConversation } = await import("../workspace/runtime")
 const { createPiWorkspaceTools } = await import("./workspace-tools");
 const { resolveToolApproval, pendingToolApprovalCount } = await import("../inference-engine/approval-gate");
 const { runPiGeneration } = await import("./runner");
+const { modelGrantFor } = await import("../engines/model-grant");
 const { model, provider } = await import("../model-providers");
 const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
 
@@ -80,8 +81,12 @@ async function scriptedRun(
   const events: GenerationEvent[] = [];
   const sink = (event: GenerationEvent) => void events.push(event);
   const run = runPiGeneration({
-    provider: provider({ id: crypto.randomUUID(), name: "Runner Tools Provider", baseUrl: server.baseUrl, apiKey: "sk-test" }),
-    model: model("fake-model", "Runner Tools Model"),
+    grant: modelGrantFor(
+      provider({ id: crypto.randomUUID(), name: "Runner Tools Provider", baseUrl: server.baseUrl, apiKey: "sk-test" }),
+      model("fake-model", "Runner Tools Model"),
+      null,
+      conversation.id,
+    )!,
     conversationId: conversation.id,
     cwd,
     history: [],

@@ -28,25 +28,24 @@ import { createAgentSession } from "../../pi/packages/coding-agent/src/core/sdk.
 import type { ToolDefinition } from "../../pi/packages/coding-agent/src/core/extensions/types.ts";
 import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
 import type { GenerationEventSink } from "../inference-engine/events";
-import type { Message, Model, Provider } from "../foundation/types";
+import type { Message } from "../foundation/types";
 import { piAgentDir } from "../foundation/paths";
 import { CodedError } from "../foundation/errors";
-import { createPiModelRuntime, mapProviderModelToPi, piThinkingLevelFor, type PiModelLimits } from "./model-bridge";
+import { createPiModelRuntime, mapGrantToPi, piThinkingLevelFor, type SubscriptionCredentialSource } from "./model-bridge";
 import { llmLogContextFor, runWithLlmRequestLog } from "./llm-request-log";
 import { createPiEventBridge } from "./event-bridge";
 import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import type { PiSessionResources } from "./resources";
-import type { CapturedEngineCompaction, EngineCompactionRecord, PromptInput } from "../engines/contract";
+import type { CapturedEngineCompaction, EngineCompactionRecord, ModelGrant, PromptInput } from "../engines/contract";
 import { seedPiSessionFromHistory } from "./context-encoder";
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
 
 export interface PiGenerationContext {
-  /** 生效 provider/model(调用方经 findModel 解析,providerOverwrite 已展开)。 */
-  provider: Provider;
-  model: Model;
-  /** 模型极限(P5:orchestrator 从 models.dev/助手配置取值;不传用 model-bridge 保守默认)。
-   *  contextWindow 决定 pi 自动压缩阈值(contextWindow - reserveTokens),必须尽量真实。 */
-  modelLimits?: PiModelLimits;
+  /** 本轮模型授权(应用侧 engines/model-grant 组装:上限/请求头已是终值)。limits.contextWindow
+   *  决定 pi 自动压缩阈值(contextWindow - reserveTokens),必须尽量真实。 */
+  grant: ModelGrant;
+  /** 订阅凭据取用口(生产 = host.models.credential);API Key 授权用不到。 */
+  credentialSource?: SubscriptionCredentialSource;
   /** 助手思考强度(assistant.reasoningLevel 原值;经 piThinkingLevelFor 译成 pi 档位:
    *  off→off、六档直传、auto/未知→medium)。不传=medium(纯测试/冒烟场景)。 */
   reasoningLevel?: string | null;
@@ -121,9 +120,9 @@ function captureRoundCompactions(
 
 export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
   if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
-  const mapped = mapProviderModelToPi(ctx.provider, ctx.model, ctx.modelLimits, ctx.conversationId);
+  const mapped = mapGrantToPi(ctx.grant);
   if (!mapped.ok) throw new Error(`该模型无法在工作区引擎使用：${mapped.reason}`);
-  const { runtime, model } = await createPiModelRuntime(mapped.mapping);
+  const { runtime, model } = await createPiModelRuntime(mapped.mapping, ctx.credentialSource);
 
   // 问题4(2.0.0 内测):每轮生成前清扫工作区根的 Windows 保留设备名残留(nul 等)——
   // 兼作存量自愈:内测期已产生的残留在用户下次使用该工作区时自动消失。
@@ -135,7 +134,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     manager,
     history: ctx.history,
     userInputs: ctx.userInputs,
-    fallbackModelId: ctx.model.modelId,
+    fallbackModelId: ctx.grant.modelId,
     syntheticIds: ctx.syntheticIds,
     compactions: ctx.compactions,
   });
@@ -198,7 +197,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
     // 当模板/扩展命令拦截(agent-session.ts prompt() 的 expandPromptTemplates 分支),我们的会话 UX 不走 pi 命令面。
     // runWithLlmRequestLog:本轮生成的 LLM fetch(pi SDK 内部)记入统一日志管线(日志问题 1)。
-    await runWithLlmRequestLog(llmLogContextFor(ctx.provider), () =>
+    await runWithLlmRequestLog(llmLogContextFor(ctx.grant), () =>
       session.prompt(ctx.promptText, {
         expandPromptTemplates: false,
         ...(ctx.images?.length ? { images: ctx.images } : {}),
@@ -232,11 +231,11 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
 // ===== P5:pi 原生手动压缩(P7:压缩记录以会话行为事实源) =====
 
 export interface PiCompactionContext {
-  provider: Provider;
-  model: Model;
+  /** 执行摘要的模型授权(同 PiGenerationContext.grant)。 */
+  grant: ModelGrant;
+  credentialSource?: SubscriptionCredentialSource;
   /** 助手思考强度(同 PiGenerationContext.reasoningLevel;压缩摘要与主会话同档,勿分叉)。 */
   reasoningLevel?: string | null;
-  modelLimits?: PiModelLimits;
   conversationId: string;
   cwd: string;
   /** P7:同 runPiGeneration——压缩前的引擎上下文同样从 DB 历史+既有压缩记录重建。 */
@@ -294,16 +293,16 @@ const PI_COMPACT_ERRORS: Record<string, { errorCode: string; message: string }> 
  */
 export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompactionResult> {
   if (ctx.signal?.aborted) throw new DOMException("Compaction cancelled", "AbortError");
-  const mapped = mapProviderModelToPi(ctx.provider, ctx.model, ctx.modelLimits, ctx.conversationId);
+  const mapped = mapGrantToPi(ctx.grant);
   if (!mapped.ok) throw new Error(`该模型无法在工作区引擎使用：${mapped.reason}`);
-  const { runtime, model } = await createPiModelRuntime(mapped.mapping);
+  const { runtime, model } = await createPiModelRuntime(mapped.mapping, ctx.credentialSource);
 
   const manager = SessionManager.inMemory(ctx.cwd);
   const seeded = seedPiSessionFromHistory({
     manager,
     history: ctx.history,
     userInputs: ctx.userInputs,
-    fallbackModelId: ctx.model.modelId,
+    fallbackModelId: ctx.grant.modelId,
     compactions: ctx.compactions,
   });
   const seededEntryIds = new Set(manager.getEntries().map((entry) => entry.id));
@@ -333,7 +332,7 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
   ctx.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     if (ctx.signal?.aborted) throw new DOMException("Compaction cancelled", "AbortError");
-    const result = await runWithLlmRequestLog(llmLogContextFor(ctx.provider), () =>
+    const result = await runWithLlmRequestLog(llmLogContextFor(ctx.grant), () =>
       session.compact(ctx.customInstructions?.trim() || undefined),
     );
     const captured = captureRoundCompactions(manager, seededEntryIds, seeded.entryIdsByMessageId).at(-1);

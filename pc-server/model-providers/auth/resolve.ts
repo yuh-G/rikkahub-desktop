@@ -6,7 +6,8 @@
 // 这是「刷新权唯一在核心」的落地:引擎永不自己刷新,只拿短命 access。
 
 import { defaultProviderAuthContext } from "../../../pi/packages/ai/src/auth/context.ts";
-import { resolveProviderAuth } from "../../../pi/packages/ai/src/auth/resolve.ts";
+import { refreshStoredOAuthCredential, resolveProviderAuth } from "../../../pi/packages/ai/src/auth/resolve.ts";
+import type { OAuthAuth, OAuthCredential } from "../../../pi/packages/ai/src/auth/types.ts";
 import type { Provider } from "../../foundation/types";
 import { providerHeaders } from "../index";
 import { createPiCredentialStore } from "./credential-store";
@@ -47,7 +48,7 @@ export async function resolveProviderAuthForProvider(
   // 仅工作区的订阅(chatCapable:false,Claude Pro/Max)在宿主全路径(对话/辅助/图像/
   // 连通性测试——它们的凭证都经本函数)统一拦下:它的凭证要求 Claude Code 全套伪装头
   // 与系统提示词首块(pi api/anthropic-messages.ts 内建),宿主引擎发裸请求必被上游拒绝。
-  // pi 引擎经 createPiCredentialStore 直取凭证、不经过本函数,工作区不受影响。
+  // 工作区引擎经 freshSubscriptionCredential 取令牌、不经过本函数,工作区不受影响。
   if (flow.chatCapable === false) {
     throw new Error("Claude 订阅(Claude Pro/Max)仅在工作区可用,不接入对话模型。请在工作区任务中使用该供应商的模型。");
   }
@@ -73,4 +74,37 @@ export async function resolveProviderAuthForProvider(
     baseUrl: result.auth.baseUrl,
     accountId: typeof (result as { accountId?: unknown }).accountId === "string" ? (result as { accountId?: string }).accountId : undefined,
   };
+}
+
+const OAUTH_MIN_VALIDITY_MS = 5 * 60 * 1000;
+
+/** 引擎取订阅令牌的应用侧实现(契约 host.models.credential):剩余有效期不足
+ *  max(5 分钟, minValidityMs) 时在应用侧锁内刷新(pi refreshStoredOAuthCredential,跑在
+ *  createPiCredentialStore 的串行队列上,与聊天轨同一把锁),返回原样凭据。
+ *  不设 chatCapable 闸门:取令牌的只有工作区引擎,Claude Pro/Max 正是为它登录的。
+ *  错误文案沿用 pi/宿主既有形态(OAuth refresh failed / credential unavailable),
+ *  classifyOAuthCredentialError 照常归类为「请重新登录」。 */
+export async function freshSubscriptionCredential(
+  provider: Provider,
+  opts?: { minValidityMs?: number },
+): Promise<OAuthCredential> {
+  const flow = provider.oauth ? OAUTH_FLOWS[provider.oauth.flow] : undefined;
+  if (!flow) throw new Error(`OAuth credential unavailable for ${provider.id}`);
+  const store = createPiCredentialStore();
+  const minimum = Math.max(OAUTH_MIN_VALIDITY_MS, opts?.minValidityMs ?? 0);
+  const expiresSoon = (credential: OAuthCredential) => Date.now() + minimum >= credential.expires;
+  const stored = await store.read(flow.piProviderId);
+  if (!stored) throw new Error(`OAuth credential unavailable for ${provider.id}`);
+  if (!expiresSoon(stored)) return stored;
+  const oauth = await loadOAuthFlow(flow.id);
+  // 取消只作用于等锁(pi 语义:刷新一旦开始就不可中断,否则可能丢掉唯一有效的 refresh token)。
+  const refreshed = await refreshStoredOAuthCredential(
+    store,
+    flow.piProviderId,
+    oauth as unknown as OAuthAuth,
+    expiresSoon,
+    new AbortController().signal,
+  );
+  if (!refreshed) throw new Error(`OAuth credential unavailable for ${provider.id}`);
+  return refreshed;
 }

@@ -32,10 +32,10 @@ export function runWithLlmRequestLog<T>(context: LlmLogContext | null, fn: () =>
   return als.run(context, fn);
 }
 
-/** 从 provider.baseUrl 提取 origin;不合法(本地异常配置)返回 null=该轮不记日志。 */
-export function llmLogContextFor(provider: { id: string; name: string; baseUrl: string }): LlmLogContext | null {
+/** 从授权 baseUrl 提取 origin;不合法(本地异常配置)返回 null=该轮不记日志。 */
+export function llmLogContextFor(grant: { providerId: string; providerName: string; baseUrl: string }): LlmLogContext | null {
   try {
-    return { providerId: provider.id, providerName: provider.name, origin: new URL(provider.baseUrl).origin };
+    return { providerId: grant.providerId, providerName: grant.providerName, origin: new URL(grant.baseUrl).origin };
   } catch {
     return null;
   }

@@ -15,6 +15,7 @@ import type { GenerationEvent } from "../inference-engine/events";
 import type { Message } from "../foundation/types";
 import { model, provider } from "../model-providers";
 import { runPiGeneration } from "./runner";
+import { modelGrantFor } from "../engines/model-grant";
 import { startFakeOpenAiSse, type FakeOpenAiSseServer } from "../test-utils/fake-openai-sse";
 
 const PROVIDER_ID = "00000000-0000-4000-8000-00000000000a";
@@ -51,8 +52,7 @@ describe("pi runner steering 轮边界", () => {
     const ourProvider = provider({ id: PROVIDER_ID, name: "Steer Provider", baseUrl: server.baseUrl, apiKey: "sk-test" });
     const ourModel = model("fake-model", "Steer Model");
     const result = await runPiGeneration({
-      provider: ourProvider,
-      model: ourModel,
+      grant: modelGrantFor(ourProvider, ourModel, null, "conv-runner-steer")!,
       conversationId: "conv-runner-steer",
       cwd,
       history: [] as Message[],
