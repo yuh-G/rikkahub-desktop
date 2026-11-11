@@ -9,7 +9,7 @@ const turn = { conversationId: "c1", turnId: "t1" };
 function fakeDriver(overrides: Partial<EngineDriver> = {}): EngineDriver {
   return {
     kind: "fake",
-    capabilities: { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, placement: "portable" },
+    capabilities: { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, workspace: "none", placement: "portable" },
     startTurn: async () => ({ text: "ok", stopReason: "stop", compactions: [] }),
     abort: async () => undefined,
     dispose: async () => undefined,

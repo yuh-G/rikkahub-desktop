@@ -34,6 +34,8 @@ const PI_CAPABILITIES: EngineCapabilities = {
   steering: "boundary",
   // pi 原生 session.compact:压引擎记忆,界面历史不动。
   nativeCompaction: true,
+  // 工作区引擎:请求必带 cwd/root(缺则以错误拒绝)。
+  workspace: "required",
   placement: "portable",
 };
 

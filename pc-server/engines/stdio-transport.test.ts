@@ -37,7 +37,7 @@ function wire(createDriver: (host: EngineHost) => EngineDriver, host: Partial<En
 function baseDriver(host: EngineHost, overrides: Partial<EngineDriver> = {}): EngineDriver {
   return {
     kind: "fake",
-    capabilities: { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, placement: "portable" },
+    capabilities: { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, workspace: "none", placement: "portable" },
     startTurn: async () => ({ text: "", stopReason: null, compactions: [] }),
     abort: async () => {},
     dispose: async () => {},

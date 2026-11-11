@@ -47,6 +47,9 @@ export interface EngineCapabilities {
   readonly steering: EngineSteeringSupport;
   /** 有引擎原生压缩(压引擎记忆,界面历史不动)。没有则应用回落界面历史压缩。 */
   readonly nativeCompaction: boolean;
+  /** 路由依据:required = 只接管工作区可用的会话(请求必带 workspace);none = 不用工作区。
+   *  会话工作区可用 → 首个 required 的驱动,否则 → 首个 none 的驱动。 */
+  readonly workspace: "required" | "none";
   /** portable = 必须能搬进独立进程:收完整的 TurnInput,只经 EngineHost 拿应用的东西。
    *  in-process-only = 应用自研的循环(聊天引擎),经进程内绑定直接读会话,不收 TurnInput。 */
   readonly placement: "in-process-only" | "portable";

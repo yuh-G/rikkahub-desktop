@@ -19,6 +19,8 @@ const CHAT_CAPABILITIES: EngineCapabilities = {
   steering: "boundary",
   // 没有引擎记忆:请求每轮从界面历史构建,压缩回落界面历史压缩。
   nativeCompaction: false,
+  // 不用工作区:工作区不可用(无工作区、缺根、未信任)的会话都由它兜底。
+  workspace: "none",
   placement: "in-process-only",
 };
 

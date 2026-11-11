@@ -342,21 +342,23 @@ describe("引擎判定单源(审批旁路/压缩路由收编)", () => {
     const workspace = ws.createWorkspace({ type: "managed", name: "route-resolve" });
 
     // 审批端点(tool-approval)据 resumeSemantics 决定"记录状态"还是"重触发续跑",
-    // 压缩端点据 compact 有无决定"引擎压缩"还是"回落 UI 历史压缩"——这里锁死两个
-    // 引擎的声明,防止 adapter 改动悄悄改变端点行为。
-    const piAdapter = resolveEngineForConversation(seedConversation(workspace.id));
-    expect(piAdapter.kind).toBe("pi");
-    expect(piAdapter.resumeSemantics).toBe("run-and-suspend");
-    expect(typeof piAdapter.compact).toBe("function");
+    // 压缩端点据 nativeCompaction 决定"引擎压缩"还是"回落 UI 历史压缩"——这里锁死两个
+    // 引擎的声明,防止驱动改动悄悄改变端点行为。
+    const piDriver = resolveEngineForConversation(seedConversation(workspace.id));
+    expect(piDriver.kind).toBe("pi");
+    expect(piDriver.capabilities.resumeSemantics).toBe("run-and-suspend");
+    expect(piDriver.capabilities.nativeCompaction).toBe(true);
+    expect(typeof piDriver.compact).toBe("function");
     // steering 能力声明:两个引擎都在真边界调 onSteerBoundary(pi=turn_end,chat=工具轮/最终轮),
     // 协调器据此下发回调;声明改成 "none" 会让编排层不再下发,补发退化为收尾派发。
-    expect(piAdapter.steering).toBe("boundary");
+    expect(piDriver.capabilities.steering).toBe("boundary");
 
-    const chatAdapter = resolveEngineForConversation(seedConversation(null));
-    expect(chatAdapter.kind).toBe("chat");
-    expect(chatAdapter.resumeSemantics).toBe("pause-resume");
-    expect(chatAdapter.compact).toBeUndefined();
-    expect(chatAdapter.steering).toBe("boundary");
+    const chatDriver = resolveEngineForConversation(seedConversation(null));
+    expect(chatDriver.kind).toBe("chat");
+    expect(chatDriver.capabilities.resumeSemantics).toBe("pause-resume");
+    expect(chatDriver.capabilities.nativeCompaction).toBe(false);
+    expect(chatDriver.compact).toBeUndefined();
+    expect(chatDriver.capabilities.steering).toBe("boundary");
   }, 30_000);
 
   test("compactEngineConversation:普通会话回落(null),工作区会话穿透到 pi 压缩驱动", async () => {
@@ -364,7 +366,7 @@ describe("引擎判定单源(审批旁路/压缩路由收编)", () => {
     // chat 无 compact 能力 → null,调用方(compress 端点)回落 UI 历史压缩。
     expect(await compactEngineConversation(seedConversation(null), "")).toBeNull();
 
-    // 工作区会话:注册表命中 pi adapter → runtime 透传 → 压缩装配(富化/资源)→
+    // 工作区会话:路由命中 pi 驱动 → 工作区运行时随路由带出 → 压缩装配(富化/资源)→
     // pi session.compact。小会话在发起任何模型请求前抛"上下文过短"(runner 映射成
     // CodedError 人话)——该错误文本即"路由穿透到引擎压缩驱动"的硬证据,且全程无上游请求。
     const workspace = ws.createWorkspace({ type: "managed", name: "route-compact" });
