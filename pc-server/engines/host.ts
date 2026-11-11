@@ -5,13 +5,30 @@
 // 返回后解绑。解绑后迟到的回调落空:emit 丢弃、tools.call 以错误拒绝、steer.take 返回空、
 // credential 报凭据不可用——会话被接管时,旧轮的回调不会写进新轮。
 // 引擎经 host.report 把诊断交给应用的错误中心,不直接 import observability。
+//
+// 进程内驱动(placement: "in-process-only",即聊天引擎)不收 TurnInput:它的循环直接读写活的
+// 会话对象,所以绑定里另带 inProcess 上下文,驱动经 boundTurn 按 turnId 取。portable 驱动
+// 永远不读它(读不到——它在另一个进程里也能跑)。
 
-import type { Provider } from "../foundation/types";
-import type { GenerationEventSink } from "../inference-engine/events";
+import type { Assistant, Conversation, Model, Provider } from "../foundation/types";
+import type { GenerationEventSink, GenerationTarget, ToolExecutor } from "../inference-engine/events";
 import { freshSubscriptionCredential } from "../model-providers/auth/resolve";
 import { reportError } from "../observability/app-errors";
 import type { AppToolCaller } from "./app-tools";
 import type { EngineErrorReport, EngineHost, SubscriptionCredential, TurnRef } from "./contract";
+
+/** 进程内驱动一轮的会话上下文(活对象,不经契约)。 */
+export interface InProcessTurnContext {
+  conversation: Conversation;
+  /** 流式落点活视图:每次现读,补发分裂会换绑到新节点。 */
+  target: GenerationTarget;
+  /** 生成入口解析的配置快照,贯穿本轮(不回读可能已被替换的设置)。 */
+  assistant: Assistant;
+  provider: Provider;
+  model: Model;
+  /** 工具执行闭包(已挂生成级 signal 与部分输出回写)。 */
+  executeTool: ToolExecutor;
+}
 
 export interface EngineTurnBinding {
   /** 生成事件的应用器(与聊天引擎同一份 sink)。 */
@@ -23,6 +40,8 @@ export interface EngineTurnBinding {
   /** 本轮授权涉及的供应商快照(会话模型 + 摘要模型)。订阅令牌按授权的 providerId 在这里找,
    *  用的是生成入口的配置快照,不回读可能已被替换的设置。 */
   providers: Provider[];
+  /** 只给进程内驱动。 */
+  inProcess?: InProcessTurnContext;
 }
 
 const turns = new Map<string, EngineTurnBinding>();
@@ -33,6 +52,11 @@ export function bindEngineTurn(turn: TurnRef, binding: EngineTurnBinding): () =>
   return () => {
     if (turns.get(turn.turnId) === binding) turns.delete(turn.turnId);
   };
+}
+
+/** 进程内驱动取本轮绑定。portable 驱动不得调用(它只经 EngineHost 拿东西)。 */
+export function boundTurn(turnId: string): EngineTurnBinding | undefined {
+  return turns.get(turnId);
 }
 
 export function reportEngineError(report: EngineErrorReport): void {

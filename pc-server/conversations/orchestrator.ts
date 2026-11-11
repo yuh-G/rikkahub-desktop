@@ -11,7 +11,6 @@ import { state } from "../persistence/json-store";
 import { addLog } from "../api/logs";
 import { broadcastConversation, broadcastEngineStatus, broadcastList, broadcastNodeUpdate, touchStream } from "../api/sse";
 import { findModel } from "../model-providers";
-import { callProviderStreaming } from "../inference-engine/chat-generation";
 import {
   finishReasoningParts,
   finishToolParts,
@@ -564,21 +563,40 @@ async function runPortableGeneration(
   return result.text;
 }
 
-/** 引擎注册表(T1):编排器把聊天引擎的生成实现与 portable 驱动的应用侧装配注入注册表。
+/** 进程内驱动(聊天引擎)一轮生成的应用侧装配:会话活视图、工具执行闭包与配置快照经进程内
+ *  绑定交给驱动,中止经 callEngineDriver 转成 driver.abort。
+ *  P1-4:generateAnswer 入口解析的 assistant/provider/model 贯穿本次生成,
+ *  聊天引擎不再从可能已被替换的 state.settings 重新解析。 */
+async function runInProcessGeneration(
+  ctx: EngineRunContext & { driver: EngineDriver },
+  sink: GenerationEventSink,
+  signal?: AbortSignal,
+): Promise<string> {
+  const { conversation, driver } = ctx;
+  const turn: TurnRef = { conversationId: conversation.id, turnId: id() };
+  const binding: EngineTurnBinding = {
+    sink,
+    // steering 轮边界(用户问题②):透传给聊天引擎的工具循环骨架。
+    ...(ctx.onSteerBoundary ? { steer: ctx.onSteerBoundary } : {}),
+    providers: [ctx.provider],
+    inProcess: {
+      conversation,
+      target: ctx.target,
+      assistant: ctx.assistant,
+      provider: ctx.provider,
+      model: ctx.model,
+      executeTool: ctx.executeTool,
+    },
+  };
+  const result = await callEngineDriver(driver, turn, binding, signal, "Generation stopped", () => driver.startTurn(turn));
+  return result.text;
+}
+
+/** 引擎注册表(T1):编排器把两类驱动一轮的应用侧装配注入注册表。
  *  pi 在前(工作区可用即接管),chat 兜底。新增引擎在注册表登记一行,runGeneration/续跑
  *  语义/压缩路由/审批旁路判定无需再改。 */
 const ENGINE_REGISTRY = createEngineRegistry({
-  chatRun: (ctx, sink, signal) =>
-    callProviderStreaming(ctx.conversation, ctx.target, {
-      signal,
-      sink,
-      executeTool: ctx.executeTool,
-      // steering 轮边界(用户问题②):透传给聊天引擎的工具循环骨架。
-      onSteerBoundary: ctx.onSteerBoundary,
-      // P1-4:generateAnswer 入口解析的 assistant/provider/model 贯穿本次生成,
-      // callProviderStreaming 不再从可能已被替换的 state.settings 重新解析。
-      snapshot: { assistant: ctx.assistant, provider: ctx.provider, model: ctx.model },
-    }),
+  inProcessRun: (ctx, sink, signal) => runInProcessGeneration(ctx, sink, signal),
   portableRun: (ctx, sink, signal) => runPortableGeneration(ctx, sink, signal),
   portableCompact: (ctx, sink, signal) => runPortableCompaction(ctx, sink, signal),
 });

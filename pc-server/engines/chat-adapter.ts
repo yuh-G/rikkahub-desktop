@@ -1,26 +1,25 @@
-// engines/chat-adapter.ts — 聊天引擎适配器(T1 收敛,行为零变化)
+// engines/chat-adapter.ts — 聊天引擎适配器(T1 收敛;P2.4 起包一个进程内驱动)
 //
-// 把既有的 callProviderStreaming(三家 Provider 流式 + 工具循环)收敛为一个
-// EngineAdapter。matches() 恒 true——它是注册表的兜底引擎(排在最后),任何会话
-// 没被更靠前的引擎(如 pi)接管时由它跑。生成逻辑本体仍在 orchestrator 的
-// callProviderStreaming,经工厂参数注入,本文件只做契约封装,不含 Provider 细节。
+// 把聊天驱动(engines/chat-driver)收敛为一个 EngineAdapter。matches() 恒 true——它是注册表的
+// 兜底引擎(排在最后),任何会话没被更靠前的引擎(如 pi)接管时由它跑。种类与能力声明直接读
+// 驱动;一轮的应用侧装配(进程内绑定、中止转发)由编排器经 run 注入。
 
 import type { Assistant, Conversation } from "../foundation/types";
-import type { ChatRunFn, EngineAdapter } from "./index";
+import type { EngineDriver } from "./contract";
+import type { EngineAdapter, InProcessRunFn } from "./index";
 
-export function createChatAdapter(chatRun: ChatRunFn): EngineAdapter {
+export function createChatAdapter(impl: { driver: EngineDriver; run: InProcessRunFn }): EngineAdapter {
+  const { driver } = impl;
   return {
-    kind: "chat",
+    kind: driver.kind,
     // 兜底引擎:恒命中。注册表顺序保证它最后才被轮到(resolveEngine 取首个命中)。
     matches(_conversation: Conversation, _assistant: Assistant): boolean {
       return true;
     },
-    // 聊天引擎=整批暂停→逐卡批准→重触发续跑(resumeApprovedToolParts)。
-    resumeSemantics: "pause-resume",
-    // 工具循环骨架在工具轮边界与最终轮调用 onSteerBoundary(inference-engine/tool-loop absorbSteering)。
-    steering: "boundary",
+    resumeSemantics: driver.capabilities.resumeSemantics,
+    steering: driver.capabilities.steering,
     run(ctx, sink, signal) {
-      return chatRun(ctx, sink, signal);
+      return impl.run({ ...ctx, driver }, sink, signal);
     },
   };
 }

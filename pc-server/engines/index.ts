@@ -10,8 +10,8 @@
 // 不进公共契约。进程内引擎(chat/pi)与子进程引擎(dsh/codex,见 T4 骨架)共享同一
 // 输出契约 GenerationEvent,前端永远无感知。
 //
-// 防循环导入:本模块不 import orchestrator;聊天引擎的生成函数(callProviderStreaming)与
-// portable 驱动的应用侧装配(组 TurnInput)由编排器在组装注册表时经参数注入。matches() 只做
+// 防循环导入:本模块不 import orchestrator;各驱动一轮的应用侧装配(进程内驱动绑会话上下文,
+// portable 驱动组 TurnInput)由编排器在组装注册表时经参数注入。matches() 只做
 // 路由判定,不产副作用。具体驱动只在本模块实例化,编排器不认识任何具体引擎
 // (engines/engine-agnostic-guard.test.ts 锁定)。
 
@@ -20,6 +20,7 @@ import type { GenerationEventSink, GenerationTarget, ToolExecutor } from "../inf
 import { createPiDriver } from "../pi-engine/driver";
 import type { WorkspaceRuntime } from "../workspace/runtime";
 import { createChatAdapter } from "./chat-adapter";
+import { createChatDriver } from "./chat-driver";
 import type { EngineDriver, EngineKind, EngineResumeSemantics, EngineSteeringSupport } from "./contract";
 import { appEngineHost } from "./host";
 import { connectDriver, connectHost, STRICT_CONTRACT_TRANSPORT } from "./loopback";
@@ -87,9 +88,9 @@ export interface EngineAdapter {
   compact?(ctx: EngineCompactContext, sink: GenerationEventSink, signal?: AbortSignal): Promise<EngineCompactionResult>;
 }
 
-/** 生成函数注入形状:编排器把真实实现注入 adapter 工厂,engines/ 与 orchestrator 解耦。 */
-export type ChatRunFn = (
-  ctx: EngineRunContext,
+/** 进程内驱动一轮生成的应用侧装配(绑进程内上下文、转发中止、调 driver.startTurn)。 */
+export type InProcessRunFn = (
+  ctx: EngineRunContext & { driver: EngineDriver },
   sink: GenerationEventSink,
   signal?: AbortSignal,
 ) => Promise<string>;
@@ -114,9 +115,10 @@ export type PortableCompactFn = (
 
 /** 组装引擎注册表(编排器在模块加载时调用一次)。顺序即优先级:pi 在前(能力命中
  *  才接管),chat 恒兜底。新增引擎往数组前部插(chat 必须保持最后兜底)。
- *  驱动经回环传输连接(测试里 strict:每个载荷 JSON 往返),宿主是应用唯一的 appEngineHost。 */
+ *  portable 驱动经回环传输连接(测试里 strict:每个载荷 JSON 往返),宿主是应用唯一的
+ *  appEngineHost;进程内驱动直连(上游错误要以原对象到达编排器的错误归类)。 */
 export function createEngineRegistry(deps: {
-  chatRun: ChatRunFn;
+  inProcessRun: InProcessRunFn;
   portableRun: PortableRunFn;
   portableCompact: PortableCompactFn;
 }): EngineAdapter[] {
@@ -124,7 +126,7 @@ export function createEngineRegistry(deps: {
   const piDriver = connectDriver(createPiDriver(connectHost(appEngineHost, strict)), strict);
   return [
     createPiAdapter({ driver: piDriver, run: deps.portableRun, compact: deps.portableCompact }),
-    createChatAdapter(deps.chatRun),
+    createChatAdapter({ driver: createChatDriver(), run: deps.inProcessRun }),
   ];
 }
 
