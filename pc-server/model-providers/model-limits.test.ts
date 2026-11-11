@@ -283,8 +283,8 @@ describe("A 行为:上限未知要留痕(「该去查官方文档并登记」的
 // ── B 完整性:输出上限线上字段的构造点登记 ─────────────────────────────────────
 // 登记表 = "已审阅过、确认上限经 model-limits 单源取值(或本身就是那个单源)"的文件。
 const REGISTERED_OUTPUT_CAP_FILES: ReadonlySet<string> = new Set([
-  // 主生成:Claude 分支 requiredOutputCap;OpenAI/Google 分支仅在用户显式配置时才发字段。
-  "conversations/orchestrator.ts",
+  // 主生成(聊天引擎):Claude 分支 requiredOutputCap;OpenAI/Google 分支仅在用户显式配置时才发字段。
+  "inference-engine/chat-generation.ts",
   // 辅助任务(标题/建议/翻译/压缩/提示词优化/OCR):requiredOutputCap + internalOutputCap。
   "conversations/auxiliary.ts",
   // 连通性测试:internalOutputCap(探测预算不得超模型上限)。
