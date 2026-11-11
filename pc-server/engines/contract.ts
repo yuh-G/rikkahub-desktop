@@ -141,6 +141,8 @@ export interface ModelGrant {
 
 export interface CredentialRequest {
   conversationId: string;
+  /** 发起请求的轮次(应用按它找本轮授权涉及的供应商快照)。 */
+  turnId: string;
   /** 授权里的应用侧供应商 id。 */
   providerId: string;
   /** 要求的最短剩余有效期(毫秒);应用取它与 5 分钟的较大者,不足即在应用侧刷新。 */

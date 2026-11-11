@@ -1,14 +1,14 @@
 // pi-engine/runner.ts — pi 会话生成驱动器(P2 骨架;P7 重写为统一会话数据)
 //
-// 一次调用 = 我们会话模型里的一轮生成:注入模型运行时(P1 model-bridge)→ 把 SQLite
-// 选中路径历史灌注进内存 SessionManager(P7 context-encoder;inMemory,零 jsonl)→
+// 一次调用 = 我们会话模型里的一轮生成:注入模型运行时(P1 model-bridge)→ 把选中路径
+// 历史灌注进内存 SessionManager(P7 context-encoder;inMemory,零 jsonl)→
 // 订阅事件经桥(event-bridge)映射为 GenerationEvent 灌进调用方 sink(生产侧即
-// generateAnswer 的共享应用器)→ prompt 等待回合结束 → 按桥观察到的终局决定
+// host.emit)→ prompt 等待回合结束 → 按桥观察到的终局决定
 // return/throw,顺手捕获本轮 pi 自动压缩产物(摘要以会话行为事实源,见下)。
 //
 // 契约与聊天引擎流式函数对齐:sink 语义相同、abort 经 AbortSignal、上游失败以 throw
-// 上抛(generateAnswer 的失败分支统一做 reportError/失败文本/注解)。P3 把工作区会话的
-// runGeneration 切到本驱动器,generateAnswer 的收尾/错误/审批框架原样复用。
+// 上抛(应用侧 generateAnswer 的失败分支统一做 reportError/失败文本/注解)。生产调用方是
+// pi-engine/driver(EngineDriver 实现,输入全部来自契约)。
 //
 // P7 会话数据统一(方案 §4.7):SQLite 是唯一事实源,引擎上下文每轮从选中路径历史
 // 确定性重建(context-encoder 保真注解解码,失配行自校验退 legacy),不再有
@@ -83,17 +83,17 @@ export interface PiGenerationContext {
   callTool?: PiAppToolCaller;
   /** 诊断出口(生产 = host.report;自动压缩失败等经它进应用错误中心)。 */
   report?: (report: EngineErrorReport) => void;
-  /** 生成事件下沉(生产侧 = conversations/generation-apply 的应用器)。 */
+  /** 生成事件下沉(生产侧 = host.emit,应用侧接 conversations/generation-apply 的应用器)。 */
   sink: GenerationEventSink;
   signal?: AbortSignal;
-  /** steering 轮边界(用户问题②,对齐 Codex pending_input):生成中补发的用户消息取流。
-   *  runner 在 pi 的 turn_end(当前 assistant 消息结束、其工具全部执行完)同步调用本回调,
-   *  返回的文本经 session.agent.steer() 同步入 pi steering 队列——agent-loop 紧接着在
-   *  「下一次 LLM 调用前」排水注入(agent-loop.ts runLoop 的 turn_end 后 getSteeringMessages)。
-   *  调用时刻 = 注入时刻 = 编排层做数据层分裂的时刻,三者同点;与聊天引擎工具循环的
+  /** steering 轮边界(用户问题②,对齐 Codex pending_input):生成中补发的用户消息取流
+   *  (生产 = host.steer.take)。runner 在 pi 的 turn_end(当前 assistant 消息结束、其工具
+   *  全部执行完)调用并等它返回,文本经 session.agent.steer() 入 pi steering 队列——agent-loop
+   *  紧接着在「下一次 LLM 调用前」排水注入(runLoop 的 turn_end 后 getSteeringMessages)。
+   *  调用时刻 = 注入时刻 = 应用做数据层分裂的时刻,三者同点;与聊天引擎工具循环的
    *  调用位、Codex 的 pending_input 排水位同构。不传 = 无 steering 能力(消息留在 FIFO
-   *  队列收尾派发兜底)。回调由编排层实现(落库/队列联动在编排层,runner 零副作用)。 */
-  onSteerBoundary?: () => string[];
+   *  队列收尾派发兜底)。落库/队列联动在应用侧,runner 零副作用。 */
+  onSteerBoundary?: () => string[] | Promise<string[]>;
 }
 
 export interface PiGenerationResult {
@@ -171,28 +171,32 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   const bridge = createPiEventBridge({ report: ctx.report });
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
-    // steering 轮边界(用户问题②):turn_end = 当前 assistant 消息结束、其工具批已执行完,
-    // agent-loop 紧接着 getSteeringMessages 排水(顺序 await 各监听器后再查队列)。这里
-    // 直调 session.agent.steer({...})——同步入队(agent.ts 只 push steeringQueue),保证
-    // 「pi 查队列之前消息已在队列」。不走 session.steer():pi 1.0 起它先 await 输入钩子
-    // (agent-session._queueUserInput)再入队,而我们的 turn_end 回调不 await 它,入队被
-    // 推迟至少一个微任务——排水可能先查、消息晚到(pi 有下轮兜底不丢,但会晚一轮送达,
-    // 破坏注入时刻=分段时刻)。跳过的只有输入钩子(noExtensions 下恒等)与 "/skill:"
-    // /模板展开(会话 UX 不产生 "/" 命令形态,恒等)。接入 pi 插件后此路径会绕过插件
-    // input 钩子,届时重评(方案 §8 P1)。
-    // 编排层在同一调用里完成数据层分裂(定格 ai_1 / 落 steer user / 开 ai_2 / 换绑),
-    // 于是分裂时刻与 pi 注入时刻逐字同点。此前用 1s 定时器轮询,分裂落在模型仍在流式
-    // 的任意时刻,ai_1 多半还是空占位(2026-09-20 用户实测 2-1)。
-    if (event.type === "turn_end" && ctx.onSteerBoundary) {
-      const texts = ctx.onSteerBoundary();
-      if (texts.length === 0) return;
-      // 注入即分段:编排层已换绑落点,桥的终局文本/保真序号切到新气泡口径。
-      bridge.beginSegment();
-      for (const text of texts) {
-        session.agent.steer({ role: "user", content: [{ type: "text", text }], timestamp: Date.now() });
-      }
-    }
   });
+  // steering 轮边界(用户问题②):turn_end = 当前 assistant 消息结束、其工具批已执行完。
+  // 挂在 agent 级监听器上而不是 session.subscribe:Agent.processEvents 逐个 await agent 级
+  // 监听器,agent-loop 等 turn_end 的全部监听器返回后才 getSteeringMessages 排水,所以这里
+  // 可以 await 取补发(跨进程时它是一次往返)。AgentSession 自己的处理器在构造时先注册,
+  // 轮到这里时桥已经处理过本次 turn_end。
+  // 入队直调 session.agent.steer({...})(同步 push steeringQueue)。不走 session.steer():
+  // pi 1.0 起它先 await 输入钩子(agent-session._queueUserInput)再入队,跳过的只有输入钩子
+  // (noExtensions 下恒等)与 "/skill:"/模板展开(会话 UX 不产生 "/" 命令形态,恒等)。
+  // 接入 pi 插件后此路径会绕过插件 input 钩子,届时重评(方案 §8 P1)。
+  // 应用在同一调用里完成数据层分裂(定格 ai_1 / 落 steer user / 开 ai_2 / 换绑),
+  // 于是分裂时刻与 pi 注入时刻逐字同点。此前用 1s 定时器轮询,分裂落在模型仍在流式
+  // 的任意时刻,ai_1 多半还是空占位(2026-09-20 用户实测 2-1)。
+  const onSteerBoundary = ctx.onSteerBoundary;
+  const unsubscribeSteer = onSteerBoundary
+    ? session.agent.subscribe(async (event) => {
+        if (event.type !== "turn_end") return;
+        const texts = await onSteerBoundary();
+        if (texts.length === 0) return;
+        // 注入即分段:应用已换绑落点,桥的终局文本/保真序号切到新气泡口径。
+        bridge.beginSegment();
+        for (const text of texts) {
+          session.agent.steer({ role: "user", content: [{ type: "text", text }], timestamp: Date.now() });
+        }
+      })
+    : undefined;
   const onAbort = () => {
     void session.abort();
   };
@@ -210,6 +214,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     );
   } finally {
     ctx.signal?.removeEventListener("abort", onAbort);
+    unsubscribeSteer?.();
     unsubscribe();
     session.dispose();
   }

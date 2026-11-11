@@ -61,7 +61,6 @@ import { createGenerationEventApplier } from "./generation-apply";
 import { apiToolCallFromPart, toolExecutionErrorPayload, toolResultTextForApi } from "../tools/format";
 import { conversationFunctionTools } from "../tools/bound";
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
-import type { WorkspaceRuntime } from "../workspace/runtime";
 import {
   createEngineRegistry,
   resolveEngine,
@@ -70,19 +69,16 @@ import {
   type EngineCompactionResult,
   type EngineKind,
   type EngineRunContext,
+  type PortableTarget,
 } from "../engines";
-import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCompaction, runPiGeneration } from "../pi-engine/runner";
-import { mapGrantToPi } from "../pi-engine/model-bridge";
 import { modelGrantFor } from "../engines/model-grant";
-import { freshSubscriptionCredential } from "../model-providers/auth/resolve";
 import { appToolSpecsFor, createAppToolCaller } from "../engines/app-tools";
 import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
-import { createPiSessionResources } from "../pi-engine/resources";
 import { buildEngineInstructions } from "../engines/instructions";
-import { reportEngineError } from "../engines/host";
+import { bindEngineTurn, type EngineTurnBinding } from "../engines/host";
 import { promptInputFromParts, userInputsFor } from "../inference-engine/prompt-input";
-import type { CapturedEngineCompaction, SubscriptionCredential } from "../engines/contract";
+import type { CapturedEngineCompaction, CompactRequest, EngineDriver, ModelGrant, TurnInput, TurnRef } from "../engines/contract";
 import { effectiveEngineCompaction, parseEngineCompactions } from "./engine-compactions";
 import { encodableMessages, enrichMessages, applyTemplateToMessage } from "../inference-engine/message-enrichment";
 import { applyOutputTransforms } from "../assistants";
@@ -734,17 +730,12 @@ async function runPostGenerationTasks(conversationId: string, snapshot: Conversa
 }
 
 /** 工作区引擎的模型授权(engines/model-grant:上限走 requiredOutputCap 单源、请求头走
- *  applyModelRequestHeaders,与聊天引擎同一组函数)+ 订阅令牌取用口(应用侧锁内刷新)。 */
-function piGrantFor(provider: Provider, model: Model, assistant: Assistant, conversationId: string) {
+ *  applyModelRequestHeaders,与聊天引擎同一组函数)。订阅令牌不在授权里:引擎经
+ *  host.models.credential 按 providerId 取,应用侧锁内刷新(engines/host)。 */
+function engineGrantFor(provider: Provider, model: Model, assistant: Assistant, conversationId: string): ModelGrant {
   const grant = modelGrantFor(provider, model, assistant, conversationId);
   if (!grant) throw new Error(`provider 类型 ${provider.type} 无法在工作区引擎使用`);
-  return { grant, credentialSource: () => freshSubscriptionCredential(provider) as Promise<SubscriptionCredential> };
-}
-
-/** 工作区引擎的应用工具面:规格下发给引擎,调用经同一入口回到应用(审批/执行/实体化)。 */
-function appToolsFor(ctx: Parameters<typeof appToolSpecsFor>[0]) {
-  const tools = appToolSpecsFor(ctx);
-  return { tools, callTool: createAppToolCaller(ctx, tools) };
+  return grant;
 }
 
 /** P7:本轮压缩产物落 conversation.engineCompactions。cutMessageId 为 null(pi 自动压缩
@@ -771,28 +762,53 @@ function applyCapturedEngineCompactions(conversation: Conversation, captured: Ca
   scheduleThrottledConvFlush();
 }
 
-/** pi 引擎生成装配(P3 路由 + P4 资源统一 + P7 会话数据统一 + P8/P9 注入面统一)。
- *  T1 起收敛为 pi adapter 的 run 实现:输入是引擎无关 EngineRunContext + pi 专属
- *  piRuntime(由 adapter 在 matches() 判定后透传)。
+/** 一次驱动调用的应用侧外壳:绑定本轮上下文(engines/host 按 turnId 路由回调),把编排器的
+ *  中止信号转成 driver.abort,结束解绑。调用前已中止则按中止抛出(与引擎内同一形态);
+ *  调用中中止由驱动中止该会话的轮次——驱动在调用的同步前缀里登记,不会漏。 */
+async function callEngineDriver<T>(
+  driver: EngineDriver,
+  turn: TurnRef,
+  binding: EngineTurnBinding,
+  signal: AbortSignal | undefined,
+  abortMessage: string,
+  call: () => Promise<T>,
+): Promise<T> {
+  if (signal?.aborted) throw new DOMException(abortMessage, "AbortError");
+  const unbind = bindEngineTurn(turn, binding);
+  const onAbort = () => {
+    void driver.abort(turn.conversationId, (signal && abortReasonOf(signal)) ?? "interrupted");
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    return await call();
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    unbind();
+  }
+}
+
+/** portable 引擎(工作区会话)一轮生成的应用侧装配(P3 路由 + P4 资源统一 + P7 会话数据统一
+ *  + P8/P9 注入面统一;P2.2 起组成契约 TurnInput 交给驱动)。输入是引擎无关 EngineRunContext
+ *  + adapter 在 matches() 判定后透传的驱动与工作区 runtime。
  *  - prompt 输入取末 USER 节点选中消息(P4 附件面:文档/OCR 文本化与聊天引擎同母本,
- *    图片走 pi 原生 images 通道);prompt 文本经消息模板渲染(四件套之一);
- *  - 引擎上下文 = 编码器从富化后的选中路径历史(不含本轮 prompt 消息)确定性重建,
- *    压缩记录从 conversation.engineCompactions 进同一灌注——重新生成/编辑重发/分支切换
- *    天然生效(UI 选中路径就是引擎记忆,所见即所记);
+ *    图片单独成列);prompt 文本经消息模板渲染(四件套之一);
+ *  - 引擎上下文 = 富化后的选中路径历史(不含本轮 prompt 消息)+ conversation.engineCompactions,
+ *    引擎每轮据此确定性重建——重新生成/编辑重发/分支切换天然生效(UI 选中路径就是引擎
+ *    记忆,所见即所记);
  *  - 消息富化 = enrichMessages(四件套共享层):模板/时间提醒/lorebook+模式注入/
  *    窗口化(滞回截断 ∨ 压缩切点锚,P9)——聊天位注入/时间提醒随富化全序列(含
- *    合成行)灌进 pi 引擎,与聊天引擎逐字同生效;合成行由 syntheticIds 标出,编码器
- *    挡在切点映射/退化诊断外;系统位注入经 appendSystemPrompt 进 pi 系统面;
- *  - 工具面 = 七个工作区工具 + 通用工具/MCP 桥(P4),审批全部内化在工具 execute;
- *  - 资源面 = createPiSessionResources(技能白名单/AGENTS.md 边界过滤/人设+记忆冻结
- *    appendSystemPrompt/受控 settings)。 */
-async function runPiWorkspaceGeneration(
-  ctx: EngineRunContext & { piRuntime: WorkspaceRuntime | null },
+ *    合成行)进引擎,与聊天引擎逐字同生效;合成行由 syntheticIds 标出,挡在切点映射/
+ *    退化诊断外;系统位注入经 appendSystemPrompt 进引擎系统面;
+ *  - 工具面 = 七个工作区工具 + 通用工具/MCP 桥的规格,调用经 host.tools.call 回到应用
+ *    (审批/执行/实体化);
+ *  - 指令面 = EngineInstructions(人设+记忆冻结/注入面/技能白名单/全局 AGENTS.md)。 */
+async function runPortableGeneration(
+  ctx: EngineRunContext & PortableTarget,
   sink: GenerationEventSink,
   signal?: AbortSignal,
 ): Promise<string> {
-  const { conversation, target } = ctx;
-  const runtime = ctx.piRuntime;
+  const { conversation, target, driver } = ctx;
+  const runtime = ctx.workspace;
   if (!runtime) {
     // 路由不变式:resolveEngine 选中 pi 时 matches() 已确认工作区可用。此处为防御兜底
     // (adapter WeakMap 透传被回收的极端情况)——不可达于正常路径,报错好过静默走错引擎。
@@ -830,52 +846,55 @@ async function runPiWorkspaceGeneration(
     windowStartMessageId: cut?.cutMessageId,
   });
 
-  // 系统位注入(before/after_system_prompt)经 appendSystemPrompt 进 pi 系统面——
-  // 与人设/记忆/搜索指引同一插槽,位置在 pi Guidelines 之后、project_context 之前。
+  // 系统位注入(before/after_system_prompt)经 appendSystemPrompt 进引擎系统面——
+  // 与人设/记忆/搜索指引同一插槽。
   const systemInjection = [enriched.systemInjectionBefore, enriched.systemInjectionAfter].filter(Boolean).join("\n");
-  const resources = await createPiSessionResources({
-    cwd: runtime.cwd,
-    root: runtime.root,
-    instructions: buildEngineInstructions(conversation, deps.assistant, deps.selectedModel, systemInjection ? [systemInjection] : undefined),
-    report: reportEngineError,
-  });
+  const instructions = buildEngineInstructions(conversation, deps.assistant, deps.selectedModel, systemInjection ? [systemInjection] : undefined);
 
   // 问题4(2.0.0 内测):每轮生成前清扫工作区根的 Windows 保留设备名残留(nul 等)——
   // 兼作存量自愈:内测期已产生的残留在用户下次使用该工作区时自动消失。
   sweepWorkspaceReservedNameArtifacts(runtime.cwd);
 
-  const result = await runPiGeneration({
-    ...piGrantFor(deps.providerItem, deps.selectedModel, deps.assistant, conversation.id),
-    // 思考强度与聊天引擎同源(助手设置);pi 档位翻译见 model-bridge piThinkingLevelFor。
+  const toolContext = { conversation, assistant: deps.assistant, sink, target, model: deps.selectedModel, signal };
+  const tools = appToolSpecsFor(toolContext);
+  const turn: TurnRef = { conversationId: conversation.id, turnId: id() };
+  const input: TurnInput = {
+    model: engineGrantFor(deps.providerItem, deps.selectedModel, deps.assistant, conversation.id),
+    // 思考强度与聊天引擎同源(助手设置),档位翻译归引擎。
     reasoningLevel: deps.assistant.reasoningLevel,
-    conversationId: conversation.id,
-    cwd: runtime.cwd,
-    history: enriched.messages,
-    userInputs: userInputsFor(enriched.messages, deps.selectedModel),
-    syntheticIds: enriched.syntheticIds,
-    compactions: compactionRecords,
-    promptText: promptInput.text,
-    images: promptInput.images,
-    resources,
-    ...appToolsFor({ conversation, assistant: deps.assistant, sink, target, model: deps.selectedModel, signal }),
-    report: reportEngineError,
+    workspace: { cwd: runtime.cwd, root: runtime.root },
+    instructions,
+    history: {
+      messages: enriched.messages,
+      syntheticIds: [...enriched.syntheticIds],
+      compactions: compactionRecords,
+      userInputs: userInputsFor(enriched.messages, deps.selectedModel),
+    },
+    prompt: promptInput,
+    tools,
+  };
+  const binding: EngineTurnBinding = {
     sink,
-    signal,
-    // steering 轮边界(用户问题②):编排层同一回调直通 pi runner,在 pi turn_end 同步
-    // 调用(落库/队列联动/分裂在 steerBoundary,runner 只拿文本喂 session.steer)。
-    onSteerBoundary: ctx.onSteerBoundary,
-  }).finally(() => {
+    callTool: createAppToolCaller(toolContext, tools),
+    // steering 轮边界(用户问题②):编排层同一回调经 host.steer.take 直通引擎,在引擎轮边界
+    // 调用(落库/队列联动/分裂在 steerBoundary,引擎只拿文本注入)。
+    ...(ctx.onSteerBoundary ? { steer: ctx.onSteerBoundary } : {}),
+    providers: [deps.providerItem],
+  };
+  const result = await callEngineDriver(driver, turn, binding, signal, "Generation stopped", () =>
+    driver.startTurn({ ...turn, input }),
+  ).finally(() => {
     // 审批等待者兜底清扫:正常路径下等待者随用户决定/中止即刻注销,这里只防实现疏漏把
     // 在途工具调用泄漏成永久悬挂(approval-gate 头注)。等待者由应用侧工具面登记,清扫归应用。
     clearToolApprovalWaiters(conversation.id);
   });
-  applyCapturedEngineCompactions(conversation, result.capturedCompactions);
+  applyCapturedEngineCompactions(conversation, result.compactions);
   return result.text;
 }
 
-/** 引擎注册表(T1):编排器把各引擎的生成/压缩实现注入 adapter 工厂。pi 在前(工作区
- *  可用即接管),chat 兜底。新增引擎在此注册一行,runGeneration/续跑语义/压缩路由/
- *  审批旁路判定无需再改。 */
+/** 引擎注册表(T1):编排器把聊天引擎的生成实现与 portable 驱动的应用侧装配注入注册表。
+ *  pi 在前(工作区可用即接管),chat 兜底。新增引擎在注册表登记一行,runGeneration/续跑
+ *  语义/压缩路由/审批旁路判定无需再改。 */
 const ENGINE_REGISTRY = createEngineRegistry({
   chatRun: (ctx, sink, signal) =>
     callProviderStreaming(ctx.conversation, ctx.target, {
@@ -888,8 +907,8 @@ const ENGINE_REGISTRY = createEngineRegistry({
       // callProviderStreaming 不再从可能已被替换的 state.settings 重新解析。
       snapshot: { assistant: ctx.assistant, provider: ctx.provider, model: ctx.model },
     }),
-  piRun: (ctx, sink, signal) => runPiWorkspaceGeneration(ctx, sink, signal),
-  piCompact: (ctx, sink, signal) => runPiWorkspaceCompaction(ctx, sink, signal),
+  portableRun: (ctx, sink, signal) => runPortableGeneration(ctx, sink, signal),
+  portableCompact: (ctx, sink, signal) => runPortableCompaction(ctx, sink, signal),
 });
 
 /** 纯生成逻辑：经引擎注册表分发到命中 adapter,由 sink 发出生成事件。
@@ -901,30 +920,31 @@ async function runGeneration(
   signal?: AbortSignal,
 ): Promise<string> {
   if (signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
-  // T1:布尔路由退役——引擎选择已收敛为 resolveEngine 选出的 adapter.run。pi 专属
-  // 决策(piRuntime)由 pi adapter 在 matches()/run() 内部携带,不再污染本层。
+  // T1:布尔路由退役——引擎选择已收敛为 resolveEngine 选出的 adapter.run。引擎专属
+  // 决策(工作区 runtime)由 adapter 在 matches()/run() 内部携带,不再污染本层。
   return deps.adapter.run(deps, sink, signal);
 }
 
-/** pi 引擎压缩装配(P5 原生 compaction + P7 产物落 engineCompactions)。压缩路由收编:
- *  收敛为 pi adapter 的 compact 实现——路由判定(工作区可用)已由 matches() 承担,
- *  本函数只管驱动;engine_status 经调用方注入的 sink 直通,广播与终局清条不在此层。
+/** portable 引擎原生压缩的应用侧装配(P5 原生 compaction + P7 产物落 engineCompactions)。
+ *  路由判定(工作区可用)已由 matches() 承担,本函数只组 CompactRequest;engine_status 经
+ *  调用方注入的 sink 直通,广播与终局清条不在此层。
  *  压缩的对象是"模型实际看到的消息":与生成路径同一富化裁决(模板/提醒/注入),
  *  但合成消息经 encodableMessages 剥回纯真实行(P9)——手动压缩是用户策展行为,
  *  摘要只覆盖真实对话;注入是配置不是对话,时间提醒只描述节奏,均不进摘要。
  *  窗口锚照常生效:切点前的历史已被上一轮摘要吸收,压缩对象从切点起即可。 */
-async function runPiWorkspaceCompaction(
-  ctx: EngineCompactContext & { piRuntime: WorkspaceRuntime | null },
+async function runPortableCompaction(
+  ctx: EngineCompactContext & PortableTarget,
   sink: GenerationEventSink,
   signal?: AbortSignal,
 ): Promise<EngineCompactionResult> {
-  const { conversation, assistant } = ctx;
-  const runtime = ctx.piRuntime;
+  const { conversation, assistant, driver } = ctx;
+  const runtime = ctx.workspace;
   if (!runtime) {
-    // 路由不变式:resolveEngine 选中 pi 时 matches() 已确认工作区可用。此处为防御兜底
-    // (与 runPiWorkspaceGeneration 同一防御)——不可达于正常路径,报错好过静默走错引擎。
+    // 路由不变式:同 runPortableGeneration 的防御——不可达于正常路径,报错好过静默走错引擎。
     throw new Error("pi 引擎被选中但工作区运行时不可用(路由判定与执行不一致)。");
   }
+  if (!driver.compact) throw new Error(`引擎 ${driver.kind} 未实现原生压缩`);
+  const compact = driver.compact.bind(driver);
   const compactionRecords = parseEngineCompactions(conversation.engineCompactions);
   const cut = effectiveEngineCompaction(compactionRecords, selectedConversationMessages(conversation), ctx.model);
   const enriched = enrichMessages(selectedConversationMessages(conversation), {
@@ -935,47 +955,27 @@ async function runPiWorkspaceCompaction(
   });
   const history = encodableMessages(enriched.messages, enriched.syntheticIds);
   const systemInjection = [enriched.systemInjectionBefore, enriched.systemInjectionAfter].filter(Boolean).join("\n");
-  const resources = await createPiSessionResources({
-    cwd: runtime.cwd,
-    root: runtime.root,
-    instructions: buildEngineInstructions(conversation, assistant, ctx.model, systemInjection ? [systemInjection] : undefined),
-    // 手动压缩门槛/保留窗口调低(中文 chars/4 低估问题,rationale 见 runner.ts 常量)。
-    compactionKeepRecentTokens: MANUAL_COMPACT_KEEP_RECENT_TOKENS,
-    report: reportEngineError,
-  });
-  // 摘要模型:公共压缩模型优先(ctx.summarizer,装配点已决策),pi 映射不进(自定义
-  // 补全路径的 openai 型服务商等)则回退会话模型——公共设置是偏好不是硬约束,
-  // 压缩必须总能进行,回退留 warn 让用户知情。注意窗口锚定/富化裁决(上方 cut/
-  // enriched)仍按 ctx.model:压缩对象是"会话模型实际看到的消息",与生成路径同一
-  // 视角,勿随摘要模型漂移。
-  let summarizer = ctx.summarizer;
-  let summarizerGrant = piGrantFor(summarizer.provider, summarizer.model, assistant, conversation.id);
-  if (summarizer.model.id !== ctx.model.id && !mapGrantToPi(summarizerGrant.grant).ok) {
-    reportError(
-      "provider",
-      "warn",
-      `压缩模型 ${summarizer.model.displayName || summarizer.model.modelId} 无法在工作区引擎使用,本次压缩改用会话模型`,
-      undefined,
-      "compact_summarizer_fallback",
-    );
-    summarizer = { provider: ctx.provider, model: ctx.model };
-    summarizerGrant = piGrantFor(summarizer.provider, summarizer.model, assistant, conversation.id);
-  }
-  const result = await runPiCompaction({
-    ...summarizerGrant,
+  // 摘要模型:公共压缩模型优先(ctx.summarizer,装配点已决策);引擎用不了时由驱动回退会话
+  // 模型并上报 warn——公共设置是偏好不是硬约束,压缩必须总能进行。注意窗口锚定/富化裁决
+  // (上方 cut/enriched)仍按 ctx.model:压缩对象是"会话模型实际看到的消息",与生成路径
+  // 同一视角,勿随摘要模型漂移。
+  const separateSummarizer = ctx.summarizer.model.id !== ctx.model.id;
+  const turn: TurnRef = { conversationId: conversation.id, turnId: id() };
+  const request: CompactRequest = {
+    ...turn,
+    model: engineGrantFor(ctx.provider, ctx.model, assistant, conversation.id),
+    summarizer: separateSummarizer
+      ? engineGrantFor(ctx.summarizer.provider, ctx.summarizer.model, assistant, conversation.id)
+      : null,
     reasoningLevel: assistant.reasoningLevel,
-    conversationId: conversation.id,
-    cwd: runtime.cwd,
-    history,
-    userInputs: userInputsFor(history, ctx.model),
-    compactions: compactionRecords,
-    resources,
+    workspace: { cwd: runtime.cwd, root: runtime.root },
+    instructions: buildEngineInstructions(conversation, assistant, ctx.model, systemInjection ? [systemInjection] : undefined),
+    history: { messages: history, syntheticIds: [], compactions: compactionRecords, userInputs: userInputsFor(history, ctx.model) },
     customInstructions: ctx.customInstructions,
-    signal,
-    sink,
-    report: reportEngineError,
-  });
-  // 产物落库是引擎注入实现的义务——与生成路径的压缩捕获同一落点、同一 helper。
+  };
+  const binding: EngineTurnBinding = { sink, providers: [ctx.provider, ctx.summarizer.provider] };
+  const result = await callEngineDriver(driver, turn, binding, signal, "Compaction cancelled", () => compact(request));
+  // 产物落库与生成路径的压缩捕获同一落点、同一 helper。
   applyCapturedEngineCompactions(conversation, [result.compaction]);
   return result;
 }

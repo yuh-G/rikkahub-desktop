@@ -10,15 +10,19 @@
 // 不进公共契约。进程内引擎(chat/pi)与子进程引擎(dsh/codex,见 T4 骨架)共享同一
 // 输出契约 GenerationEvent,前端永远无感知。
 //
-// 防循环导入:本模块不 import orchestrator;两个引擎的生成函数(callProviderStreaming /
-// runPiWorkspaceGeneration)由编排器在组装注册表时经参数注入。matches() 只做路由判定,
-// 不产副作用。
+// 防循环导入:本模块不 import orchestrator;聊天引擎的生成函数(callProviderStreaming)与
+// portable 驱动的应用侧装配(组 TurnInput)由编排器在组装注册表时经参数注入。matches() 只做
+// 路由判定,不产副作用。具体驱动只在本模块实例化,编排器不认识任何具体引擎
+// (engines/engine-agnostic-guard.test.ts 锁定)。
 
 import type { Assistant, Conversation, Model, Provider } from "../foundation/types";
 import type { GenerationEventSink, GenerationTarget, ToolExecutor } from "../inference-engine/events";
+import { createPiDriver } from "../pi-engine/driver";
 import type { WorkspaceRuntime } from "../workspace/runtime";
 import { createChatAdapter } from "./chat-adapter";
-import type { EngineKind, EngineResumeSemantics, EngineSteeringSupport } from "./contract";
+import type { EngineDriver, EngineKind, EngineResumeSemantics, EngineSteeringSupport } from "./contract";
+import { appEngineHost } from "./host";
+import { connectDriver, connectHost, STRICT_CONTRACT_TRANSPORT } from "./loopback";
 import { createPiAdapter } from "./pi-adapter";
 
 // 三个能力枚举的定义已迁到契约(engines/contract.ts);旧形状在 P2.7 删除前经这里转出。
@@ -89,28 +93,39 @@ export type ChatRunFn = (
   sink: GenerationEventSink,
   signal?: AbortSignal,
 ) => Promise<string>;
-/** pi 生成实现签名:除引擎无关输入包外,还需 pi adapter 在 run() 内注入的工作区
- *  runtime(matches() 判定产物,经 WeakMap 透传)。 */
-export type PiRunFn = (
-  ctx: EngineRunContext & { piRuntime: WorkspaceRuntime | null },
+/** portable 驱动的调用目标:驱动句柄 + adapter 在 matches() 判定出的工作区 runtime
+ *  (经 WeakMap 透传)。 */
+export interface PortableTarget {
+  driver: EngineDriver;
+  workspace: WorkspaceRuntime | null;
+}
+/** portable 驱动一轮生成的应用侧装配(组 TurnInput、绑宿主上下文、调 driver.startTurn)。 */
+export type PortableRunFn = (
+  ctx: EngineRunContext & PortableTarget,
   sink: GenerationEventSink,
   signal?: AbortSignal,
 ) => Promise<string>;
-/** pi 压缩实现签名:与 PiRunFn 同构(引擎无关输入包 + adapter 透传的 runtime)。 */
-export type PiCompactFn = (
-  ctx: EngineCompactContext & { piRuntime: WorkspaceRuntime | null },
+/** portable 驱动原生压缩的应用侧装配(与 PortableRunFn 同构)。 */
+export type PortableCompactFn = (
+  ctx: EngineCompactContext & PortableTarget,
   sink: GenerationEventSink,
   signal?: AbortSignal,
 ) => Promise<EngineCompactionResult>;
 
 /** 组装引擎注册表(编排器在模块加载时调用一次)。顺序即优先级:pi 在前(能力命中
- *  才接管),chat 恒兜底。新增引擎往数组前部插(chat 必须保持最后兜底)。 */
+ *  才接管),chat 恒兜底。新增引擎往数组前部插(chat 必须保持最后兜底)。
+ *  驱动经回环传输连接(测试里 strict:每个载荷 JSON 往返),宿主是应用唯一的 appEngineHost。 */
 export function createEngineRegistry(deps: {
   chatRun: ChatRunFn;
-  piRun: PiRunFn;
-  piCompact: PiCompactFn;
+  portableRun: PortableRunFn;
+  portableCompact: PortableCompactFn;
 }): EngineAdapter[] {
-  return [createPiAdapter({ run: deps.piRun, compact: deps.piCompact }), createChatAdapter(deps.chatRun)];
+  const strict = { strict: STRICT_CONTRACT_TRANSPORT };
+  const piDriver = connectDriver(createPiDriver(connectHost(appEngineHost, strict)), strict);
+  return [
+    createPiAdapter({ driver: piDriver, run: deps.portableRun, compact: deps.portableCompact }),
+    createChatAdapter(deps.chatRun),
+  ];
 }
 
 /** 路由:遍历注册表取首个 matches() 命中的 adapter;数组恒含 chat 兜底,不会空。 */

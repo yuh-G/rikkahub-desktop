@@ -9,8 +9,8 @@
 //   - 聊天引擎:runStreamingToolLoop 的轮边界(工具批执行完、encodeNextTurn 之后、
 //     下一次 fetchRound 之前)经 drainSteeringMessages 取出,把排队消息编码成 user
 //     turn 追加进请求体(三家 Provider 的 body 形态由注入回调处理)。
-//   - pi 引擎:runPiWorkspaceGeneration 驱动 pi 原生 session.steer()(agent-loop 在
-//     当前轮工具执行完后、下一次 LLM 调用前排水 steering 队列,语义逐字一致)。
+//   - pi 引擎:驱动在 pi turn_end 调 host.steer.take,取回的文本经 session.agent.steer()
+//     入 pi steering 队列(agent-loop 在当前轮工具执行完后、下一次 LLM 调用前排水,语义逐字一致)。
 //
 // 与消息发送队列(FIFO 保底派发)的关系:messages 端点的 Steer 支(生成中入队)同步推送本
 // 通道一份——队列仍是「事实源」(用户可改/撤/看序),steering 只是「及时性通道」。消息被
