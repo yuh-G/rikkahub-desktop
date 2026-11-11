@@ -50,6 +50,10 @@ export type TokenUsage = {
   completionTokens: number;
   cachedTokens: number;
   totalTokens: number;
+  /** 缓存写入量(已含在 promptTokens 内;Anthropic 口径即 cache_creation_input_tokens)。目前只有
+   *  工作区 pi 路径采集(事件桥 mapPiUsage);缺省 = 零或未回报。给 APP 的备份原样透传,
+   *  APP 端按未知键忽略。 */
+  cacheWriteTokens?: number;
   /** true = 本地字数折算的估算值(厂商未回报 usage,见 conversations/helpers.ts ensureUsage);
    *  统计页命中率分母与前端上下文用量条均排除估算记录。 */
   estimated?: boolean;

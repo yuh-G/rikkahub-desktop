@@ -201,6 +201,8 @@ export function ensureUsage(msg: Message, conversation?: Conversation) {
     totalTokens: promptTokens + completionTokens,
     // 上游回报过的缓存命中数是真实值,保留(Kimi 场景 cache_read 正常回报)。
     cachedTokens: usable ? Number(existing.cachedTokens ?? 0) : 0,
+    // 缓存写入量同理(真实回报值;可选键,零值不发)。
+    ...(usable && Number(existing.cacheWriteTokens ?? 0) > 0 ? { cacheWriteTokens: Number(existing.cacheWriteTokens) } : {}),
     // 只要有估算成分就标 estimated(统计页照旧排除),不冒充全真实。
     estimated: true,
     // 估算只兜 token;骨架已累计的纯生成耗时是真实测量值,保留(速度=估算token/真实时长)。

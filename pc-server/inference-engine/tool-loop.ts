@@ -41,11 +41,14 @@ export function mergeTokenUsage(prev: Message["usage"], next: Message["usage"]):
   const contextLimit = nextRec.contextLimit !== undefined ? nextRec.contextLimit : prevRec.contextLimit;
   // generationMs 单调累计(骨架每轮发的都是至今总和),新值>0 覆盖语义天然正确。
   const generationMs = pick("generationMs");
+  // 可选键:两侧都没有时不虚构(不回报写入量的路径与旧数据形状不变)。
+  const cacheWriteTokens = pick("cacheWriteTokens");
   return {
     promptTokens: pick("promptTokens"),
     completionTokens: pick("completionTokens"),
     totalTokens: pick("totalTokens"),
     cachedTokens: pick("cachedTokens"),
+    ...(cacheWriteTokens > 0 ? { cacheWriteTokens } : {}),
     ...(contextLimit !== undefined ? { contextLimit: contextLimit as number | null } : {}),
     ...(generationMs > 0 ? { generationMs } : {}),
   };

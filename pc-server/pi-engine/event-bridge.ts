@@ -43,7 +43,8 @@ import type { JsonValue, ToolOutputEntry } from "../foundation/types";
 import type { EngineErrorReport } from "../engines/contract";
 
 /** pi Usage → 我们的 TokenUsage(conversations/helpers ensureUsage 同形)。
- *  口径:promptTokens 含缓存读写(对齐 OpenAI prompt_tokens 语义);cachedTokens=cacheRead。
+ *  口径:promptTokens 含缓存读写(对齐 OpenAI prompt_tokens 语义);cachedTokens=cacheRead;
+ *  cacheWriteTokens=cacheWrite,零值不发键(没有缓存写入的协议/轮次不多出恒 0 字段)。
  *  P5 统计对齐阶段按 provider 逐一精化(方案 §六 P5-2)。 */
 export function mapPiUsage(usage: PiUsage): Record<string, JsonValue> {
   const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
@@ -52,6 +53,7 @@ export function mapPiUsage(usage: PiUsage): Record<string, JsonValue> {
     completionTokens: usage.output,
     totalTokens: usage.totalTokens > 0 ? usage.totalTokens : promptTokens + usage.output,
     cachedTokens: usage.cacheRead,
+    ...(usage.cacheWrite > 0 ? { cacheWriteTokens: usage.cacheWrite } : {}),
   };
 }
 

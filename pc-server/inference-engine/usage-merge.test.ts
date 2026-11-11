@@ -77,6 +77,14 @@ describe("usage 合并语义(新值>0 才覆盖)", () => {
     // 两侧都没有 → 不虚构字段(旧数据形状不变,前端按缺省回退全程)。
     expect("generationMs" in (mergeTokenUsage({ ...base }, { ...base }) as object)).toBe(false);
   });
+
+  test("mergeTokenUsage:cacheWriteTokens 同款新值>0 覆盖,后轮缺省保留,两侧皆无不虚构", () => {
+    const base = { promptTokens: 1, completionTokens: 2, totalTokens: 3, cachedTokens: 0 };
+    // 工具循环首轮写缓存、后轮全读命中(写入 0 不发键)→ 保留首轮写入量。
+    expect((mergeTokenUsage({ ...base, cacheWriteTokens: 900 }, { ...base }) as Record<string, number>).cacheWriteTokens).toBe(900);
+    expect((mergeTokenUsage({ ...base, cacheWriteTokens: 900 }, { ...base, cacheWriteTokens: 40 }) as Record<string, number>).cacheWriteTokens).toBe(40);
+    expect("cacheWriteTokens" in (mergeTokenUsage({ ...base }, { ...base }) as object)).toBe(false);
+  });
 });
 
 describe("ensureUsage 估算兜底与纯时长载荷的交互", () => {
@@ -117,6 +125,18 @@ describe("ensureUsage 估算兜底与纯时长载荷的交互", () => {
     expect(usage.generationMs).toBe(12800); // 真实耗时保留
     expect(usage.estimated).toBe(true); // 含估算成分,统计页照旧排除
     expect(Number(usage.totalTokens)).toBe(106 + estimateTokens(text));
+  });
+
+  test("字段级兜底保留上游回报的缓存写入量;未回报时不虚构键", async () => {
+    const { ensureUsage } = await import("../conversations/helpers");
+    const withWrite = message("ASSISTANT", [{ type: "text", text: "回答正文" }]);
+    withWrite.usage = { promptTokens: 2000, completionTokens: 0, totalTokens: 2000, cachedTokens: 0, cacheWriteTokens: 1800 };
+    ensureUsage(withWrite);
+    expect((withWrite.usage as Record<string, unknown>).cacheWriteTokens).toBe(1800);
+    const without = message("ASSISTANT", [{ type: "text", text: "回答正文" }]);
+    without.usage = { promptTokens: 2000, completionTokens: 0, totalTokens: 2000, cachedTokens: 0 };
+    ensureUsage(without);
+    expect("cacheWriteTokens" in (without.usage as object)).toBe(false);
   });
 
   test("起始计数残留:completionTokens=1(anthropic message_start 起始值) → 视为缺失,估算兜底", async () => {
