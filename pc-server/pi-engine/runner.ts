@@ -24,13 +24,22 @@
 // (无任何激活工具,系统提示词 Available tools 为 "(none)")。
 
 import { createAgentSession } from "../../pi/packages/coding-agent/src/core/sdk.ts";
+import { markRuntimeStreamFunction } from "../../pi/packages/coding-agent/src/core/agent-session.ts";
+import type { ModelRuntime } from "../../pi/packages/coding-agent/src/core/model-runtime.ts";
+import type { StreamFn } from "../../pi/packages/agent/src/types.ts";
 
 import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
 import type { GenerationEventSink } from "../inference-engine/events";
 import type { Message } from "../foundation/types";
 import { piAgentDir } from "../foundation/paths";
 import { CodedError } from "../foundation/errors";
-import { createPiModelRuntime, mapGrantToPi, piThinkingLevelFor, type SubscriptionCredentialSource } from "./model-bridge";
+import {
+  createPiModelRuntime,
+  mapGrantToPi,
+  piCacheRetentionFor,
+  piThinkingLevelFor,
+  type SubscriptionCredentialSource,
+} from "./model-bridge";
 import { llmLogContextFor, runWithLlmRequestLog } from "./llm-request-log";
 import { createPiEventBridge } from "./event-bridge";
 import type { PiSessionResources } from "./resources";
@@ -127,6 +136,19 @@ function captureRoundCompactions(
   return captured;
 }
 
+/** 授权的缓存策略注入 agent 的流函数。会话请求与 pi 缓存预热的重放都从这里拿到选项(预热按
+ *  请求选项算保留期,关时自行停下),所以注入点必须在 sdk 流函数之外,而不是更底层的运行时。
+ *  显式值优先:pi 的摘要/压缩请求自带 cacheRetention:"none"。包装后重新登记为「经运行时自行
+ *  鉴权」的流函数——不登记的话 pi 摘要路径会预解析凭据,订阅登录被当成显式 API Key(上游 #11520)。 */
+function applyPromptCachePolicy(agent: { streamFunction: StreamFn }, runtime: ModelRuntime, grant: ModelGrant): void {
+  const cacheRetention = piCacheRetentionFor(grant.promptCache);
+  const inner = agent.streamFunction;
+  const wrapped: StreamFn = (model, context, options) =>
+    inner(model, context, { ...options, cacheRetention: options?.cacheRetention ?? cacheRetention });
+  agent.streamFunction = wrapped;
+  markRuntimeStreamFunction(wrapped, runtime);
+}
+
 export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
   if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
   const mapped = mapGrantToPi(ctx.grant);
@@ -167,6 +189,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   // steering 一次吸收全部:与聊天引擎 steerBoundary 整批排水、Codex pending_input
   // split_off(0) 同语义——多条插话 = 多个 user 气泡 + 一个 ai_2,不按轮次逐条滴灌。
   session.agent.steeringMode = "all";
+  applyPromptCachePolicy(session.agent, runtime, ctx.grant);
 
   const bridge = createPiEventBridge({ report: ctx.report });
   const unsubscribe = session.subscribe((event) => {

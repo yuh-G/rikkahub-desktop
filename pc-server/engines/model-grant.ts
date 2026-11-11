@@ -6,6 +6,7 @@
 // - 请求头:applyModelRequestHeaders(供应商/模型自定义头 + 主机特例 + 会话身份头),
 //   与聊天引擎同一个汇聚函数。
 // - 凭据:API Key 直接给;订阅登录只给流程标识与登录状态,令牌由引擎经 host.models.credential 取。
+// - 提示缓存:由供应商设置决定(promptCachePolicyFor),引擎只翻译。
 // 传入的 provider 必须是生效 provider(findModel 已展开 providerOverwrite)。
 
 import type { Assistant, Model, Provider } from "../foundation/types";
@@ -13,7 +14,7 @@ import { modelsDevCache } from "../inference-engine/providers";
 import { applyModelRequestHeaders } from "../model-providers";
 import { isOAuthProvider, oauthFlowFor } from "../model-providers/auth";
 import { contextWindowFor, requiredOutputCap } from "../model-providers/model-limits";
-import type { ModelGrant, ModelProtocol } from "./contract";
+import type { ModelGrant, ModelProtocol, PromptCachePolicy } from "./contract";
 
 const DEFAULT_COMPLETIONS_PATH = "/chat/completions";
 
@@ -22,6 +23,20 @@ function protocolFor(provider: Provider): ModelProtocol | null {
   if (provider.type === "google") return "google-generative-ai";
   if (provider.type === "openai") return provider.useResponseApi ? "openai-responses" : "openai-completions";
   return null;
+}
+
+/** 读的是聊天引擎请求构建读的同几个字段(promptCaching/promptCacheTtl/promptCacheKey),
+ *  所以同一个开关对两个引擎含义一致。
+ *  订阅登录行恒开、保留期取服务端默认:设置页对它们不显示缓存开关,字段从未被用户写过,
+ *  照字面读会把订阅端点判成关;这些通道的缓存形态由引擎侧的内建供应商定义维护。
+ *  google 没有缓存开关,恒关。 */
+export function promptCachePolicyFor(provider: Provider): PromptCachePolicy {
+  if (isOAuthProvider(provider)) return { enabled: true, retention: "short" };
+  if (provider.type === "claude") {
+    return { enabled: provider.promptCaching === true, retention: provider.promptCacheTtl === "1h" ? "long" : "short" };
+  }
+  if (provider.type === "openai") return { enabled: provider.promptCacheKey === true, retention: "short" };
+  return { enabled: false, retention: "short" };
 }
 
 /** null = provider 类型不在已知协议之内(状态损坏时的防御面,正常配置不可达)。
@@ -56,5 +71,6 @@ export function modelGrantFor(
     credential: isOAuthProvider(provider)
       ? { kind: "subscription", flow: oauthFlowFor(provider)?.id ?? null, signedIn: provider.oauth != null }
       : { kind: "api-key", apiKey: provider.apiKey },
+    promptCache: promptCachePolicyFor(provider),
   };
 }

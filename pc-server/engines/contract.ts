@@ -120,6 +120,14 @@ export type ModelCredential =
   | { kind: "api-key"; apiKey: string }
   | { kind: "subscription"; flow: OAuthFlowId | null; signedIn: boolean };
 
+/** 提示缓存策略(应用按供应商设置决定,引擎翻译成自己的请求选项)。
+ *  enabled=false:请求不带任何缓存标记、缓存键。retention:"short" = 服务端默认保留期
+ *  (Anthropic 5 分钟),"long" = 用户选的长保留(Anthropic 1 小时)。 */
+export interface PromptCachePolicy {
+  enabled: boolean;
+  retention: "short" | "long";
+}
+
 /** 这一轮该用的模型。数值与请求头都是应用侧的最终值(上限走 requiredOutputCap 单源,请求头
  *  已含供应商/模型自定义头、主机特例与会话身份头),引擎只翻译成自己的请求选项,不二次加工。 */
 export interface ModelGrant {
@@ -137,6 +145,7 @@ export interface ModelGrant {
   limits: { contextWindow: number | null; maxTokens: number | null };
   headers: Record<string, string>;
   credential: ModelCredential;
+  promptCache: PromptCachePolicy;
 }
 
 export interface CredentialRequest {

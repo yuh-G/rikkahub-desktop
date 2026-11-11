@@ -8,10 +8,10 @@
 // 只做 pi 选项翻译。订阅凭据不随授权下发:pi 的 CredentialStore 换成「向应用取令牌」的薄层,
 // 刷新只在应用侧发生。
 import type { CredentialStore, OAuthCredential } from "../../pi/packages/ai/src/auth/types.ts";
-import type { Api, KnownApi, Model as PiModel } from "../../pi/packages/ai/src/types.ts";
+import type { Api, CacheRetention, KnownApi, Model as PiModel } from "../../pi/packages/ai/src/types.ts";
 import { ModelRuntime } from "../../pi/packages/coding-agent/src/core/model-runtime.ts";
 import type { ProviderConfigInput } from "../../pi/packages/coding-agent/src/core/provider-composer.ts";
-import type { ModelGrant, SubscriptionCredential } from "../engines/contract";
+import type { ModelGrant, PromptCachePolicy, SubscriptionCredential } from "../engines/contract";
 import { OAUTH_FLOWS } from "../model-providers/auth/flows";
 import {
   ARK_SEED2_EFFORT_BY_LEVEL,
@@ -136,8 +136,11 @@ function piBaseUrlFor(baseUrl: string, api: KnownApi): string {
  *    喂聊天引擎 budgetTokensFor 同款表（届时提升方言）；google 同类。历史思考回传无需接线——pi 对称回传（收到什么字段回传什么字段），
  *    K3/DeepSeek 官方硬性要求已天然满足，与聊天引擎 includeHistoryReasoning 默认
  *    行为一致（工作区不支持用户关闭回传：agent 工具循环下思考连续性即正确性）。
- *  - claude/google 协议无以上概念，不设（各自 compat 类型契约不同）。 */
-function piCompatOverridesFor(host: string, api: KnownApi) {
+ *  - claude/google 协议无以上概念，不设（各自 compat 类型契约不同）。
+ *  - promptCacheKeyMode ← 缓存开关(仅 completions):开关开时显式 "enabled"——pi 的 "auto" 只对
+ *    api.openai.com 发 prompt_cache_key,聊天引擎则开关开即发(第三方端点同样),两引擎同义。
+ *    开关关时由 cacheRetention:"none" 整体关掉(piCacheRetentionFor),这里不设。 */
+function piCompatOverridesFor(host: string, api: KnownApi, promptCacheEnabled: boolean) {
   if (api === "openai-responses") return { supportsDeveloperRole: OPENAI_DEVELOPER_ROLE_ALLOWED };
   if (api !== "openai-completions") return undefined;
   return {
@@ -146,7 +149,15 @@ function piCompatOverridesFor(host: string, api: KnownApi) {
     // 聊天引擎从不发 store 字段(官方 chat completions 默认即 store:false,无隐私退化;
     // 第三方严格端点对未知字段有拒收风险)——压制 pi 默认的 store:false 输出,两引擎对齐。
     supportsStore: false,
+    ...(promptCacheEnabled ? { promptCacheKeyMode: "enabled" as const } : {}),
   };
+}
+
+/** 契约缓存策略 → pi 请求的 cacheRetention(各协议适配器再译成 cache_control / prompt_cache_key /
+ *  保留期字段)。关必须显式 "none":pi 不传时按 "short" 处理,等于无视开关恒开。 */
+export function piCacheRetentionFor(policy: PromptCachePolicy): CacheRetention {
+  if (!policy.enabled) return "none";
+  return policy.retention === "long" ? "long" : "short";
 }
 
 /** pi 受控 settings 的思考预算表——聊天引擎预算表(方言 THINKING_BUDGET_BY_LEVEL,
@@ -367,7 +378,7 @@ export function mapGrantToPi(grant: ModelGrant): PiMappingResult {
 
   const host = hostOf(grant.baseUrl);
   const headers = { ...grant.headers };
-  const compatOverrides = piCompatOverridesFor(host, api);
+  const compatOverrides = piCompatOverridesFor(host, api, grant.promptCache.enabled);
   // 思考开关翻译按协议分派:openai-completions 走厂商方言矩阵(K3 判定在函数内,
   // 模型级跨渠道);anthropic-messages 镜像聊天引擎 adaptive 方言(见函数头注);
   // google/responses 字段与格式 pi 原生已对,但 xhigh/max 两档须同名登记放行(pi
