@@ -88,6 +88,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
         const result = await runPiGeneration({
           grant: input.model,
           credentialSource: credentialSourceFor(turn, input.model),
+          requestLog: (record) => host.models.log(turn, record),
           // 思考强度与聊天引擎同源(助手设置);pi 档位翻译见 model-bridge piThinkingLevelFor。
           reasoningLevel: input.reasoningLevel,
           conversationId: req.conversationId,
@@ -134,6 +135,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
         const result = await runPiCompaction({
           grant,
           credentialSource: credentialSourceFor(turn, grant),
+          requestLog: (record) => host.models.log(turn, record),
           // 压缩摘要与主会话同档(勿分叉)。
           reasoningLevel: req.reasoningLevel,
           conversationId: req.conversationId,

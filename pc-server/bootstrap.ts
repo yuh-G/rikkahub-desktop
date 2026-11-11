@@ -10,7 +10,7 @@
 // 拿到端口并导航,只会看到一扇死窗口。
 
 import { applyEffectiveProxy, installProxyFetchInterceptor, primeSystemProxyCache } from "./foundation/net";
-import { installLlmRequestLogInterceptor } from "./pi-engine/llm-request-log";
+import { installGoogleRequestLogShell } from "./pi-engine/llm-request-log";
 import { setStartupPhase } from "./foundation/startup-gate";
 import { saveState, setState, state } from "./persistence/json-store";
 import { loadState } from "./persistence/state-load";
@@ -30,9 +30,9 @@ export async function bootstrap(): Promise<void> {
   // 2) 代理拦截器:必须在首次出站 fetch 之前安装,否则首个请求会触发 Bun 的 env 快照
   //    锁定,之后改代理不生效。就绪前 /api 全部 503,不会有业务出站请求先行。
   installProxyFetchInterceptor(() => state.settings.proxyConfig);
-  // 2b) 工作区 LLM 日志壳(日志问题 1):包在代理拦截器外层(后安装者先执行),pi SDK 内部的
-  //     LLM fetch 经 AsyncLocalStorage 上下文记入统一日志管线,与聊天引擎同一套 addLog。
-  installLlmRequestLogInterceptor();
+  // 2b) 工作区 google 轨的请求日志壳:包在代理拦截器外层(后安装者先执行)。其余轨经模型出口
+  //     记日志;pi 的 google 适配器拒收自定义 fetch,只能在这里补记(拆除条件见该文件头注)。
+  installGoogleRequestLogShell();
   // R1-7:系统代理探测(reg query/gsettings)已全异步化,拦截器 per-request 只读缓存。
   // 这里预热一次,保证首个业务出站请求就能拿到正确的系统代理(之后 TTL 过期走
   // "陈值即用 + 后台刷新",事件循环永不被 spawn 阻塞)。

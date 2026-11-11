@@ -127,7 +127,10 @@ export function connectHost(host: EngineHost, options: { strict: boolean }): Eng
     emit: strictCall("host.emit", host.emit.bind(host)),
     tools: { call: strictCall("host.tools.call", host.tools.call.bind(host.tools)) },
     steer: { take: strictCall("host.steer.take", host.steer.take.bind(host.steer)) },
-    models: { credential: strictCall("host.models.credential", host.models.credential.bind(host.models)) },
+    models: {
+      credential: strictCall("host.models.credential", host.models.credential.bind(host.models)),
+      log: strictCall("host.models.log", host.models.log.bind(host.models)),
+    },
     report: strictCall("host.report", host.report.bind(host)),
   };
 }

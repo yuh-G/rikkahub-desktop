@@ -38,9 +38,11 @@ import {
   mapGrantToPi,
   piCacheRetentionFor,
   piThinkingLevelFor,
+  type PiModelMapping,
   type SubscriptionCredentialSource,
 } from "./model-bridge";
-import { llmLogContextFor, runWithLlmRequestLog } from "./llm-request-log";
+import { googleRequestLogContextFor, runWithGoogleRequestLog } from "./llm-request-log";
+import { createModelOutlet, type ModelRequestLog } from "../engines/model-outlet";
 import { createPiEventBridge } from "./event-bridge";
 import type { PiSessionResources } from "./resources";
 import type {
@@ -60,6 +62,8 @@ export interface PiGenerationContext {
   grant: ModelGrant;
   /** 订阅凭据取用口(生产 = host.models.credential);API Key 授权用不到。 */
   credentialSource?: SubscriptionCredentialSource;
+  /** 模型请求日志(生产 = host.models.log)。不传 = 不记(测试/冒烟)。 */
+  requestLog?: ModelRequestLog;
   /** 助手思考强度(assistant.reasoningLevel 原值;经 piThinkingLevelFor 译成 pi 档位:
    *  off→off、六档直传、auto/未知→medium)。不传=medium(纯测试/冒烟场景)。 */
   reasoningLevel?: string | null;
@@ -149,11 +153,24 @@ function applyPromptCachePolicy(agent: { streamFunction: StreamFn }, runtime: Mo
   markRuntimeStreamFunction(wrapped, runtime);
 }
 
+/** 模型运行时 + 模型出口:本轮的模型请求经带供应商身份的 fetch 发出并记日志(google 轨除外,见
+ *  llm-request-log 头注)。 */
+function createModelRuntimeFor(
+  mapping: PiModelMapping,
+  ctx: Pick<PiGenerationContext, "grant" | "credentialSource" | "requestLog">,
+) {
+  const { requestLog } = ctx;
+  const outlet = requestLog
+    ? createModelOutlet({ providerId: ctx.grant.providerId, providerName: ctx.grant.providerName }, requestLog)
+    : undefined;
+  return createPiModelRuntime(mapping, ctx.credentialSource, outlet);
+}
+
 export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
   if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
   const mapped = mapGrantToPi(ctx.grant);
   if (!mapped.ok) throw new Error(`该模型无法在工作区引擎使用：${mapped.reason}`);
-  const { runtime, model } = await createPiModelRuntime(mapped.mapping, ctx.credentialSource);
+  const { runtime, model } = await createModelRuntimeFor(mapped.mapping, ctx);
 
   // P7:引擎上下文从 SQLite 历史每轮重建,inMemory 会话零文件生命周期。
   const manager = SessionManager.inMemory(ctx.cwd);
@@ -228,8 +245,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
     // 当模板/扩展命令拦截(agent-session.ts prompt() 的 expandPromptTemplates 分支),我们的会话 UX 不走 pi 命令面。
-    // runWithLlmRequestLog:本轮生成的 LLM fetch(pi SDK 内部)记入统一日志管线(日志问题 1)。
-    await runWithLlmRequestLog(llmLogContextFor(ctx.grant), () =>
+    await runWithGoogleRequestLog(googleRequestLogContextFor(model.api, ctx.grant, ctx.requestLog), () =>
       session.prompt(ctx.promptText, {
         expandPromptTemplates: false,
         ...(ctx.images?.length ? { images: ctx.images } : {}),
@@ -264,6 +280,7 @@ export interface PiCompactionContext {
   /** 执行摘要的模型授权(同 PiGenerationContext.grant)。 */
   grant: ModelGrant;
   credentialSource?: SubscriptionCredentialSource;
+  requestLog?: ModelRequestLog;
   /** 助手思考强度(同 PiGenerationContext.reasoningLevel;压缩摘要与主会话同档,勿分叉)。 */
   reasoningLevel?: string | null;
   conversationId: string;
@@ -326,7 +343,7 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
   if (ctx.signal?.aborted) throw new DOMException("Compaction cancelled", "AbortError");
   const mapped = mapGrantToPi(ctx.grant);
   if (!mapped.ok) throw new Error(`该模型无法在工作区引擎使用：${mapped.reason}`);
-  const { runtime, model } = await createPiModelRuntime(mapped.mapping, ctx.credentialSource);
+  const { runtime, model } = await createModelRuntimeFor(mapped.mapping, ctx);
 
   const manager = SessionManager.inMemory(ctx.cwd);
   const seeded = seedPiSessionFromHistory({
@@ -363,7 +380,7 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
   ctx.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     if (ctx.signal?.aborted) throw new DOMException("Compaction cancelled", "AbortError");
-    const result = await runWithLlmRequestLog(llmLogContextFor(ctx.grant), () =>
+    const result = await runWithGoogleRequestLog(googleRequestLogContextFor(model.api, ctx.grant, ctx.requestLog), () =>
       session.compact(ctx.customInstructions?.trim() || undefined),
     );
     const captured = captureRoundCompactions(manager, seededEntryIds, seeded.entryIdsByMessageId).at(-1);

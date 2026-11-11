@@ -3,7 +3,8 @@
 // 锁定:①一轮生成只经 EngineHost 拿应用的东西——事件带 TurnRef、工具调用带 turnId 回到
 // host.tools.call、轮边界 await host.steer.take 后注入下一次请求;②abort(conversationId)
 // 中止在途轮次,轮次正常返回已生成部分;③压缩的摘要模型映射不进 pi 时经 host.report 报 warn
-// 并回退会话模型;pi 的已知压缩错误以 CodedError 穿过传输(前端按 errorCode 查文案)。
+// 并回退会话模型;pi 的已知压缩错误以 CodedError 穿过传输(前端按 errorCode 查文案);④模型请求
+// 经模型出口发出,每条请求的日志记录带 TurnRef 经 host.models.log 回到应用。
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,6 +18,7 @@ import type {
   EngineErrorReport,
   EngineHost,
   EngineInstructions,
+  ModelRequestRecord,
   TurnInput,
   TurnRef,
 } from "../engines/contract";
@@ -43,10 +45,11 @@ interface HostLog {
   toolCalls: AppToolCall[];
   steerTakes: TurnRef[];
   reports: EngineErrorReport[];
+  requests: Array<{ turn: TurnRef; record: ModelRequestRecord }>;
 }
 
 function fakeHost(options: { steer?: () => string[]; tool?: (call: AppToolCall) => Promise<AppToolResult> } = {}) {
-  const log: HostLog = { events: [], toolCalls: [], steerTakes: [], reports: [] };
+  const log: HostLog = { events: [], toolCalls: [], steerTakes: [], reports: [], requests: [] };
   const host: EngineHost = {
     emit: (turn, event) => void log.events.push({ turn, event }),
     tools: {
@@ -61,7 +64,10 @@ function fakeHost(options: { steer?: () => string[]; tool?: (call: AppToolCall) 
         return options.steer?.() ?? [];
       },
     },
-    models: { credential: async () => ({}) },
+    models: {
+      credential: async () => ({}),
+      log: (turn, record) => void log.requests.push({ turn, record }),
+    },
     report: (report) => void log.reports.push(report),
   };
   return { host, log };
@@ -133,6 +139,15 @@ describe("pi 驱动 × 契约(strict 回环)", () => {
     const secondRequest = JSON.stringify(server.requests[1]?.messages);
     expect(secondRequest).toContain("查到了");
     expect(secondRequest).toContain("顺便看看明天");
+    // 两次模型请求各一条日志,身份取自授权,流式响应不读体。
+    await Bun.sleep(10);
+    expect(log.requests.map((item) => item.turn)).toEqual([turn, turn]);
+    for (const { record } of log.requests) {
+      expect(record).toMatchObject({ providerName: "Driver Provider", method: "POST", ok: true, status: 200 });
+      expect(record.url).toBe(`${server.baseUrl}/chat/completions`);
+      expect(record.requestBody).toContain('"fake-model"');
+      expect(record.responseBody).toBeUndefined();
+    }
   }, 30_000);
 
   test("abort(conversationId):在途轮次被中止,正常返回(中止收尾归应用)", async () => {

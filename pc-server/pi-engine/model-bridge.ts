@@ -538,10 +538,12 @@ function createGrantCredentialStore(
  *    密钥在注册配置里,凭据存储为空。请求以应用身份 UA 发出(withAppUserAgent)。
  *  - builtin:不注册,直接用 pi 内建 provider(见 PiModelMapping 头注);令牌经
  *    createGrantCredentialStore 向应用取,凭据不落 pi 的 auth.json。客户端身份保留内建定义:
- *    部分订阅通道只对特定客户端开放(Kimi Coding 按 UA 白名单放行),身份由上游随通道维护。 */
+ *    部分订阅通道只对特定客户端开放(Kimi Coding 按 UA 白名单放行),身份由上游随通道维护。
+ *  outlet = 应用的模型出口(两种映射都注入,日志不分授权方式);不传 = 走全局 fetch(测试/冒烟)。 */
 export async function createPiModelRuntime(
   mapping: PiModelMapping,
   credentialSource?: SubscriptionCredentialSource,
+  outlet?: typeof fetch,
 ): Promise<{ runtime: ModelRuntime; model: PiModel<Api> }> {
   const runtime = await ModelRuntime.create({
     // 不传 credentials 时 pi 的文件后端会急切创建 auth.json(空 {}),破"零落盘";
@@ -549,6 +551,7 @@ export async function createPiModelRuntime(
     credentials: createGrantCredentialStore(mapping, credentialSource),
     modelsPath: null,
   });
+  if (outlet) applyModelOutlet(runtime, outlet);
   if (mapping.kind === "builtin") {
     return { runtime, model: resolveBuiltinPiModel(runtime, mapping) };
   }
@@ -571,4 +574,18 @@ function withAppUserAgent(runtime: ModelRuntime, userAgent: string): void {
   const streamSimple = runtime.streamSimple.bind(runtime);
   runtime.streamSimple = (model, context, options) =>
     streamSimple(model, context, { ...options, identity: mergeClientIdentity(options?.identity, appIdentity) });
+}
+
+/** 上游 google 两条适配器拒收自定义 fetch(options.fetch !== globalThis.fetch 即抛)。 */
+export function piApiRejectsCustomFetch(api: Api): boolean {
+  return api === "google-generative-ai" || api === "google-vertex";
+}
+
+/** 把应用的模型出口(engines/model-outlet)作为流选项 fetch 注入。与 withAppUserAgent 同一层:
+ *  会话请求、压缩摘要、缓存预热重放都经 runtime.streamSimple。google 轨不注入(上游拒收),由
+ *  pi-engine/llm-request-log 的全局壳补记。 */
+export function applyModelOutlet(runtime: Pick<ModelRuntime, "streamSimple">, outlet: typeof fetch): void {
+  const streamSimple = runtime.streamSimple.bind(runtime);
+  runtime.streamSimple = (model, context, options) =>
+    streamSimple(model, context, piApiRejectsCustomFetch(model.api) ? options : { ...options, fetch: outlet });
 }

@@ -105,7 +105,7 @@ describe("connectDriver / connectHost", () => {
       emit: () => undefined,
       tools: { call: async () => ({ content: [] }) },
       steer: { take: async () => [] },
-      models: { credential: async () => ({}) },
+      models: { credential: async () => ({}), log: () => undefined },
       report: () => undefined,
     };
     const strict = connectHost(host, { strict: true });

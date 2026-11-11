@@ -16,8 +16,11 @@
 // - 活落点不进契约:事件只带 turnId,落到哪个消息节点由应用决定;补发分裂在 host.steer.take 里完成。
 // - 应用工具一律经 host.tools.call:审批(含 ask_user 提问)、执行、结果实体化在应用侧一次完成,
 //   执行中的部分输出由应用直接写进工具卡,不回绕引擎。
+// - 模型请求日志:引擎把请求交给引擎侧的模型出口(engines/model-outlet,带显式供应商身份的
+//   fetch),出口经 host.models.log 把每条请求的记录送回应用。fetch 本身不过契约(函数不可序列化),
+//   所以引擎搬进子进程后日志照常。
 // - 暂不定义,到对应阶段再加:permission.check(P4b,引擎自己执行的工具)、指令列举与执行
-//   (P5/P6)、界面请求(P5.4)、invalidate(P5.6 长驻会话)、请求日志通知(P2.5)。
+//   (P5/P6)、界面请求(P5.4)、invalidate(P5.6 长驻会话)。
 
 import type { JsonValue, Message, OAuthFlowId, ToolOutputEntry } from "../foundation/types";
 import type { AppErrorDomain, AppErrorSeverity } from "../foundation/types/dto";
@@ -162,6 +165,23 @@ export interface CredentialRequest {
   minValidityMs?: number;
 }
 
+/** 引擎经模型出口(engines/model-outlet)发出的一条模型请求,应用记入请求日志。
+ *  响应头到手即记(durationMs = 到响应头的时间),流式响应体不读;非 2xx 带截断的错误体;
+ *  网络失败 status 为 0。凭据脱敏归应用。 */
+export interface ModelRequestRecord {
+  providerId: string;
+  providerName: string;
+  url: string;
+  method: string;
+  ok: boolean;
+  status: number;
+  durationMs: number;
+  requestBody?: string;
+  responseHeaders?: Record<string, string>;
+  responseBody?: string;
+  error?: string;
+}
+
 /** 订阅凭据(pi-ai OAuthCredential 原样 JSON,对应用不透明)。 */
 export type SubscriptionCredential = Record<string, JsonValue>;
 
@@ -287,6 +307,10 @@ export interface EngineHost {
   tools: { call(call: AppToolCall): Promise<AppToolResult> };
   /** 轮边界取「生成中补发」的消息文本;应用在同一调用里完成数据层分裂。空数组 = 无补发。 */
   steer: { take(turn: TurnRef): Promise<string[]> };
-  models: { credential(req: CredentialRequest): Promise<SubscriptionCredential> };
+  models: {
+    credential(req: CredentialRequest): Promise<SubscriptionCredential>;
+    /** 单向通知:一条模型请求的日志(引擎侧出口记录,应用落请求日志)。 */
+    log(turn: TurnRef, record: ModelRequestRecord): void;
+  };
   report(report: EngineErrorReport): void;
 }

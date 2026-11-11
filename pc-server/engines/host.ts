@@ -12,6 +12,7 @@
 
 import type { Assistant, Conversation, Model, Provider } from "../foundation/types";
 import type { GenerationEventSink, GenerationTarget, ToolExecutor } from "../inference-engine/events";
+import { addLog } from "../api/logs";
 import { freshSubscriptionCredential } from "../model-providers/auth/resolve";
 import { reportError } from "../observability/app-errors";
 import type { AppToolCaller } from "./app-tools";
@@ -86,6 +87,10 @@ export const appEngineHost: EngineHost = {
       if (!provider) throw new Error(`OAuth credential unavailable for ${req.providerId}`);
       const credential = await freshSubscriptionCredential(provider, { minValidityMs: req.minValidityMs });
       return credential as unknown as SubscriptionCredential;
+    },
+    // 引擎侧模型出口的请求记录。不看轮次绑定:请求已经发生,轮次结束后迟到的记录照样入档。
+    log(_turn, record) {
+      addLog({ ...record, kind: "provider:agent" });
     },
   },
   report: reportEngineError,
