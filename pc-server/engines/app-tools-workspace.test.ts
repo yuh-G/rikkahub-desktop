@@ -1,11 +1,8 @@
-// pi-engine/workspace-tools.test.ts — 七工具 customTools 的契约对照 + 审批内化行为(P3)
+// engines/app-tools-workspace.test.ts — 工作区工具在应用侧的审批与执行(host.tools.call 的执行面)
 //
-// 两类保障:
-// 1) 升级回归门:我们移植工具(customTools 声明来源)与 pi 原版工厂的 name/description/
-//    parameters 必须语义全等(键序无关;TypeBox 先 required 后 properties,纯序差)。
-//    pi 升级改工具面 → 本测试红,倒逼重新对齐移植层(方案 §〇 升级纪律)。
-// 2) 审批内化(方案 §4.4):auto 直执行;pending 挂卡等决定(放行→userApproved 执行/
-//    拒绝→历史契约文案抛错);中止时卡收敛 denied。
+// 审批内化(方案 §4.4):auto 直执行;pending 挂卡等决定(放行→userApproved 执行/
+// 拒绝→历史契约文案抛错);中止时卡收敛 denied。pi 侧的包装与提示词镜像见
+// pi-engine/app-tools.test.ts。
 import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,28 +14,8 @@ const conversations = await import("../conversations");
 const { configureWorkingSet } = await import("../conversations/working-set");
 const { getConversationMeta } = await import("../conversations/read-queries");
 const ws = await import("../workspace");
-const runtime = await import("../workspace/runtime");
-const { createPiWorkspaceTools } = await import("./workspace-tools");
+const { createAppToolCaller, workspaceToolSpecs } = await import("./app-tools");
 const { resolveToolApproval, pendingToolApprovalCount } = await import("../inference-engine/approval-gate");
-const ourTools = {
-  read: (await import("../workspace/tools/read")).createReadTool,
-  bash: (await import("../workspace/tools/bash")).createBashTool,
-  edit: (await import("../workspace/tools/edit")).createEditTool,
-  write: (await import("../workspace/tools/write")).createWriteTool,
-  grep: (await import("../workspace/tools/grep")).createGrepTool,
-  find: (await import("../workspace/tools/find")).createFindTool,
-  ls: (await import("../workspace/tools/ls")).createLsTool,
-};
-const pi = await import("../../pi/packages/coding-agent/src/core/sdk.ts");
-const piPromptContributions: Record<string, { snippet: string; guidelines: readonly string[] }> = {
-  read: (await import("../../pi/packages/coding-agent/src/core/tools/read.ts")).readToolSystemPromptContribution,
-  bash: (await import("../../pi/packages/coding-agent/src/core/tools/bash.ts")).bashToolSystemPromptContribution,
-  edit: (await import("../../pi/packages/coding-agent/src/core/tools/edit.ts")).editToolSystemPromptContribution,
-  write: (await import("../../pi/packages/coding-agent/src/core/tools/write.ts")).writeToolSystemPromptContribution,
-  grep: (await import("../../pi/packages/coding-agent/src/core/tools/grep.ts")).grepToolSystemPromptContribution,
-  find: (await import("../../pi/packages/coding-agent/src/core/tools/find.ts")).findToolSystemPromptContribution,
-  ls: (await import("../../pi/packages/coding-agent/src/core/tools/ls.ts")).lsToolSystemPromptContribution,
-};
 import type { GenerationEvent } from "../inference-engine/events";
 
 const db = conversations.openConversationsDb();
@@ -101,97 +78,27 @@ async function waitUntil(cond: () => boolean, timeoutMs = 5000): Promise<void> {
   }
 }
 
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as object).sort()) out[key] = canonical((value as Record<string, unknown>)[key]);
-    return out;
-  }
-  return value;
+/** 本会话工作区工具的应用侧调用入口(生产 = host.tools.call 落到这里)。 */
+function callerFor(conversation: ReturnType<typeof bindConversation>, log: SinkLog, signal?: AbortSignal) {
+  const ctx = { conversation: conversation as never, assistant: fakeAssistant, sink: log.sink, signal };
+  const specs = workspaceToolSpecs(conversation as never);
+  const call = createAppToolCaller(ctx, specs);
+  return { specs, call: (toolCallId: string, name: string, args: Record<string, unknown>) => call({ toolCallId, name, args: args as never }) };
 }
 
-type AnyTool = { name: string; description: string; parameters: unknown };
-type ExecFn = (
-  toolCallId: string,
-  params: unknown,
-  signal?: AbortSignal,
-  onUpdate?: (partial: unknown) => void,
-) => Promise<{ content: Array<{ type: string; text?: string }>; details: Record<string, unknown> }>;
-
-function execOf(tool: { execute: unknown }): ExecFn {
-  return tool.execute as ExecFn;
-}
-
-describe("契约对照(pi 升级回归门)", () => {
-  test("七工具 name/description/parameters 与 pi 原版语义全等(键序无关)", () => {
-    const cwd = process.cwd();
-    const piFactories: Record<string, AnyTool> = {
-      read: pi.createReadTool(cwd) as AnyTool,
-      bash: pi.createBashTool(cwd) as AnyTool,
-      edit: pi.createEditTool(cwd) as AnyTool,
-      write: pi.createWriteTool(cwd) as AnyTool,
-      grep: pi.createGrepTool(cwd) as AnyTool,
-      find: pi.createFindTool(cwd) as AnyTool,
-      ls: pi.createLsTool(cwd) as AnyTool,
-    };
-    for (const [name, factory] of Object.entries(ourTools)) {
-      const mine = factory(cwd) as unknown as AnyTool;
-      const theirs = piFactories[name];
-      expect(mine.name).toBe(theirs.name);
-      expect(mine.description).toBe(theirs.description);
-      expect(canonical(JSON.parse(JSON.stringify(mine.parameters)))).toEqual(
-        canonical(JSON.parse(JSON.stringify(theirs.parameters))),
-      );
-    }
-    // bash 是唯一在 pi 工厂产物上暴露 promptSnippet 的工具,顺带钉住镜像文案。
-    const piBash = piFactories.bash as AnyTool & { promptSnippet?: string };
-    expect(piBash.promptSnippet).toBe("Execute bash commands (ls, grep, find, etc.)");
-  });
-
-  test("createPiWorkspaceTools:挂载矩阵 + sequential + snippet + edit prepareArguments", () => {
-    const workspace = ws.createWorkspace({ type: "managed", name: "contract" });
-    const conversation = bindConversation(workspace.id);
-    const log = makeSink();
-    const tools = createPiWorkspaceTools({ conversation, assistant: fakeAssistant, sink: log.sink });
-    expect(tools.map((tool) => tool.name)).toEqual(runtime.mountedWorkspaceToolNames());
-    for (const tool of tools) {
-      expect(tool.executionMode).toBe("sequential");
-      expect(typeof tool.promptSnippet).toBe("string");
-      expect((tool.promptSnippet ?? "").length).toBeGreaterThan(0);
-      expect(tool.label).toBe(tool.name);
-      if (tool.name === "edit") expect(typeof tool.prepareArguments).toBe("function");
-      else expect(tool.prepareArguments).toBeUndefined();
-    }
-  });
-
-  test("promptSnippet/promptGuidelines 逐字镜像 pi 各工具的 SystemPromptContribution 常量(bash 不镜像 PI_* 条目)", () => {
-    const workspace = ws.createWorkspace({ type: "managed", name: "prompt-mirror" });
-    const conversation = bindConversation(workspace.id);
-    const tools = createPiWorkspaceTools({ conversation, assistant: fakeAssistant, sink: makeSink().sink });
-    for (const tool of tools) {
-      const contribution = piPromptContributions[tool.name];
-      expect(contribution).toBeDefined();
-      expect(tool.promptSnippet).toBe(contribution!.snippet);
-      const expectedGuidelines = tool.name === "bash" || contribution!.guidelines.length === 0 ? undefined : [...contribution!.guidelines];
-      expect(tool.promptGuidelines).toEqual(expectedGuidelines);
-    }
-  });
-});
-
-describe("审批内化(execute 生命周期)", () => {
+describe("审批内化(应用侧调用生命周期)", () => {
   test("balanced 档区内读:免审直执行(零审批事件)", async () => {
     const workspace = ws.createWorkspace({ type: "managed", name: "auto-read" });
     writeFileSync(join(workspace.root, "hello.txt"), "hello from pi tools\n");
     const conversation = bindConversation(workspace.id);
     const log = makeSink();
-    const tools = createPiWorkspaceTools({ conversation, assistant: fakeAssistant, sink: log.sink });
-    const read = tools.find((tool) => tool.name === "read")!;
-    const result = await execOf(read)("call-read-1", { path: "hello.txt" });
-    expect(result.content[0]?.text ?? "").toContain("hello from pi tools");
+    const tools = callerFor(conversation, log);
+    const result = await tools.call("call-read-1", "read", { path: "hello.txt" });
+    const first = result.content[0];
+    expect(first?.type === "text" ? first.text : "").toContain("hello from pi tools");
     // 小文本读取本就无 details(与聊天引擎一致,不造假 metadata);
-    // details.workspace 的还原往返由下方 bash 用例(exitCode)钉住。
-    expect(result.details).toEqual({});
+    // 结构化细节的往返由下方 bash 用例(exitCode)钉住。
+    expect(result.details).toBeUndefined();
     expect(approvalEvents(log)).toEqual([]);
   });
 
@@ -200,9 +107,8 @@ describe("审批内化(execute 生命周期)", () => {
     ws.updateWorkspace(workspace.id, { permissionPreset: "confirm_each" });
     const conversation = bindConversation(workspace.id);
     const log = makeSink();
-    const tools = createPiWorkspaceTools({ conversation, assistant: fakeAssistant, sink: log.sink });
-    const write = tools.find((tool) => tool.name === "write")!;
-    const running = execOf(write)("call-write-1", { path: "made.txt", content: "approved!" });
+    const tools = callerFor(conversation, log);
+    const running = tools.call("call-write-1", "write", { path: "made.txt", content: "approved!" });
     await waitUntil(() => approvalEvents(log).some((state) => state.type === "pending"));
     expect(pendingToolApprovalCount()).toBe(1);
     expect(resolveToolApproval(conversation.id, "call-write-1", { approved: true })).toBe(true);
@@ -216,9 +122,8 @@ describe("审批内化(execute 生命周期)", () => {
     ws.updateWorkspace(workspace.id, { permissionPreset: "confirm_each" });
     const conversation = bindConversation(workspace.id);
     const log = makeSink();
-    const tools = createPiWorkspaceTools({ conversation, assistant: fakeAssistant, sink: log.sink });
-    const write = tools.find((tool) => tool.name === "write")!;
-    const running = execOf(write)("call-write-2", { path: "evil.txt", content: "nope" });
+    const tools = callerFor(conversation, log);
+    const running = tools.call("call-write-2", "write", { path: "evil.txt", content: "nope" });
     await waitUntil(() => approvalEvents(log).some((state) => state.type === "pending"));
     expect(resolveToolApproval(conversation.id, "call-write-2", { approved: false, reason: "不允许" })).toBe(true);
     await expect(running).rejects.toThrow("Tool execution denied by user. Reason: 不允许");
@@ -233,10 +138,9 @@ describe("审批内化(execute 生命周期)", () => {
     ws.updateWorkspace(workspace.id, { permissionPreset: "confirm_each" });
     const conversation = bindConversation(workspace.id);
     const log = makeSink();
-    const tools = createPiWorkspaceTools({ conversation, assistant: fakeAssistant, sink: log.sink });
-    const write = tools.find((tool) => tool.name === "write")!;
     const controller = new AbortController();
-    const running = execOf(write)("call-write-3", { path: "late.txt", content: "x" }, controller.signal);
+    const tools = callerFor(conversation, log, controller.signal);
+    const running = tools.call("call-write-3", "write", { path: "late.txt", content: "x" });
     await waitUntil(() => approvalEvents(log).some((state) => state.type === "pending"));
     controller.abort();
     await expect(running).rejects.toMatchObject({ name: "AbortError" });
@@ -250,10 +154,9 @@ describe("审批内化(execute 生命周期)", () => {
     const workspace = ws.createWorkspace({ type: "managed", name: "gate-danger" });
     const conversation = bindConversation(workspace.id);
     const log = makeSink();
-    const tools = createPiWorkspaceTools({ conversation, assistant: fakeAssistant, sink: log.sink });
-    const bash = tools.find((tool) => tool.name === "bash");
-    if (!bash) return; // K3:本机无 bash 时挂载矩阵不含 bash,该路径由 approval 单测覆盖
-    const running = execOf(bash)("call-bash-1", { command: "rm -rf /" });
+    const tools = callerFor(conversation, log);
+    if (!tools.specs.some((spec) => spec.name === "bash")) return; // K3:本机无 bash 时挂载矩阵不含 bash,该路径由 approval 单测覆盖
+    const running = tools.call("call-bash-1", "bash", { command: "rm -rf /" });
     await waitUntil(() => approvalEvents(log).some((state) => state.type === "pending"));
     const pending = approvalEvents(log)[0]!;
     expect(pending.reason ?? "").toContain("Destructive command pattern");
@@ -265,14 +168,13 @@ describe("审批内化(execute 生命周期)", () => {
     const workspace = ws.createWorkspace({ type: "managed", name: "auto-bash" });
     const conversation = bindConversation(workspace.id);
     const log = makeSink();
-    const tools = createPiWorkspaceTools({ conversation, assistant: fakeAssistant, sink: log.sink });
-    const bash = tools.find((tool) => tool.name === "bash");
-    if (!bash) return; // K3 兜底矩阵机器跳过
-    const result = await execOf(bash)("call-bash-2", { command: "echo pi-p3-ok" });
-    expect(result.content[0]?.text ?? "").toContain("pi-p3-ok");
-    const details = result.details as { workspace?: { tool?: string; details?: { exitCode?: number } } };
-    expect(details.workspace?.tool).toBe("bash");
-    expect(details.workspace?.details?.exitCode).toBe(0);
+    const tools = callerFor(conversation, log);
+    if (!tools.specs.some((spec) => spec.name === "bash")) return; // K3 兜底矩阵机器跳过
+    const result = await tools.call("call-bash-2", "bash", { command: "echo pi-p3-ok" });
+    const first = result.content[0];
+    expect(first?.type === "text" ? first.text : "").toContain("pi-p3-ok");
+    expect(result.details?.tool).toBe("bash");
+    expect(result.details?.details.exitCode).toBe(0);
     expect(approvalEvents(log)).toEqual([]);
   });
 });

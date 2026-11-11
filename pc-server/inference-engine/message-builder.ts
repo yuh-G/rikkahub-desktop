@@ -692,7 +692,7 @@ export function hasBuiltInTool(modelItem: Model, toolType: string) {
  *  functionTools 与 responseApiBuiltInTools 并列发出)与一切未来引擎。
  *
  *  单源纪律:外挂 search_web 的唯一注入源 openAiSearchTools(tools/bound)经本谓词门控,
- *  聊天引擎(conversationFunctionTools)与 pi 引擎(createPiGeneralTools)同口消费——
+ *  聊天引擎(conversationFunctionTools)与工作区引擎的应用工具面(engines/app-tools)同口消费——
  *  未来新引擎只要从同一注入源取外挂搜索,天然继承本闸,无需各自复刻判定。 */
 export function shouldUseExternalWebSearch(enableWebSearch: boolean, modelItem: Model | null | undefined) {
   return enableWebSearch && !(modelItem && hasBuiltInTool(modelItem, "search"));

@@ -75,8 +75,7 @@ import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCompaction, runPiGeneration } f
 import { mapGrantToPi } from "../pi-engine/model-bridge";
 import { modelGrantFor } from "../engines/model-grant";
 import { freshSubscriptionCredential } from "../model-providers/auth/resolve";
-import { createPiWorkspaceTools } from "../pi-engine/workspace-tools";
-import { createPiGeneralTools } from "../pi-engine/general-tools";
+import { appToolSpecsFor, createAppToolCaller } from "../engines/app-tools";
 import { createPiSessionResources } from "../pi-engine/resources";
 import { buildEngineInstructions } from "../engines/instructions";
 import { reportEngineError } from "../engines/host";
@@ -740,6 +739,12 @@ function piGrantFor(provider: Provider, model: Model, assistant: Assistant, conv
   return { grant, credentialSource: () => freshSubscriptionCredential(provider) as Promise<SubscriptionCredential> };
 }
 
+/** 工作区引擎的应用工具面:规格下发给引擎,调用经同一入口回到应用(审批/执行/实体化)。 */
+function appToolsFor(ctx: Parameters<typeof appToolSpecsFor>[0]) {
+  const tools = appToolSpecsFor(ctx);
+  return { tools, callTool: createAppToolCaller(ctx, tools) };
+}
+
 /** P7:本轮压缩产物落 conversation.engineCompactions。cutMessageId 为 null(pi 自动压缩
  *  的切点可能落在本轮 prompt 之后,而本轮消息尚未入库)按"外收拢"落当前尾消息
  *  id——只多保不少保,下一轮编码器按"切点在场"自校验生效。 */
@@ -846,10 +851,7 @@ async function runPiWorkspaceGeneration(
     promptText: promptInput.text,
     images: promptInput.images,
     resources,
-    tools: [
-      ...createPiWorkspaceTools({ conversation, assistant: deps.assistant, sink }),
-      ...createPiGeneralTools({ conversation, assistant: deps.assistant, sink, target, model: deps.selectedModel }),
-    ],
+    ...appToolsFor({ conversation, assistant: deps.assistant, sink, target, model: deps.selectedModel, signal }),
     sink,
     signal,
     // steering 轮边界(用户问题②):编排层同一回调直通 pi runner,在 pi turn_end 同步

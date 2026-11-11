@@ -19,13 +19,12 @@
 // 锚),聊天位注入/时间提醒在工作区会话与聊天引擎逐字同生效。
 //
 // P3 工具面:noTools:"builtin"——pi 内建 read/bash/edit/write 一律不启用(它们绕开
-// 我们的审批与边界壳),我们的七工具经 ctx.tools 以 customTools 注册
-// (pi-engine/workspace-tools.ts,审批内化在工具 execute 里)。不传 tools 即纯对话
-// (与 P2 语义等价:无任何激活工具,系统提示词 Available tools 为 "(none)")。
+// 我们的审批与边界壳),应用工具规格(ctx.tools)经 pi-engine/app-tools 包成 customTools,
+// 调用交回应用(ctx.callTool,审批与执行在应用侧)。不传 tools 即纯对话
+// (无任何激活工具,系统提示词 Available tools 为 "(none)")。
 
 import { createAgentSession } from "../../pi/packages/coding-agent/src/core/sdk.ts";
 
-import type { ToolDefinition } from "../../pi/packages/coding-agent/src/core/extensions/types.ts";
 import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
 import type { GenerationEventSink } from "../inference-engine/events";
 import type { Message } from "../foundation/types";
@@ -36,7 +35,8 @@ import { llmLogContextFor, runWithLlmRequestLog } from "./llm-request-log";
 import { createPiEventBridge } from "./event-bridge";
 import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import type { PiSessionResources } from "./resources";
-import type { CapturedEngineCompaction, EngineCompactionRecord, ModelGrant, PromptInput } from "../engines/contract";
+import type { AppToolSpec, CapturedEngineCompaction, EngineCompactionRecord, ModelGrant, PromptInput } from "../engines/contract";
+import { createPiAppTools, type PiAppToolCaller } from "./app-tools";
 import { seedPiSessionFromHistory } from "./context-encoder";
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
 
@@ -72,8 +72,10 @@ export interface PiGenerationContext {
    *  生产侧 = createPiSessionResources;不传 = 纯对话,pi 默认资源面全关不了——
    *  仅测试/冒烟场景使用,生产路由必须传)。 */
   resources?: PiSessionResources;
-  /** customTools(生产侧 = 七个工作区工具 + 通用工具/MCP 桥;不传 = 纯对话)。 */
-  tools?: ToolDefinition[];
+  /** 应用工具规格(生产侧 = 工作区工具 + 通用工具/MCP 桥;不传 = 纯对话)。 */
+  tools?: AppToolSpec[];
+  /** 应用工具调用口(生产 = host.tools.call:审批/执行/实体化在应用侧)。 */
+  callTool?: PiAppToolCaller;
   /** 生成事件下沉(生产侧 = conversations/generation-apply 的应用器)。 */
   sink: GenerationEventSink;
   signal?: AbortSignal;
@@ -150,7 +152,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     // "builtin" 只关内建工具;customTools 经 includeAllExtensionTools 全部激活
     // (agent-session.ts 的 includeAllExtensionTools + _refreshToolRegistry,§七-3 实证)。
     noTools: "builtin",
-    customTools: ctx.tools ?? [],
+    customTools: createPiAppTools(ctx.tools ?? [], ctx.callTool),
     // P4 资源统一:受控 ResourceLoader(技能白名单/AGENTS.md 边界过滤/appendSystemPrompt)
     // + 受控 SettingsManager(inMemory,封死 .pi/settings.json 注入面)。
     // 注意 sdk 只对自建 loader 调 reload,resources 在装配处已 reload 完毕。

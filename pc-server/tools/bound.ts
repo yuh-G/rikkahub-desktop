@@ -36,7 +36,7 @@ export function openAiMcpTools(assistant: Assistant) {
  *  的唯一聚合入口，消灭复读展开式。
  *  P6 退役:工作区工具条件挂载已移除——生成路由与旧挂载判定同用
  *  workspaceRuntimeForConversation,工作区可用必走 pi 会话(工具由
- *  pi-engine/workspace-tools 承载),不可用时旧挂载本就返回空,两头皆死代码。
+ *  engines/app-tools 承载),不可用时旧挂载本就返回空,两头皆死代码。
  *  model 用于防双搜门控(见 openAiSearchTools):调用方在聊天引擎各装配点都能拿到
  *  picked.model/modelItem,务必传入以启用外挂让位;缺省则退化为只看全局开关。 */
 export function conversationFunctionTools(assistant: Assistant, model?: Model | null) {

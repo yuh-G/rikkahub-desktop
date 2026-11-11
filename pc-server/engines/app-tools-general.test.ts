@@ -1,4 +1,4 @@
-// pi-engine/general-tools.test.ts — P4 通用工具/MCP 桥(方案 §3.2/§4.9)
+// engines/app-tools-general.test.ts — 通用工具/MCP 桥在应用侧的规格与执行(方案 §3.2/§4.9)
 //
 // 钉住三条语义:
 //   1) 工具面枚举与聊天引擎同源同开关:enableWebSearch 关 → search 对不声明;
@@ -6,7 +6,7 @@
 //   2) 审批语义与聊天引擎同口径:MCP 工具 needsApproval → pending 卡 → 拒绝回灌
 //      拒绝理由并抛错;auto 工具(save_memory)不产卡直通执行;
 //   3) 执行路由走 executeToolCall(真跑 save_memory:进待确认队列,单文本结果
-//      details 为空 → 事件桥按 content 文本渲染)。
+//      不带 display → 事件桥按 content 文本渲染)。
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +14,7 @@ import { join } from "node:path";
 
 process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-generaltools-test-"));
 
-const { createPiGeneralTools } = await import("./general-tools");
+const { createAppToolCaller, generalToolSpecs } = await import("./app-tools");
 const { resolveToolApproval } = await import("../inference-engine/approval-gate");
 const { defaultAssistant } = await import("../assistants");
 const { defaultState } = await import("../app-config/defaults");
@@ -75,27 +75,31 @@ function approvalEvents(events: GenerationEvent[]) {
   return events.filter((event) => event.kind === "tool_approval_updated");
 }
 
-// 与 workspace-tools.test 同款:我们的实现不使用第 5 参 ctx,测试按 4 参宽松签名调用。
-type ExecFn = (
-  toolCallId: string,
-  params: unknown,
-  signal?: AbortSignal,
-  onUpdate?: (partial: unknown) => void,
-) => Promise<{ content: Array<{ type: string; text?: string }>; details?: Record<string, unknown> }>;
+type Ctx = ReturnType<typeof fixture>["ctx"];
 
-function execOf(tool: { execute: unknown }): ExecFn {
-  return tool.execute as ExecFn;
+function specsOf(ctx: Ctx & { model?: Model | null }) {
+  return generalToolSpecs(ctx.assistant, ctx.model);
+}
+
+/** 应用侧调用入口(生产 = host.tools.call 落到这里)。 */
+function callerFor(ctx: Ctx) {
+  const call = createAppToolCaller(ctx, specsOf(ctx));
+  return (toolCallId: string, name: string, args: Record<string, unknown>) => call({ toolCallId, name, args: args as never });
+}
+
+function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
+  return String(result.content[0]?.text ?? "");
 }
 
 describe("工具面枚举", () => {
   test("search/save_memory/MCP 全在列,开关同聊天引擎同源", () => {
     const { ctx } = fixture();
-    const names = createPiGeneralTools(ctx).map((tool) => tool.name);
+    const names = specsOf(ctx).map((tool) => tool.name);
     expect(names).toEqual(["search_web", "scrape_web", "save_memory", "mcp__alpha", "mcp__beta"]);
 
     store.state.settings.enableWebSearch = false;
     try {
-      const closed = createPiGeneralTools(ctx).map((tool) => tool.name);
+      const closed = specsOf(ctx).map((tool) => tool.name);
       expect(closed).toEqual(["save_memory", "mcp__alpha", "mcp__beta"]);
     } finally {
       store.state.settings.enableWebSearch = true;
@@ -104,12 +108,13 @@ describe("工具面枚举", () => {
 
   test("未选该 MCP 服务器的助手看不到其工具;声明面带 schema", () => {
     const { ctx } = fixture({ mcpServers: [] });
-    const names = createPiGeneralTools(ctx).map((tool) => tool.name);
+    const names = specsOf(ctx).map((tool) => tool.name);
     expect(names.every((name) => !name.startsWith("mcp__"))).toBe(true);
 
     const { ctx: withMcp } = fixture();
-    const alpha = createPiGeneralTools(withMcp).find((tool) => tool.name === "mcp__alpha");
+    const alpha = specsOf(withMcp).find((tool) => tool.name === "mcp__alpha");
     expect(alpha?.description).toBe("Alpha tool");
+    expect(alpha?.group).toBe("general");
     expect((alpha?.parameters as { properties?: Record<string, unknown> }).properties).toHaveProperty("q");
   });
 
@@ -118,23 +123,20 @@ describe("工具面枚举", () => {
   test("模型带内置 search → 外挂搜索让位(防双搜同闸)", () => {
     const { ctx } = fixture({ mcpServers: [] });
     const builtIn = { ...ctx, model: { tools: ["search"] } as unknown as Model };
-    const names = createPiGeneralTools(builtIn).map((tool) => tool.name);
+    const names = specsOf(builtIn).map((tool) => tool.name);
     expect(names).not.toContain("search_web");
     expect(names).not.toContain("scrape_web");
 
     // 无内置搜索的模型(常态)→ 外挂照常,证明让位是内置 search 触发而非误伤。
     const plain = { ...ctx, model: { tools: [] } as unknown as Model };
-    expect(createPiGeneralTools(plain).map((tool) => tool.name)).toContain("search_web");
+    expect(specsOf(plain).map((tool) => tool.name)).toContain("search_web");
   });
 });
 
 describe("审批语义(同聊天引擎口径)", () => {
   test("needsApproval 的 MCP 工具:pending 卡 → 用户拒绝 → 拒绝理由回灌并抛错", async () => {
     const { ctx, conversation, events } = fixture();
-    const alpha = createPiGeneralTools(ctx).find((tool) => tool.name === "mcp__alpha");
-    if (!alpha) throw new Error("mcp__alpha missing");
-
-    const running = execOf(alpha)("call-1", { q: "hi" }, new AbortController().signal, () => {});
+    const running = callerFor(ctx)("call-1", "mcp__alpha", { q: "hi" });
     await Bun.sleep(10);
     expect(approvalEvents(events).map((event) => event.approvalState.type)).toEqual(["pending"]);
 
@@ -146,17 +148,19 @@ describe("审批语义(同聊天引擎口径)", () => {
 
   test("needsApproval=false 的 MCP 工具与 save_memory 都是 auto:不产卡", async () => {
     const { ctx, events } = fixture();
-    const tools = createPiGeneralTools(ctx);
-    const save = tools.find((tool) => tool.name === "save_memory");
-    if (!save) throw new Error("save_memory missing");
-
-    const result = await execOf(save)("call-2", { content: "用户喜欢简洁回答" }, new AbortController().signal, () => {});
+    const result = await callerFor(ctx)("call-2", "save_memory", { content: "用户喜欢简洁回答" });
     expect(approvalEvents(events)).toEqual([]);
-    const first = result.content[0];
-    expect(first?.type).toBe("text");
-    expect(String(first?.text ?? "").length).toBeGreaterThan(0);
-    // 单文本结果不带 app 结构化输出 → 事件桥按 content 渲染
-    expect(result.details ?? {}).toEqual({});
+    expect(result.content[0]?.type).toBe("text");
+    expect(textOf(result).length).toBeGreaterThan(0);
+    // 单文本结果不带 display → 事件桥按 content 渲染
+    expect(result.display).toBeUndefined();
+  });
+});
+
+describe("调用入口", () => {
+  test("只认本轮下发过的规格:未知工具名以错误拒绝", async () => {
+    const { ctx } = fixture({ mcpServers: [] });
+    await expect(callerFor(ctx)("call-x", "mcp__alpha", {})).rejects.toThrow("Unknown tool: mcp__alpha");
   });
 });
 
@@ -164,11 +168,11 @@ describe("ask_user(run-and-suspend 提问)", () => {
   const withAskUser = { localTools: [{ type: "ask_user" }] };
 
   test("挂载随助手 localTools 开关;声明面含 selection_type 枚举", () => {
-    const off = createPiGeneralTools(fixture().ctx).map((tool) => tool.name);
+    const off = specsOf(fixture().ctx).map((tool) => tool.name);
     expect(off).not.toContain("ask_user");
 
     const { ctx } = fixture(withAskUser);
-    const ask = createPiGeneralTools(ctx).find((tool) => tool.name === "ask_user");
+    const ask = specsOf(ctx).find((tool) => tool.name === "ask_user");
     if (!ask) throw new Error("ask_user missing");
     const items = (ask.parameters as { properties?: { questions?: { items?: { properties?: Record<string, unknown> } } } })
       .properties?.questions?.items?.properties;
@@ -177,11 +181,8 @@ describe("ask_user(run-and-suspend 提问)", () => {
 
   test("作答:execute 挂起 → resolve 携 answer → 回灌文本为扁平契约(与聊天引擎逐字一致)", async () => {
     const { ctx, conversation, events } = fixture(withAskUser);
-    const ask = createPiGeneralTools(ctx).find((tool) => tool.name === "ask_user");
-    if (!ask) throw new Error("ask_user missing");
-
     const questions = [{ id: "q1", question: "选哪个?", selection_type: "multi", options: ["甲", "乙"] }];
-    const running = execOf(ask)("call-q1", { questions }, new AbortController().signal, () => {});
+    const running = callerFor(ctx)("call-q1", "ask_user", { questions });
     await Bun.sleep(10);
     expect(approvalEvents(events).map((e) => e.approvalState.type)).toEqual(["pending"]);
 
@@ -189,17 +190,15 @@ describe("ask_user(run-and-suspend 提问)", () => {
     expect(resolveToolApproval(conversation.id, "call-q1", { approved: true, answer: payload })).toBe(true);
 
     const result = await running;
-    expect(result.content[0]?.text).toBe(payload);
-    // 单文本结果不带 details.app → 事件桥按 content 渲染(与聊天 answered 回放同字符串)。
-    expect(result.details ?? {}).toEqual({});
+    expect(textOf(result)).toBe(payload);
+    // 单文本结果不带 display → 事件桥按 content 渲染(与聊天 answered 回放同字符串)。
+    expect(result.display).toBeUndefined();
     expect(approvalEvents(events).at(-1)?.approvalState).toEqual({ type: "answered", answer: payload });
   });
 
   test("拒绝:抛历史契约文案(桥映射 {error})", async () => {
     const { ctx, conversation } = fixture(withAskUser);
-    const ask = createPiGeneralTools(ctx).find((tool) => tool.name === "ask_user");
-    if (!ask) throw new Error("ask_user missing");
-    const running = execOf(ask)("call-q2", { questions: [{ id: "q", question: "?" }] }, new AbortController().signal, () => {});
+    const running = callerFor(ctx)("call-q2", "ask_user", { questions: [{ id: "q", question: "?" }] });
     await Bun.sleep(10);
     expect(resolveToolApproval(conversation.id, "call-q2", { approved: false, reason: "跳过" })).toBe(true);
     await expect(running).rejects.toThrow("Tool execution denied by user. Reason: 跳过");
@@ -207,11 +206,7 @@ describe("ask_user(run-and-suspend 提问)", () => {
 
   test("非法入参(零题/超上限)→ 抛错回灌模型重试,不挂卡", async () => {
     const { ctx, events } = fixture(withAskUser);
-    const ask = createPiGeneralTools(ctx).find((tool) => tool.name === "ask_user");
-    if (!ask) throw new Error("ask_user missing");
-    await expect(
-      execOf(ask)("call-q3", { questions: [] }, new AbortController().signal, () => {}),
-    ).rejects.toThrow(/at least one valid question/);
+    await expect(callerFor(ctx)("call-q3", "ask_user", { questions: [] })).rejects.toThrow(/at least one valid question/);
     expect(approvalEvents(events)).toEqual([]);
   });
 });

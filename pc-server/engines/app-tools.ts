@@ -1,164 +1,207 @@
-// pi-engine/general-tools.ts — 通用工具与 MCP 桥注册为 pi customTools(P4,方案 §3.2/§4.9)
+// engines/app-tools.ts — 应用工具的应用侧实现(契约 AppToolSpec + host.tools.call 的执行面)
 //
-// 挂载裁决(§4.9 落定):search_web / scrape_web / save_memory / ask_user + 按助手启用的 mcp__*。
-// 不挂:use_skill(pi 原生 <available_skills> 替代)、get_time_info(有 bash)、tts/clipboard(v1 收面)。
+// 引擎只拿工具规格(名称/描述/JSON Schema/分组),调用一律交回这里:审批(含 ask_user 提问)、
+// 执行、结果实体化在应用侧一次完成,执行中的部分输出直接写进工具卡(sink),不回绕引擎。
 //
-// ask_user(P6 起进工作区):早期注释"挂起语义与 pi 循环冲突"针对的是聊天式"返回 pending 哨兵
-// → 整批暂停→重触发"。pi 已有更强的 run-and-suspend 原语(gateToolApproval 在 execute 内挂起
-// 单工具),ask_user 只是"决议里多带一个 answer 字段"的特例——经 inference-engine/ask-user-flow
-// 的 gateAskUser 挂起,/tool-approval 端点把答复经 approval-gate 送达在途 execute,执行返回真实
-// 结果,循环原地继续,零冲突。答案回灌模型的文本与聊天引擎逐字一致(扁平 {"answers":{...}}
-// 契约,经 details.app.output 由事件桥还原成 text part)。
+// 工具面:
+// - 工作区工具(group "workspace"):按 K3 挂载矩阵(bash 可用: read/bash/edit/write;不可用:
+//   read/edit/write/grep/find/ls),声明复用挂载层 openAiWorkspaceTools——与 pi 原版逐字一致。
+//   执行走 workspace/runtime.executeWorkspaceToolCore(三道闸/危险命令拦截/宽严边界/K3 shell)。
+// - 通用工具(group "general",§4.9 落定):search_web / scrape_web / save_memory / ask_user +
+//   按助手启用的 mcp__*。不挂 use_skill(pi 原生 <available_skills> 替代)、get_time_info
+//   (有 bash)、tts/clipboard(v1 收面)。声明用 tools/bound 的同一组装配函数(与聊天引擎
+//   进模型的 schema 逐字同源,关掉的面天然为空);执行走 tools/execution.executeToolCall
+//   (搜索开关守卫/MCP OAuth 预刷新/analytics/save_memory 写策略全在其内)。
 //
-// 根源纪律:一行分发/守卫/审批逻辑都不复刻——
-// - 声明:tools/bound 的同一组装配函数(与聊天引擎进模型的 schema 逐字同源);
-// - 执行:tools/execution.executeToolCall(搜索开关守卫/MCP OAuth 预刷新/analytics/
-//   save_memory 写策略全在其内);
-// - 审批:tools/approval.initialApprovalState(MCP 每工具 needsApproval + 助手级
-//   override 的既有体系原样生效;search/scrape/memory 恒 auto——与聊天引擎逐字一致)
-//   + approval-flow 共享生命周期(与工作区工具同一状态机);
-// - 结果:toolResultToParts + realizeToolResult(MCP 图片落盘为 /api/files URL)后,
-//   模型面 = openAiToolOutput(与聊天回灌模型的字符串同源),UI 面 = entries 经
-//   details.app.output 由事件桥整批还原(part.output 与聊天渲染契约逐字一致)。
+// 审批:tools/approval.initialApprovalState(与聊天引擎同一判定函数:工作区三档矩阵、MCP 每
+// 工具 needsApproval + 助手级 override,search/scrape/memory 恒 auto)+ approval-flow 共享
+// 生命周期。ask_user 是「决议里多带一个 answer 字段」的特例,经 gateAskUser 挂起,答案即工具
+// 结果(扁平 {"answers":{...}} 契约,与聊天引擎 answered 回放逐字一致)。
 //
-// jsonl 体积纪律:单 text 条目时 content 即全部信息,不带 details.app(避免大文本
-// 在引擎记忆里双写);仅当 entries 含图片/多条目时才带,桥按有无 app 标记选路。
+// 结果形态(AppToolResult):
+// - content 是模型可见结果。通用工具 = openAiToolOutput(entries),与聊天回灌模型的字符串同源。
+// - display 是工具卡条目(realizeToolResult 已把 MCP 图片落盘为 /api/files URL)。单 text 条目时
+//   content 即全部信息,不带 display(避免大文本在引擎记忆里双写)。
+// - details 是工作区工具的结构化细节(diff/exitCode,jsonSafeDetails 截断口径与聊天引擎同源)。
 
-import type { ToolDefinition } from "../../pi/packages/coding-agent/src/core/extensions/types.ts";
+import type { AppToolResult, AppToolSpec } from "./contract";
 import type { Assistant, Conversation, JsonValue, Model, ToolOutputEntry } from "../foundation/types";
 import type { GenerationEventSink, GenerationTarget } from "../inference-engine/events";
+import { gateToolApproval } from "../inference-engine/approval-flow";
+import { gateAskUser } from "../inference-engine/ask-user-flow";
+import { initialApprovalState } from "../tools/approval";
+import { ASK_USER_TOOL_NAME, normalizeAskUserQuestions, serializeAskUserAnswer } from "../tools/ask-user";
 import { openAiLocalTools, openAiMcpTools, openAiSearchTools } from "../tools/bound";
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
 import { openAiToolOutput } from "../tools/format";
-import { initialApprovalState } from "../tools/approval";
-import { gateToolApproval } from "../inference-engine/approval-flow";
-import { gateAskUser } from "../inference-engine/ask-user-flow";
-import { normalizeAskUserQuestions, serializeAskUserAnswer, ASK_USER_TOOL_NAME } from "../tools/ask-user";
+import { isWorkspaceToolName, type WorkspaceToolName } from "../workspace/approval";
+import { executeWorkspaceToolCore, jsonSafeDetails, openAiWorkspaceTools } from "../workspace/runtime";
+import type { WorkspaceToolOutput } from "../workspace/tools/types";
 
-type PiToolParameters = ToolDefinition["parameters"];
-type PiToolResult = Awaited<ReturnType<ToolDefinition["execute"]>>;
-
-export interface PiGeneralToolsContext {
+export interface AppToolsContext {
+  /** 会话对象(审批矩阵的 workspaceId/workspaceCwd 语境 + 执行内核的会话归属守卫)。 */
   conversation: Conversation;
+  /** 生成快照里的助手(审批判定与通用工具执行都按它)。 */
   assistant: Assistant;
+  /** 审批状态迁移与执行中部分输出的下沉(与引擎事件共用同一应用器)。 */
   sink: GenerationEventSink;
   /** save_memory 待确认队列的来源标注(当前 ASSISTANT 节点,与聊天路径同口径)。
    *  活落点:steer 分裂后新 ai_2 接管,执行时现读 node.id 才落到真正产出该工具调用的节点。 */
   target?: GenerationTarget;
-  /** 生效模型。用于外挂 search_web 的防双搜门控(openAiSearchTools 单源谓词):模型
-   *  已声明内置 search 时外挂让位。pi 引擎当前不接内置搜索(只挂外挂),传它是为了与
-   *  聊天引擎同一注入源同一判定——未来 pi 接内置搜索或新引擎照抄时零成本继承。 */
+  /** 生效模型。用于外挂 search_web 的防双搜门控(openAiSearchTools 单源谓词):模型已声明
+   *  内置 search 时外挂让位,与聊天引擎同一注入源同一判定。 */
   model?: Model | null;
+  /** 本轮生成的取消信号:等待审批中停止生成时卡收敛 denied,执行中的工具随之中止。 */
+  signal?: AbortSignal;
 }
 
-/** entries → pi AgentToolResult。模型面文本与聊天引擎 resolvedToolOutput 同源
- *  (openAiToolOutput);UI 面 entries 走 details.app 还原通道。 */
-function toGeneralPiToolResult(entries: ToolOutputEntry[]): PiToolResult {
-  const text = openAiToolOutput(entries);
-  const isPlainSingleText = entries.length === 1 && entries[0]?.type === "text";
-  return {
-    content: [{ type: "text", text }],
-    details: isPlainSingleText ? {} : { app: { output: entries } },
-  } as PiToolResult;
+export interface AppToolInvocation {
+  toolCallId: string;
+  name: string;
+  args: Record<string, JsonValue>;
 }
 
-function buildGeneralTool(
-  declaration: { name: string; description: string; parameters: Record<string, unknown> },
-  ctx: PiGeneralToolsContext,
-): ToolDefinition {
-  const { name } = declaration;
+export type AppToolCaller = (call: AppToolInvocation) => Promise<AppToolResult>;
+
+function specFromDeclaration(fn: Record<string, unknown>, group: AppToolSpec["group"]): AppToolSpec {
   return {
-    name,
-    label: name,
-    description: declaration.description,
-    // 无 promptSnippet:不进 pi 系统提示词 Available tools 清单(那里只该有编码工具,
-    // 引擎契约原文已有"you may have access to other custom tools"兜底句)——与聊天
-    // 引擎"通用工具只出现在 API tools 数组"同构。
-    parameters: declaration.parameters as unknown as PiToolParameters,
-    // 与工作区工具同为 sequential:审批卡一次一张,MCP 慢调用不并发抢跑。
-    executionMode: "sequential",
-    async execute(toolCallId, params, signal) {
-      const args = (params ?? {}) as Record<string, JsonValue>;
-      const argsJson = JSON.stringify(args);
-      const approval = initialApprovalState(name, ctx.assistant, ctx.conversation, argsJson);
-      // 域4-1:通用/MCP 工具审批的摘要——优先 url/query 等可读字段,退化工具名。
-      const approvalTarget = args.url ?? args.query ?? args.content ?? args.path ?? args.command;
-      const approvalSummary =
-        typeof approvalTarget === "string" && approvalTarget.trim() ? approvalTarget.trim().slice(0, 120) : undefined;
-      await gateToolApproval(approval, {
-        conversationId: ctx.conversation.id,
-        toolCallId,
-        sink: ctx.sink,
-        signal,
-        toolName: name,
-        ...(approvalSummary ? { summary: approvalSummary } : {}),
-      });
-      const raw = await executeToolCall(
-        { id: toolCallId, function: { name, arguments: argsJson } },
-        ctx.assistant,
-        {
-          conversationId: ctx.conversation.id,
-          conversationTitle: ctx.conversation.title,
-          messageNodeId: ctx.target?.node.id,
-          signal,
-        },
-      );
-      const entries = await realizeToolResult(await toolResultToParts(raw));
-      return toGeneralPiToolResult(entries);
-    },
+    name: String(fn.name),
+    description: String(fn.description ?? ""),
+    parameters: (fn.parameters ?? { type: "object", properties: {} }) as Record<string, JsonValue>,
+    group,
   };
 }
 
-/** ask_user 专用构造:不经 gateToolApproval+executeToolCall,改走 gateAskUser——决议携答复
- *  载荷,答案即工具结果(扁平契约,与聊天引擎 answered 回放逐字一致)。executionMode 同为
- *  sequential:提问卡与审批卡一次一张,不与其它工具并发抢跑。 */
-function buildAskUserTool(
-  declaration: { name: string; description: string; parameters: Record<string, unknown> },
-  ctx: PiGeneralToolsContext,
-): ToolDefinition {
-  return {
-    name: declaration.name,
-    label: declaration.name,
-    description: declaration.description,
-    parameters: declaration.parameters as unknown as PiToolParameters,
-    executionMode: "sequential",
-    async execute(toolCallId, params, signal) {
-      const args = (params ?? {}) as Record<string, JsonValue>;
-      const normalized = normalizeAskUserQuestions(args.questions);
-      if ("error" in normalized) throw new Error(normalized.error);
-      const summary = normalized.questions[0]?.question.trim().slice(0, 120);
-      const resolution = await gateAskUser({
-        conversationId: ctx.conversation.id,
-        toolCallId,
-        sink: ctx.sink,
-        signal,
-        ...(summary ? { summary } : {}),
-      });
-      // denied/中止在 gateAskUser 内已抛错(桥映射 {error}/中断);此处返回时必为 answered。
-      if (resolution.kind !== "answered") throw new Error("ask_user did not resolve to an answer");
-      const entries: ToolOutputEntry[] = [{ type: "text", text: serializeAskUserAnswer(resolution.answers) }];
-      return toGeneralPiToolResult(entries);
-    },
-  };
+export function workspaceToolSpecs(conversation: Conversation): AppToolSpec[] {
+  return openAiWorkspaceTools(conversation).map((decl) =>
+    specFromDeclaration(decl.function as Record<string, unknown>, "workspace"),
+  );
 }
 
-/** 会话装配入口:声明与聊天引擎同源(openAiSearchTools 带全局开关门控、save_memory
- *  带记忆开关+写策略门控、openAiMcpTools 带服务器/工具双层启用过滤),关掉的面在
- *  这里天然为空——用户没启用 MCP 时 pi 会话零 MCP 工具(§3.2)。 */
-export function createPiGeneralTools(ctx: PiGeneralToolsContext): ToolDefinition[] {
+export function generalToolSpecs(assistant: Assistant, model?: Model | null): AppToolSpec[] {
   const declarations = [
-    ...openAiSearchTools(ctx.model),
-    ...openAiLocalTools(ctx.assistant).filter(
+    ...openAiSearchTools(model),
+    ...openAiLocalTools(assistant).filter(
       (tool) => tool.function.name === "save_memory" || tool.function.name === ASK_USER_TOOL_NAME,
     ),
-    ...openAiMcpTools(ctx.assistant),
+    ...openAiMcpTools(assistant),
   ];
-  return declarations.map((decl) => {
-    const shaped = {
-      name: String(decl.function.name),
-      description: String(decl.function.description ?? ""),
-      parameters: (decl.function.parameters ?? { type: "object", properties: {} }) as Record<string, unknown>,
-    };
-    return shaped.name === ASK_USER_TOOL_NAME ? buildAskUserTool(shaped, ctx) : buildGeneralTool(shaped, ctx);
+  return declarations.map((decl) => specFromDeclaration(decl.function as Record<string, unknown>, "general"));
+}
+
+export function appToolSpecsFor(ctx: AppToolsContext): AppToolSpec[] {
+  return [...workspaceToolSpecs(ctx.conversation), ...generalToolSpecs(ctx.assistant, ctx.model)];
+}
+
+/** 内核部分输出 → 工具卡条目:text 原样、图片封成 data URL、结构化细节挂首个 text 条目的
+ *  metadata.workspace(无 text 条目时补一个空载体)——与工具结果经 pi 回到事件桥的还原
+ *  口径逐字一致。 */
+function workspacePartialEntries(name: WorkspaceToolName, output: WorkspaceToolOutput<unknown>): ToolOutputEntry[] {
+  const entries: ToolOutputEntry[] = output.content.map((item) =>
+    item.type === "text" ? { type: "text", text: item.text } : { type: "image", url: `data:${item.mimeType};base64,${item.data}` },
+  );
+  const details = jsonSafeDetails(output.details);
+  if (!details) return entries;
+  const metadata = { workspace: { tool: name, details } };
+  const firstText = entries.find((entry): entry is Extract<ToolOutputEntry, { type: "text" }> => (entry as { type?: unknown }).type === "text");
+  if (firstText) firstText.metadata = metadata;
+  else entries.push({ type: "text", text: "", metadata });
+  return entries;
+}
+
+function workspaceResult(name: WorkspaceToolName, output: WorkspaceToolOutput<unknown>): AppToolResult {
+  const details = jsonSafeDetails(output.details);
+  return { content: output.content, ...(details ? { details: { tool: name, details } } : {}) };
+}
+
+function generalResult(entries: ToolOutputEntry[]): AppToolResult {
+  const isPlainSingleText = entries.length === 1 && entries[0]?.type === "text";
+  return {
+    content: [{ type: "text", text: openAiToolOutput(entries) }],
+    ...(isPlainSingleText ? {} : { display: entries }),
+  };
+}
+
+/** 审批通知/状态摘要(域4-1):取审批对象本体,截断防爆通知体。 */
+function summaryOf(value: JsonValue | undefined): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 120) : undefined;
+}
+
+async function callWorkspaceTool(ctx: AppToolsContext, name: WorkspaceToolName, call: AppToolInvocation): Promise<AppToolResult> {
+  const { args, toolCallId } = call;
+  const approval = initialApprovalState(name, ctx.assistant, ctx.conversation, JSON.stringify(args));
+  const summary = summaryOf(args.command ?? args.path);
+  // 返回 true = 用户对 pending 卡显式批准,是危险命令拦截的知情同意放行门
+  // (workspace/runtime.ts),仅此路径可置 true。
+  const userApproved = await gateToolApproval(approval, {
+    conversationId: ctx.conversation.id,
+    toolCallId,
+    sink: ctx.sink,
+    signal: ctx.signal,
+    toolName: name,
+    ...(summary ? { summary } : {}),
   });
+  const output = await executeWorkspaceToolCore(name, args, {
+    conversationId: ctx.conversation.id,
+    userApproved,
+    signal: ctx.signal,
+    // 执行中部分输出直写工具卡(bash 内核 100ms 自节流,SSE 33ms 合帧)。非终局:不落
+    // toolFinishedAt(issue #59 每工具计时终点);空快照(bash 起跑的首帧)不写。
+    onUpdate: (partial) => {
+      if (!partial.content.length) return;
+      ctx.sink({ kind: "tool_result", toolCallId, output: workspacePartialEntries(name, partial), final: false });
+    },
+  });
+  return workspaceResult(name, output);
+}
+
+async function callAskUser(ctx: AppToolsContext, call: AppToolInvocation): Promise<AppToolResult> {
+  const normalized = normalizeAskUserQuestions(call.args.questions);
+  if ("error" in normalized) throw new Error(normalized.error);
+  const summary = normalized.questions[0]?.question.trim().slice(0, 120);
+  const resolution = await gateAskUser({
+    conversationId: ctx.conversation.id,
+    toolCallId: call.toolCallId,
+    sink: ctx.sink,
+    signal: ctx.signal,
+    ...(summary ? { summary } : {}),
+  });
+  // denied/中止在 gateAskUser 内已抛错;此处返回时必为 answered。
+  if (resolution.kind !== "answered") throw new Error("ask_user did not resolve to an answer");
+  return generalResult([{ type: "text", text: serializeAskUserAnswer(resolution.answers) }]);
+}
+
+async function callGeneralTool(ctx: AppToolsContext, call: AppToolInvocation): Promise<AppToolResult> {
+  const { name, args, toolCallId } = call;
+  const argsJson = JSON.stringify(args);
+  const approval = initialApprovalState(name, ctx.assistant, ctx.conversation, argsJson);
+  const summary = summaryOf(args.url ?? args.query ?? args.content ?? args.path ?? args.command);
+  await gateToolApproval(approval, {
+    conversationId: ctx.conversation.id,
+    toolCallId,
+    sink: ctx.sink,
+    signal: ctx.signal,
+    toolName: name,
+    ...(summary ? { summary } : {}),
+  });
+  const raw = await executeToolCall({ id: toolCallId, function: { name, arguments: argsJson } }, ctx.assistant, {
+    conversationId: ctx.conversation.id,
+    conversationTitle: ctx.conversation.title,
+    messageNodeId: ctx.target?.node.id,
+    signal: ctx.signal,
+  });
+  return generalResult(await realizeToolResult(await toolResultToParts(raw)));
+}
+
+/** 本轮的工具调用入口。只认本轮下发过的规格(分组决定执行路径);被拒绝或执行失败以错误
+ *  拒绝,错误文本即给模型的工具结果(审批拒绝是历史契约文案,与聊天引擎逐字一致)。 */
+export function createAppToolCaller(ctx: AppToolsContext, specs: readonly AppToolSpec[]): AppToolCaller {
+  const groups = new Map(specs.map((spec) => [spec.name, spec.group]));
+  return async (call) => {
+    const group = groups.get(call.name);
+    if (!group) throw new Error(`Unknown tool: ${call.name}`);
+    if (group === "workspace" && isWorkspaceToolName(call.name)) return callWorkspaceTool(ctx, call.name, call);
+    if (call.name === ASK_USER_TOOL_NAME) return callAskUser(ctx, call);
+    return callGeneralTool(ctx, call);
+  };
 }

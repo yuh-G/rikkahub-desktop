@@ -42,7 +42,7 @@ function keyOf(conversationId: string, toolCallId: string): string {
 }
 
 /** 登记一次审批等待。用户决定 → resolve;signal 中止 → reject AbortError(调用方负责
- *  把卡收敛为 denied 后再上抛,见 pi-engine/workspace-tools.ts)。 */
+ *  把卡收敛为 denied 后再上抛,见 inference-engine/approval-flow.ts)。 */
 export function waitForToolApproval(
   conversationId: string,
   toolCallId: string,

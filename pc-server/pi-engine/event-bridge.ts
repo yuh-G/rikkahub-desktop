@@ -88,7 +88,7 @@ function workspaceMetadataOf(details: unknown): Record<string, JsonValue> | null
   return { workspace: workspace as JsonValue };
 }
 
-/** 通用工具桥的 {app:{output}} 标记:general-tools 已把聊天引擎实体化产物
+/** 通用工具桥的 {app:{output}} 标记:应用侧(engines/app-tools)已把聊天引擎实体化产物
  *  (realizeToolResult,含 /api/files 图片 URL)原样打包,直接作为 part.output——
  *  UI 渲染契约与聊天引擎逐字一致,不经 pi content 往返(那会把文件 URL 图降级)。 */
 function appOutputOf(details: unknown): ToolOutputEntry[] | null {

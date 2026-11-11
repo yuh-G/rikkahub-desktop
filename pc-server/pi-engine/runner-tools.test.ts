@@ -1,6 +1,6 @@
 // pi-engine/runner-tools.test.ts — runner × customTools × 审批门的全链路集成(P3)
 //
-// 与 workspace-tools.test.ts(工具 execute 单体生命周期)的分工:本文件跑真 pi 会话
+// 与 engines/app-tools-workspace.test.ts(应用侧单次调用生命周期)的分工:本文件跑真 pi 会话
 // 循环——假 OpenAI SSE 回工具调用帧 → pi 执行我们的 customTools → 结果回灌上游 →
 // 终局文本落 sink。核心断言三件事:
 //   1) 工具产出真的进了下一轮上游请求(引擎循环闭合的硬证据);
@@ -18,7 +18,7 @@ const { configureWorkingSet } = await import("../conversations/working-set");
 const { getConversationMeta } = await import("../conversations/read-queries");
 const ws = await import("../workspace");
 const { workspaceRuntimeForConversation } = await import("../workspace/runtime");
-const { createPiWorkspaceTools } = await import("./workspace-tools");
+const { createAppToolCaller, workspaceToolSpecs } = await import("../engines/app-tools");
 const { resolveToolApproval, pendingToolApprovalCount } = await import("../inference-engine/approval-gate");
 const { runPiGeneration } = await import("./runner");
 const { modelGrantFor } = await import("../engines/model-grant");
@@ -80,6 +80,9 @@ async function scriptedRun(
   servers.push(server);
   const events: GenerationEvent[] = [];
   const sink = (event: GenerationEvent) => void events.push(event);
+  // 应用侧工具面(生产 = orchestrator 组装 + host.tools.call):取消信号与生成同源。
+  const toolCtx = { conversation: conversation as never, assistant: fakeAssistant, sink, signal: extras.signal };
+  const specs = workspaceToolSpecs(conversation as never);
   const run = runPiGeneration({
     grant: modelGrantFor(
       provider({ id: crypto.randomUUID(), name: "Runner Tools Provider", baseUrl: server.baseUrl, apiKey: "sk-test" }),
@@ -92,7 +95,8 @@ async function scriptedRun(
     history: [],
     userInputs: {},
     promptText: "干活",
-    tools: createPiWorkspaceTools({ conversation: conversation as never, assistant: fakeAssistant, sink }),
+    tools: specs,
+    callTool: createAppToolCaller(toolCtx, specs),
     sink,
     ...extras,
   });

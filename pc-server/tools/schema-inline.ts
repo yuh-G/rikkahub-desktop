@@ -4,7 +4,7 @@
 // OpenAI/Claude 对完整 schema($defs+$ref 原样)是兼容的,但 Google 原生路
 // (functionDeclarations.parameters 是 OpenAPI 子集)不认 $ref——悬空引用即 400,
 // 拒掉整条请求(安卓 #1974 实证)。在工具声明单源处(openAiMcpTools)展开,聊天引擎
-// 三家协议与 pi 引擎(general-tools/workspace-tools 复用同一声明)天然继承,未来
+// 三家协议与工作区引擎(engines/app-tools 复用同一声明)天然继承,未来
 // 新引擎亦然——这是比安卓(转换层各自展开)更靠上游的单点。
 //
 // 展开规则(镜像安卓 McpToolSchema.kt cf79246b,行为逐条对齐):

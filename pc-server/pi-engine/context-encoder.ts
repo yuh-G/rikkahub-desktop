@@ -36,7 +36,7 @@
 // 工具结果反向(与捕获侧一一对应,event-bridge.ts mapPiToolResult 的逆):
 // - {error} 载荷 → isError:true + 单 text(桥存的就是 pi 错误 content 原文);
 // - app 通道(首条目 metadata.pi.src==="app",通用工具实体化产物)→ content =
-//   openAiToolOutput(entries) 单 text 再计算(general-tools.ts toGeneralPiToolResult
+//   openAiToolOutput(entries) 单 text 再计算(engines/app-tools.ts generalResult
 //   同源;format.ts openAiToolOutput 对已存单 text 幂等);
 // - 逐字通道(工作区工具)→ text 原样 / data: 图解回 ImageContent(字节无损);
 //   "空 text 仅携 metadata"载体条目跳过(桥无 text 条目时补的 metadata 挂载点);

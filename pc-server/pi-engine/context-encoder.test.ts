@@ -251,7 +251,7 @@ describe("DB→pi 编码器:工具结果反向通道", () => {
         ],
       }),
     ]);
-    // app 通道:模型面 = openAiToolOutput(entries) 单 text(运行时 general-tools 同源口径)
+    // app 通道:模型面 = openAiToolOutput(entries) 单 text(运行时 engines/app-tools 同源口径)
     expect(app).toMatchObject({ isError: false, content: [{ type: "text", text: "1. Result" }] });
     // 逐字通道:空 text 载体条目跳过,data 图还原为 ImageContent
     expect(workspace).toMatchObject({

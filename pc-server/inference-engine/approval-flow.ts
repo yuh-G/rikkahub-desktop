@@ -1,7 +1,7 @@
-// inference-engine/approval-flow.ts — 审批内化生命周期(P3 内联于 workspace-tools,P4 抽取共用,T2 迁出 pi-engine)
+// inference-engine/approval-flow.ts — 审批内化生命周期(P3 内联于 pi 工作区工具,P4 抽取共用,T2 迁出 pi-engine)
 //
 // 单一事实源:pending 卡 → approval-gate 等待 → 放行/拒绝/中止收敛的完整状态机。
-// 消费者:pi 引擎的 workspace-tools(七个工作区工具)与 general-tools(MCP 桥/通用工具)。
+// 消费者:engines/app-tools(应用工具的应用侧执行面:七个工作区工具与 MCP 桥/通用工具)。
 // 两边的差异只在"审批判定"(工作区三档矩阵 vs MCP 档位规则),判定结果作为参数传入,
 // 生命周期本身零分叉——审批语义改版(如 §4.4 回退面)只动这一处。
 //
