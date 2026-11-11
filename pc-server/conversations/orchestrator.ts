@@ -76,6 +76,8 @@ import { mapProviderModelToPi } from "../pi-engine/model-bridge";
 import { createPiWorkspaceTools } from "../pi-engine/workspace-tools";
 import { createPiGeneralTools } from "../pi-engine/general-tools";
 import { createPiSessionResources } from "../pi-engine/resources";
+import { buildEngineInstructions } from "../engines/instructions";
+import { reportEngineError } from "../engines/host";
 import { promptInputFromParts, userInputsFor } from "../inference-engine/prompt-input";
 import type { CapturedEngineCompaction } from "../engines/contract";
 import { effectiveEngineCompaction, parseEngineCompactions } from "./engine-compactions";
@@ -826,12 +828,10 @@ async function runPiWorkspaceGeneration(
   // 与人设/记忆/搜索指引同一插槽,位置在 pi Guidelines 之后、project_context 之前。
   const systemInjection = [enriched.systemInjectionBefore, enriched.systemInjectionAfter].filter(Boolean).join("\n");
   const resources = await createPiSessionResources({
-    conversation,
-    assistant: deps.assistant,
-    model: deps.selectedModel,
     cwd: runtime.cwd,
     root: runtime.root,
-    extraAppendSystemPrompt: systemInjection ? [systemInjection] : undefined,
+    instructions: buildEngineInstructions(conversation, deps.assistant, deps.selectedModel, systemInjection ? [systemInjection] : undefined),
+    report: reportEngineError,
   });
 
   const result = await runPiGeneration({
@@ -926,14 +926,12 @@ async function runPiWorkspaceCompaction(
   const history = encodableMessages(enriched.messages, enriched.syntheticIds);
   const systemInjection = [enriched.systemInjectionBefore, enriched.systemInjectionAfter].filter(Boolean).join("\n");
   const resources = await createPiSessionResources({
-    conversation,
-    assistant,
-    model: ctx.model,
     cwd: runtime.cwd,
     root: runtime.root,
-    extraAppendSystemPrompt: systemInjection ? [systemInjection] : undefined,
+    instructions: buildEngineInstructions(conversation, assistant, ctx.model, systemInjection ? [systemInjection] : undefined),
     // 手动压缩门槛/保留窗口调低(中文 chars/4 低估问题,rationale 见 runner.ts 常量)。
     compactionKeepRecentTokens: MANUAL_COMPACT_KEEP_RECENT_TOKENS,
+    report: reportEngineError,
   });
   // 摘要模型:公共压缩模型优先(ctx.summarizer,装配点已决策),pi 映射不进(自定义
   // 补全路径的 openai 型服务商等)则回退会话模型——公共设置是偏好不是硬约束,
