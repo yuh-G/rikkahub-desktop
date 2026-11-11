@@ -15,6 +15,7 @@ const { message } = await import("../foundation/utils");
 const { model, provider } = await import("../model-providers");
 const { createGenerationEventApplier } = await import("../conversations/generation-apply");
 const { runPiGeneration } = await import("../pi-engine/runner");
+const { userInputsFor } = await import("../inference-engine/prompt-input");
 const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
 
 const SPIKE_PROVIDER_ID = "00000000-0000-4000-8000-000000000001";
@@ -59,6 +60,7 @@ async function main(): Promise<void> {
 			conversationId: conversation.id,
 			cwd,
 			history: [],
+			userInputs: {},
 			promptText: "Say hello",
 			sink: apply,
 		});
@@ -83,6 +85,7 @@ async function main(): Promise<void> {
 			conversationId: conversation.id,
 			cwd,
 			history: [user1, asst1],
+			userInputs: userInputsFor([user1, asst1], ourModel),
 			promptText: "And again",
 			sink: apply,
 		});

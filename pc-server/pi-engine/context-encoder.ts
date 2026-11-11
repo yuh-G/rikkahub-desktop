@@ -15,14 +15,14 @@
 // (USER→encodeUser,ASSISTANT 无注解→legacy),零特判;但 synthetic 行不进
 // entryIdsByMessageId(压缩切点反查按 DB 消息 id 说话)也不进 degradedMessageIds
 // (legacy 是合成行唯一可走的路径,非"用户编辑过")。合成行恒在压缩切点之后——
-// 富化层的 windowStartMessageId 窗口锚保证(orchestrator 以 effectiveEngineCompaction
+// 富化层的 windowStartMessageId 窗口锚保证(应用侧以 effectiveEngineCompaction
 // 的切点为锚),永不进被 appendCompaction 摘要吸收的旧历史。
 //
 // 确定性=缓存稳定性(§4.8 硬约束):同一历史两次编码逐字节一致(单测锁定)。所有输入
-// 均来自行级数据(parts/annotations/createdAt/modelId),不掺时钟与随机数;附件文本化
-// 复用生成入口同一母本(piPromptInputFromParts→contentPartsForApi,OCR 在 part
-// metadata,函数纯)。模型切换会改历史用户消息的图片降级口径→前缀变化=一次性破缓存,
-// 与聊天引擎同语义,接受。
+// 均来自行级数据(parts/annotations/createdAt/modelId),不掺时钟与随机数。USER 行的
+// 模型可见输入由应用侧预先物化(契约 EngineHistory.userInputs,promptInputFromParts→
+// contentPartsForApi,与生成入口同一母本),本编码器不读应用的文件表。模型切换会改历史
+// 用户消息的图片降级口径→前缀变化=一次性破缓存,与聊天引擎同语义,接受。
 //
 // 保真来源(P7 桥捕获,annotations["pi-fidelity"]):
 // - 引擎消息分组:msg 序号数组,每条 = 块序列(parts 是合并视图——连续同类增量并入
@@ -44,7 +44,8 @@
 //   (provider 拒绝无结果的调用)。
 
 import type { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
-import type { JsonValue, Message, MessagePart, Model, ToolOutputEntry } from "../foundation/types";
+import type { EngineCompactionRecord, PromptInput } from "../engines/contract";
+import type { JsonValue, Message, MessagePart, ToolOutputEntry } from "../foundation/types";
 import type {
   AssistantMessage,
   ImageContent,
@@ -55,10 +56,8 @@ import type {
   Usage,
   UserMessage,
 } from "../../pi/packages/ai/src/types.ts";
-import { isRecord } from "../foundation/utils";
+import { isRecord, parseDataUrl } from "../foundation/utils";
 import { UNRESOLVED_TOOL_RESULT_TEXT, openAiToolOutput } from "../tools/format";
-import { parseDataUrl } from "../inference-engine/message-builder";
-import { piPromptInputFromParts } from "./attachments";
 
 // ----- 保真注解读取 -----
 
@@ -320,7 +319,7 @@ function decodeWithFidelity(message: Message, fidelity: FidelityAnnotation): PiA
 /** legacy 路径:无注解(P2-P6 存量)或注解失配(编辑过)。剥 thinking(无签名不可复签,
  *  剥净是唯一合法重放),启发式分组:连续 tool part 段结束后遇到非 tool part 即断消息
  *  (provider 通例:toolCall 恒收尾 assistant 消息)。 */
-function decodeLegacy(message: Message, fallbackModel: Model): PiAgentMessage[] {
+function decodeLegacy(message: Message, fallbackModelId: string): PiAgentMessage[] {
   const timestamp = timestampOf(message);
   const groups: Array<{ texts: string[]; toolParts: ToolPartView[] }> = [];
   let current = { texts: [] as string[], toolParts: [] as ToolPartView[] };
@@ -361,7 +360,7 @@ function decodeLegacy(message: Message, fallbackModel: Model): PiAgentMessage[] 
       content,
       api: "openai-completions" as AssistantMessage["api"],
       provider: "unknown",
-      model: message.modelId ?? fallbackModel.modelId,
+      model: message.modelId ?? fallbackModelId,
       usage: zeroUsage(),
       stopReason: group.toolParts.length ? "toolUse" : "stop",
       timestamp,
@@ -373,44 +372,16 @@ function decodeLegacy(message: Message, fallbackModel: Model): PiAgentMessage[] 
 
 // ----- 用户行 -----
 
-function encodeUser(message: Message, model: Model): UserMessage | null {
-  const input = piPromptInputFromParts(message.parts, model);
-  if (!input.text && !input.images.length) return null; // 与生成入口同一拒发条件
+/** 应用已物化的输入 → pi 用户消息。缺项 = 该行没有可发送内容(与生成入口同一拒发条件)。 */
+function encodeUser(message: Message, input: PromptInput | undefined): UserMessage | null {
+  if (!input || (!input.text && !input.images.length)) return null;
   const content: (TextContent | ImageContent)[] = [{ type: "text", text: input.text }];
   content.push(...input.images);
   // 形状逐字复刻 agent-session.ts _startRun 的 prompt 装配(text 块恒在首位,图片后置)
   return { role: "user", content, timestamp: timestampOf(message) };
 }
 
-// ----- 行级可编码性判定(窗口锚与压缩重放共用的单源谓词) -----
-
-/** 该行能否编出 ≥1 个条目(与编码循环同源判定)。effectiveEngineCompaction 用它把
- *  "切点落在零条目行"的压缩记录判为不适用,与编码器内部重放过滤行为一致。 */
-function encodesToEntries(message: Message, model: Model): boolean {
-  if (message.role === "USER") {
-    const input = piPromptInputFromParts(message.parts, model);
-    return Boolean(input.text) || input.images.length > 0;
-  }
-  if (message.role === "ASSISTANT") {
-    return message.parts.some((part) =>
-      isRecord(part) && (part.type === "text" || part.type === "tool"),
-    );
-  }
-  return false; // SYSTEM 行不进引擎上下文
-}
-
 // ----- 主入口 -----
-
-/** DB 压缩记录(conversation 级 engineCompactions 元素)。压缩记录是引擎中性的会话级
- *  状态(T3 泛化:压缩是引擎无关能力,任何 run-and-suspend 引擎都可压缩,结构不再绑死
- *  pi)。 */
-export interface EngineCompactionRecord {
-  /** 切点:从这条消息(含)起保留原文,之前的历史被 summary 取代。 */
-  cutMessageId: string;
-  summary: string;
-  tokensBefore: number;
-  createdAt?: string;
-}
 
 export interface PiHistoryEncodeResult {
   /** DB messageId → 灌注生成的 pi entry id 列表(压缩切点映射用;合成行不在内)。 */
@@ -423,16 +394,20 @@ export interface PiHistoryEncodeResult {
  *  (P9:含合成行——提醒/注入,syntheticIds 标出),不含本轮新用户输入(那条走
  *  session.prompt);compactions 只取"切点仍在历史中"的最新一条生效(pi
  *  buildContextEntries 只认最后一条 compaction,更早的被覆盖)。合成行照常编码
- *  但跳过两个登记(见头注)。 */
+ *  但跳过两个登记(见头注)。切点生效判定与应用侧 effectiveEngineCompaction
+ *  (conversations/engine-compactions)必须一致,由 context-encoder.test.ts 锁定。 */
 export function seedPiSessionFromHistory(options: {
   manager: SessionManager;
   history: Message[];
-  model: Model;
+  /** USER 行的模型可见输入(契约 EngineHistory.userInputs)。 */
+  userInputs: Record<string, PromptInput>;
+  /** legacy 行缺 modelId 时 AssistantMessage.model 的占位(会话模型 id)。 */
+  fallbackModelId: string;
   /** 富化层 EnrichResult.syntheticIds(P9):标记合成行,挡在切点映射与退化诊断外。 */
   syntheticIds?: Set<string>;
   compactions?: EngineCompactionRecord[];
 }): PiHistoryEncodeResult {
-  const { manager, history, model } = options;
+  const { manager, history, userInputs, fallbackModelId } = options;
   const syntheticIds = options.syntheticIds ?? new Set<string>();
   const entryIdsByMessageId = new Map<string, string[]>();
   const degradedMessageIds: string[] = [];
@@ -442,13 +417,13 @@ export function seedPiSessionFromHistory(options: {
     const synthetic = syntheticIds.has(message.id);
     const entryIds: string[] = [];
     if (message.role === "USER") {
-      const encoded = encodeUser(message, model);
+      const encoded = encodeUser(message, userInputs[message.id]);
       if (encoded) entryIds.push(manager.appendMessage(encoded));
     } else if (message.role === "ASSISTANT") {
       const fidelity = fidelityOf(message);
       let decoded = fidelity ? decodeWithFidelity(message, fidelity) : null;
       if (!decoded) {
-        decoded = decodeLegacy(message, model);
+        decoded = decodeLegacy(message, fallbackModelId);
         // 合成行不进退化名单:无注解走 legacy 是它唯一可走的路径(设计内),非编辑痕迹。
         if (decoded.length && !synthetic) degradedMessageIds.push(message.id);
       }
@@ -483,22 +458,4 @@ export function seedPiSessionFromHistory(options: {
   }
 
   return { entryIdsByMessageId, degradedMessageIds };
-}
-
-/** 有效压缩切点判定(P9 单源):富化层取窗口锚(windowStartMessageId)前调用。
- *  与编码器内部重放过滤同一谓词(该行能否编出 ≥1 条目),切点落在空行/被删消息/
- *  零条目行上的记录一律视为不生效——取最新一条切点在场的记录,无则 null。 */
-export function effectiveEngineCompaction(
-  compactions: EngineCompactionRecord[],
-  history: Message[],
-  model: Model,
-): EngineCompactionRecord | null {
-  return (
-    compactions
-      .filter((record) => {
-        const cut = history.find((msg) => msg.id === record.cutMessageId);
-        return cut !== undefined && encodesToEntries(cut, model);
-      })
-      .at(-1) ?? null
-  );
 }

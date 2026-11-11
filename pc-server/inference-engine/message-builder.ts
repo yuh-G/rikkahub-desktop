@@ -4,7 +4,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import type { ApiMessage, Assistant, JsonValue, Message, MessagePart, Model, Provider, ToolOutputEntry } from "../foundation/types";
-import { id, isRecord } from "../foundation/utils";
+import { id, isRecord, parseDataUrl } from "../foundation/utils";
 import {
   ARK_SEED2_EFFORT_BY_LEVEL,
   budgetTokensFor,
@@ -46,12 +46,6 @@ export function dataUrlForMessageUrl(url: string) {
   if (!entry || !existsSync(entry.path)) return url;
   const data = readFileSync(entry.path).toString("base64");
   return `data:${entry.mime || "application/octet-stream"};base64,${data}`;
-}
-
-
-export function parseDataUrl(url: string) {
-  const match = url.match(/^data:([^;,]+);base64,(.+)$/);
-  return match ? { mime: match[1], data: match[2] } : null;
 }
 
 

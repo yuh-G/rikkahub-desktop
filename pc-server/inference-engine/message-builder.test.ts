@@ -15,7 +15,6 @@ import {
   groupAssistantPartsByToolBoundary,
   googleFunctionDeclarations,
   isModelAllowTemperature,
-  parseDataUrl,
   reasoningPayloadForProvider,
   responseApiContentFromUiParts,
   responseApiFunctionTool,
@@ -25,6 +24,7 @@ import {
   toolResultApiMessage,
 } from "./message-builder";
 import type { MessagePart, Model, Provider } from "../foundation/types";
+import { parseDataUrl } from "../foundation/utils";
 
 const textModel = { inputModalities: ["TEXT"] } as unknown as Model;
 const visionModel = { inputModalities: ["TEXT", "IMAGE"] } as unknown as Model;

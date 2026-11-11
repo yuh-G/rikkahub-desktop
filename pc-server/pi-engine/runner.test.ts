@@ -20,6 +20,7 @@ import type { GenerationEvent } from "../inference-engine/events";
 import type { Message } from "../foundation/types";
 import { message } from "../foundation/utils";
 import { model, provider } from "../model-providers";
+import { userInputsFor } from "../inference-engine/prompt-input";
 import { runPiCompaction, runPiGeneration } from "./runner";
 import { startFakeOpenAiSse, type FakeOpenAiSseServer } from "../test-utils/fake-openai-sse";
 
@@ -62,6 +63,7 @@ function testContext(conversationId: string, promptText: string, extras: Partial
       promptText,
       sink: (event: GenerationEvent) => events.push(event),
       ...extras,
+      userInputs: userInputsFor(extras.history ?? [], ourModel),
     },
   };
 }
@@ -117,6 +119,7 @@ describe("pi runner 集成(P7 统一会话数据)", () => {
       conversationId: "conv-runner-manual",
       cwd,
       history: [user1, asst1],
+      userInputs: userInputsFor([user1, asst1], ourModel),
       sink: (event: GenerationEvent) => events.push(event),
     });
 

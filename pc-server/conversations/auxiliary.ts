@@ -2,7 +2,7 @@
 // 纪律：纯搬迁自 server.ts（阶段 5.3g），行为不变。
 
 import type { Assistant, AuxiliaryTextOptions, Conversation, Message, MessagePart, Model } from "../foundation/types";
-import { applyPlaceholders, id, isRecord, localeDisplayName, message, textFromParts, uniqueStrings } from "../foundation/utils";
+import { applyPlaceholders, id, isRecord, localeDisplayName, message, parseDataUrl, textFromParts, uniqueStrings } from "../foundation/utils";
 import { state } from "../persistence/json-store";
 import { broadcastConversation, broadcastEngineStatus } from "../api/sse";
 import { DEFAULT_AUTO_MODEL_ID, applyCustomBody, applyRequestHeaders, findModel } from "../model-providers";
@@ -16,7 +16,6 @@ import {
   dataUrlForMessageUrl,
   hostOfProvider,
   isModelAllowTemperature,
-  parseDataUrl,
   supportsAbility,
   supportsInputModality,
 } from "../inference-engine/message-builder";

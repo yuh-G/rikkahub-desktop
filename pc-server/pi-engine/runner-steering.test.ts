@@ -56,6 +56,7 @@ describe("pi runner steering 轮边界", () => {
       conversationId: "conv-runner-steer",
       cwd,
       history: [] as Message[],
+      userInputs: {},
       promptText: "开始",
       sink: (event) => events.push(event),
       onSteerBoundary: () => {

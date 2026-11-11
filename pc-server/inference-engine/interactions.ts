@@ -22,7 +22,7 @@
 // 未知事件/未知 delta 官方要求"log and skip"——容错跳过,不抛错。
 
 import type { Assistant, JsonValue, Message, Model, Provider, ApiMessage } from "../foundation/types";
-import { id, isRecord } from "../foundation/utils";
+import { id, isRecord, parseDataUrl } from "../foundation/utils";
 import { initialApprovalState } from "../tools/approval";
 import { toolResultTextForApi } from "../tools/format";
 import { appendReasoningDelta, finishReasoningParts } from "./parts";
@@ -31,7 +31,6 @@ import {
   apiContentText,
   googleFunctionDeclarations,
   hasBuiltInTool,
-  parseDataUrl,
   supportsAbility,
   supportsOutputModality,
 } from "./message-builder";

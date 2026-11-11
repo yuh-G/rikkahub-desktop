@@ -85,6 +85,7 @@ async function scriptedRun(
     conversationId: conversation.id,
     cwd,
     history: [],
+    userInputs: {},
     promptText: "干活",
     tools: createPiWorkspaceTools({ conversation: conversation as never, assistant: fakeAssistant, sink }),
     sink,

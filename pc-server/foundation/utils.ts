@@ -94,6 +94,12 @@ export function isRecord(value: unknown): value is Record<string, JsonValue> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+/** base64 data URL → { mime, data };其它形态返回 null。 */
+export function parseDataUrl(url: string) {
+  const match = url.match(/^data:([^;,]+);base64,(.+)$/);
+  return match ? { mime: match[1]!, data: match[2]! } : null;
+}
+
 export function mergeById<T extends { id: string }>(current: T[], defaults: T[]): T[] {
   const byId = new Set(current.map((item) => item.id));
   return [...current, ...defaults.filter((item) => !byId.has(item.id))];

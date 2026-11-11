@@ -1,21 +1,32 @@
 // pi-engine/context-encoder.test.ts — DB→pi 编码器单测(P7 会话数据统一)
 //
 // 断言面刻意选 manager.buildSessionContext().messages:这是 createAgentSession 构造点
-// 真正消费的产物(sdk.ts:194),测"pi 将看到什么",不测编码器中间形。压缩用例同理,
-// 锁的是 pi buildContextEntries 对灌注 CompactionEntry 的真实语义。
+// 真正消费的产物(sdk.ts 的 buildSessionContext 调用),测"pi 将看到什么",不测编码器
+// 中间形。压缩用例同理,锁的是 pi buildContextEntries 对灌注 CompactionEntry 的真实语义。
+// USER 行输入按生产路径由应用侧物化(userInputsFor),编码器只消费契约数据。
 
 import { describe, expect, test } from "bun:test";
 
 import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
+import type { EngineCompactionRecord } from "../engines/contract";
 import type { JsonValue, Message, Model, ToolPart } from "../foundation/types";
 import { message } from "../foundation/utils";
-import { effectiveEngineCompaction, seedPiSessionFromHistory, type EngineCompactionRecord } from "./context-encoder";
+import { effectiveEngineCompaction } from "../conversations/engine-compactions";
+import { userInputsFor } from "../inference-engine/prompt-input";
+import { seedPiSessionFromHistory } from "./context-encoder";
 
 const model = { modelId: "test-model", inputModalities: ["TEXT", "IMAGE"] } as unknown as Model;
 
 function seed(history: Message[], compactions?: EngineCompactionRecord[], syntheticIds?: Set<string>) {
   const manager = SessionManager.inMemory(process.cwd());
-  const result = seedPiSessionFromHistory({ manager, history, model, compactions, syntheticIds });
+  const result = seedPiSessionFromHistory({
+    manager,
+    history,
+    userInputs: userInputsFor(history, model),
+    fallbackModelId: model.modelId,
+    compactions,
+    syntheticIds,
+  });
   return { manager, result, messages: manager.buildSessionContext().messages };
 }
 

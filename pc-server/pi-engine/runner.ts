@@ -36,7 +36,8 @@ import { llmLogContextFor, runWithLlmRequestLog } from "./llm-request-log";
 import { createPiEventBridge } from "./event-bridge";
 import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import type { PiSessionResources } from "./resources";
-import { seedPiSessionFromHistory, type EngineCompactionRecord } from "./context-encoder";
+import type { CapturedEngineCompaction, EngineCompactionRecord, PromptInput } from "../engines/contract";
+import { seedPiSessionFromHistory } from "./context-encoder";
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
 
 export interface PiGenerationContext {
@@ -56,13 +57,15 @@ export interface PiGenerationContext {
   /** P9:选中路径上的历史消息(富化全序列,含合成行——提醒/聊天位注入,
    *  syntheticIds 标出;不含本轮新用户输入——那条走 session.prompt)。 */
   history: Message[];
+  /** 历史里 USER 行的模型可见输入(应用侧 userInputsFor 物化,按消息 id)。 */
+  userInputs: Record<string, PromptInput>;
   /** P9:富化层 EnrichResult.syntheticIds,透传编码器(合成行照常编码,挡在切点
    *  映射与退化诊断外)。生产侧生成路径必传;手动压缩路径传 real-only 序列,不传。 */
   syntheticIds?: Set<string>;
   /** P7:既有压缩记录(conversation.engineCompactions 解析产物;编码器只取切点仍在
    *  历史中的最新一条生效)。 */
   compactions?: EngineCompactionRecord[];
-  /** 本轮用户输入(文本;文档/OCR 已由 pi-engine/attachments 文本化)。 */
+  /** 本轮用户输入(文本;文档/OCR 已由 inference-engine/prompt-input 文本化)。 */
   promptText: string;
   /** 图片附件(pi 原生 prompt images 通道,P4 附件面)。 */
   images?: Array<{ type: "image"; data: string; mimeType: string }>;
@@ -83,17 +86,6 @@ export interface PiGenerationContext {
    *  调用位、Codex 的 pending_input 排水位同构。不传 = 无 steering 能力(消息留在 FIFO
    *  队列收尾派发兜底)。回调由编排层实现(落库/队列联动在编排层,runner 零副作用)。 */
   onSteerBoundary?: () => string[];
-}
-
-/** 压缩产物的 DB 侧映射(runner 返回;orchestrator 负责落 conversation.engineCompactions)。
- *  引擎中性(T3):结构与引擎无关,任何 run-and-suspend 引擎的压缩捕获都用它。 */
-export interface CapturedEngineCompaction {
-  /** 切点(首个保留原文的 DB 消息 id)。null = 切点落在本轮(prompt 之后)——
-   *  本轮消息尚未入库,调用方按"外收拢"落为当前尾消息 id(只多保不少保,
-   *  下一轮编码器按"切点在场"自校验生效)。 */
-  cutMessageId: string | null;
-  summary: string;
-  tokensBefore: number;
 }
 
 export interface PiGenerationResult {
@@ -142,7 +134,8 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   const seeded = seedPiSessionFromHistory({
     manager,
     history: ctx.history,
-    model: ctx.model,
+    userInputs: ctx.userInputs,
+    fallbackModelId: ctx.model.modelId,
     syntheticIds: ctx.syntheticIds,
     compactions: ctx.compactions,
   });
@@ -248,6 +241,7 @@ export interface PiCompactionContext {
   cwd: string;
   /** P7:同 runPiGeneration——压缩前的引擎上下文同样从 DB 历史+既有压缩记录重建。 */
   history: Message[];
+  userInputs: Record<string, PromptInput>;
   compactions?: EngineCompactionRecord[];
   /** 受控资源装配(生产必传:压缩会话也不许打开 .pi/settings.json 注入面)。 */
   resources?: PiSessionResources;
@@ -308,7 +302,8 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
   const seeded = seedPiSessionFromHistory({
     manager,
     history: ctx.history,
-    model: ctx.model,
+    userInputs: ctx.userInputs,
+    fallbackModelId: ctx.model.modelId,
     compactions: ctx.compactions,
   });
   const seededEntryIds = new Set(manager.getEntries().map((entry) => entry.id));

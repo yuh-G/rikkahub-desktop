@@ -71,13 +71,14 @@ import {
   type EngineKind,
   type EngineRunContext,
 } from "../engines";
-import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCompaction, runPiGeneration, type CapturedEngineCompaction } from "../pi-engine/runner";
+import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCompaction, runPiGeneration } from "../pi-engine/runner";
 import { mapProviderModelToPi } from "../pi-engine/model-bridge";
 import { createPiWorkspaceTools } from "../pi-engine/workspace-tools";
 import { createPiGeneralTools } from "../pi-engine/general-tools";
 import { createPiSessionResources } from "../pi-engine/resources";
-import { piPromptInputFromParts } from "../pi-engine/attachments";
-import { effectiveEngineCompaction, type EngineCompactionRecord } from "../pi-engine/context-encoder";
+import { promptInputFromParts, userInputsFor } from "../inference-engine/prompt-input";
+import type { CapturedEngineCompaction } from "../engines/contract";
+import { effectiveEngineCompaction, parseEngineCompactions } from "./engine-compactions";
 import { encodableMessages, enrichMessages, applyTemplateToMessage } from "../inference-engine/message-enrichment";
 import { applyOutputTransforms } from "../assistants";
 import { TITLE_CHARACTER_LIMIT } from "../app-config/prompts";
@@ -738,24 +739,6 @@ function piModelLimitsFor(provider: Provider, model: Model, assistant: Assistant
   };
 }
 
-/** P7:conversation.engineCompactions(DB 任意 JSON)→ 编码器契约。宽容校验:
- *  坏条目丢弃而不是整列作废(与列解析"损坏回 null"同哲学)。 */
-function parseEngineCompactions(raw: JsonValue[] | null | undefined): EngineCompactionRecord[] {
-  const records: EngineCompactionRecord[] = [];
-  for (const item of raw ?? []) {
-    if (!isRecord(item)) continue;
-    if (typeof item.cutMessageId !== "string" || typeof item.summary !== "string") continue;
-    const record: EngineCompactionRecord = {
-      cutMessageId: item.cutMessageId,
-      summary: item.summary,
-      tokensBefore: typeof item.tokensBefore === "number" ? item.tokensBefore : 0,
-    };
-    if (typeof item.createdAt === "string") record.createdAt = item.createdAt;
-    records.push(record);
-  }
-  return records;
-}
-
 /** P7:本轮压缩产物落 conversation.engineCompactions。cutMessageId 为 null(pi 自动压缩
  *  的切点可能落在本轮 prompt 之后,而本轮消息尚未入库)按"外收拢"落当前尾消息
  *  id——只多保不少保,下一轮编码器按"切点在场"自校验生效。 */
@@ -818,7 +801,7 @@ async function runPiWorkspaceGeneration(
     ? applyTemplateToMessage(promptMessage, template, "user", deps.assistant, deps.selectedModel)
     : [];
   const promptInput = promptMessage
-    ? piPromptInputFromParts(templatedPromptParts, deps.selectedModel)
+    ? promptInputFromParts(templatedPromptParts, deps.selectedModel)
     : { text: "", images: [] };
   if (!promptInput.text && !promptInput.images.length) {
     // 无文本且无图片输入直接走失败分支给出人话。
@@ -860,6 +843,7 @@ async function runPiWorkspaceGeneration(
     conversationId: conversation.id,
     cwd: runtime.cwd,
     history: enriched.messages,
+    userInputs: userInputsFor(enriched.messages, deps.selectedModel),
     syntheticIds: enriched.syntheticIds,
     compactions: compactionRecords,
     promptText: promptInput.text,
@@ -975,6 +959,7 @@ async function runPiWorkspaceCompaction(
     conversationId: conversation.id,
     cwd: runtime.cwd,
     history,
+    userInputs: userInputsFor(history, ctx.model),
     compactions: compactionRecords,
     resources,
     customInstructions: ctx.customInstructions,

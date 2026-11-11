@@ -19,7 +19,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
-import type { Message, Model, ToolPart } from "../foundation/types";
+import type { Message, ToolPart } from "../foundation/types";
 import { message } from "../foundation/utils";
 import {
   appendAssistantApiMessages,
@@ -108,7 +108,8 @@ describe("A 行为:退化工具卡在每条上线路径都不得投影成空", (
     seedPiSessionFromHistory({
       manager,
       history: [assistantRow()],
-      model: { modelId: "m", inputModalities: ["TEXT"] } as unknown as Model,
+      userInputs: {},
+      fallbackModelId: "m",
     });
     const toolResult = manager.buildSessionContext().messages.find((entry) => entry.role === "toolResult")!;
     expect(nonEmpty((toolResult as { content: unknown }).content)).toBe(true);
