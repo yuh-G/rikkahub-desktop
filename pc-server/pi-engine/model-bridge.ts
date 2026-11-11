@@ -9,6 +9,7 @@
 // 刷新只在应用侧发生。
 import type { CredentialStore, OAuthCredential } from "../../pi/packages/ai/src/auth/types.ts";
 import type { Api, CacheRetention, KnownApi, Model as PiModel } from "../../pi/packages/ai/src/types.ts";
+import { type ClientIdentity, mergeClientIdentity } from "../../pi/packages/ai/src/utils/identity.ts";
 import { ModelRuntime } from "../../pi/packages/coding-agent/src/core/model-runtime.ts";
 import type { ProviderConfigInput } from "../../pi/packages/coding-agent/src/core/provider-composer.ts";
 import type { ModelGrant, PromptCachePolicy, SubscriptionCredential } from "../engines/contract";
@@ -53,6 +54,8 @@ export type PiModelMapping =
       /** 上游模型 id(进请求体的 model 字段)。 */
       modelId: string;
       config: ProviderConfigInput;
+      /** 应用身份 UA(授权 userAgent),经 pi 的 identity 请求选项发出(见 createPiModelRuntime)。 */
+      userAgent: string;
     }
   | {
       kind: "builtin";
@@ -430,7 +433,10 @@ export function mapGrantToPi(grant: ModelGrant): PiMappingResult {
       },
     ],
   };
-  return { ok: true, mapping: { kind: "registered", providerId: grant.providerId, modelId: grant.modelId, config } };
+  return {
+    ok: true,
+    mapping: { kind: "registered", providerId: grant.providerId, modelId: grant.modelId, config, userAgent: grant.userAgent },
+  };
 }
 
 /** 订阅供应商:从 pi 内建目录取模型并叠加宿主侧请求头。目录无此 id(厂商新模型、pi 快照
@@ -529,9 +535,10 @@ function createGrantCredentialStore(
 
 /** 为一次工作区会话构造 pi 模型运行时:零落盘。
  *  - registered:内存注册单 provider 单模型(registerProvider,应用 UUID 作 providerId),
- *    密钥在注册配置里,凭据存储为空。
+ *    密钥在注册配置里,凭据存储为空。请求以应用身份 UA 发出(withAppUserAgent)。
  *  - builtin:不注册,直接用 pi 内建 provider(见 PiModelMapping 头注);令牌经
- *    createGrantCredentialStore 向应用取,凭据不落 pi 的 auth.json。 */
+ *    createGrantCredentialStore 向应用取,凭据不落 pi 的 auth.json。客户端身份保留内建定义:
+ *    部分订阅通道只对特定客户端开放(Kimi Coding 按 UA 白名单放行),身份由上游随通道维护。 */
 export async function createPiModelRuntime(
   mapping: PiModelMapping,
   credentialSource?: SubscriptionCredentialSource,
@@ -550,5 +557,18 @@ export async function createPiModelRuntime(
   if (!model) {
     throw new Error(`pi 运行时未返回已注册模型 ${mapping.providerId}/${mapping.modelId}`);
   }
+  withAppUserAgent(runtime, mapping.userAgent);
   return { runtime, model };
+}
+
+/** pi 默认以 `pi/<版本> (…)` 作 UA,宿主 fetch 壳对已带 UA 的请求不覆盖。官方口子是请求选项
+ *  identity,但 sdk 的流函数每次请求都把 identity 重置为 pi 自己的身份,所以只能在它之后、
+ *  运行时这一层合入:会话请求、压缩摘要、缓存预热重放都经 runtime.streamSimple。只换 UA,
+ *  归属头沿用受控设置的结果(enableInstallTelemetry:false → 无);供应商/模型自定义头里的
+ *  User-Agent 仍优先(pi 把 model.headers 叠在 identity 之上)。 */
+function withAppUserAgent(runtime: ModelRuntime, userAgent: string): void {
+  const appIdentity: ClientIdentity = { userAgent: { custom: userAgent } };
+  const streamSimple = runtime.streamSimple.bind(runtime);
+  runtime.streamSimple = (model, context, options) =>
+    streamSimple(model, context, { ...options, identity: mergeClientIdentity(options?.identity, appIdentity) });
 }

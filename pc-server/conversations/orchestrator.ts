@@ -5,7 +5,7 @@ import type { ApiMessage, Assistant, Conversation, JsonValue, Message, MessageNo
 import { bumpAnalyticsErrCount } from "../app-config/analytics";
 import type { GenerationEventSink, GenerationTarget, StreamHooksWithSink, ToolExecutor } from "../inference-engine/events";
 import { id, isRecord, message, textFromParts } from "../foundation/utils";
-import { classifyProxyError } from "../foundation/net";
+import { classifyProxyError, resolveUserAgent } from "../foundation/net";
 import { classifyContextOverflowError, classifyOAuthCredentialError, classifyOutputCapError, classifyRateLimitError } from "../inference-engine/provider-errors";
 import { state } from "../persistence/json-store";
 import { addLog } from "../api/logs";
@@ -731,9 +731,10 @@ async function runPostGenerationTasks(conversationId: string, snapshot: Conversa
 
 /** 工作区引擎的模型授权(engines/model-grant:上限走 requiredOutputCap 单源、请求头走
  *  applyModelRequestHeaders,与聊天引擎同一组函数)。订阅令牌不在授权里:引擎经
- *  host.models.credential 按 providerId 取,应用侧锁内刷新(engines/host)。 */
+ *  host.models.credential 按 providerId 取,应用侧锁内刷新(engines/host)。UA 与全局 fetch 壳
+ *  同一口径(当前代理设置里的自定义 UA,否则品牌默认)。 */
 function engineGrantFor(provider: Provider, model: Model, assistant: Assistant, conversationId: string): ModelGrant {
-  const grant = modelGrantFor(provider, model, assistant, conversationId);
+  const grant = modelGrantFor(provider, model, assistant, conversationId, resolveUserAgent(state.settings.proxyConfig));
   if (!grant) throw new Error(`provider 类型 ${provider.type} 无法在工作区引擎使用`);
   return grant;
 }

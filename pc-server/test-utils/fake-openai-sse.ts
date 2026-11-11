@@ -29,11 +29,14 @@ export interface FakeOpenAiSseServer {
   baseUrl: string;
   /** 每个请求的完整 body(JSON 解析后),测试断言上下文回放用。 */
   requests: Array<Record<string, unknown>>;
+  /** 与 requests 同序的请求头(Node 已把头名转小写)。 */
+  requestHeaders: http.IncomingHttpHeaders[];
   close(): Promise<void>;
 }
 
 export async function startFakeOpenAiSse(turns: FakeSseTurn[]): Promise<FakeOpenAiSseServer> {
   const requests: Array<Record<string, unknown>> = [];
+  const requestHeaders: http.IncomingHttpHeaders[] = [];
   let cursor = 0;
   const server = http.createServer(async (req, res) => {
     if (req.method !== "POST" || !req.url?.endsWith("/chat/completions")) {
@@ -43,6 +46,7 @@ export async function startFakeOpenAiSse(turns: FakeSseTurn[]): Promise<FakeOpen
     let body = "";
     for await (const chunk of req) body += chunk.toString();
     requests.push(JSON.parse(body) as Record<string, unknown>);
+    requestHeaders.push(req.headers);
     const turn = turns[cursor];
     cursor += 1;
     if (!turn) {
@@ -99,6 +103,7 @@ export async function startFakeOpenAiSse(turns: FakeSseTurn[]): Promise<FakeOpen
   return {
     baseUrl: `http://127.0.0.1:${port}`,
     requests,
+    requestHeaders,
     close: async () => {
       server.close();
       await once(server, "close");

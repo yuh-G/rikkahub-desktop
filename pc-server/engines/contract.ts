@@ -146,6 +146,10 @@ export interface ModelGrant {
   headers: Record<string, string>;
   credential: ModelCredential;
   promptCache: PromptCachePolicy;
+  /** 应用身份 User-Agent(设置 → 网络 的自定义值,否则品牌默认)。引擎的模型请求以它为 UA;
+   *  订阅通道的客户端身份若由引擎内建的供应商定义维护(部分通道只对特定客户端开放),
+   *  引擎保留通道身份。headers 里显式的 User-Agent 优先于它。 */
+  userAgent: string;
 }
 
 export interface CredentialRequest {
