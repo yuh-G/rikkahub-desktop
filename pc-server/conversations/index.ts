@@ -9,9 +9,10 @@ import { checkoutConversation, configureWorkingSet, peekConversation, releaseCon
 import { hasQueuedMessages } from "./message-queue";
 import { getConversationMeta } from "./read-queries";
 import { generating } from "./generation-state";
-import type { Conversation, ConversationListDto, JsonValue, Message, MessageNode, MessageNodeDto, PcConversationRow, PcMessageNodeRow, PcWorkspaceRow } from "../foundation/types";
+import type { Conversation, ConversationListDto, JsonValue, Message, MessageNode, MessageNodeDto, PcConversationRow, PcEngineTablesRows, PcMessageNodeRow, PcWorkspaceRow } from "../foundation/types";
 import { clearAllFts, deleteConversationFts, ensureMessageFtsTable, ftsRowCount, rebuildFtsFromNodeTable, replaceNodeFts } from "./fts";
 import { reportError } from "../observability/app-errors";
+import { copyEngineTablesInto, ensureEngineEntryTables, pruneOrphanEngineEntries, refillEngineTables, snapshotLiveEngineTables } from "./engine-entries";
 import { collectPcFileRefs } from "../backup/file-refs";
 
 export const DEFAULT_ASSISTANT_ID = "0950e2dc-9bd5-4801-afa3-aa887aa36b4e";
@@ -86,6 +87,7 @@ export function ensureConversationTables(db: InstanceType<typeof Database>): voi
     -- J 族(专题2):列表分页的覆盖排序索引(assistant 过滤 + 置顶/更新时间倒序扫描)。
     CREATE INDEX IF NOT EXISTS idx_pc_conversation_list ON pc_conversation(assistant_id, is_pinned, update_at, create_at, id);
   `);
+  ensureEngineEntryTables(db);
 }
 
 /** 1.5.0 跟进安卓 Migration_16_17:废弃"清除上下文"机制,删除 truncate_index 列。
@@ -441,6 +443,7 @@ export function persistConversation(conv: Conversation): void {
       insertNode.run(node.id, conv.id, i, JSON.stringify(node.messages ?? []), node.selectIndex ?? 0);
       replaceNodeFts(db, conv.id, node);
     }
+    pruneOrphanEngineEntries(db, conv.id, new Set((conv.messages ?? []).flatMap((node) => node.messages.map((message) => message.id))));
   });
   txn();
 }
@@ -628,7 +631,10 @@ export async function migrateConversationsIntoDbBatched(
  *  却指向不存在的工作区(绑定悬空)。pc_workspace 与 pc_conversation 同驻一个活库,故
  *  此处一并 ATTACH 复制;导入侧在同库事务内重灌。硬约束:此表只进 pc dump,绝不进
  *  安卓 rikka_hub.db(安卓 workspaces 表同名不同构),PC→APP 边界不受影响。
- *  表按存在性探测(不读 format 号),老 dump(format 1,无该表)导入时跳过工作区重灌。 */
+ *  表按存在性探测(不读 format 号),老 dump(format 1,无该表)导入时跳过工作区重灌。
+ *
+ *  format 2→3(P3.1):增引擎私有条目两表(engine-entries.ts)。同样只进桌面端 dump——
+ *  给 APP 的 rikka_hub.db 由安卓模板另建,从不复制 PC 表。 */
 export function exportPcConversationsDump(targetPath: string): number {
   if (!conversationsDb) return -1;
   const db = conversationsDb;
@@ -671,7 +677,7 @@ export function exportPcConversationsDump(targetPath: string): number {
         update_at         INTEGER NOT NULL,
         last_access_at    INTEGER NOT NULL
       );
-      INSERT INTO pcdump.pc_dump_meta (key, value) VALUES ('format', '2'), ('exportedAt', strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+      INSERT INTO pcdump.pc_dump_meta (key, value) VALUES ('format', '3'), ('exportedAt', strftime('%Y-%m-%dT%H:%M:%fZ','now'));
       INSERT INTO pcdump.pc_conversation SELECT id, assistant_id, title, system_prompt, suggestions, is_pinned, create_at, update_at, mode_injection_ids, lorebook_ids, workspace_id, workspace_cwd, engine_compactions FROM main.pc_conversation;
       INSERT INTO pcdump.pc_message_node SELECT id, conversation_id, node_index, messages, select_index FROM main.pc_message_node;
     `);
@@ -684,6 +690,7 @@ export function exportPcConversationsDump(targetPath: string): number {
     if (hasWorkspaceTable) {
       db.exec("INSERT INTO pcdump.pc_workspace SELECT id, name, type, root, permission_preset, trusted_at, create_at, update_at, last_access_at FROM main.pc_workspace");
     }
+    copyEngineTablesInto(db, "pcdump");
     return (db.prepare("SELECT COUNT(*) AS n FROM pcdump.pc_conversation").get() as { n: number }).n;
   } finally {
     db.exec("DETACH DATABASE pcdump");
@@ -714,14 +721,20 @@ export function snapshotConversationsDbBeforeImport(): void {
  *  pc_conversation 同驻一个活库,工作区重灌必须与会话灌库同事务——否则会话灌失败回滚、
  *  工作区却写进库的半成品态。传入时先全清再重灌(与会话替换语义一致,绑定悬空由会话侧
  *  workspace_id 决定);未传(老 dump 无该表)不动现有工作区。表结构幂等懒建,与
- *  workspace/index.ts 同型。 */
-export function resetConversationsDbTo(conversations: Conversation[], workspaces?: PcWorkspaceRow[]): void {
+ *  workspace/index.ts 同型。
+ *
+ *  P3.1:引擎私有条目外键挂在会话行上,DELETE 会把它们级联清空。传入 engineTables(dump
+ *  format 3)即替换;未传(APP 库合并 / JSON 备份 / 老 dump / bak 重灌)先读出现有行、灌库后
+ *  写回会话与锚定消息仍在的那些——封存摘要会自校验,内容变了的组装载时自然回退。 */
+export function resetConversationsDbTo(conversations: Conversation[], workspaces?: PcWorkspaceRow[], engineTables?: PcEngineTablesRows): void {
   if (!conversationsDb) throw new Error("conversationsDb not open");
   const db = conversationsDb;
   const txn = db.transaction(() => {
+    const keptEngineTables = engineTables ?? snapshotLiveEngineTables(db);
     db.exec("DELETE FROM pc_conversation");
     clearAllFts(db);
     migrateConversationsIntoDb(db, conversations);
+    if (keptEngineTables) refillEngineTables(db, keptEngineTables, conversations);
     if (workspaces) {
       db.exec(`CREATE TABLE IF NOT EXISTS pc_workspace (
         id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, root TEXT NOT NULL DEFAULT '',

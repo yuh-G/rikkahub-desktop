@@ -13,6 +13,7 @@ import { tempDir } from "../foundation/platform";
 import { CONVERSATIONS_SQLITE_MIGRATION, MEMORY_FILE_SPLIT_MIGRATION, saveState, setState, state } from "../persistence/json-store";
 import { GLOBAL_MEMORY_ID, memoryStore } from "../memory/index";
 import { invalidateContextSnapshots } from "../inference-engine/context-snapshots";
+import { readEngineTables } from "../conversations/engine-entries";
 import { clearConvDirtyState, DEFAULT_ASSISTANT_ID, getConversationsDb, loadAllConversationsFromDb, loadConversationNodesFromDb, resetConversationsDbTo, snapshotConversationsDbBeforeImport } from "../conversations";
 import { reportError } from "../observability/app-errors";
 import { hashFileSha256, rewriteAndroidFileUrlsDeep, rewritePcFileUrlsDeep } from "./file-refs";
@@ -177,6 +178,7 @@ function captureRestoreRollbackPoint(): (err: unknown) => void {
       // 下次启动被当作待迁移数据灌进活库(R4-2 的事故链)。
       delete state.conversations;
       delete state.pcWorkspaces;
+      delete state.pcEngineTables;
       reportError("backup", "error", "备份恢复失败且回滚异常，请重启应用并核对设置与记忆", rollbackErr, "restore_rollback_failed");
     }
   };
@@ -861,6 +863,9 @@ function importPcConversationsDump(dumpPath: string): number {
     if (hasWorkspaceTable) {
       state.pcWorkspaces = db.query("SELECT * FROM pc_workspace").all() as PcWorkspaceRow[];
     }
+    // format 3:引擎私有条目替换语义;老 dump 无两表时不暂存,finalize 保留活库里仍有效的行。
+    const engineTables = readEngineTables(db);
+    if (engineTables) state.pcEngineTables = engineTables;
     return conversations.length;
   } finally {
     try { db.close(); } catch { /* best-effort:句柄随 GC 释放 */ }
@@ -1093,9 +1098,10 @@ function finalizeConversationImport(): void {
   if (Array.isArray(state.conversations)) {
     snapshotConversationsDbBeforeImport();
     // B6-①a:工作区(dump format 2)随会话同事务重灌,保持"会话+其绑定工作区"原子替换。
-    resetConversationsDbTo(state.conversations, state.pcWorkspaces);
+    resetConversationsDbTo(state.conversations, state.pcWorkspaces, state.pcEngineTables);
     delete state.conversations; // 中转字段用完即清(State 类型注释有角色说明)
     delete state.pcWorkspaces;
+    delete state.pcEngineTables;
   }
   clearWorkingSet();
   // R2-4:待发节点广播挂着旧实例引用,定时器触发会把导入前的陈旧帧广播出去,整表清空。

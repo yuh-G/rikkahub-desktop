@@ -427,11 +427,14 @@ async function main() {
     assert(existsSync(join(extractDir, "pc-backup.json")), "备份 zip 缺少 pc-backup.json");
     assert(existsSync(join(extractDir, "pc_conversations.db")), "备份 zip 缺少 pc_conversations.db(PC 原生会话 dump,批4)");
     {
-      // B6-①a:format 2 dump 必须带 pc_workspace 表且含本次种入的工作区行(权限档/信任态/类型)。
+      // B6-①a:dump 必须带 pc_workspace 表且含本次种入的工作区行(权限档/信任态/类型)。
+      // P3.1(format 3):另带引擎私有条目两表(本冒烟不产生条目,只核表在)。
       const { Database } = require("bun:sqlite");
       const dump = new Database(join(extractDir, "pc_conversations.db"), { readonly: true });
       const fmt = (dump.query("SELECT value FROM pc_dump_meta WHERE key='format'").get() as AnyRecord)?.value;
-      assert(fmt === "2", `pc_dump_meta.format 应为 2(B6-①a),实际 ${fmt}`);
+      assert(fmt === "3", `pc_dump_meta.format 应为 3(P3.1),实际 ${fmt}`);
+      const engineTables = (dump.query("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('pc_engine_entry','pc_engine_session')").all() as AnyRecord[]).length;
+      assert(engineTables === 2, `pc dump 缺引擎私有条目表(实得 ${engineTables}/2)`);
       const wsRows = dump.query("SELECT id, name, type, permission_preset FROM pc_workspace").all() as AnyRecord[];
       dump.close();
       const wsRow = wsRows.find((w) => w.id === seedInfo.workspaceId);

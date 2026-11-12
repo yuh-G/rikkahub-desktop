@@ -374,6 +374,28 @@ export interface PcWorkspaceRow {
   last_access_at: number;
 }
 
+// 引擎私有条目两表的原始行(conversations/engine-entries.ts),payload / header 是 JSON 文本。
+export interface PcEngineSessionRow {
+  conversation_id: string;
+  engine: string;
+  format: string;
+  header: string;
+}
+export interface PcEngineEntryRow {
+  conversation_id: string;
+  engine: string;
+  seq: number;
+  format: string;
+  anchor_message_id: string;
+  entry_id: string | null;
+  payload: string;
+  digest: string | null;
+}
+export interface PcEngineTablesRows {
+  sessions: PcEngineSessionRow[];
+  entries: PcEngineEntryRow[];
+}
+
 export interface RequestLog {
   id: string;
   at: number;
@@ -447,6 +469,8 @@ export interface State {
   // B6-①a:备份导入流程的工作区暂存中转(dump format 2 的 pc_workspace 行),与 conversations
   // 同生命周期——finalize 随会话同事务灌库后 delete。仅暂存,运行时权威在活库。
   pcWorkspaces?: PcWorkspaceRow[];
+  // 备份导入流程的引擎私有条目暂存(dump format 3),同上生命周期;不写进 state.json。
+  pcEngineTables?: PcEngineTablesRows;
   files: StoredFile[];
   generatedImages: GeneratedImage[];
   logs: RequestLog[];
