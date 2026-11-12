@@ -6,6 +6,7 @@
 //  2. OpenAI 形缓存键:Responses 与 completions(第三方主机)开关开才发 prompt_cache_key,
 //     与聊天引擎同义(pi 自己的 auto 规则在 Responses 上恒发、在 completions 上只认官方主机)。
 //  3. 显式值优先:手动压缩的摘要请求自带 cacheRetention:"none",策略开着也不打标记。
+//  4. 缓存键跨轮稳定:pi 会话 id 取应用会话 id(P3.3),同一会话连续两轮发同一个 prompt_cache_key。
 // 订阅登录行的策略(恒开)在映射层锁;它们走 pi 内建供应商,出线形态由上游维护。
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -15,11 +16,11 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { Message, Provider } from "../foundation/types";
+import type { Provider } from "../foundation/types";
 import { message } from "../foundation/utils";
 import { model, provider } from "../model-providers";
 import { modelGrantFor, promptCachePolicyFor } from "../engines/model-grant";
-import { userInputsFor } from "../inference-engine/prompt-input";
+import { sessionViewOf } from "../test-utils/engine-session-view";
 import { startFakeOpenAiSse, type FakeOpenAiSseServer } from "../test-utils/fake-openai-sse";
 import { piCacheRetentionFor } from "./model-bridge";
 import { runPiCompaction, runPiGeneration } from "./runner";
@@ -102,14 +103,12 @@ function claudeRow(overrides: Partial<Provider> = {}): Provider {
   return provider({ id: crypto.randomUUID(), name: "Cache Claude", baseUrl: anthropic.baseUrl, apiKey: "sk-test", type: "claude", ...overrides });
 }
 
-async function runTurn(row: Provider, modelRow = claudeModel): Promise<void> {
-  const conversationId = crypto.randomUUID();
+async function runTurn(row: Provider, modelRow = claudeModel, conversationId: string = crypto.randomUUID()): Promise<void> {
   await runPiGeneration({
     grant: modelGrantFor(row, modelRow, null, conversationId)!,
     conversationId,
     cwd,
-    history: [] as Message[],
-    userInputs: {},
+    view: sessionViewOf([]),
     promptText: "你好",
     sink: () => {},
   });
@@ -161,6 +160,15 @@ describe("OpenAI 形缓存键:开关开才发 prompt_cache_key", () => {
     expect(completions.requests[before]!.prompt_cache_key).toBeUndefined();
     expect(typeof completions.requests[before + 1]!.prompt_cache_key).toBe("string");
   });
+
+  test("同一会话连续两轮:缓存键都是应用会话 id", async () => {
+    const row = responsesRow(true);
+    const conversationId = crypto.randomUUID();
+    const before = responses.requests.length;
+    await runTurn(row, gpt, conversationId);
+    await runTurn(row, gpt, conversationId);
+    expect(responses.requests.slice(before).map((body) => body.prompt_cache_key)).toEqual([conversationId, conversationId]);
+  });
 });
 
 test("显式值优先:手动压缩的摘要请求在策略开着时也不打缓存标记", async () => {
@@ -176,8 +184,7 @@ test("显式值优先:手动压缩的摘要请求在策略开着时也不打缓�
     grant: modelGrantFor(row, claudeModel, null, "conv-cache-compact")!,
     conversationId: "conv-cache-compact",
     cwd,
-    history,
-    userInputs: userInputsFor(history, claudeModel),
+    view: sessionViewOf(history, { model: claudeModel }),
     sink: () => {},
   });
   expect(result.summary).toContain("回答");

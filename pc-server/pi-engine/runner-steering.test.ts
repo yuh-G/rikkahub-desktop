@@ -12,10 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { GenerationEvent } from "../inference-engine/events";
-import type { Message } from "../foundation/types";
 import { model, provider } from "../model-providers";
 import { runPiGeneration } from "./runner";
 import { modelGrantFor } from "../engines/model-grant";
+import { sessionViewOf } from "../test-utils/engine-session-view";
 import { startFakeOpenAiSse, type FakeOpenAiSseServer } from "../test-utils/fake-openai-sse";
 
 const PROVIDER_ID = "00000000-0000-4000-8000-00000000000a";
@@ -55,8 +55,7 @@ describe("pi runner steering 轮边界", () => {
       grant: modelGrantFor(ourProvider, ourModel, null, "conv-runner-steer")!,
       conversationId: "conv-runner-steer",
       cwd,
-      history: [] as Message[],
-      userInputs: {},
+      view: sessionViewOf([]),
       promptText: "开始",
       sink: (event) => events.push(event),
       onSteerBoundary: () => {

@@ -11,13 +11,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ModelRuntime } from "../../pi/packages/coding-agent/src/core/model-runtime.ts";
-import type { Message } from "../foundation/types";
 import { getDefaultUserAgent } from "../foundation/net";
 import { message } from "../foundation/utils";
 import { modelGrantFor } from "../engines/model-grant";
-import { userInputsFor } from "../inference-engine/prompt-input";
 import { model, provider } from "../model-providers";
 import { OAUTH_FLOWS } from "../model-providers/auth";
+import { sessionViewOf } from "../test-utils/engine-session-view";
 import { startFakeOpenAiSse, type FakeOpenAiSseServer } from "../test-utils/fake-openai-sse";
 import { createPiModelRuntime, mapGrantToPi } from "./model-bridge";
 import { runPiCompaction, runPiGeneration } from "./runner";
@@ -47,8 +46,7 @@ async function runTurn(grantUserAgent: string | undefined, extra: Record<string,
     grant: modelGrantFor(row(extra), fakeModel, null, conversationId, grantUserAgent)!,
     conversationId,
     cwd,
-    history: [] as Message[],
-    userInputs: {},
+    view: sessionViewOf([]),
     promptText: "你好",
     sink: () => {},
   });
@@ -83,8 +81,7 @@ describe("API Key 授权:请求以应用身份 UA 发出", () => {
       grant: modelGrantFor(row(), fakeModel, null, "conv-ua-compact", "MyClient/9.9")!,
       conversationId: "conv-ua-compact",
       cwd,
-      history,
-      userInputs: userInputsFor(history, fakeModel),
+      view: sessionViewOf(history, { model: fakeModel }),
       sink: () => {},
     });
     const sent = server.requestHeaders.slice(before).map((headers) => headers["user-agent"]);

@@ -474,9 +474,9 @@ function resolveBuiltinPiModel(
   // 主前提,这里显式压制防上游把闸门重构成复合条件。
   // Anthropic 还关 supportsMessageThreads(pi 1.5.1 新增,provider=anthropic 且端点在
   // api.anthropic.com 时默认开,即 Claude 订阅轨):开启后带 sessionId 的请求只发新增消息,由
-  // 服务端续接。我们每轮新建会话、随机 session id,线程只能在一轮的工具循环内续接,收益有限,
-  // 却多一个 beta 头和一份服务端状态;保持与 1.0.3 一致的全量请求。会话 id 稳定后(方案
-  // P3.3)再评估放开。
+  // 服务端续接。会话 id 已取应用会话 id(P3.3),但 runner 每轮结束即 dispose,pi 在 dispose 时按
+  // 会话 id 清掉线程状态,线程只能在一轮的工具循环内续接,收益有限,却多一个 beta 头和一份服务端
+  // 状态;保持与 1.0.3 一致的全量请求。
   const compat = { ...(base.compat as Record<string, unknown>) };
   compat.supportsMidConvoSystemMessages = false;
   if (base.api === "anthropic-messages") {

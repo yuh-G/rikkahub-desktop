@@ -4,7 +4,8 @@
 // host.tools.call、轮边界 await host.steer.take 后注入下一次请求;②abort(conversationId)
 // 中止在途轮次,轮次正常返回已生成部分;③压缩的摘要模型映射不进 pi 时经 host.report 报 warn
 // 并回退会话模型;pi 的已知压缩错误以 CodedError 穿过传输(前端按 errorCode 查文案);④模型请求
-// 经模型出口发出,每条请求的日志记录带 TurnRef 经 host.models.log 回到应用。
+// 经模型出口发出,每条请求的日志记录带 TurnRef 经 host.models.log 回到应用;⑤同会话串行:新一轮
+// 等旧轮收尾后才装载(两轮共用 pi 会话 id,旧轮 dispose 释放的会话级资源不能落在新轮上)。
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -208,6 +209,39 @@ describe("pi 驱动 × 契约(strict 回环)", () => {
     expect(result.stopReason).toBe("aborted");
     expect(server.requests.length).toBe(1);
     expect(log.toolCalls.length).toBe(1);
+  }, 30_000);
+
+  test("同会话串行:被接管的旧轮收尾之后,新一轮才装载会话视图", async () => {
+    let release!: () => void;
+    const toolStarted = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const order: string[] = [];
+    const server = await upstream([{ toolCalls: [{ id: "tc-slow", name: "lookup", arguments: "{}" }] }, { content: "新一轮" }]);
+    const { host } = fakeHost({
+      tool: () =>
+        new Promise((_, reject) => {
+          release();
+          setTimeout(() => {
+            order.push("旧轮工具结束");
+            reject(new Error("Tool execution aborted"));
+          }, 200);
+        }),
+    });
+    const load = host.session.load;
+    host.session.load = async (turn) => {
+      order.push(`load:${turn.turnId}`);
+      return load(turn);
+    };
+    const driver = strictDriver(host);
+    const conversationId = "conv-driver-serial";
+    const first = driver.startTurn({ conversationId, turnId: "old", input: inputFor(server, "开始", [lookupTool]) });
+    await toolStarted;
+    await driver.abort(conversationId, "replaced");
+    const second = await driver.startTurn({ conversationId, turnId: "new", input: inputFor(server, "接着") });
+    expect((await first).stopReason).toBe("aborted");
+    expect(second.text).toBe("新一轮");
+    expect(order).toEqual(["load:old", "旧轮工具结束", "load:new"]);
   }, 30_000);
 
   test("缺工作区:以错误拒绝(portable 驱动只认请求数据)", async () => {

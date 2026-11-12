@@ -1,4 +1,4 @@
-// pi-engine/context-encoder.test.ts — DB→pi 编码器单测(P7 会话数据统一)
+// pi-engine/context-encoder.test.ts — 中立消息→pi 编码单测(经会话视图装载,视图不带原生条目)
 //
 // 断言面刻意选 manager.buildSessionContext().messages:这是 createAgentSession 构造点
 // 真正消费的产物(sdk.ts 的 buildSessionContext 调用),测"pi 将看到什么",不测编码器
@@ -7,27 +7,23 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
 import type { EngineCompactionRecord } from "../engines/contract";
 import type { JsonValue, Message, Model, ToolPart } from "../foundation/types";
 import { message } from "../foundation/utils";
 import { effectiveEngineCompaction } from "../conversations/engine-compactions";
-import { userInputsFor } from "../inference-engine/prompt-input";
-import { seedPiSessionFromHistory } from "./context-encoder";
+import { sessionViewOf } from "../test-utils/engine-session-view";
+import { createPiSessionFromView } from "./session-view";
 
 const model = { modelId: "test-model", inputModalities: ["TEXT", "IMAGE"] } as unknown as Model;
 
 function seed(history: Message[], compactions?: EngineCompactionRecord[], syntheticIds?: Set<string>) {
-  const manager = SessionManager.inMemory(process.cwd());
-  const result = seedPiSessionFromHistory({
-    manager,
-    history,
-    userInputs: userInputsFor(history, model),
+  const result = createPiSessionFromView({
+    cwd: process.cwd(),
+    conversationId: "conv-encoder",
+    view: sessionViewOf(history, { model, syntheticIds, compactions }),
     fallbackModelId: model.modelId,
-    compactions,
-    syntheticIds,
   });
-  return { manager, result, messages: manager.buildSessionContext().messages };
+  return { manager: result.manager, result, messages: result.manager.buildSessionContext().messages };
 }
 
 function toolPart(partial: Partial<ToolPart> & Pick<ToolPart, "toolCallId" | "toolName">): ToolPart {

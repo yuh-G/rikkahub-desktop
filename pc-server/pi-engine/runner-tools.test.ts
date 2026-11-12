@@ -24,6 +24,7 @@ const { runPiGeneration } = await import("./runner");
 const { modelGrantFor } = await import("../engines/model-grant");
 const { model, provider } = await import("../model-providers");
 const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
+const { sessionViewOf } = await import("../test-utils/engine-session-view");
 
 import type { GenerationEvent } from "../inference-engine/events";
 import type { FakeOpenAiSseServer, FakeSseTurn } from "../test-utils/fake-openai-sse";
@@ -92,8 +93,7 @@ async function scriptedRun(
     )!,
     conversationId: conversation.id,
     cwd,
-    history: [],
-    userInputs: {},
+    view: sessionViewOf([]),
     promptText: "干活",
     tools: specs,
     callTool: createAppToolCaller(toolCtx, specs),

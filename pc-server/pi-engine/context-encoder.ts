@@ -1,22 +1,14 @@
-// pi-engine/context-encoder.ts — DB 会话历史 → pi 引擎上下文灌注(P7 会话数据统一)
+// pi-engine/context-encoder.ts — 中立消息 → pi 引擎消息(会话视图的回退编码)
 //
-// 定位:SQLite 是两种模式共用的唯一事实源。每轮把"UI 可见的选中路径历史"经
-// message-enrichment 富化(模板/提醒/注入/截断)后,确定性重建为 pi 引擎消息,
-// 灌入 SessionManager.inMemory(),由 createAgentSession 在构造点消费
-// (sdk.ts 里的 sessionManager.buildSessionContext(),与 jsonl 恢复走同一内部路径)。UI 编辑/重生成/
-// fork 从此真正改写引擎记忆——所见即所记,双表征的"引擎只追加、UI 可截断"容忍
-// 分叉消失。
+// 会话视图(pi-engine/session-view)里没有可用原生条目的行由本模块从中立内容编码:用户行与
+// 合成行恒走这里;助手行在原生条目缺失或作废(编辑过、别的引擎生成、老数据、生成中崩溃未封存)
+// 时走这里。SQLite 的中立记录是两种引擎共用的事实源,UI 编辑/重生成/fork 改写的就是它,
+// 回退编码让这些改动真正改写引擎记忆。
 //
 // 富化与保真的接缝(P8/P9):模板渲染会改变文本长度,fidelity 注解的 len 按原始 parts
 // 记录——takeText 的 charOffset + len > full.length 判定会让整行自动退化 legacy,
-// 剥 thinking 后重放。这是设计内行为(编辑即退化),不是缺陷。P9 起合成消息(提醒/
-// 注入)随富化全序列灌进本编码器(orchestrator 把 EnrichResult.messages 整列传入,
-// syntheticIds 标出合成行):它们只有 USER/ASSISTANT 两种 role,现有路径全覆盖
-// (USER→encodeUser,ASSISTANT 无注解→legacy),零特判;但 synthetic 行不进
-// entryIdsByMessageId(压缩切点反查按 DB 消息 id 说话)也不进 degradedMessageIds
-// (legacy 是合成行唯一可走的路径,非"用户编辑过")。合成行恒在压缩切点之后——
-// 富化层的 windowStartMessageId 窗口锚保证(应用侧以 effectiveEngineCompaction
-// 的切点为锚),永不进被 appendCompaction 摘要吸收的旧历史。
+// 剥 thinking 后重放。这是设计内行为(编辑即退化),不是缺陷。合成消息(提醒/注入)只有
+// USER/ASSISTANT 两种 role,现有路径全覆盖(USER→encodeUser,ASSISTANT 无注解→legacy),零特判。
 //
 // 确定性=缓存稳定性(§4.8 硬约束):同一历史两次编码逐字节一致(单测锁定)。所有输入
 // 均来自行级数据(parts/annotations/createdAt/modelId),不掺时钟与随机数。USER 行的
@@ -43,8 +35,7 @@
 // - 工具卡无输出无错误(中断残留)→ 合成 isError 占位,保证 toolCall/toolResult 配对
 //   (provider 拒绝无结果的调用)。
 
-import type { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
-import type { EngineCompactionRecord, PromptInput } from "../engines/contract";
+import type { PromptInput } from "../engines/contract";
 import type { JsonValue, Message, MessagePart, ToolOutputEntry } from "../foundation/types";
 import type {
   AssistantMessage,
@@ -381,81 +372,24 @@ function encodeUser(message: Message, input: PromptInput | undefined): UserMessa
   return { role: "user", content, timestamp: timestampOf(message) };
 }
 
-// ----- 主入口 -----
+// ----- 入口 -----
 
-export interface PiHistoryEncodeResult {
-  /** DB messageId → 灌注生成的 pi entry id 列表(压缩切点映射用;合成行不在内)。 */
-  entryIdsByMessageId: Map<string, string[]>;
-  /** 走了 legacy 退化的 assistant 行(诊断/测试;合成行不在内——legacy 是其设计路径)。 */
-  degradedMessageIds: string[];
-}
-
-/** 把选中路径历史灌注进(空的)inMemory SessionManager。history 是富化全序列
- *  (P9:含合成行——提醒/注入,syntheticIds 标出),不含本轮新用户输入(那条走
- *  session.prompt);compactions 只取"切点仍在历史中"的最新一条生效(pi
- *  buildContextEntries 只认最后一条 compaction,更早的被覆盖)。合成行照常编码
- *  但跳过两个登记(见头注)。切点生效判定与应用侧 effectiveEngineCompaction
- *  (conversations/engine-compactions)必须一致,由 context-encoder.test.ts 锁定。 */
-export function seedPiSessionFromHistory(options: {
-  manager: SessionManager;
-  history: Message[];
-  /** USER 行的模型可见输入(契约 EngineSessionItem.input,按消息 id)。 */
-  userInputs: Record<string, PromptInput>;
-  /** legacy 行缺 modelId 时 AssistantMessage.model 的占位(会话模型 id)。 */
-  fallbackModelId: string;
-  /** 富化层 EnrichResult.syntheticIds(P9):标记合成行,挡在切点映射与退化诊断外。 */
-  syntheticIds?: Set<string>;
-  compactions?: EngineCompactionRecord[];
-}): PiHistoryEncodeResult {
-  const { manager, history, userInputs, fallbackModelId } = options;
-  const syntheticIds = options.syntheticIds ?? new Set<string>();
-  const entryIdsByMessageId = new Map<string, string[]>();
-  const degradedMessageIds: string[] = [];
-  let firstSeededEntryId: string | null = null;
-
-  for (const message of history) {
-    const synthetic = syntheticIds.has(message.id);
-    const entryIds: string[] = [];
-    if (message.role === "USER") {
-      const encoded = encodeUser(message, userInputs[message.id]);
-      if (encoded) entryIds.push(manager.appendMessage(encoded));
-    } else if (message.role === "ASSISTANT") {
-      const fidelity = fidelityOf(message);
-      let decoded = fidelity ? decodeWithFidelity(message, fidelity) : null;
-      if (!decoded) {
-        decoded = decodeLegacy(message, fallbackModelId);
-        // 合成行不进退化名单:无注解走 legacy 是它唯一可走的路径(设计内),非编辑痕迹。
-        if (decoded.length && !synthetic) degradedMessageIds.push(message.id);
-      }
-      for (const piMessage of decoded) entryIds.push(manager.appendMessage(piMessage));
-    }
-    // SYSTEM 行不进引擎上下文:工作区会话的 system 面由 resources(系统提示词/appendSystemPrompt)全权承载
-    // 合成行不进切点映射:id 非 DB id,压缩切点若经外收拢落上来,反查 miss 由
-    // captureRoundCompactions 的 null 路径兜底(orchestrator 按尾消息收拢,现有语义)。
-    if (entryIds.length) {
-      if (firstSeededEntryId === null) firstSeededEntryId = entryIds[0];
-      if (!synthetic) entryIdsByMessageId.set(message.id, entryIds);
-    }
+/** 一条中立消息的回退编码。USER 行取应用物化的输入(缺省 = 没有可发送内容);ASSISTANT 行先按
+ *  保真注解解码,无注解或失配走 legacy(degraded);SYSTEM 行不进引擎上下文——工作区会话的
+ *  system 面由 resources(系统提示词/appendSystemPrompt)全权承载。 */
+export function encodeNeutralMessage(
+  message: Message,
+  input: PromptInput | undefined,
+  fallbackModelId: string,
+): { messages: PiAgentMessage[]; degraded: boolean } {
+  if (message.role === "USER") {
+    const encoded = encodeUser(message, input);
+    return { messages: encoded ? [encoded] : [], degraded: false };
   }
-
-  // 压缩:取切点仍在场的最新记录。firstKept 指向"切点行之前、不可吸收的开头段"
-  // 之后的第一个 entry,而非恒等于序列首 entry:
-  // - 生产路径(P9):富化窗口锚(windowStartMessageId)已把切点前的真实历史挡在
-  //   序列外,窗口内排在切点行之前的只可能是 top_of_chat 注入/首条时间提醒(都插
-  //   在窗口首条 USER 之前)——它们是配置快照,必须留在可见区;直接按切点行算
-  //   firstKept 会把它们盖进摘要区。故生产序列的首个 entry 就是正确的 firstKept。
-  // - 无窗口锚的直灌调用(本文件单测/潜在测试场景):切点前的真实历史在序列里,
-  //   它们理应被摘要吸收——firstKept 取切点行的首 entry,维持既有语义。
-  const applicable = (options.compactions ?? [])
-    .filter((record) => entryIdsByMessageId.has(record.cutMessageId))
-    .at(-1);
-  if (applicable) {
-    const cutEntryIds = entryIdsByMessageId.get(applicable.cutMessageId)!;
-    const summaryBoundary = syntheticIds.size
-      ? firstSeededEntryId
-      : cutEntryIds[0];
-    manager.appendCompaction(applicable.summary, summaryBoundary ?? cutEntryIds[0]!, applicable.tokensBefore);
-  }
-
-  return { entryIdsByMessageId, degradedMessageIds };
+  if (message.role !== "ASSISTANT") return { messages: [], degraded: false };
+  const fidelity = fidelityOf(message);
+  const decoded = fidelity ? decodeWithFidelity(message, fidelity) : null;
+  if (decoded) return { messages: decoded, degraded: false };
+  const legacy = decodeLegacy(message, fallbackModelId);
+  return { messages: legacy, degraded: legacy.length > 0 };
 }

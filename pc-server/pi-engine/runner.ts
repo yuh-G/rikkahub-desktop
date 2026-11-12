@@ -1,7 +1,7 @@
 // pi-engine/runner.ts — pi 会话生成驱动器(P2 骨架;P7 重写为统一会话数据)
 //
-// 一次调用 = 我们会话模型里的一轮生成:注入模型运行时(P1 model-bridge)→ 把选中路径
-// 历史灌注进内存 SessionManager(P7 context-encoder;inMemory,零 jsonl)→
+// 一次调用 = 我们会话模型里的一轮生成:注入模型运行时(P1 model-bridge)→ 把应用给的会话
+// 视图装进内存 SessionManager(session-view:有效原生条目原样、其余回退编码;inMemory,零 jsonl)→
 // 订阅事件经桥(event-bridge)映射为 GenerationEvent 灌进调用方 sink(生产侧即
 // host.emit)→ prompt 等待回合结束 → 按桥观察到的终局决定
 // return/throw,顺手捕获本轮 pi 自动压缩产物(摘要以会话行为事实源,见下)。
@@ -10,13 +10,11 @@
 // 上抛(应用侧 generateAnswer 的失败分支统一做 reportError/失败文本/注解)。生产调用方是
 // pi-engine/driver(EngineDriver 实现,输入全部来自契约)。
 //
-// P7 会话数据统一(方案 §4.7):SQLite 是唯一事实源,引擎上下文每轮从选中路径历史
-// 确定性重建(context-encoder 保真注解解码,失配行自校验退 legacy),不再有
-// 会话↔jsonl 文件关联。pi 自动压缩发生在 prompt 内部,结果捕获为
-// capturedCompactions(firstKeptEntryId 反查灌注映射回到 DB 消息 id),由调用方落
-// conversation.engineCompactions——下一轮经编码器 appendCompaction 重放,语义逐字等价。
-// P9 灌注统一:history 是富化全序列(含合成行,orchestrator 以压缩切点为富化窗口
-// 锚),聊天位注入/时间提醒在工作区会话与聊天引擎逐字同生效。
+// 会话数据(方案 §4.7 / §5.4):引擎上下文每轮由会话视图重建,不再有会话↔jsonl 文件关联。
+// pi 自动压缩发生在 prompt 内部,结果捕获为 capturedCompactions(firstKeptEntryId 反查视图的
+// 条目映射回到消息 id),由调用方落 conversation.engineCompactions——下一轮由 session-view 重放。
+// 视图是富化全序列(含合成行,应用以压缩切点为富化窗口锚),聊天位注入/时间提醒在工作区会话
+// 与聊天引擎逐字同生效。
 //
 // P3 工具面:noTools:"builtin"——pi 内建 read/bash/edit/write 一律不启用(它们绕开
 // 我们的审批与边界壳),应用工具规格(ctx.tools)经 pi-engine/app-tools 包成 customTools,
@@ -28,9 +26,8 @@ import { markRuntimeStreamFunction } from "../../pi/packages/coding-agent/src/co
 import type { ModelRuntime } from "../../pi/packages/coding-agent/src/core/model-runtime.ts";
 import type { StreamFn } from "../../pi/packages/agent/src/types.ts";
 
-import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
+import type { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
 import type { GenerationEventSink } from "../inference-engine/events";
-import type { Message } from "../foundation/types";
 import { piAgentDir } from "../foundation/paths";
 import { CodedError } from "../foundation/errors";
 import {
@@ -48,13 +45,12 @@ import type { PiSessionResources } from "./resources";
 import type {
   AppToolSpec,
   CapturedEngineCompaction,
-  EngineCompactionRecord,
   EngineErrorReport,
+  EngineSessionView,
   ModelGrant,
-  PromptInput,
 } from "../engines/contract";
 import { createPiAppTools, type PiAppToolCaller } from "./app-tools";
-import { seedPiSessionFromHistory } from "./context-encoder";
+import { createPiSessionFromView } from "./session-view";
 
 export interface PiGenerationContext {
   /** 本轮模型授权(应用侧 engines/model-grant 组装:上限/请求头已是终值)。limits.contextWindow
@@ -67,21 +63,13 @@ export interface PiGenerationContext {
   /** 助手思考强度(assistant.reasoningLevel 原值;经 piThinkingLevelFor 译成 pi 档位:
    *  off→off、六档直传、auto/未知→medium)。不传=medium(纯测试/冒烟场景)。 */
   reasoningLevel?: string | null;
-  /** 会话身份(引擎上下文与身份无关,纯由 history 决定)。 */
+  /** 会话身份:pi 会话 id 取它(prompt_cache_key 与会话亲和头跨轮稳定)。 */
   conversationId: string;
   /** 会话工作目录(工作区边界内的绝对路径)。 */
   cwd: string;
-  /** P9:选中路径上的历史消息(富化全序列,含合成行——提醒/聊天位注入,
-   *  syntheticIds 标出;不含本轮新用户输入——那条走 session.prompt)。 */
-  history: Message[];
-  /** 历史里 USER 行的模型可见输入(应用侧 userInputsFor 物化,按消息 id)。 */
-  userInputs: Record<string, PromptInput>;
-  /** P9:富化层 EnrichResult.syntheticIds,透传编码器(合成行照常编码,挡在切点
-   *  映射与退化诊断外)。生产侧生成路径必传;手动压缩路径传 real-only 序列,不传。 */
-  syntheticIds?: Set<string>;
-  /** P7:既有压缩记录(conversation.engineCompactions 解析产物;编码器只取切点仍在
-   *  历史中的最新一条生效)。 */
-  compactions?: EngineCompactionRecord[];
+  /** 会话视图(生产 = host.session.load):富化全序列,含合成行与既有压缩记录,不含本轮新用户
+   *  输入——那条走 session.prompt。 */
+  view: EngineSessionView;
   /** 本轮用户输入(文本;文档/OCR 已由 inference-engine/prompt-input 文本化)。 */
   promptText: string;
   /** 图片附件(pi 原生 prompt images 通道,P4 附件面)。 */
@@ -112,13 +100,13 @@ export interface PiGenerationContext {
 export interface PiGenerationResult {
   /** 全程 assistant 可见文本(镜像聊天引擎 allContent 口径:trim,空则占位)。 */
   text: string;
-  /** 灌注后走了 legacy 退化的 assistant 行 id(诊断;注解失配=用户编辑过历史)。 */
+  /** 装载时走了 legacy 退化的 assistant 行 id(诊断;注解失配=用户编辑过历史)。 */
   degradedMessageIds: string[];
   stopReason: string | null;
   capturedCompactions: CapturedEngineCompaction[];
 }
 
-/** 本轮新增的压缩条目 → DB 压缩记录。切点反查灌注映射(assistant 行一条消息产
+/** 本轮新增的压缩条目 → DB 压缩记录。切点反查视图的条目映射(assistant 行一条消息产
  *  多个 entry,任一命中即归属该消息);查不到 = 切点在本轮,交调用方外收拢。 */
 function captureRoundCompactions(
   manager: SessionManager,
@@ -172,16 +160,14 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   if (!mapped.ok) throw new Error(`该模型无法在工作区引擎使用：${mapped.reason}`);
   const { runtime, model } = await createModelRuntimeFor(mapped.mapping, ctx);
 
-  // P7:引擎上下文从 SQLite 历史每轮重建,inMemory 会话零文件生命周期。
-  const manager = SessionManager.inMemory(ctx.cwd);
-  const seeded = seedPiSessionFromHistory({
-    manager,
-    history: ctx.history,
-    userInputs: ctx.userInputs,
+  // 引擎上下文每轮由会话视图重建,inMemory 会话零文件生命周期。
+  const seeded = createPiSessionFromView({
+    cwd: ctx.cwd,
+    conversationId: ctx.conversationId,
+    view: ctx.view,
     fallbackModelId: ctx.grant.modelId,
-    syntheticIds: ctx.syntheticIds,
-    compactions: ctx.compactions,
   });
+  const manager = seeded.manager;
   const seededEntryIds = new Set(manager.getEntries().map((entry) => entry.id));
 
   const { session } = await createAgentSession({
@@ -285,10 +271,8 @@ export interface PiCompactionContext {
   reasoningLevel?: string | null;
   conversationId: string;
   cwd: string;
-  /** P7:同 runPiGeneration——压缩前的引擎上下文同样从 DB 历史+既有压缩记录重建。 */
-  history: Message[];
-  userInputs: Record<string, PromptInput>;
-  compactions?: EngineCompactionRecord[];
+  /** 同 runPiGeneration——压缩前的引擎上下文同样由会话视图重建(压缩调用的视图只含真实行)。 */
+  view: EngineSessionView;
   /** 受控资源装配(生产必传:压缩会话也不许打开 .pi/settings.json 注入面)。 */
   resources?: PiSessionResources;
   /** 用户附加指示(compress 框的 additionalPrompt → pi compact customInstructions)。 */
@@ -345,14 +329,13 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
   if (!mapped.ok) throw new Error(`该模型无法在工作区引擎使用：${mapped.reason}`);
   const { runtime, model } = await createModelRuntimeFor(mapped.mapping, ctx);
 
-  const manager = SessionManager.inMemory(ctx.cwd);
-  const seeded = seedPiSessionFromHistory({
-    manager,
-    history: ctx.history,
-    userInputs: ctx.userInputs,
+  const seeded = createPiSessionFromView({
+    cwd: ctx.cwd,
+    conversationId: ctx.conversationId,
+    view: ctx.view,
     fallbackModelId: ctx.grant.modelId,
-    compactions: ctx.compactions,
   });
+  const manager = seeded.manager;
   const seededEntryIds = new Set(manager.getEntries().map((entry) => entry.id));
 
   const { session } = await createAgentSession({

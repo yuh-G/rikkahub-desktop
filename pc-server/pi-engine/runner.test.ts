@@ -1,7 +1,7 @@
 // pi-engine/runner.test.ts — pi 会话驱动器集成测试(P2 骨架,P7 改 unified 语义)
 //
 // 真实链路:假 OpenAI SSE 服务器 → model-bridge 内存注册 → SessionManager.inMemory
-// (P7:上下文从 history 灌注,零 jsonl)→ 事件桥 → sink。覆盖:首轮生成、DB 历史
+// (上下文由会话视图装载,零 jsonl)→ 事件桥 → sink。覆盖:首轮生成、DB 历史
 // 灌注回放(硬证据:上游请求体携带灌注的历史)、既有压缩记录重放(pi 引擎上下文
 // 以摘要起头=编码器 appendCompaction 语义生效)、手动压缩捕获、预中止。
 //
@@ -17,12 +17,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { GenerationEvent } from "../inference-engine/events";
+import type { EngineCompactionRecord } from "../engines/contract";
 import type { Message } from "../foundation/types";
 import { message } from "../foundation/utils";
 import { model, provider } from "../model-providers";
-import { userInputsFor } from "../inference-engine/prompt-input";
 import { runPiCompaction, runPiGeneration } from "./runner";
 import { modelGrantFor } from "../engines/model-grant";
+import { sessionViewOf } from "../test-utils/engine-session-view";
 import { startFakeOpenAiSse, type FakeOpenAiSseServer } from "../test-utils/fake-openai-sse";
 
 const PROVIDER_ID = "00000000-0000-4000-8000-000000000002";
@@ -49,21 +50,26 @@ afterAll(async () => {
   await server.close();
 });
 
-function testContext(conversationId: string, promptText: string, extras: Partial<Parameters<typeof runPiGeneration>[0]> = {}) {
+interface HistoryExtras {
+  history?: Message[];
+  syntheticIds?: Set<string>;
+  compactions?: EngineCompactionRecord[];
+}
+
+function testContext(conversationId: string, promptText: string, extras: HistoryExtras = {}) {
   const events: GenerationEvent[] = [];
   const ourProvider = provider({ id: PROVIDER_ID, name: "Runner Test Provider", baseUrl: server.baseUrl, apiKey: "sk-test" });
   const ourModel = model("fake-model", "Runner Test Model");
+  const { history = [], ...viewOptions } = extras;
   return {
     events,
     ctx: {
       grant: modelGrantFor(ourProvider, ourModel, null, conversationId)!,
       conversationId,
       cwd,
-      history: [] as Message[],
+      view: sessionViewOf(history, { model: ourModel, ...viewOptions }),
       promptText,
       sink: (event: GenerationEvent) => events.push(event),
-      ...extras,
-      userInputs: userInputsFor(extras.history ?? [], ourModel),
     },
   };
 }
@@ -117,8 +123,7 @@ describe("pi runner 集成(P7 统一会话数据)", () => {
       grant: modelGrantFor(ourProvider, ourModel, null, "conv-runner-manual")!,
       conversationId: "conv-runner-manual",
       cwd,
-      history: [user1, asst1],
-      userInputs: userInputsFor([user1, asst1], ourModel),
+      view: sessionViewOf([user1, asst1], { model: ourModel }),
       sink: (event: GenerationEvent) => events.push(event),
     });
 
@@ -165,7 +170,7 @@ describe("pi runner 集成(P7 统一会话数据)", () => {
   }, 20_000);
 
   test("P9 合成行灌注:富化全序列(含注入/提醒)进引擎,上游请求体可见", async () => {
-    // 复刻 orchestrator 生成路径的装配形状:history = 富化全序列,syntheticIds 标出
+    // 复刻 orchestrator 生成路径的装配形状:视图 = 富化全序列,合成行标出
     // 合成行;压缩切点作富化窗口锚(这里直接给一个已对齐的切点场景:切点=user2,
     // 切点前的真实行已被富化窗口挡在序列外——富化层职责,此处直接给结果)。
     const user2 = message("USER", [{ type: "text", text: "P9 新问" }]);

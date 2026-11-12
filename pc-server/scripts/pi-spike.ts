@@ -16,7 +16,7 @@ const { model, provider } = await import("../model-providers");
 const { createGenerationEventApplier } = await import("../conversations/generation-apply");
 const { runPiGeneration } = await import("../pi-engine/runner");
 const { modelGrantFor } = await import("../engines/model-grant");
-const { userInputsFor } = await import("../inference-engine/prompt-input");
+const { sessionViewOf } = await import("../test-utils/engine-session-view");
 const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
 
 const SPIKE_PROVIDER_ID = "00000000-0000-4000-8000-000000000001";
@@ -59,8 +59,7 @@ async function main(): Promise<void> {
 			grant: modelGrantFor(ourProvider, ourModel, null, conversation.id)!,
 			conversationId: conversation.id,
 			cwd,
-			history: [],
-			userInputs: {},
+			view: sessionViewOf([]),
 			promptText: "Say hello",
 			sink: apply,
 		});
@@ -75,7 +74,7 @@ async function main(): Promise<void> {
 		if (assistantMessage.parts.some((part) => part.type === "loading")) throw new Error("loading 占位未被剥离");
 		if (!assistantMessage.usage) throw new Error("usage 未合并");
 
-		// 第二轮:P7 语义——上一轮问答作为 history 灌注(生产侧由 generateAnswer 从
+		// 第二轮:P7 语义——上一轮问答作为会话视图灌注(生产侧由 generateAnswer 从
 		// 选中路径构建),灌注的历史必须回放给上游(DB 单一事实源的硬证据)。
 		const user1 = message("USER", [{ type: "text", text: "Say hello" }]);
 		const asst1 = message("ASSISTANT", [{ type: "text", text: FAKE_REPLY }]);
@@ -83,8 +82,7 @@ async function main(): Promise<void> {
 			grant: modelGrantFor(ourProvider, ourModel, null, conversation.id)!,
 			conversationId: conversation.id,
 			cwd,
-			history: [user1, asst1],
-			userInputs: userInputsFor([user1, asst1], ourModel),
+			view: sessionViewOf([user1, asst1], { model: ourModel }),
 			promptText: "And again",
 			sink: apply,
 		});
