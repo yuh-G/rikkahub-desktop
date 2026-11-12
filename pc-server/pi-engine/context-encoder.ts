@@ -20,7 +20,7 @@
 //
 // 确定性=缓存稳定性(§4.8 硬约束):同一历史两次编码逐字节一致(单测锁定)。所有输入
 // 均来自行级数据(parts/annotations/createdAt/modelId),不掺时钟与随机数。USER 行的
-// 模型可见输入由应用侧预先物化(契约 EngineHistory.userInputs,promptInputFromParts→
+// 模型可见输入由应用侧预先物化(契约 EngineSessionItem.input,promptInputFromParts→
 // contentPartsForApi,与生成入口同一母本),本编码器不读应用的文件表。模型切换会改历史
 // 用户消息的图片降级口径→前缀变化=一次性破缓存,与聊天引擎同语义,接受。
 //
@@ -399,7 +399,7 @@ export interface PiHistoryEncodeResult {
 export function seedPiSessionFromHistory(options: {
   manager: SessionManager;
   history: Message[];
-  /** USER 行的模型可见输入(契约 EngineHistory.userInputs)。 */
+  /** USER 行的模型可见输入(契约 EngineSessionItem.input,按消息 id)。 */
   userInputs: Record<string, PromptInput>;
   /** legacy 行缺 modelId 时 AssistantMessage.model 的占位(会话模型 id)。 */
   fallbackModelId: string;

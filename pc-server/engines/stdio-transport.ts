@@ -22,6 +22,7 @@ import type {
   EngineDriver,
   EngineHost,
   EngineKind,
+  EngineSessionView,
   SubscriptionCredential,
   TurnResult,
 } from "./contract";
@@ -186,6 +187,8 @@ export function connectDriverOverStdio(
     {
       "engine.ready": (kind: EngineKind, capabilities: EngineCapabilities) => resolveReady(driverProxy(kind, capabilities)),
       "host.emit": (...args: Parameters<EngineHost["emit"]>) => host.emit(...args),
+      "host.session.load": (...args: Parameters<EngineHost["session"]["load"]>) => host.session.load(...args),
+      "host.session.append": (...args: Parameters<EngineHost["session"]["append"]>) => host.session.append(...args),
       "host.tools.call": (...args: Parameters<EngineHost["tools"]["call"]>) => host.tools.call(...args),
       "host.steer.take": (...args: Parameters<EngineHost["steer"]["take"]>) => host.steer.take(...args),
       "host.models.credential": (...args: Parameters<EngineHost["models"]["credential"]>) => host.models.credential(...args),
@@ -254,6 +257,12 @@ export function serveDriverOverStdio(
   );
   const host: EngineHost = {
     emit: (turn, event) => peer.notify("host.emit", [turn, event]),
+    session: {
+      load: (turn) => peer.request("host.session.load", [turn]) as Promise<EngineSessionView>,
+      append: async (turn, entries) => {
+        await peer.request("host.session.append", [turn, entries]);
+      },
+    },
     tools: { call: (call) => peer.request("host.tools.call", [call]) as Promise<AppToolResult> },
     steer: { take: (turn) => peer.request("host.steer.take", [turn]) as Promise<string[]> },
     models: {

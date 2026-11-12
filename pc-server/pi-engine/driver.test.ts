@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { CodedError } from "../foundation/errors";
+import { message } from "../foundation/utils";
 import type { GenerationEvent } from "../inference-engine/events";
 import type {
   AppToolCall,
@@ -18,6 +19,7 @@ import type {
   EngineErrorReport,
   EngineHost,
   EngineInstructions,
+  EngineSessionView,
   ModelRequestRecord,
   TurnInput,
   TurnRef,
@@ -42,16 +44,24 @@ const instructions: EngineInstructions = {
 
 interface HostLog {
   events: Array<{ turn: TurnRef; event: GenerationEvent }>;
+  sessionLoads: TurnRef[];
   toolCalls: AppToolCall[];
   steerTakes: TurnRef[];
   reports: EngineErrorReport[];
   requests: Array<{ turn: TurnRef; record: ModelRequestRecord }>;
 }
 
-function fakeHost(options: { steer?: () => string[]; tool?: (call: AppToolCall) => Promise<AppToolResult> } = {}) {
-  const log: HostLog = { events: [], toolCalls: [], steerTakes: [], reports: [], requests: [] };
+function fakeHost(options: { steer?: () => string[]; tool?: (call: AppToolCall) => Promise<AppToolResult>; view?: EngineSessionView } = {}) {
+  const log: HostLog = { events: [], sessionLoads: [], toolCalls: [], steerTakes: [], reports: [], requests: [] };
   const host: EngineHost = {
     emit: (turn, event) => void log.events.push({ turn, event }),
+    session: {
+      load: async (turn) => {
+        log.sessionLoads.push(turn);
+        return options.view ?? { items: [], compactions: [] };
+      },
+      append: async () => undefined,
+    },
     tools: {
       call: async (call) => {
         log.toolCalls.push(call);
@@ -94,7 +104,6 @@ function inputFor(server: FakeOpenAiSseServer, prompt: string, tools: TurnInput[
     reasoningLevel: null,
     workspace: { cwd: root, root },
     instructions,
-    history: { messages: [], syntheticIds: [], compactions: [], userInputs: {} },
     prompt: { text: prompt, images: [] },
     tools,
   };
@@ -150,6 +159,30 @@ describe("pi 驱动 × 契约(strict 回环)", () => {
     }
   }, 30_000);
 
+  test("历史只经 host.session.load 取:视图项按序编码进请求,合成行照常编码", async () => {
+    const server = await upstream([{ content: "好" }]);
+    const user = message("USER", [{ type: "text", text: "早先的问题" }]);
+    const ai = message("ASSISTANT", [{ type: "text", text: "早先的回答" }], "fake-model");
+    const reminder = message("USER", [{ type: "text", text: "时间提醒" }]);
+    const { host, log } = fakeHost({
+      view: {
+        items: [
+          { message: user, synthetic: false, input: { text: "早先的问题", images: [] } },
+          { message: ai, synthetic: false },
+          { message: reminder, synthetic: true, input: { text: "时间提醒", images: [] } },
+        ],
+        compactions: [],
+      },
+    });
+    const turn = { conversationId: "conv-driver-view", turnId: "turn-view" };
+    await strictDriver(host).startTurn({ ...turn, input: inputFor(server, "新问题") });
+    expect(log.sessionLoads).toEqual([turn]);
+    const sent = JSON.stringify(server.requests[0]?.messages);
+    const order = ["早先的问题", "早先的回答", "时间提醒", "新问题"].map((text) => sent.indexOf(text));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  }, 30_000);
+
   test("abort(conversationId):在途轮次被中止,正常返回(中止收尾归应用)", async () => {
     let release!: () => void;
     const toolStarted = new Promise<void>((resolve) => {
@@ -200,7 +233,6 @@ describe("pi 驱动 × 契约(strict 回环)", () => {
         reasoningLevel: null,
         workspace: { cwd: root, root },
         instructions,
-        history: { messages: [], syntheticIds: [], compactions: [], userInputs: {} },
         customInstructions: "",
       })
       .catch((err: unknown) => err);

@@ -14,6 +14,9 @@
 //   经 host.models.credential 取应用刷新过的令牌——刷新权只在应用。
 // - 取消是 driver.abort(conversationId, reason),不传 AbortSignal。
 // - 活落点不进契约:事件只带 turnId,落到哪个消息节点由应用决定;补发分裂在 host.steer.take 里完成。
+// - 会话存储(§5.4):引擎经 host.session.load 取视图(富化后的选中路径 + 每项的有效原生条目),
+//   经 host.session.append 追加原生条目。锚定(当前落点)与封存都在应用侧:封存的摘要必须取应用
+//   收尾(输出变换等)之后的中立内容,而收尾发生在引擎的轮次结束之后,所以封存不进契约。
 // - 应用工具一律经 host.tools.call:审批(含 ask_user 提问)、执行、结果实体化在应用侧一次完成,
 //   执行中的部分输出由应用直接写进工具卡,不回绕引擎。
 // - 模型请求日志:引擎把请求交给引擎侧的模型出口(engines/model-outlet,带显式供应商身份的
@@ -87,16 +90,42 @@ export interface CapturedEngineCompaction {
   tokensBefore: number;
 }
 
-/** 引擎会话视图(P3 前的取法:富化后的选中路径消息序列,内嵌在请求里;P3 改为 host 装载)。 */
-export interface EngineHistory {
-  /** 富化全序列(含合成行:时间提醒、聊天位注入),不含本轮新用户输入。 */
-  messages: Message[];
-  /** 合成行的 id(编码时照常编码,但挡在压缩切点映射与退化诊断之外)。 */
-  syntheticIds: string[];
+// ---- 会话存储(§5.4) ----
+
+/** 引擎原生条目(应用只存取不解释 payload)。format 是引擎自定的格式版本;entryId 是条目自身的
+ *  id(可空:DSH 以序号为身份),同会话同引擎内唯一,重复追加被跳过——对账可以整批重放。 */
+export interface EngineEntryInput {
+  format: string;
+  entryId?: string | null;
+  payload: JsonValue;
+}
+
+export interface EngineEntry {
+  /** 会话内追加序号(跨锚定递增)。 */
+  seq: number;
+  format: string;
+  entryId: string | null;
+  payload: JsonValue;
+}
+
+/** 会话视图的一项:选中路径上的一条中立消息。 */
+export interface EngineSessionItem {
+  /** 富化后的消息(模板已渲染)。 */
+  message: Message;
+  /** 合成行(时间提醒、聊天位注入):照常编码,但挡在压缩切点映射与退化诊断之外;不会有原生条目。 */
+  synthetic: boolean;
+  /** USER 行的模型可见输入(附件物化读应用的文件表,所以在应用侧做)。缺省 = 该行没有可发送内容。 */
+  input?: PromptInput;
+  /** 本引擎锚定在这条消息上的原生条目(seq 升序)。只在条目已封存、且消息的引擎可见内容与封存时
+   *  一致时给出;缺省 = 由中立内容回退编码(编辑过、别的引擎生成、老数据、生成中崩溃未封存)。 */
+  native?: EngineEntry[];
+}
+
+/** 引擎会话视图(host.session.load)。复用粒度由驱动定:逐项取用,或只取从头起的最长有效前缀。 */
+export interface EngineSessionView {
+  /** 按选中路径排列(窗口化后),不含本轮新用户输入。 */
+  items: EngineSessionItem[];
   compactions: EngineCompactionRecord[];
-  /** USER 行的模型可见输入,按消息 id(附件物化读应用的文件表,所以在应用侧做)。
-   *  缺项 = 该行没有可发送内容。 */
-  userInputs: Record<string, PromptInput>;
 }
 
 /** 会话工作区(工作区会话才有)。cwd 是会话工作目录,root 是边界根。 */
@@ -229,7 +258,6 @@ export interface TurnInput {
   reasoningLevel: string | null;
   workspace: EngineWorkspace | null;
   instructions: EngineInstructions;
-  history: EngineHistory;
   prompt: PromptInput;
   tools: AppToolSpec[];
 }
@@ -259,8 +287,6 @@ export interface CompactRequest {
   reasoningLevel: string | null;
   workspace: EngineWorkspace | null;
   instructions: EngineInstructions;
-  /** 只含真实行(合成行不进摘要)。 */
-  history: EngineHistory;
   customInstructions: string;
 }
 
@@ -307,6 +333,12 @@ export interface EngineDriver {
 export interface EngineHost {
   /** 流式事件(GenerationEvent 是两种引擎共用的联合类型)。 */
   emit(turn: TurnRef, event: GenerationEvent): void;
+  session: {
+    /** 本次调用的会话视图。压缩调用的视图只含真实行(合成行不进摘要)。 */
+    load(turn: TurnRef): Promise<EngineSessionView>;
+    /** 追加原生条目,锚定到应用的当前落点消息。压缩调用不接收(以错误拒绝)。 */
+    append(turn: TurnRef, entries: EngineEntryInput[]): Promise<void>;
+  };
   tools: { call(call: AppToolCall): Promise<AppToolResult> };
   /** 轮边界取「生成中补发」的消息文本;应用在同一调用里完成数据层分裂。空数组 = 无补发。 */
   steer: { take(turn: TurnRef): Promise<string[]> };

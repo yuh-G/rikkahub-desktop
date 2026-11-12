@@ -7,6 +7,7 @@
 // - 封存自校验:一轮结束时用 engineVisibleDigest(锚定范围内的中立消息)封存该锚定的全部行;
 //   装载方重算比对,不符(用户编辑过 / 选中分支变了)或未封存(生成中崩溃)即整组作废,
 //   引擎从中立记录回退编码。所以这张表缺失、陈旧、来自别的机器,都只会退化为回退。
+//   契约侧的读写与封存时机在 conversations/engine-session.ts。
 // - 生命周期:外键级联随会话删除;消息删除留下的孤儿由 persistConversation 同事务清除。
 //   会话头(pc_engine_session)每会话每引擎一行:DSH 的格式版本在头上而不在事件上(X1)。
 
@@ -22,6 +23,7 @@ import type {
   PcEngineTablesRows,
   ToolOutputEntry,
 } from "../foundation/types";
+import type { EngineEntry, EngineEntryInput } from "../engines/contract";
 import { reportError } from "../observability/app-errors";
 
 type Db = InstanceType<typeof Database>;
@@ -102,19 +104,6 @@ export function engineVisibleDigest(messages: readonly Message[]): string {
 
 // ----- 存取 -----
 
-export interface EngineEntryInput {
-  format: string;
-  entryId?: string | null;
-  payload: JsonValue;
-}
-
-export interface EngineEntry {
-  seq: number;
-  format: string;
-  entryId: string | null;
-  payload: JsonValue;
-}
-
 /** 一个锚定的全部条目(seq 升序)。digest 只在整组行都封存且一致时非空,否则该组无效。 */
 export interface EngineEntryGroup {
   anchorMessageId: string;
@@ -184,11 +173,18 @@ export function appendEngineEntries(db: Db, conversationId: string, engine: stri
   })();
 }
 
-/** 封存一个锚定的全部行(含此前封存过、本轮又追加的)。返回封存的行数。 */
+/** 封存一个锚定的全部行。返回封存的行数。 */
 export function sealEngineEntries(db: Db, conversationId: string, engine: string, anchorMessageId: string, digest: string): number {
   return db
     .prepare("UPDATE pc_engine_entry SET digest = ? WHERE conversation_id = ? AND engine = ? AND anchor_message_id = ?")
     .run(digest, conversationId, engine, anchorMessageId).changes;
+}
+
+/** 删除一个锚定的全部行,返回删除的行数(锚定消息被新一次生成复用时,旧条目作废)。 */
+export function clearEngineEntries(db: Db, conversationId: string, engine: string, anchorMessageId: string): number {
+  return db
+    .prepare("DELETE FROM pc_engine_entry WHERE conversation_id = ? AND engine = ? AND anchor_message_id = ?")
+    .run(conversationId, engine, anchorMessageId).changes;
 }
 
 export function readEngineSessionHeader(db: Db, conversationId: string, engine: string): EngineSessionHeader | null {

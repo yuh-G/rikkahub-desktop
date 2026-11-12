@@ -17,6 +17,7 @@ function wire(createDriver: (host: EngineHost) => EngineDriver, host: Partial<En
   const protocolErrors: string[] = [];
   const fullHost: EngineHost = {
     emit: (_turn, event) => void order.push(`emit:${event.kind}`),
+    session: { load: async () => ({ items: [], compactions: [] }), append: async () => undefined },
     tools: { call: async () => ({ content: [] }) },
     steer: { take: async () => [] },
     models: { credential: async () => ({}), log: () => undefined },

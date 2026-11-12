@@ -103,6 +103,7 @@ describe("connectDriver / connectHost", () => {
   test("strict:宿主侧单向通知同样校验(emit 携带函数即抛)", () => {
     const host: EngineHost = {
       emit: () => undefined,
+      session: { load: async () => ({ items: [], compactions: [] }), append: async () => undefined },
       tools: { call: async () => ({ content: [] }) },
       steer: { take: async () => [] },
       models: { credential: async () => ({}), log: () => undefined },

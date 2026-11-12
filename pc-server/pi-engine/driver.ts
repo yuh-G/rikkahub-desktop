@@ -1,8 +1,9 @@
 // pi-engine/driver.ts — pi 引擎的 EngineDriver 实现(P2.2,placement: "portable")
 //
-// 输入全部来自契约:TurnRequest.input / CompactRequest(模型授权、历史、指令、工具规格、本轮
-// 输入)与 EngineHost(事件、工具调用、补发、订阅令牌、诊断)。本模块不读应用状态,所以能原样
-// 搬进子进程(P2.6 跨进程冒烟)。
+// 输入全部来自契约:TurnRequest.input / CompactRequest(模型授权、指令、工具规格、本轮输入)与
+// EngineHost(会话视图、事件、工具调用、补发、订阅令牌、诊断)。本模块不读应用状态,所以能原样
+// 搬进子进程(P2.6 跨进程冒烟)。会话视图里的原生条目暂不取用,整条视图由中立内容编码
+// (context-encoder)。
 //
 // 取消:应用调 abort(conversationId),驱动中止该会话登记的控制器(轮次或压缩,同会话不会
 // 并存)。登记发生在 startTurn/compact 的同步前缀里,应用在调用之前挂好中止监听,所以从
@@ -18,6 +19,7 @@ import type {
   EngineDriver,
   EngineErrorReport,
   EngineHost,
+  EngineSessionView,
   ModelGrant,
   TurnRef,
   TurnRequest,
@@ -55,6 +57,16 @@ function summarizerGrant(req: CompactRequest, report: (report: EngineErrorReport
   return req.model;
 }
 
+/** 视图 → 中立编码器的输入。 */
+function encoderInputOf(view: EngineSessionView) {
+  return {
+    history: view.items.map((item) => item.message),
+    userInputs: Object.fromEntries(view.items.flatMap((item) => (item.input ? [[item.message.id, item.input] as const] : []))),
+    syntheticIds: new Set(view.items.filter((item) => item.synthetic).map((item) => item.message.id)),
+    compactions: view.compactions,
+  };
+}
+
 export function createPiDriver(host: EngineHost): EngineDriver {
   const running = new Map<string, AbortController>();
 
@@ -86,6 +98,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
         if (!input) throw new Error("pi 驱动缺少 TurnInput(portable 驱动必须收完整输入)。");
         if (!input.workspace) throw new Error(MISSING_WORKSPACE);
         const { cwd, root } = input.workspace;
+        const history = encoderInputOf(await host.session.load(turn));
         const resources = await createPiSessionResources({ cwd, root, instructions: input.instructions, report });
         const result = await runPiGeneration({
           grant: input.model,
@@ -95,10 +108,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
           reasoningLevel: input.reasoningLevel,
           conversationId: req.conversationId,
           cwd,
-          history: input.history.messages,
-          userInputs: input.history.userInputs,
-          syntheticIds: new Set(input.history.syntheticIds),
-          compactions: input.history.compactions,
+          ...history,
           promptText: input.prompt.text,
           images: input.prompt.images,
           resources,
@@ -125,6 +135,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
       try {
         if (!req.workspace) throw new Error(MISSING_WORKSPACE);
         const { cwd, root } = req.workspace;
+        const { history, userInputs, compactions } = encoderInputOf(await host.session.load(turn));
         const resources = await createPiSessionResources({
           cwd,
           root,
@@ -142,9 +153,9 @@ export function createPiDriver(host: EngineHost): EngineDriver {
           reasoningLevel: req.reasoningLevel,
           conversationId: req.conversationId,
           cwd,
-          history: req.history.messages,
-          userInputs: req.history.userInputs,
-          compactions: req.history.compactions,
+          history,
+          userInputs,
+          compactions,
           resources,
           customInstructions: req.customInstructions,
           sink: (event) => host.emit(turn, event),

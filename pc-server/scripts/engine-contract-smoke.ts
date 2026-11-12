@@ -89,7 +89,6 @@ function inputFor(prompt: string): TurnInput {
     reasoningLevel: null,
     workspace: { cwd: workspaceRoot, root: workspaceRoot },
     instructions,
-    history: { messages: [], syntheticIds: [], compactions: [], userInputs: {} },
     prompt: { text: prompt, images: [] },
     tools: [writeNote],
   };
@@ -105,6 +104,7 @@ let steerQueue: string[] = [];
 
 const host: EngineHost = {
   emit: (turn, event) => void events.push({ turn, event }),
+  session: { load: async () => ({ items: [], compactions: [] }), append: async () => undefined },
   tools: {
     async call(call) {
       toolCalls.push(call);

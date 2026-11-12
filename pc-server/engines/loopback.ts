@@ -125,6 +125,10 @@ export function connectHost(host: EngineHost, options: { strict: boolean }): Eng
   if (!options.strict) return host;
   return {
     emit: strictCall("host.emit", host.emit.bind(host)),
+    session: {
+      load: strictCall("host.session.load", host.session.load.bind(host.session)),
+      append: strictCall("host.session.append", host.session.append.bind(host.session)),
+    },
     tools: { call: strictCall("host.tools.call", host.tools.call.bind(host.tools)) },
     steer: { take: strictCall("host.steer.take", host.steer.take.bind(host.steer)) },
     models: {

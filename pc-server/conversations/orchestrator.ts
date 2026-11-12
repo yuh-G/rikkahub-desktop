@@ -46,6 +46,7 @@ import { applyOutputTransforms } from "../assistants";
 import { TITLE_CHARACTER_LIMIT } from "../app-config/prompts";
 import { flushConvDirtyNow, getConversation, getConversationsDb, markConversationRowDirty, markMessageNodeDirty, persistConversation, scheduleThrottledConvFlush, selectedConversationMessages } from "./index";
 import { checkoutConversation, releaseConversation } from "./working-set";
+import { buildEngineSessionView, createEngineSessionWriter, type EngineSessionWriter } from "./engine-session";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
 import { abortGeneration, abortReasonOf, awaitingApproval, compressing, generating } from "./generation-state";
@@ -468,6 +469,8 @@ interface GenerationTurnContext {
   model: Model;
   /** 工具执行闭包(内部已挂生成级 signal 与部分输出回写)。 */
   executeTool: ToolExecutor;
+  /** 本次生成的引擎私有条目写入方(只有 portable 驱动经 host.session.append 写)。 */
+  sessionWriter: EngineSessionWriter;
   /** steering 轮边界:只下发给声明 steering:"boundary" 的驱动。调用即排水并完成数据层分裂
    *  (落库补发、换绑落点、通知 FIFO 队列移除),返回补发文本;空数组 = 无补发。 */
   onSteerBoundary?: () => string[];
@@ -492,7 +495,8 @@ interface CompactionContext {
  *  - prompt 输入取末 USER 节点选中消息(P4 附件面:文档/OCR 文本化与聊天引擎同母本,
  *    图片单独成列);prompt 文本经消息模板渲染(四件套之一);
  *  - 引擎上下文 = 富化后的选中路径历史(不含本轮 prompt 消息)+ conversation.engineCompactions,
- *    引擎每轮据此确定性重建——重新生成/编辑重发/分支切换天然生效(UI 选中路径就是引擎
+ *    经 host.session.load 交给引擎(视图由 conversations/engine-session 组装),引擎每轮据此
+ *    确定性重建——重新生成/编辑重发/分支切换天然生效(UI 选中路径就是引擎
  *    记忆,所见即所记);
  *  - 消息富化 = enrichMessages(四件套共享层):模板/时间提醒/lorebook+模式注入/
  *    窗口化(滞回截断 ∨ 压缩切点锚,P9)——聊天位注入/时间提醒随富化全序列(含
@@ -559,17 +563,24 @@ async function runPortableGeneration(
     reasoningLevel: deps.assistant.reasoningLevel,
     workspace: route.workspace ? { cwd: route.workspace.cwd, root: route.workspace.root } : null,
     instructions,
-    history: {
-      messages: enriched.messages,
-      syntheticIds: [...enriched.syntheticIds],
-      compactions: compactionRecords,
-      userInputs: userInputsFor(enriched.messages, deps.selectedModel),
-    },
     prompt: promptInput,
     tools,
   };
   const binding: EngineTurnBinding = {
     sink,
+    session: {
+      view: buildEngineSessionView(getConversationsDb(), {
+        conversationId: conversation.id,
+        engine: driver.kind,
+        neutral: historySource,
+        enriched: enriched.messages,
+        syntheticIds: enriched.syntheticIds,
+        userInputs: userInputsFor(enriched.messages, deps.selectedModel),
+        compactions: compactionRecords,
+      }),
+      // 锚定 = 调用时的落点(补发分裂后是续写消息),每次现读。
+      append: (entries) => ctx.sessionWriter.append(target.message.id, entries),
+    },
     callTool: createAppToolCaller(toolContext, tools),
     // steering 轮边界(用户问题②):编排层同一回调经 host.steer.take 直通引擎,在引擎轮边界
     // 调用(落库/队列联动/分裂在 steerBoundary,引擎只拿文本注入)。
@@ -650,8 +661,9 @@ async function runPortableCompaction(
   if (!driver.compact) throw new Error(`引擎 ${driver.kind} 未实现原生压缩`);
   const compact = driver.compact.bind(driver);
   const compactionRecords = parseEngineCompactions(conversation.engineCompactions);
-  const cut = effectiveEngineCompaction(compactionRecords, selectedConversationMessages(conversation), ctx.model);
-  const enriched = enrichMessages(selectedConversationMessages(conversation), {
+  const neutral = selectedConversationMessages(conversation);
+  const cut = effectiveEngineCompaction(compactionRecords, neutral, ctx.model);
+  const enriched = enrichMessages(neutral, {
     conversation,
     assistant,
     model: ctx.model,
@@ -674,10 +686,23 @@ async function runPortableCompaction(
     reasoningLevel: assistant.reasoningLevel,
     workspace: route.workspace ? { cwd: route.workspace.cwd, root: route.workspace.root } : null,
     instructions: buildEngineInstructions(conversation, assistant, ctx.model, systemInjection ? [systemInjection] : undefined),
-    history: { messages: history, syntheticIds: [], compactions: compactionRecords, userInputs: userInputsFor(history, ctx.model) },
     customInstructions: ctx.customInstructions,
   };
-  const binding: EngineTurnBinding = { sink, providers: [ctx.provider, ctx.summarizer.provider] };
+  const binding: EngineTurnBinding = {
+    sink,
+    session: {
+      view: buildEngineSessionView(getConversationsDb(), {
+        conversationId: conversation.id,
+        engine: driver.kind,
+        neutral,
+        enriched: history,
+        syntheticIds: new Set(),
+        userInputs: userInputsFor(history, ctx.model),
+        compactions: compactionRecords,
+      }),
+    },
+    providers: [ctx.provider, ctx.summarizer.provider],
+  };
   const result = await callEngineDriver(driver, turn, binding, signal, "Compaction cancelled", () => compact(request));
   // 产物落库与生成路径的压缩捕获同一落点、同一 helper。
   applyCapturedEngineCompactions(conversation, [result.compaction]);
@@ -781,13 +806,14 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
   // P1-3:四条出口路径(pending/done/aborted/failed)的共同收尾序列。差异只在 parts 与
   // finishedAt 处理,由 applyParts 注入。completeConversationGeneration 幂等,finally 兜底。
   // 落点读 session 当前值:无 steer 时=ai_1,有 steer 时=ai_2——四条路径同正确。
-  const finalizeOutcome = (applyParts: () => void) => {
+  // 返回 false = 被接管守卫拦下(消息已易主,本流不收尾)。
+  const finalizeOutcome = (applyParts: () => void): boolean => {
     // 批6复审 G2:接管守卫——被新流接管且新流复用同一消息对象时,旧流的收尾若继续执行,
     // 会对新流正在写的回答做 transforms/盖 finishedAt/写估算 usage,失败分支甚至把
     // "请求失败"文本和 model_call_error 注解追加进去。此时静默退出(消息已易主,由新流
     // 负责收尾);新流用的是新消息对象时,旧流仍照常收尾自己的消息,行为不变。
     const owner = generating.get(conversation.id);
-    if (owner && owner !== controller && activeGenerationMessages.get(conversation.id) === session.message) return;
+    if (owner && owner !== controller && activeGenerationMessages.get(conversation.id) === session.message) return false;
     applyOutputTransforms(session.message, assistant);
     finishReasoningParts(session.message);
     // #59 补完:工具卡与思维链同规则收口——本流终局仍无终点戳的已执行工具在此定格
@@ -804,10 +830,15 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     completeConversationGeneration(conversation.id, controller);
     broadcastNodeUpdate(conversation, session.node);
     broadcastConversation(conversation);
+    return true;
   };
   // T1:续跑语义读驱动声明——仅 pause-resume 引擎(聊天)有"整批暂停→逐卡批准→
   // 重触发续跑";run-and-suspend 引擎(pi)的工具审批由 approval-gate 挂起汇合,不重触发。
   const resumingApprovedTools = capabilities.resumeSemantics === "pause-resume" && hasResumableToolParts(currentMessage);
+  // 引擎私有条目的写入方。入口复用了已有内容的助手消息时,这条消息本次不封存(engine-session 头注)。
+  const sessionWriter = createEngineSessionWriter(getConversationsDb(), conversation.id, route.driver.kind, {
+    reusedMessageId: currentMessage.parts.some((part) => part.type !== "loading") ? currentMessage.id : null,
+  });
   currentMessage.finishedAt = null;
   // R7-2:重入生成(续写/重试复用同一消息对象)时清掉上一轮的失败标记,
   // 本轮成功后前端错误横幅不再残留;本轮再失败会在 catch 里重新落标记。
@@ -883,6 +914,7 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
         provider: picked.provider,
         model: picked.model,
         executeTool,
+        sessionWriter,
         // steering 轮边界(用户问题②):唯一装配点。聊天引擎在工具循环轮边界与最终轮调用;
         // pi 引擎在 turn_end 调用;未来引擎在「即将构建下一模型请求前」调用同一回调即自动
         // 继承分裂能力(收口当前节点、落库 steer user、新开 continuation 节点并换绑)。
@@ -904,7 +936,7 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
       });
       return;
     }
-    finalizeOutcome(() => {
+    const finalized = finalizeOutcome(() => {
       if (session.message.parts.length === 0) {
         finishMessage(session.message, [{ type: "text", text: content }]);
       } else {
@@ -915,6 +947,8 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
         session.message.finishedAt = new Date().toISOString();
       }
     });
+    // 只有正常结束的轮次封存,且按收尾后的内容(输出变换会改正文)。
+    if (finalized) sessionWriter.seal(conversation);
     const snapshot = cloneConversation(conversation);
     void runPostGenerationTasks(conversation.id, snapshot, session.message.id);
     // 语音模式回复通道:本条若源自「等回复的排队生成」,把该轮 assistant 文本交付等待方。
