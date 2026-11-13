@@ -29,7 +29,7 @@ const { model, provider } = await import("../model-providers");
 const { pendingToolApprovalCount } = await import("../inference-engine/approval-gate");
 const { handleConversationRoutes } = await import("../api/handlers/conversations");
 const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
-const { engineVisibleDigest, loadEngineEntries } = await import("./engine-entries");
+const { appendEngineEntries, engineVisibleDigest, loadEngineEntries, readEngineSessionHeader, writeEngineSessionHeader } = await import("./engine-entries");
 
 import type { Conversation, State } from "../foundation/types";
 import type { FakeOpenAiSseServer, FakeSseTurn } from "../test-utils/fake-openai-sse";
@@ -229,6 +229,28 @@ describe("generateAnswer P3 路由", () => {
     expect(loadEngineEntries(db, conversation.id, "pi")).toEqual(sourceGroups);
     // 分叉在第一条用户消息上:没有被复制的条目。
     expect(loadEngineEntries(db, await fork(conversation.messages[0]!.messages[0]!.id), "pi")).toEqual([]);
+  }, 30_000);
+
+  test("删除(P3.7):经路由删消息 → 锚定在它上面的条目随落库清掉;删会话 → 条目与会话头级联删除", async () => {
+    await installUpstream([]);
+    const conversation = seedConversation(null);
+    const user = conversation.messages[0]!.messages[0]!;
+    const answer = { ...user, id: `piroute-del-ai-${seq}`, role: "ASSISTANT", parts: [{ type: "text", text: "答" }] } as typeof user;
+    conversation.messages.push({ id: `piroute-del-n-${seq}`, selectIndex: 0, messages: [answer] } as never);
+    conversations.persistConversation(conversation);
+    appendEngineEntries(db, conversation.id, "pi", user.id, [{ format: "f", payload: 1 }]);
+    appendEngineEntries(db, conversation.id, "pi", answer.id, [{ format: "f", payload: 2 }]);
+    writeEngineSessionHeader(db, conversation.id, "pi", { format: "f", header: {} });
+
+    const route = (subPath: string) => {
+      const url = new URL(`http://localhost/api/conversations/${conversation.id}${subPath}`);
+      return handleConversationRoutes(new Request(url, { method: "DELETE" }), url, `conversations/${conversation.id}${subPath}`);
+    };
+    expect((await route(`/messages/${answer.id}`))?.status).toBe(200);
+    expect(loadEngineEntries(db, conversation.id, "pi").map((group) => group.anchorMessageId)).toEqual([user.id]);
+    expect((await route(""))?.status).toBe(204);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM pc_engine_entry WHERE conversation_id = ?").get(conversation.id)).toEqual({ n: 0 });
+    expect(readEngineSessionHeader(db, conversation.id, "pi")).toBeNull();
   }, 30_000);
 
   test("推理模型的工作区请求:系统提示词恒 system 角色 + 上限恒 max_tokens(2.0.0 内测缺陷回归)", async () => {
