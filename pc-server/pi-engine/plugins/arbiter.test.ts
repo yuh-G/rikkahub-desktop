@@ -113,7 +113,7 @@ describe("加载期裁决", () => {
     );
 
     const extension = result.extensions[0]!;
-    // 插件工具在 P5.4 审批接上前一律不进会话;不重名的 todo_ok 不记审计。
+    // 没有审批口(压缩会话即如此)时插件工具一律不进会话;不重名的 todo_ok 不记审计。
     expect([...extension.tools.keys()]).toEqual([]);
     expect([...extension.commands.keys()]).toEqual(["my-cmd"]);
     expect([...extension.handlers.keys()]).toEqual(["agent_start"]);

@@ -190,6 +190,7 @@ export function connectDriverOverStdio(
       "host.session.load": (...args: Parameters<EngineHost["session"]["load"]>) => host.session.load(...args),
       "host.session.append": (...args: Parameters<EngineHost["session"]["append"]>) => host.session.append(...args),
       "host.tools.call": (...args: Parameters<EngineHost["tools"]["call"]>) => host.tools.call(...args),
+      "host.permission.check": (...args: Parameters<EngineHost["permission"]["check"]>) => host.permission.check(...args),
       "host.steer.take": (...args: Parameters<EngineHost["steer"]["take"]>) => host.steer.take(...args),
       "host.models.credential": (...args: Parameters<EngineHost["models"]["credential"]>) => host.models.credential(...args),
       "host.models.log": (...args: Parameters<EngineHost["models"]["log"]>) => host.models.log(...args),
@@ -264,6 +265,11 @@ export function serveDriverOverStdio(
       },
     },
     tools: { call: (call) => peer.request("host.tools.call", [call]) as Promise<AppToolResult> },
+    permission: {
+      check: async (req) => {
+        await peer.request("host.permission.check", [req]);
+      },
+    },
     steer: { take: (turn) => peer.request("host.steer.take", [turn]) as Promise<string[]> },
     models: {
       credential: (req) => peer.request("host.models.credential", [req]) as Promise<SubscriptionCredential>,

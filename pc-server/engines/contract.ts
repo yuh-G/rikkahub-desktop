@@ -259,6 +259,16 @@ export interface AppToolResult {
   details?: { tool: string; details: Record<string, JsonValue> };
 }
 
+/** 引擎自己执行的工具(插件工具)执行前的应用审批。审批卡与会话级「总是允许」按来源认领。 */
+export interface PermissionCheck {
+  conversationId: string;
+  turnId: string;
+  toolCallId: string;
+  toolName: string;
+  origin: { kind: "plugin"; pluginId: string };
+  args: Record<string, JsonValue>;
+}
+
 // ---- 请求与结果 ----
 
 /** portable 驱动一轮需要的全部输入(纯数据)。 */
@@ -357,6 +367,8 @@ export interface EngineHost {
     append(turn: TurnRef, entries: EngineEntryInput[]): Promise<void>;
   };
   tools: { call(call: AppToolCall): Promise<AppToolResult> };
+  /** 放行时返回;用户拒绝或中止时以错误拒绝,错误文本即给模型的工具结果(与 tools.call 同口径)。 */
+  permission: { check(req: PermissionCheck): Promise<void> };
   /** 轮边界取「生成中补发」的消息文本;应用在同一调用里完成数据层分裂。空数组 = 无补发。 */
   steer: { take(turn: TurnRef): Promise<string[]> };
   models: {

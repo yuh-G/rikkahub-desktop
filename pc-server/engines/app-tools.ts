@@ -29,7 +29,7 @@ import type { Assistant, Conversation, JsonValue, Model, ToolOutputEntry } from 
 import type { GenerationEventSink, GenerationTarget } from "../inference-engine/events";
 import { gateToolApproval } from "../inference-engine/approval-flow";
 import { gateAskUser } from "../inference-engine/ask-user-flow";
-import { decideAppToolPermission } from "../tools/approval";
+import { decideAppToolPermission, pluginToolApprovalState, pluginToolSessionKey } from "../tools/approval";
 import { ASK_USER_TOOL_NAME, normalizeAskUserQuestions, serializeAskUserAnswer } from "../tools/ask-user";
 import { openAiLocalTools, openAiMcpTools, openAiSearchTools } from "../tools/bound";
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
@@ -203,5 +203,30 @@ export function createAppToolCaller(ctx: AppToolsContext, specs: readonly AppToo
     if (group === "workspace") return callWorkspaceTool(ctx, call.name, call);
     if (call.name === ASK_USER_TOOL_NAME) return callAskUser(ctx, call);
     return callGeneralTool(ctx, call);
+  };
+}
+
+export interface PluginToolPermissionRequest {
+  toolCallId: string;
+  toolName: string;
+  pluginId: string;
+  args: Record<string, JsonValue>;
+}
+
+export type PluginToolPermissionChecker = (req: PluginToolPermissionRequest) => Promise<void>;
+
+/** 引擎自己执行的插件工具在执行前过应用审批(类别 plugin,默认询问;插件页免问或本会话已「总是允许」则
+ *  免问)。工具卡由引擎事件建,这里只驱动它的审批态;拒绝与中止的语义与应用工具同一生命周期。 */
+export function createPluginToolPermissionChecker(ctx: AppToolsContext): PluginToolPermissionChecker {
+  return async (req) => {
+    const approval = pluginToolApprovalState(ctx.conversation.id, req.pluginId, req.toolName);
+    await gateToolApproval(approval, {
+      conversationId: ctx.conversation.id,
+      toolCallId: req.toolCallId,
+      sink: ctx.sink,
+      signal: ctx.signal,
+      toolName: req.toolName,
+      sessionAllowKey: pluginToolSessionKey(req.pluginId, req.toolName),
+    });
   };
 }

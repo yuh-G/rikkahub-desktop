@@ -2,7 +2,7 @@
 //
 // 锁定:①清单为空时加载器配置与插件接入前相同(没有扩展、没有错误);②替身插件真的被加载,
 // 插件包里声明的技能不会借道进会话;③session_start 在首个请求前送达(插件在这里重放状态),
-// session_shutdown 在会话收尾时送达;④插件登记的工具在 P5.4 审批接上前不进会话工具集;
+// session_shutdown 在会话收尾时送达;④没有审批口时(这里不传 approvePluginTool)插件工具不进会话工具集;
 // ⑤插件 appendEntry 写的私有条目经 appendEntries 交给应用;⑥路径错误、模块错误、处理函数抛错
 // 都进错误中心并署插件 id,不挡住这一轮。
 import { afterAll, describe, expect, test } from "bun:test";

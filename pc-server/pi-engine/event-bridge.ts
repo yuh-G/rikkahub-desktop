@@ -15,6 +15,7 @@
 //     单 text 条目恰好命中 node-delta 的 isStreamableToolPart 快路,SSE 走 text_delta 帧)
 //   tool_execution_end             → tool_result(成功 → content 映射;失败 → {error} 载荷,
 //     与聊天引擎 toolExecutionErrorPayload 的历史契约形状一致)
+//   插件工具(P5.4,不在本轮应用工具名里)→ 通用工具卡:建卡同上,结果只按 content 映射(details 归插件)
 //   result.details.workspace       → 首个 text 条目的 metadata.workspace(P3:我们的
 //     customTools 打包的 diff/exitCode 等结构化细节,还原口径与聊天引擎
 //     runtime.toToolResult 逐字一致——前端渲染器与安卓导出适配层吃同一形状)
@@ -155,8 +156,16 @@ interface ToolCardState {
 }
 
 /** 有状态映射桥:一次生成一个实例。状态只服务于关联(卡去重/参数累计/输出通道仲裁),
- *  不持有任何外部资源。report 是诊断出口(生产 = host.report)。 */
-export function createPiEventBridge(options: { report?: (report: EngineErrorReport) => void } = {}) {
+ *  不持有任何外部资源。report 是诊断出口(生产 = host.report)。
+ *  appToolNames:本轮应用工具名。给了它,其余工具(插件工具)走通用工具卡——结果只按 content 映射,
+ *  details 是插件自己的数据(待办插件靠它重放状态),不按我们 customTools 的两种标记解读。 */
+export function createPiEventBridge(
+  options: { report?: (report: EngineErrorReport) => void; appToolNames?: ReadonlySet<string> } = {},
+) {
+  const resultOf = (toolName: string, result: PiToolResultView | undefined): ToolOutputEntry[] =>
+    options.appToolNames && !options.appToolNames.has(toolName)
+      ? mapPiToolContent(result?.content ?? [])
+      : mapPiToolResult(result);
   const cards = new Map<string, ToolCardState>();
   /** message_update 流式工具块:contentIndex → toolCallId(建卡后参数增量寻址用)。 */
   const streamingToolByIndex = new Map<number, string>();
@@ -276,7 +285,7 @@ export function createPiEventBridge(options: { report?: (report: EngineErrorRepo
         const partial = event.partialResult as PiToolResultView | undefined;
         if (!partial?.content?.length) return [];
         // partial 快照非终局:不落 toolFinishedAt(issue #59 每工具计时终点)。
-        return [{ kind: "tool_result", toolCallId: event.toolCallId, output: mapPiToolResult(partial), final: false }];
+        return [{ kind: "tool_result", toolCallId: event.toolCallId, output: resultOf(event.toolName, partial), final: false }];
       }
       case "tool_execution_end": {
         executing.delete(event.toolCallId);
@@ -287,7 +296,7 @@ export function createPiEventBridge(options: { report?: (report: EngineErrorRepo
           const text = result?.content?.length ? contentText(result.content) : "Tool execution failed";
           return [{ kind: "tool_result", toolCallId: event.toolCallId, output: [{ error: text }] }];
         }
-        return [{ kind: "tool_result", toolCallId: event.toolCallId, output: mapPiToolResult(result) }];
+        return [{ kind: "tool_result", toolCallId: event.toolCallId, output: resultOf(event.toolName, result) }];
       }
       case "bash_execution_update": {
         // 归属仲裁:显式 id 优先;无 id 时仅当恰有一个工具在执行。找不到归属或该卡已被

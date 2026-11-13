@@ -24,7 +24,7 @@ import { apiToolCallFromPart, toolExecutionErrorPayload, toolResultTextForApi } 
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
 import { resolveEngine, type EngineRoute } from "../engines";
 import { modelGrantFor } from "../engines/model-grant";
-import { appToolSpecsFor, createAppToolCaller } from "../engines/app-tools";
+import { appToolSpecsFor, createAppToolCaller, createPluginToolPermissionChecker } from "../engines/app-tools";
 import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
 import { buildEngineInstructions } from "../engines/instructions";
@@ -584,6 +584,7 @@ async function runPortableGeneration(
       append: (entries) => ctx.sessionWriter.append(target.message.id, entries),
     },
     callTool: createAppToolCaller(toolContext, tools),
+    checkPermission: createPluginToolPermissionChecker(toolContext),
     // steering 轮边界(用户问题②):编排层同一回调经 host.steer.take 直通引擎,在引擎轮边界
     // 调用(落库/队列联动/分裂在 steerBoundary,引擎只拿文本注入)。
     ...(ctx.onSteerBoundary ? { steer: ctx.onSteerBoundary } : {}),

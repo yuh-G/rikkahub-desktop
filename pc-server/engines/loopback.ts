@@ -130,6 +130,7 @@ export function connectHost(host: EngineHost, options: { strict: boolean }): Eng
       append: strictCall("host.session.append", host.session.append.bind(host.session)),
     },
     tools: { call: strictCall("host.tools.call", host.tools.call.bind(host.tools)) },
+    permission: { check: strictCall("host.permission.check", host.permission.check.bind(host.permission)) },
     steer: { take: strictCall("host.steer.take", host.steer.take.bind(host.steer)) },
     models: {
       credential: strictCall("host.models.credential", host.models.credential.bind(host.models)),

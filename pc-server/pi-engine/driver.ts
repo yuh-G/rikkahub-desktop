@@ -119,6 +119,9 @@ export function createPiDriver(host: EngineHost): EngineDriver {
           instructions: input.instructions,
           plugins: input.plugins,
           appToolNames: input.tools.map((tool) => tool.name),
+          // 插件工具由 pi 执行,执行前回应用审批(类别 plugin,来源带插件 id)。
+          approvePluginTool: ({ pluginId, ...call }) =>
+            host.permission.check({ ...turn, ...call, origin: { kind: "plugin", pluginId } }),
           report,
         });
         const result = await runPiGeneration({

@@ -2,7 +2,8 @@
 //
 // 裁决只针对插件经 pi 接口登记的东西,插件自身的代码不管(D6)。两种时机:
 // - 加载期(arbitratePiExtensions):与本轮应用工具 / pi 内建工具同名、以 mcp__ 开头的工具,pi 内建指令名,
-//   保留事件的处理函数,排队中的供应商 / 虚拟模型 / MCP 登记,都拿掉;终端界面类登记留着但记「不支持」;
+//   保留事件的处理函数,排队中的供应商 / 虚拟模型 / MCP 登记,都拿掉;终端界面类登记记「不支持」;
+//   其余插件工具包上执行前审批(P5.4,类别 plugin,经应用审批流程,来源带插件 id)后进会话;
 //   tool_call 处理函数逐个包一层做行为裁决(D7)。
 // - 运行期(guardPiPluginRuntime,会话建好后、session_start 之前):pi 的 bindCore 已把动作装进 runtime,
 //   这里把保留域的运行期入口换成「不生效 + 记审计」;运行期 registerTool 经 refreshTools 走同一套工具规则;
@@ -13,8 +14,6 @@
 // 缓存了会话级 ui,由 ui-context 认领);处理期间只要调用了对话框,对话框不显示、按取消回答,这次的返回值
 // 连同对入参的改写一起作废。没弹窗的否决照常生效,理由前缀插件 id(模型与工具卡都看得到是谁拒绝的)。
 // 已知缺口:session_start 之后才登记的 tool_call 处理函数不经裁决;包装后插件对 tool_call 的取消登记无效。
-//
-// 插件工具在 P5.4 审批接上之前一律不进会话(放行等于绕过审批直接执行),这一项不是裁决结论,不记审计。
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type {
@@ -23,12 +22,15 @@ import type {
   ExtensionRuntime,
   ExtensionUIContext,
   LoadExtensionsResult,
+  RegisteredTool,
   ToolCallEvent,
   ToolCallEventResult,
+  ToolDefinition,
 } from "../../../pi/packages/coding-agent/src/core/extensions/types.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../../pi/packages/coding-agent/src/core/slash-commands.ts";
 import { allToolNames } from "../../../pi/packages/coding-agent/src/core/tools/index.ts";
 import type { EngineErrorReport } from "../../engines/contract";
+import type { JsonValue } from "../../foundation/types";
 import { pluginIdForExtensionPath, type PiPluginEntry } from "./entries";
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
@@ -46,12 +48,24 @@ export interface PiPluginAuditRecord {
   detail?: string;
 }
 
+export interface PiPluginToolApproval {
+  toolCallId: string;
+  toolName: string;
+  pluginId: string;
+  args: Record<string, JsonValue>;
+}
+
+/** 放行时返回;拒绝 / 中止时以错误拒绝,错误文本即给模型的工具结果。 */
+export type PiPluginToolApprover = (req: PiPluginToolApproval) => Promise<void>;
+
 export interface PiPluginPolicy {
   entries: readonly PiPluginEntry[];
   /** 本轮应用工具名:插件工具与之同名即拿掉。 */
   appToolNames: ReadonlySet<string>;
   /** 用户手动停用了工具调用钩子的插件 id(D7 的兜底开关)。 */
   toolCallHooksDisabled: ReadonlySet<string>;
+  /** 插件工具执行前的应用审批(生产 = host.permission.check)。不给 = 插件工具不进会话(压缩会话不执行工具)。 */
+  approveTool?: PiPluginToolApprover;
   /** 运行期审计(否决、作废、运行期登记)的出口;加载期的审计随裁决结果返回。 */
   onAudit: (record: PiPluginAuditRecord) => void;
 }
@@ -150,6 +164,43 @@ function arbitrateToolCallHook(pluginId: string, hook: HandlerFn, onAudit: PiPlu
 
 const ARBITRATED = Symbol("rikkahub.arbitrated");
 
+type Marked = { [ARBITRATED]?: true };
+
+/** 插件工具进会话前包一层执行前审批(类别 plugin,经应用的审批流程)。同一个定义只包一次。 */
+function gatePluginTool(tool: RegisteredTool, pluginId: string, approve: PiPluginToolApprover): void {
+  const definition = tool.definition;
+  if ((definition as Marked)[ARBITRATED]) return;
+  const gated: ToolDefinition = {
+    ...definition,
+    // 与应用工具同为顺序执行:审批卡逐个弹(并行批里的多张待审卡会互相覆盖会话的等待态)。
+    executionMode: "sequential",
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      await approve({ toolCallId, toolName: definition.name, pluginId, args: (params ?? {}) as Record<string, JsonValue> });
+      return definition.execute(toolCallId, params, signal, onUpdate, ctx);
+    },
+  };
+  tool.definition = Object.assign(gated, { [ARBITRATED]: true as const });
+}
+
+/** 工具规则:保留名拿掉并记审计;没有审批口(压缩会话)时一律不进会话;其余包上执行前审批。 */
+function arbitrateTools(
+  extension: Extension,
+  pluginId: string,
+  policy: PiPluginPolicy,
+  onAudit: (record: PiPluginAuditRecord) => void,
+): void {
+  for (const [name, tool] of [...extension.tools]) {
+    if (isReservedToolName(name, policy.appToolNames)) {
+      extension.tools.delete(name);
+      onAudit({ pluginId, action: "removed", subject: `tool:${name}` });
+    } else if (!policy.approveTool) {
+      extension.tools.delete(name);
+    } else {
+      gatePluginTool(tool, pluginId, policy.approveTool);
+    }
+  }
+}
+
 function wrapToolCallHandlers(extension: Extension, pluginId: string, policy: PiPluginPolicy): void {
   const handlers = extension.handlers.get("tool_call");
   if (!handlers) return;
@@ -175,10 +226,7 @@ export function arbitratePiExtensions(
     const pluginId = pluginIdOf(policy, extension.path);
     const record = (action: PiPluginAuditRecord["action"], subject: string) => audit.push({ pluginId, action, subject });
 
-    for (const name of [...extension.tools.keys()]) {
-      if (isReservedToolName(name, policy.appToolNames)) record("removed", `tool:${name}`);
-      extension.tools.delete(name);
-    }
+    arbitrateTools(extension, pluginId, policy, (item) => audit.push(item));
     for (const name of [...extension.commands.keys()]) {
       if (!isReservedCommand(name)) continue;
       extension.commands.delete(name);
@@ -249,15 +297,7 @@ export function guardPiPluginRuntime(result: LoadExtensionsResult, policy: PiPlu
   // 运行期 registerTool 写进扩展的工具表后调 refreshTools:先过同一套工具规则再交回 pi。
   const refreshTools = runtime.refreshTools;
   runtime.refreshTools = () => {
-    for (const extension of result.extensions) {
-      const pluginId = pluginIdOf(policy, extension.path);
-      for (const name of [...extension.tools.keys()]) {
-        if (isReservedToolName(name, policy.appToolNames)) {
-          policy.onAudit({ pluginId, action: "removed", subject: `tool:${name}` });
-        }
-        extension.tools.delete(name);
-      }
-    }
+    for (const extension of result.extensions) arbitrateTools(extension, pluginIdOf(policy, extension.path), policy, policy.onAudit);
     refreshTools();
   };
 }

@@ -119,6 +119,11 @@ const host: EngineHost = {
       return { content: [{ type: "text", text: `已记录:${String(call.args.text)}` }] };
     },
   },
+  permission: {
+    async check() {
+      throw new Error("冒烟不加载插件");
+    },
+  },
   steer: {
     async take(turn) {
       steerTakes.push(turn);

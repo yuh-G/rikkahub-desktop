@@ -19,7 +19,7 @@
 // - 人设+记忆:appendSystemPrompt 单一插槽(§3.4,只放应用自己的域:人设/记忆/
 //   搜索指引/教学行/注入面),内容由应用侧冻结(同会话逐字节稳定)。
 // - 插件(P5.2/P5.3):契约给的插件清单 → plugins/entries 展开成入口文件 → additionalExtensionPaths,
-//   加载结果经 extensionsOverride 交裁决层(plugins/arbiter,策略含本轮应用工具名与手动停用的钩子;
+//   加载结果经 extensionsOverride 交裁决层(plugins/arbiter,策略含本轮应用工具名、手动停用的钩子与插件工具的审批口;
 //   加载期审计在 reload 后上报);noExtensions:true 不变(只加载清单里的,
 //   不读 pi 设置里的包与默认扩展目录),内建扩展(mcp / llama / codemode / tool-search)只经
 //   extensionFactories 进入,我们不传,恒不加载。清单为空时这两项都不传,加载器配置与此前逐项相同。
@@ -35,7 +35,13 @@ import { SettingsManager } from "../../pi/packages/coding-agent/src/core/setting
 import type { EngineErrorReport, EngineInstructions, EnginePlugin } from "../engines/contract";
 import { piAgentDir } from "../foundation/paths";
 import { PI_THINKING_BUDGETS } from "./model-bridge";
-import { arbitratePiExtensions, piPluginAuditReport, type PiPluginAuditRecord, type PiPluginPolicy } from "./plugins/arbiter";
+import {
+  arbitratePiExtensions,
+  piPluginAuditReport,
+  type PiPluginAuditRecord,
+  type PiPluginPolicy,
+  type PiPluginToolApprover,
+} from "./plugins/arbiter";
 import { pluginIdForExtensionPath, resolvePiPluginEntries, type PiPluginEntry } from "./plugins/entries";
 
 export interface PiSessionResources {
@@ -80,6 +86,8 @@ export async function createPiSessionResources(options: {
   plugins?: EnginePlugin[];
   /** 本轮应用工具名(插件工具与之同名即拿掉);不传 = 本轮没有应用工具。 */
   appToolNames?: readonly string[];
+  /** 插件工具执行前的应用审批(生产 = host.permission.check)。不传 = 插件工具不进会话(压缩)。 */
+  approvePluginTool?: PiPluginToolApprover;
   /** 压缩保留窗口覆盖(pi chars/4 估算口径)。手动压缩装配点传
    *  MANUAL_COMPACT_KEEP_RECENT_TOKENS(门槛/保留都调低,rationale 见 runner.ts 常量);
    *  不传 = pi 默认 20000(生成会话的 threshold/overflow 自动压缩用)。 */
@@ -87,7 +95,7 @@ export async function createPiSessionResources(options: {
   /** 技能加载诊断的上报出口(生产 = host.report)。 */
   report?: (report: EngineErrorReport) => void;
 }): Promise<PiSessionResources> {
-  const { cwd, root, instructions, plugins = [], appToolNames = [], compactionKeepRecentTokens, report } = options;
+  const { cwd, root, instructions, plugins = [], appToolNames = [], approvePluginTool, compactionKeepRecentTokens, report } = options;
   // inMemory:零文件 I/O(不读不写任何 settings.json);projectTrusted:false 是给
   // resource-loader 的发现逻辑看的(.pi/SYSTEM.md 门控)。压缩面 P5 接管:threshold/
   // overflow 自动压缩显式开启(数值与 pi 默认一致,但不再依赖库默认值漂移),
@@ -125,6 +133,7 @@ export async function createPiSessionResources(options: {
           entries: pluginEntries.entries,
           appToolNames: new Set(appToolNames),
           toolCallHooksDisabled: new Set(plugins.filter((plugin) => plugin.toolCallHookDisabled).map((plugin) => plugin.id)),
+          ...(approvePluginTool ? { approveTool: approvePluginTool } : {}),
           // 运行期审计(否决 / 作废 / 运行期登记)逐次上报,错误中心按码 + 参数合并风暴。
           onAudit: (record) => report?.(piPluginAuditReport(record)),
         }

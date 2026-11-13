@@ -19,6 +19,7 @@ function wire(createDriver: (host: EngineHost) => EngineDriver, host: Partial<En
     emit: (_turn, event) => void order.push(`emit:${event.kind}`),
     session: { load: async () => ({ items: [], compactions: [] }), append: async () => undefined },
     tools: { call: async () => ({ content: [] }) },
+    permission: { check: async () => undefined },
     steer: { take: async () => [] },
     models: { credential: async () => ({}), log: () => undefined },
     report: () => undefined,
@@ -119,6 +120,34 @@ describe("stdio 传输", () => {
     );
     const driver = await app.ready;
     expect((await driver.startTurn(turn)).text).toBe("工具失败:用户拒绝");
+  });
+
+  test("插件工具审批跨通道:请求原样到达宿主,宿主的拒绝回到引擎侧", async () => {
+    const seen: unknown[] = [];
+    const check = { ...turn, toolCallId: "tc-p", toolName: "counter_add", origin: { kind: "plugin" as const, pluginId: "dev:counter" }, args: { n: 1 } };
+    const { app } = wire(
+      (host) =>
+        baseDriver(host, {
+          async startTurn() {
+            const outcome = await host.permission.check(check).then(
+              () => "放行",
+              (err: Error) => err.message,
+            );
+            return { text: outcome, stopReason: null, compactions: [] };
+          },
+        }),
+      {
+        permission: {
+          check: async (req) => {
+            seen.push(req);
+            throw new Error("Tool execution denied by user. Reason: 不要");
+          },
+        },
+      },
+    );
+    const driver = await app.ready;
+    expect((await driver.startTurn(turn)).text).toBe("Tool execution denied by user. Reason: 不要");
+    expect(seen).toEqual([check]);
   });
 
   test("通道关闭:在途调用以错误拒绝,之后的调用立即拒绝", async () => {

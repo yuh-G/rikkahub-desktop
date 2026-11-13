@@ -105,6 +105,7 @@ describe("connectDriver / connectHost", () => {
       emit: () => undefined,
       session: { load: async () => ({ items: [], compactions: [] }), append: async () => undefined },
       tools: { call: async () => ({ content: [] }) },
+      permission: { check: async () => undefined },
       steer: { take: async () => [] },
       models: { credential: async () => ({}), log: () => undefined },
       report: () => undefined,

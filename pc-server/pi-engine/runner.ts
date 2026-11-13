@@ -217,7 +217,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   session.agent.steeringMode = "all";
   applyPromptCachePolicy(session.agent, runtime, ctx.grant);
 
-  const bridge = createPiEventBridge({ report: ctx.report });
+  const bridge = createPiEventBridge({ report: ctx.report, appToolNames: new Set((ctx.tools ?? []).map((tool) => tool.name)) });
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
     // 流式增量之外的每个事件都是对账点。message_end 的落库在事件派发之后,那一条由下一个事件交出。
