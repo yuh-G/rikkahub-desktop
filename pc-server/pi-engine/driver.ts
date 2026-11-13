@@ -27,6 +27,7 @@ import type {
   TurnRequest,
   TurnResult,
 } from "../engines/contract";
+import { bindPiAgentDir } from "./agent-dir";
 import { mapGrantToPi } from "./model-bridge";
 import { createPiSessionResources } from "./resources";
 import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCompaction, runPiGeneration } from "./runner";
@@ -69,6 +70,7 @@ function summarizerGrant(req: CompactRequest, report: (report: EngineErrorReport
 }
 
 export function createPiDriver(host: EngineHost): EngineDriver {
+  bindPiAgentDir();
   const running = new Map<string, AbortController>();
   /** 每会话最近一次运行的收尾(见头注「同会话串行」)。 */
   const lastRun = new Map<string, Promise<void>>();

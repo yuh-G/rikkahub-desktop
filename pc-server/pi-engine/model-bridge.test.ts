@@ -416,8 +416,8 @@ describe("createPiModelRuntime 内存注册闭环", () => {
     expect(piModel.baseUrl).toBe("https://relay.example/v1");
     expect(runtime.hasConfiguredAuth(piModel.provider)).toBe(true);
 
-    // 零落盘:客房目录整个不存在(auth 用内存存储,models 用内存 store,方案 §3.5 红线)。
-    // (全局 AGENTS.md 已迁引擎中立的 pc-data/AGENTS.md,客房回归纯空置。)
+    // 零落盘:pi 数据目录整个不存在(auth 用内存存储,models 用内存 store,方案 §3.5 红线)。
+    // (全局 AGENTS.md 住引擎中立的 pc-data/AGENTS.md,不在 pi 数据目录。)
     expect(existsSync(piAgentDir)).toBe(false);
   });
 });

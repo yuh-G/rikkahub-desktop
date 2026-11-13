@@ -22,11 +22,12 @@ export const skillsDir = join(dataDir, "skills");
 export const workspacesDir = join(dataDir, "workspaces");
 // 用户上传的自定义字体。跟 files/skills 同级，落在 pc-data/ 下，gitignored 且应用更新不覆盖。
 export const customFontsDir = join(dataDir, "fonts");
-// pi 引擎的 agentDir（方案"客房"：近乎空置、可整目录清空、用户无感）。auth.json/models.json
-// 永不写入——模型与密钥经 ModelRuntime 内存注册注入，唯一事实源是 state.json。
-// P7 起其子目录 sessions/(jsonl 引擎记忆)已退役:启动卫生(data-dir-hygiene)会整目录
-// 清掉残留,会话上下文每轮从会话行确定性重建(pi-engine/context-encoder)。
-export const piAgentDir = join(dataDir, "pi-agent");
+// pi 引擎的数据目录(pi 的 agentDir,方案 §5.9):<数据目录>/engines/pi/。pi 驱动创建时把
+// PI_CODING_AGENT_DIR 指到这里(pi-engine/agent-dir),插件经 getAgentDir() 找自己的配置/状态文件
+// 也落在这里。auth.json/models.json 永不写入——模型与密钥经 ModelRuntime 内存注册注入,唯一事实源
+// 是 state.json;技能与全局 AGENTS.md 也不住这里(应用级资源,见 skillsDir / globalAgentsPath)。
+// 不进任何备份。旧位置 pi-agent/ 由启动卫生(data-dir-hygiene)退役删除。
+export const piAgentDir = join(dataDir, "engines", "pi");
 // 全局工作区指引(引擎中立:所有 agent 引擎共读的用户层指令文件,pi 经
 // agentsFilesOverride 虚拟文件注入原生上下文件管线,未来引擎直接 import agents/ 域同源消费)。
 export const globalAgentsPath = join(dataDir, "AGENTS.md");

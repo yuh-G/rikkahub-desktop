@@ -1,5 +1,5 @@
 // backup/global-agents-roundtrip.test.ts — 全局工作区指引(pc-data/AGENTS.md,引擎中立)
-// 备份面回归:导出 zip 顶层携带四个候选名文件(不扫目录、不打包 pi-agent/),
+// 备份面回归:导出 zip 顶层携带四个候选名文件(不扫目录、不打包 pi 数据目录 engines/pi/),
 // 导入恢复首命中候选(与读取语义对齐,不复制被遮蔽的次选)。
 // 端到端走隔离数据目录直调 createSettingsBackupZipToPath(同 import-overwrite e2e
 // 的数据隔离思路),zip 落盘后解包断言条目。
@@ -30,9 +30,9 @@ afterAll(async () => {
 });
 
 describe("全局工作区指引备份面(引擎中立)", () => {
-  test("导出 zip 顶层携带 AGENTS.md;客房(pi-agent/)绝不打包", async () => {
+  test("导出 zip 顶层携带 AGENTS.md;pi 数据目录绝不打包", async () => {
     writeFileSync(join(dataDir, "AGENTS.md"), "# My global rules\n\n- Answer in Chinese.\n", "utf8");
-    // 客房里的任何文件都不该进备份(引擎私产,且全局层已不在此)
+    // pi 数据目录里的任何文件都不该进备份(引擎私产,且全局层不在此)
     mkdirSync(piAgentDir, { recursive: true });
     writeFileSync(join(piAgentDir, "AGENTS.md"), "STALE", "utf8");
     try {
@@ -44,13 +44,13 @@ describe("全局工作区指引备份面(引擎中立)", () => {
       const entries = readZipEntries(readFileSync(zipPath));
       const staged = entries.find((entry) => entry.name === "AGENTS.md");
       expect(staged?.data.toString("utf8")).toContain("# My global rules");
-      expect(entries.some((entry) => entry.name.startsWith("pi-agent/"))).toBe(false);
+      expect(entries.some((entry) => entry.name.startsWith("engines/") || entry.name.startsWith("pi-agent/"))).toBe(false);
 
       // 读取器(生产路径)看到的同一内容
       expect(readGlobalAgentsFile().content).toContain("Answer in Chinese.");
       rmSync(zipPath, { force: true });
     } finally {
-      // 共享路径落笔即时清(Bun 单进程跑全部文件,残留会撞 model-bridge 的客房零落盘断言)
+      // 共享路径落笔即时清(Bun 单进程跑全部文件,残留会撞 model-bridge 的零落盘断言)
       rmSync(piAgentDir, { recursive: true, force: true });
       rmSync(join(dataDir, "AGENTS.md"), { force: true });
     }

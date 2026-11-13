@@ -68,14 +68,14 @@ describe("P4 资源装配", () => {
     expect(names).toEqual(["alpha-skill"]);
   });
 
-  test("AGENTS.md 面:全局层经原生上下文件通道注入(首位),项目层按边界过滤,客房文件忽略", async () => {
+  test("AGENTS.md 面:全局层经原生上下文件通道注入(首位),项目层按边界过滤,pi 数据目录里的文件忽略", async () => {
     const parent = mkdtempSync(join(tmpdir(), "rkh-res-agents-"));
     const root = join(parent, "ws");
     mkdirSync(root, { recursive: true });
     writeFileSync(join(parent, "AGENTS.md"), "ANCESTOR-INSTRUCTIONS", "utf-8");
     writeFileSync(join(root, "AGENTS.md"), "WORKSPACE-INSTRUCTIONS", "utf-8");
-    // 全局层:pc-data/AGENTS.md(引擎中立,本测试数据目录直系)。写进 pi-agent/ 的
-    // 任何文件都必须被忽略——客房纯空置,agentDir 直系件天然被边界过滤。
+    // 全局层:pc-data/AGENTS.md(引擎中立,本测试数据目录直系)。写进 pi 数据目录的
+    // 任何文件都必须被忽略——它不在工作区内,天然被边界过滤。
     mkdirSync(piAgentDir, { recursive: true });
     writeFileSync(join(piAgentDir, "AGENTS.md"), "STALE-AGENTDIR-GLOBAL", "utf-8");
     mkdirSync(dataDir, { recursive: true });
@@ -91,7 +91,7 @@ describe("P4 资源装配", () => {
     const append = resourceLoader.getAppendSystemPrompt().join("\n\n");
     expect(append).not.toContain("GLOBAL-INSTRUCTIONS");
     expect(append).not.toContain("STALE-AGENTDIR-GLOBAL");
-    // 清扫本测试在共享路径上的落笔:客房目录必须回到不存在(model-bridge 的零落盘
+    // 清扫本测试在共享路径上的落笔:pi 数据目录必须回到不存在(model-bridge 的零落盘
     // 断言看整个目录;Bun 单进程跑全部文件,这里不删就会跨文件污染)。
     rmSync(piAgentDir, { recursive: true, force: true });
     rmSync(join(dataDir, "AGENTS.md"), { force: true });
