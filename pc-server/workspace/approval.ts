@@ -40,7 +40,7 @@ export function workspaceToolNeedsApproval(tool: WorkspaceToolName, preset: Work
 }
 
 /** 词法越界判定:与 boundary.ts 同前缀语义(Windows 大小写不敏感),但不做 realpath。 */
-function isLexicallyOutsideRoot(absolutePath: string, root: string): boolean {
+export function isLexicallyOutsideRoot(absolutePath: string, root: string): boolean {
   const cmp = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
   const target = cmp(resolve(absolutePath));
   const rootCmp = cmp(resolve(root));

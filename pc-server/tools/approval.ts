@@ -1,58 +1,74 @@
-// tools/approval.ts — 工具审批状态判断
-// 纪律：纯函数，只读取 assistant / settings / 工作区档位，不读写 state 运行时副作用。
-// workspace 工具（read/write/edit/bash）按会话绑定工作区的 permissionPreset 走审批
-// 矩阵（workspace/approval.ts）。判定两段式：参数未到（args 缺省）用无参数下界，
-// 参数齐备用终局判定（危险命令/区外写入才在 balanced 档触发审批）——单调只升不降，
-// 循环层负责把上调同步回已建的卡（见 workspace/approval.ts 头注）。
+// tools/approval.ts — 工具审批接线:工具名 + 参数 → PermissionRequest,应用设置 → PermissionPolicy
+// 判定本身在 tools/permission.ts(只读「类别 + 对象」的纯函数)。这里只做两件事:按工具名查类别、
+// 从参数取对象(args 缺省 = 参数未到,请求不带对象,得无参数下界);把会话绑定工作区的档位与 MCP
+// 逐工具设置解析成策略。策略按类别惰性解析:非 MCP 工具不读 state,非写入 / 执行不查工作区。
+// 终局比下界只升不降,循环层负责把上调同步回已建的卡(见 tools/permission.ts 头注)。
 
 import { getStringArray, isRecord } from "../foundation/utils";
 import type { Assistant, Conversation, JsonValue, ToolApprovalState } from "../foundation/types";
 import { skillsDir } from "../foundation/paths";
 import { state } from "../persistence/json-store";
-import {
-  isWorkspaceToolName,
-  lexicalWorkspaceCwd,
-  workspaceCallApprovalReason,
-  workspaceToolNeedsApproval,
-  type WorkspaceToolName,
-} from "../workspace/approval";
+import { isWorkspaceToolName, lexicalWorkspaceCwd, type WorkspaceToolName } from "../workspace/approval";
 import { getWorkspace } from "../workspace";
+import { ASK_USER_TOOL_NAME } from "./ask-user";
+import {
+  decidePermission,
+  type PermissionDecision,
+  type PermissionPolicy,
+  type PermissionTarget,
+  type ToolCategory,
+  type WorkspacePolicy,
+} from "./permission";
 
-type ConversationWorkspacePick = Pick<Conversation, "workspaceId" | "workspaceCwd">;
+type ConversationWorkspacePick = Pick<Conversation, "id" | "workspaceId" | "workspaceCwd">;
 
 function parseArgsRecord(args: string): Record<string, JsonValue> {
   try {
     const parsed = JSON.parse(args) as JsonValue;
     return isRecord(parsed) ? parsed : {};
   } catch {
+    // 参数不是合法 JSON:按无对象处理,执行层会按 schema 报错回灌模型。
     return {};
   }
 }
 
-/** 工作区工具审批判定。args 缺省 = 参数未到（流式建卡），给无参数下界。 */
-function workspaceApprovalDecision(
-  toolName: WorkspaceToolName,
-  conversation: ConversationWorkspacePick | null | undefined,
-  args?: string,
-): { pending: boolean; reason?: string } {
-  // 工作区工具只在 workspaceId 非空的会话挂载；非工作区会话的残留调用在执行层被拒
-  // （workspace/runtime.ts 守卫），这里不挂审批。
+const WORKSPACE_TOOL_CATEGORIES: Record<WorkspaceToolName, ToolCategory> = {
+  read: "read",
+  grep: "read",
+  find: "read",
+  ls: "read",
+  write: "write",
+  edit: "write",
+  bash: "execute",
+};
+
+function classifyAppTool(toolName: string): ToolCategory | null {
+  if (!toolName) return null;
+  if (toolName === ASK_USER_TOOL_NAME) return "ask";
+  if (isWorkspaceToolName(toolName)) return WORKSPACE_TOOL_CATEGORIES[toolName];
+  if (toolName.startsWith("mcp__")) return "mcp";
+  return "local";
+}
+
+function permissionTarget(category: ToolCategory, args: string): PermissionTarget {
+  const record = parseArgsRecord(args);
+  if (category === "execute") return { command: String(record.command ?? "") };
+  return typeof record.path === "string" ? { path: record.path } : {};
+}
+
+function workspacePolicy(conversation: ConversationWorkspacePick | null | undefined): WorkspacePolicy | null {
   const workspaceId = conversation?.workspaceId;
-  if (!workspaceId) return { pending: false };
+  if (!workspaceId) return null;
   const workspace = getWorkspace(workspaceId);
-  // 工作区记录丢失 → 按最严档处理（执行层同样会拒，pending 卡只是多一道门）。
-  const preset = workspace?.permissionPreset ?? "confirm_each";
-  if (args === undefined || !workspace) {
-    return { pending: workspaceToolNeedsApproval(toolName, preset) };
-  }
-  const reason = workspaceCallApprovalReason(toolName, preset, parseArgsRecord(args), {
+  // 工作区记录丢失 → 按最严档处理(执行层同样会拒,pending 卡只是多一道门)。
+  if (!workspace) return { preset: "confirm_each", root: "", cwd: "", exemptWritePrefixes: [] };
+  return {
+    preset: workspace.permissionPreset,
     root: workspace.root,
     cwd: lexicalWorkspaceCwd(workspace.root, conversation?.workspaceCwd),
     // §6.7:技能库 pc-data/skills/ 免审批可写(AI 装/改技能不弹窗)。
-    approvalExemptWritePrefixes: [skillsDir],
-  });
-  if (reason === null) return { pending: false };
-  return { pending: true, ...(reason ? { reason } : {}) };
+    exemptWritePrefixes: [skillsDir],
+  };
 }
 
 export function getMcpToolOverride(
@@ -95,23 +111,8 @@ export function isMcpToolApprovalRequiredForAssistant(
   return tool.needsApproval === true;
 }
 
-// Returns true if this tool requires user approval before executing — mirrors Android's
-// GenerationHandler.kt:184-189 logic (`toolDef?.needsApproval == true && state is Auto -> Pending`).
-// PC scope: `ask_user` is always pending (it's literally a "ask the user" prompt), and any
-// MCP tool whose effective needsApproval (override-resolved) is true gets pending too. Local
-// built-ins (search/scrape/memory/etc.) currently never need approval — Android matches.
-export function toolNeedsApproval(
-  toolName: string,
-  assistant: Assistant,
-  conversation?: ConversationWorkspacePick | null,
-  args?: string,
-): boolean {
-  if (!toolName) return false;
-  if (toolName === "ask_user") return true;
-  if (isWorkspaceToolName(toolName)) {
-    return workspaceApprovalDecision(toolName, conversation, args).pending;
-  }
-  if (!toolName.startsWith("mcp__")) return false;
+/** 该 MCP 工具对当前助手生效的 needsApproval;助手没选中、服务停用或工具已关 → false(本轮不会挂载)。 */
+function mcpApprovalRequired(toolName: string, assistant: Assistant): boolean {
   const selected = new Set(getStringArray(assistant.mcpServers));
   const servers = (state.settings.mcpServers as Array<Record<string, unknown>>)
     .filter((server) => selected.has(String(server.id ?? "")) && isRecord(server.commonOptions) && server.commonOptions.enable !== false);
@@ -128,16 +129,44 @@ export function toolNeedsApproval(
   return false;
 }
 
+/** 一次应用工具调用的审批判定。args 缺省 = 参数未到(流式建卡),给无参数下界。 */
+function decideAppToolPermission(
+  toolName: string,
+  assistant: Assistant,
+  conversation: ConversationWorkspacePick | null | undefined,
+  args: string | undefined,
+): PermissionDecision {
+  const category = classifyAppTool(toolName);
+  if (!category) return { type: "auto" };
+  const policy: PermissionPolicy = {};
+  if (category === "write" || category === "execute") policy.workspace = workspacePolicy(conversation);
+  if (category === "mcp") policy.mcpApprovalRequired = mcpApprovalRequired(toolName, assistant);
+  return decidePermission(
+    {
+      conversationId: conversation?.id ?? "",
+      toolName,
+      category,
+      ...(args === undefined ? {} : { target: permissionTarget(category, args) }),
+      origin: { kind: "app" },
+    },
+    policy,
+  );
+}
+
+export function toolNeedsApproval(
+  toolName: string,
+  assistant: Assistant,
+  conversation?: ConversationWorkspacePick | null,
+  args?: string,
+): boolean {
+  return decideAppToolPermission(toolName, assistant, conversation, args).type === "pending";
+}
+
 export function initialApprovalState(
   toolName: string,
   assistant: Assistant,
   conversation?: ConversationWorkspacePick | null,
   args?: string,
 ): ToolApprovalState {
-  if (isWorkspaceToolName(toolName)) {
-    const decision = workspaceApprovalDecision(toolName, conversation, args);
-    if (!decision.pending) return { type: "auto" };
-    return decision.reason ? { type: "pending", reason: decision.reason } : { type: "pending" };
-  }
-  return toolNeedsApproval(toolName, assistant, conversation) ? { type: "pending" } : { type: "auto" };
+  return decideAppToolPermission(toolName, assistant, conversation, args);
 }
