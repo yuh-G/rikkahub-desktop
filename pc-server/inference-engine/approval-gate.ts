@@ -16,6 +16,10 @@
 // 生命周期:等待者随决定/中止即刻注销;引擎 runner 在生成收尾时 clearToolApprovalWaiters
 // 兜底清扫(防泄漏)。跨重启的孤儿审批(卡 pending 但生成已死)不在本表——API 端
 // 查不到等待者时按"仅记录状态"处理,见 handlers 注释。
+//
+// 会话级免问(P4.3,方案 §5.6):用户在审批卡上选「此会话内总是允许该工具」,同一会话里该工具
+// 之后不再询问。只在内存:重启即忘,不进会话数据与备份;会话删除时清掉。记不记由调用方的
+// 免问键决定(approval-flow 的 sessionAllowKey,目前只有插件工具带),这里只存取。
 
 export interface ToolApprovalDecision {
   approved: boolean;
@@ -25,6 +29,8 @@ export interface ToolApprovalDecision {
    *  仅 ask_user 路径填;普通审批工具恒 undefined。聊天引擎忽略它(其 resume 读持久化
    *  part 的 approvalState.answer);run-and-suspend 引擎(pi)靠它把答案送回在途 execute。 */
   answer?: string;
+  /** 「此会话内总是允许该工具」。只对带免问键的审批生效(见 approval-flow)。 */
+  alwaysAllowInSession?: boolean;
 }
 
 interface Waiter {
@@ -111,4 +117,21 @@ export function clearToolApprovalWaiters(conversationId: string): void {
 /** 测试观测面。 */
 export function pendingToolApprovalCount(): number {
   return waiters.size;
+}
+
+const sessionAllowances = new Map<string, Set<string>>();
+
+export function allowToolForSession(conversationId: string, key: string): void {
+  let keys = sessionAllowances.get(conversationId);
+  if (!keys) sessionAllowances.set(conversationId, (keys = new Set()));
+  keys.add(key);
+}
+
+export function isToolAllowedForSession(conversationId: string, key: string): boolean {
+  return sessionAllowances.get(conversationId)?.has(key) === true;
+}
+
+/** 会话删除时调用。 */
+export function forgetSessionToolAllowances(conversationId: string): void {
+  sessionAllowances.delete(conversationId);
 }

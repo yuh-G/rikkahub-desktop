@@ -57,6 +57,10 @@ export interface PermissionPolicy {
   workspace?: WorkspacePolicy | null;
   /** MCP 类:该工具对当前助手生效的 needsApproval(助手级覆盖优先,否则全局逐工具设置)。 */
   mcpApprovalRequired?: boolean;
+  /** 插件类:插件页把该工具设为免问。 */
+  pluginToolExempt?: boolean;
+  /** 插件类:用户在本会话的审批卡上选过「此会话内总是允许该工具」。 */
+  allowedForSession?: boolean;
 }
 
 export type PermissionDecision = { type: "auto" } | { type: "pending"; reason?: string };
@@ -91,8 +95,9 @@ export function decidePermission(req: PermissionRequest, policy: PermissionPolic
     case "local":
       return AUTO;
     case "ask":
-    case "plugin":
       return pending();
+    case "plugin":
+      return policy.pluginToolExempt || policy.allowedForSession ? AUTO : pending();
     case "mcp":
       return policy.mcpApprovalRequired ? pending() : AUTO;
     case "write":

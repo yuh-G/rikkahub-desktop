@@ -783,7 +783,13 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       return json({ conversationId: fork.id });
     }
     if (sub === "tool-approval" && request.method === "POST") {
-      const body = await readJson<{ toolCallId?: string; approved?: boolean; reason?: string; answer?: string }>(request);
+      const body = await readJson<{
+        toolCallId?: string;
+        approved?: boolean;
+        reason?: string;
+        answer?: string;
+        alwaysAllowInSession?: boolean;
+      }>(request);
       let changed = false;
       for (const node of conversation.messages) {
         for (const msg of node.messages) {
@@ -816,6 +822,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         ...(body.reason ? { reason: String(body.reason) } : {}),
         // ask_user:把答复载荷一并送达在途等待者(pi 引擎 execute 据此把答案回灌模型)。
         ...(body.answer != null ? { answer: String(body.answer) } : {}),
+        // 「此会话内总是允许该工具」:只对带免问键的审批(插件工具)生效,见 approval-flow。
+        ...(body.approved === true && body.alwaysAllowInSession === true ? { alwaysAllowInSession: true } : {}),
       });
       if (consumed || resolveEngineForConversation(conversation).capabilities.resumeSemantics === "run-and-suspend") {
         return json({ status: "accepted" }, { status: 202 });

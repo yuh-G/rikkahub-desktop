@@ -34,7 +34,7 @@ const decide = (category: ToolCategory, policy: PermissionPolicy, target?: Permi
   decidePermission(request(category, target), policy).type;
 
 describe("与工作区无关的类别", () => {
-  test("read / network / local 恒免审,ask / plugin 恒待审", () => {
+  test("read / network / local 恒免审;ask 恒待审;plugin 在无免问设置时待审", () => {
     for (const preset of ["confirm_each", "balanced", "full_access"] as const) {
       expect(decide("read", workspace(preset), { path: "/etc/passwd" })).toBe("auto");
       expect(decide("network", workspace(preset), { url: "https://example.com" })).toBe("auto");
@@ -42,6 +42,13 @@ describe("与工作区无关的类别", () => {
       expect(decide("ask", workspace(preset))).toBe("pending");
       expect(decide("plugin", workspace(preset))).toBe("pending");
     }
+  });
+
+  test("plugin 默认询问;插件页免问或本会话已选「总是允许」则免问", () => {
+    expect(decide("plugin", {})).toBe("pending");
+    expect(decide("plugin", { pluginToolExempt: true })).toBe("auto");
+    expect(decide("plugin", { allowedForSession: true })).toBe("auto");
+    expect(decide("ask", { pluginToolExempt: true, allowedForSession: true })).toBe("pending");
   });
 
   test("mcp 只看逐工具设置", () => {

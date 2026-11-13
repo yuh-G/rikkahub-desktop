@@ -14,7 +14,7 @@
 
 import type { ToolApprovalState } from "../foundation/types";
 import type { GenerationEventSink } from "./events";
-import { waitForToolApproval } from "./approval-gate";
+import { allowToolForSession, waitForToolApproval, type ToolApprovalDecision } from "./approval-gate";
 import { awaitingApproval } from "../conversations/generation-state";
 
 export interface ApprovalFlowContext {
@@ -25,6 +25,9 @@ export interface ApprovalFlowContext {
   /** 域4-1:通知/状态摘要用的工具名与审批对象摘要(命令/路径,截断后)。 */
   toolName?: string;
   summary?: string;
+  /** 会话级免问键(P4.3):带了它,用户批准时选「此会话内总是允许」才会被记下,同会话之后
+   *  判定为免问。目前只有插件工具带;工作区与 MCP 工具不带,沿用各自的档位与逐工具设置。 */
+  sessionAllowKey?: string;
 }
 
 /** 走完审批生命周期。approval 为非 pending(auto 等)时立即返回 false(免审执行);
@@ -54,7 +57,7 @@ export async function gateToolApproval(approval: ToolApprovalState, ctx: Approva
       ...(ctx.summary ? { summary: ctx.summary } : {}),
     },
   });
-  let decision: { approved: boolean; reason?: string };
+  let decision: ToolApprovalDecision;
   try {
     decision = await waitForToolApproval(ctx.conversationId, ctx.toolCallId, ctx.signal);
   } catch (err) {
@@ -78,6 +81,7 @@ export async function gateToolApproval(approval: ToolApprovalState, ctx: Approva
     const reason = (decision.reason ?? "").trim() || "No reason provided";
     throw new Error(`Tool execution denied by user. Reason: ${reason}`);
   }
+  if (decision.alwaysAllowInSession && ctx.sessionAllowKey) allowToolForSession(ctx.conversationId, ctx.sessionAllowKey);
   ctx.sink({ kind: "tool_approval_updated", toolCallId: ctx.toolCallId, approvalState: { type: "approved" } });
   return true;
 }
