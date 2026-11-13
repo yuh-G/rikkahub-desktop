@@ -1,24 +1,17 @@
 // tools/approval.ts — 工具审批接线:工具名 + 参数 → PermissionRequest,应用设置 → PermissionPolicy
-// 判定本身在 tools/permission.ts(只读「类别 + 对象」的纯函数)。这里只做两件事:按工具名查类别、
-// 从参数取对象(args 缺省 = 参数未到,请求不带对象,得无参数下界);把会话绑定工作区的档位与 MCP
-// 逐工具设置解析成策略。策略按类别惰性解析:非 MCP 工具不读 state,非写入 / 执行不查工作区。
+// 判定本身在 tools/permission.ts(只读「类别 + 对象」的纯函数),工具名 → 类别 + 对象的知识在
+// tools/tool-categories.ts。这里只做两件事:查表并从参数取对象(args 缺省 = 参数未到,请求不带对象,
+// 得无参数下界);把会话绑定工作区的档位与 MCP 逐工具设置解析成策略。策略按类别惰性解析:非 MCP 工具不读 state,非写入 / 执行不查工作区。
 // 终局比下界只升不降,循环层负责把上调同步回已建的卡(见 tools/permission.ts 头注)。
 
 import { getStringArray, isRecord } from "../foundation/utils";
 import type { Assistant, Conversation, JsonValue, ToolApprovalState } from "../foundation/types";
 import { skillsDir } from "../foundation/paths";
 import { state } from "../persistence/json-store";
-import { isWorkspaceToolName, lexicalWorkspaceCwd, type WorkspaceToolName } from "../workspace/approval";
+import { lexicalWorkspaceCwd } from "../workspace/approval";
 import { getWorkspace } from "../workspace";
-import { ASK_USER_TOOL_NAME } from "./ask-user";
-import {
-  decidePermission,
-  type PermissionDecision,
-  type PermissionPolicy,
-  type PermissionTarget,
-  type ToolCategory,
-  type WorkspacePolicy,
-} from "./permission";
+import { decidePermission, type PermissionDecision, type PermissionPolicy, type WorkspacePolicy } from "./permission";
+import { classifyAppTool } from "./tool-categories";
 
 type ConversationWorkspacePick = Pick<Conversation, "id" | "workspaceId" | "workspaceCwd">;
 
@@ -30,30 +23,6 @@ function parseArgsRecord(args: string): Record<string, JsonValue> {
     // 参数不是合法 JSON:按无对象处理,执行层会按 schema 报错回灌模型。
     return {};
   }
-}
-
-const WORKSPACE_TOOL_CATEGORIES: Record<WorkspaceToolName, ToolCategory> = {
-  read: "read",
-  grep: "read",
-  find: "read",
-  ls: "read",
-  write: "write",
-  edit: "write",
-  bash: "execute",
-};
-
-function classifyAppTool(toolName: string): ToolCategory | null {
-  if (!toolName) return null;
-  if (toolName === ASK_USER_TOOL_NAME) return "ask";
-  if (isWorkspaceToolName(toolName)) return WORKSPACE_TOOL_CATEGORIES[toolName];
-  if (toolName.startsWith("mcp__")) return "mcp";
-  return "local";
-}
-
-function permissionTarget(category: ToolCategory, args: string): PermissionTarget {
-  const record = parseArgsRecord(args);
-  if (category === "execute") return { command: String(record.command ?? "") };
-  return typeof record.path === "string" ? { path: record.path } : {};
 }
 
 function workspacePolicy(conversation: ConversationWorkspacePick | null | undefined): WorkspacePolicy | null {
@@ -136,8 +105,9 @@ function decideAppToolPermission(
   conversation: ConversationWorkspacePick | null | undefined,
   args: string | undefined,
 ): PermissionDecision {
-  const category = classifyAppTool(toolName);
-  if (!category) return { type: "auto" };
+  const entry = classifyAppTool(toolName);
+  if (!entry) return { type: "auto" };
+  const { category } = entry;
   const policy: PermissionPolicy = {};
   if (category === "write" || category === "execute") policy.workspace = workspacePolicy(conversation);
   if (category === "mcp") policy.mcpApprovalRequired = mcpApprovalRequired(toolName, assistant);
@@ -146,7 +116,7 @@ function decideAppToolPermission(
       conversationId: conversation?.id ?? "",
       toolName,
       category,
-      ...(args === undefined ? {} : { target: permissionTarget(category, args) }),
+      ...(args === undefined ? {} : { target: entry.target(parseArgsRecord(args)) }),
       origin: { kind: "app" },
     },
     policy,
