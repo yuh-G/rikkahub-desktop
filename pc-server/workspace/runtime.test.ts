@@ -58,6 +58,8 @@ function bindConversation(workspaceId: string | null, workspaceCwd: string | nul
 }
 
 const fakeAssistant = { id: "a1", name: "A", systemPrompt: "", mcpServers: [] } as never;
+const needsApproval = (...args: Parameters<typeof approval.decideAppToolPermission>) =>
+  approval.decideAppToolPermission(...args).type === "pending";
 
 describe("条件挂载(openAiWorkspaceTools)", () => {
   test("非工作区会话不挂载", () => {
@@ -241,35 +243,35 @@ describe("审批矩阵经 tools/approval 联动(三档改版)", () => {
     const workspace = ws.createWorkspace({ type: "managed", name: "appr" }); // 默认 balanced
     const conversation = bindConversation(workspace.id);
     // 参数未到(无参数下界):balanced 全部 auto
-    expect(approval.toolNeedsApproval("write", fakeAssistant, conversation)).toBe(false);
-    expect(approval.toolNeedsApproval("bash", fakeAssistant, conversation)).toBe(false);
-    expect(approval.toolNeedsApproval("read", fakeAssistant, conversation)).toBe(false);
+    expect(needsApproval("write", fakeAssistant, conversation)).toBe(false);
+    expect(needsApproval("bash", fakeAssistant, conversation)).toBe(false);
+    expect(needsApproval("read", fakeAssistant, conversation)).toBe(false);
     // 参数齐备(终局):区内写免审;危险命令/区外写入 pending 且带缘由
-    expect(approval.toolNeedsApproval("write", fakeAssistant, conversation, JSON.stringify({ path: "a.txt" }))).toBe(false);
-    expect(approval.toolNeedsApproval("bash", fakeAssistant, conversation, JSON.stringify({ command: "ls -la" }))).toBe(false);
-    const dangerous = approval.initialApprovalState("bash", fakeAssistant, conversation, JSON.stringify({ command: "rm -rf /" }));
+    expect(needsApproval("write", fakeAssistant, conversation, JSON.stringify({ path: "a.txt" }))).toBe(false);
+    expect(needsApproval("bash", fakeAssistant, conversation, JSON.stringify({ command: "ls -la" }))).toBe(false);
+    const dangerous = approval.decideAppToolPermission("bash", fakeAssistant, conversation, JSON.stringify({ command: "rm -rf /" }));
     expect(dangerous.type).toBe("pending");
     expect((dangerous as { reason?: string }).reason).toContain("Destructive command pattern");
-    const outside = approval.initialApprovalState("write", fakeAssistant, conversation, JSON.stringify({ path: "../outside.txt" }));
+    const outside = approval.decideAppToolPermission("write", fakeAssistant, conversation, JSON.stringify({ path: "../outside.txt" }));
     expect(outside.type).toBe("pending");
     expect((outside as { reason?: string }).reason).toContain("Writes outside the workspace");
 
     ws.updateWorkspace(workspace.id, { permissionPreset: "confirm_each" });
-    expect(approval.toolNeedsApproval("write", fakeAssistant, conversation)).toBe(true);
-    expect(approval.initialApprovalState("edit", fakeAssistant, conversation)).toEqual({ type: "pending" });
+    expect(needsApproval("write", fakeAssistant, conversation)).toBe(true);
+    expect(approval.decideAppToolPermission("edit", fakeAssistant, conversation)).toEqual({ type: "pending" });
     // confirm_each 恒审批,无附加缘由
-    expect(approval.initialApprovalState("bash", fakeAssistant, conversation, JSON.stringify({ command: "ls" }))).toEqual({ type: "pending" });
+    expect(approval.decideAppToolPermission("bash", fakeAssistant, conversation, JSON.stringify({ command: "ls" }))).toEqual({ type: "pending" });
 
     ws.updateWorkspace(workspace.id, { permissionPreset: "full_access" });
-    expect(approval.toolNeedsApproval("bash", fakeAssistant, conversation)).toBe(false);
+    expect(needsApproval("bash", fakeAssistant, conversation)).toBe(false);
     // full_access:危险命令与区外写入也免审("不受限制操作电脑文件")
-    expect(approval.toolNeedsApproval("bash", fakeAssistant, conversation, JSON.stringify({ command: "rm -rf /" }))).toBe(false);
-    expect(approval.toolNeedsApproval("write", fakeAssistant, conversation, JSON.stringify({ path: "../outside.txt" }))).toBe(false);
+    expect(needsApproval("bash", fakeAssistant, conversation, JSON.stringify({ command: "rm -rf /" }))).toBe(false);
+    expect(needsApproval("write", fakeAssistant, conversation, JSON.stringify({ path: "../outside.txt" }))).toBe(false);
   });
 
   test("非工作区会话对同名工具不挂审批(执行层守卫兜底)", () => {
-    expect(approval.toolNeedsApproval("bash", fakeAssistant, bindConversation(null))).toBe(false);
-    expect(approval.toolNeedsApproval("bash", fakeAssistant, undefined)).toBe(false);
+    expect(needsApproval("bash", fakeAssistant, bindConversation(null))).toBe(false);
+    expect(needsApproval("bash", fakeAssistant, undefined)).toBe(false);
   });
 });
 

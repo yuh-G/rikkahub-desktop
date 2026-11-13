@@ -23,7 +23,7 @@
 
 import type { Assistant, JsonValue, Message, Model, Provider, ApiMessage } from "../foundation/types";
 import { id, isRecord, parseDataUrl } from "../foundation/utils";
-import { initialApprovalState } from "../tools/approval";
+import { decideAppToolPermission } from "../tools/approval";
 import { toolResultTextForApi } from "../tools/format";
 import { appendReasoningDelta, finishReasoningParts } from "./parts";
 import type { StreamHooksWithSink } from "./events";
@@ -354,7 +354,7 @@ export function makeInteractionsDecoder(result: InteractionsStreamRoundResult, h
         toolCallId: callId,
         toolName: name,
         input: JSON.stringify(args),
-        approvalState: initialApprovalState(name, assistant, hooks.conversation, JSON.stringify(args)),
+        approvalState: decideAppToolPermission(name, assistant, hooks.conversation, JSON.stringify(args)),
         ...(signature ? { metadata: { interactions_signature: signature } } : {}),
       });
     }

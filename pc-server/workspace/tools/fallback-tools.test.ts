@@ -16,7 +16,6 @@ import {
   createBoundedLsOperations,
   WorkspaceBoundaryError,
 } from "../boundary";
-import { workspaceToolNeedsApproval } from "../approval";
 import type { ToolTextContent } from "./types";
 
 // ----- 共享目录树 -----
@@ -161,16 +160,5 @@ describe("有界 Operations(边界断言)", () => {
     expect(textOf(await grep.execute({ pattern: "beta", path: "src" }))).toContain("app.ts:2:");
     const ls = createLsTool(root, { operations: createBoundedLsOperations(root) });
     expect(textOf(await ls.execute({ path: "src" }))).toContain("app.ts");
-  });
-});
-
-describe("审批矩阵(只读工具恒免审)", () => {
-  test("grep/find/ls 任何档位都不需要审批", () => {
-    for (const tool of ["grep", "find", "ls"] as const) {
-      for (const preset of ["confirm_each", "balanced", "full_access"] as const) {
-        expect(workspaceToolNeedsApproval(tool, preset)).toBe(false);
-      }
-    }
-    expect(workspaceToolNeedsApproval("bash", "confirm_each")).toBe(true);
   });
 });

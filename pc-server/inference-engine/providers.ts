@@ -7,7 +7,7 @@ import type { Assistant, JsonValue, Message, Provider, ApiMessage, ClaudeStreamR
 import { id, isRecord, reasoningFromParts, safeJsonParse, visibleReasoningFromMessage, visibleTextFromMessage } from "../foundation/utils";
 import { MODELS_DEV_CACHE_PATH } from "../foundation/paths";
 import { fetchWithTimeout, readWithIdleTimeout } from "../foundation/net";
-import { initialApprovalState, toolNeedsApproval } from "../tools/approval";
+import { decideAppToolPermission } from "../tools/approval";
 import { toolArgumentsJson, toolExecutionErrorPayload, toolResultTextForApi } from "../tools/format";
 import {
   claudeBlocksFromUiParts,
@@ -299,7 +299,7 @@ export async function readClaudeStreamingRound(
             toolCallId: String(block.id ?? ""),
             toolName: String(block.name ?? ""),
             input: "",
-            approvalState: initialApprovalState(String(block.name ?? ""), assistant, hooks.conversation),
+            approvalState: decideAppToolPermission(String(block.name ?? ""), assistant, hooks.conversation),
           });
           touchStream(hooks);
         }
@@ -451,7 +451,7 @@ export async function readClaudeJsonRound(
         toolCallId: String(block.id ?? id()),
         toolName: name,
         input: inputJson,
-        approvalState: initialApprovalState(name, assistant, hooks.conversation, inputJson),
+        approvalState: decideAppToolPermission(name, assistant, hooks.conversation, inputJson),
       });
       touchStream(hooks);
     }
@@ -630,7 +630,7 @@ export async function fetchClaudeTextWithTools(
     // Same rationale as the stream path: bail out of the turn if any tool needs approval so
     // we don't end up sending an unanswered tool_use to Anthropic on the next turn.
     const hasPendingInBatch = toolUses.some((toolUse) =>
-      toolNeedsApproval(String(toolUse.name ?? ""), assistant, hooks?.conversation, JSON.stringify(isRecord(toolUse.input) ? toolUse.input : {})),
+      decideAppToolPermission(String(toolUse.name ?? ""), assistant, hooks?.conversation, JSON.stringify(isRecord(toolUse.input) ? toolUse.input : {})).type === "pending",
     );
     for (const toolUse of toolUses) {
       // R3-4:停止后剩余工具不再执行。
@@ -649,7 +649,7 @@ export async function fetchClaudeTextWithTools(
         toolName: toolCall.function.name,
         input: toolCall.function.arguments,
         output: [],
-        approvalState: initialApprovalState(toolCall.function.name, assistant, hooks?.conversation, toolCall.function.arguments),
+        approvalState: decideAppToolPermission(toolCall.function.name, assistant, hooks?.conversation, toolCall.function.arguments),
       };
       if (hooks?.message) {
         finishReasoningParts(hooks.message);
@@ -773,7 +773,7 @@ function applyGoogleRoundChunk(
           toolName: name,
           input: JSON.stringify(args),
           // Gemini 函数调用整体到达，建卡即参数齐备的终局审批态
-          approvalState: initialApprovalState(name, assistant, hooks.conversation, JSON.stringify(args)),
+          approvalState: decideAppToolPermission(name, assistant, hooks.conversation, JSON.stringify(args)),
         });
         touchStream(hooks);
       }
@@ -1010,7 +1010,7 @@ export async function fetchOpenAiText(
 
     const toolMessages = [];
     const hasPendingInBatch = toolCalls.some((toolCall: any) =>
-      toolNeedsApproval(String(toolCall?.function?.name ?? ""), assistant, hooks?.conversation, toolArgumentsJson(toolCall?.function?.arguments)),
+      decideAppToolPermission(String(toolCall?.function?.name ?? ""), assistant, hooks?.conversation, toolArgumentsJson(toolCall?.function?.arguments)).type === "pending",
     );
     const dispatchCtx = toolCallContext(hooks);
     for (const toolCall of toolCalls) {
@@ -1025,7 +1025,7 @@ export async function fetchOpenAiText(
         toolName: String(toolCall.function?.name ?? ""),
         input: toolArguments,
         output: [],
-        approvalState: initialApprovalState(String(toolCall.function?.name ?? ""), assistant, hooks?.conversation, toolArguments),
+        approvalState: decideAppToolPermission(String(toolCall.function?.name ?? ""), assistant, hooks?.conversation, toolArguments),
       };
       if (hooks?.message) {
         finishReasoningParts(hooks.message);
@@ -1403,7 +1403,7 @@ export function applyOpenAiDelta(
             toolName: callName,
             input: args,
             approvalState: assistant
-              ? initialApprovalState(callName, assistant, hooks.conversation)
+              ? decideAppToolPermission(callName, assistant, hooks.conversation)
               : { type: "auto" },
           });
         } else if (args) {
@@ -1864,7 +1864,7 @@ export async function fetchOpenAiTextStreaming(
           toolName: call.name,
           input: call.arguments,
           output,
-          approvalState: initialApprovalState(call.name, assistant, hooks.conversation),
+          approvalState: decideAppToolPermission(call.name, assistant, hooks.conversation),
         };
         return useResponseInput
           ? { type: "function_call_output", call_id: call.id, output: toolResultTextForApi(toolPart) }

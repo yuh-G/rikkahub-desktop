@@ -99,12 +99,13 @@ function mcpApprovalRequired(toolName: string, assistant: Assistant): boolean {
   return false;
 }
 
-/** 一次应用工具调用的审批判定。args 缺省 = 参数未到(流式建卡),给无参数下界。 */
-function decideAppToolPermission(
+/** 一次应用工具调用的审批判定(两个引擎、聊天引擎各供应商路径的唯一入口)。args 缺省 = 参数未到
+ *  (流式建卡),给无参数下界;结果直接作工具卡的初始审批态。 */
+export function decideAppToolPermission(
   toolName: string,
   assistant: Assistant,
-  conversation: ConversationWorkspacePick | null | undefined,
-  args: string | undefined,
+  conversation?: ConversationWorkspacePick | null,
+  args?: string,
 ): PermissionDecision {
   const entry = classifyAppTool(toolName);
   if (!entry) return { type: "auto" };
@@ -122,24 +123,6 @@ function decideAppToolPermission(
     },
     policy,
   );
-}
-
-export function toolNeedsApproval(
-  toolName: string,
-  assistant: Assistant,
-  conversation?: ConversationWorkspacePick | null,
-  args?: string,
-): boolean {
-  return decideAppToolPermission(toolName, assistant, conversation, args).type === "pending";
-}
-
-export function initialApprovalState(
-  toolName: string,
-  assistant: Assistant,
-  conversation?: ConversationWorkspacePick | null,
-  args?: string,
-): ToolApprovalState {
-  return decideAppToolPermission(toolName, assistant, conversation, args);
 }
 
 /** 插件工具的会话级免问键(审批卡「此会话内总是允许该工具」记在这个键上)。 */

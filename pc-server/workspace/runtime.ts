@@ -6,7 +6,7 @@
 //     应用工具面拿 WorkspaceToolOutput 原始形状,见 engines/app-tools.ts;
 //     runWorkspaceTool 的调度器 ToolResult 形状仅剩防御面:模型幻觉工具名经
 //     tools/execution 分发到此,安全壳报"工作区不可用")。
-// 审批矩阵在 tools/approval.ts(纯函数在 ./approval.ts);路径边界在 ./boundary.ts;
+// 审批判定在 tools/permission.ts(按类别,工具名 → 类别见 tools/tool-categories.ts);路径边界在 ./boundary.ts;
 // 工具内核是 ./tools/ 下的 pi 原样移植,本层不复制其任何逻辑。
 
 import { existsSync, mkdirSync } from "node:fs";
@@ -121,7 +121,7 @@ export function mountedWorkspaceToolNames(): WorkspaceToolName[] {
     : ["read", "edit", "write", "grep", "find", "ls"];
 }
 
-/** 边界宽窄选择(权限档位改版,与 workspace/approval.ts 三档语义配套):
+/** 边界宽窄选择(权限档位改版,与 tools/permission.ts 三档语义配套):
  *  - read 三档全宽(读不具破坏性,区外读免审,2026-08-01 拍板;skills/tmp 只读挂载
  *    随之天然可读,原多根机件已删);
  *  - write/edit 走宽界当且仅当"用户显式批准了这次调用"(区外写入的知情同意)或

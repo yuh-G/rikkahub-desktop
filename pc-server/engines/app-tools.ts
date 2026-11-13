@@ -13,7 +13,7 @@
 //   进模型的 schema 逐字同源,关掉的面天然为空);执行走 tools/execution.executeToolCall
 //   (搜索开关守卫/MCP OAuth 预刷新/analytics/save_memory 写策略全在其内)。
 //
-// 审批:tools/approval.initialApprovalState(与聊天引擎同一判定函数:工作区三档矩阵、MCP 每
+// 审批:tools/approval.decideAppToolPermission(与聊天引擎同一判定函数:工作区三档矩阵、MCP 每
 // 工具 needsApproval + 助手级 override,search/scrape/memory 恒 auto)+ approval-flow 共享
 // 生命周期。ask_user 是「决议里多带一个 answer 字段」的特例,经 gateAskUser 挂起,答案即工具
 // 结果(扁平 {"answers":{...}} 契约,与聊天引擎 answered 回放逐字一致)。
@@ -29,12 +29,11 @@ import type { Assistant, Conversation, JsonValue, Model, ToolOutputEntry } from 
 import type { GenerationEventSink, GenerationTarget } from "../inference-engine/events";
 import { gateToolApproval } from "../inference-engine/approval-flow";
 import { gateAskUser } from "../inference-engine/ask-user-flow";
-import { initialApprovalState } from "../tools/approval";
+import { decideAppToolPermission } from "../tools/approval";
 import { ASK_USER_TOOL_NAME, normalizeAskUserQuestions, serializeAskUserAnswer } from "../tools/ask-user";
 import { openAiLocalTools, openAiMcpTools, openAiSearchTools } from "../tools/bound";
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
 import { openAiToolOutput } from "../tools/format";
-import { isWorkspaceToolName, type WorkspaceToolName } from "../workspace/approval";
 import { executeWorkspaceToolCore, jsonSafeDetails, openAiWorkspaceTools } from "../workspace/runtime";
 import type { WorkspaceToolOutput } from "../workspace/tools/types";
 
@@ -96,7 +95,7 @@ export function appToolSpecsFor(ctx: AppToolsContext): AppToolSpec[] {
 /** 内核部分输出 → 工具卡条目:text 原样、图片封成 data URL、结构化细节挂首个 text 条目的
  *  metadata.workspace(无 text 条目时补一个空载体)——与工具结果经 pi 回到事件桥的还原
  *  口径逐字一致。 */
-function workspacePartialEntries(name: WorkspaceToolName, output: WorkspaceToolOutput<unknown>): ToolOutputEntry[] {
+function workspacePartialEntries(name: string, output: WorkspaceToolOutput<unknown>): ToolOutputEntry[] {
   const entries: ToolOutputEntry[] = output.content.map((item) =>
     item.type === "text" ? { type: "text", text: item.text } : { type: "image", url: `data:${item.mimeType};base64,${item.data}` },
   );
@@ -109,7 +108,7 @@ function workspacePartialEntries(name: WorkspaceToolName, output: WorkspaceToolO
   return entries;
 }
 
-function workspaceResult(name: WorkspaceToolName, output: WorkspaceToolOutput<unknown>): AppToolResult {
+function workspaceResult(name: string, output: WorkspaceToolOutput<unknown>): AppToolResult {
   const details = jsonSafeDetails(output.details);
   return { content: output.content, ...(details ? { details: { tool: name, details } } : {}) };
 }
@@ -127,9 +126,9 @@ function summaryOf(value: JsonValue | undefined): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, 120) : undefined;
 }
 
-async function callWorkspaceTool(ctx: AppToolsContext, name: WorkspaceToolName, call: AppToolInvocation): Promise<AppToolResult> {
+async function callWorkspaceTool(ctx: AppToolsContext, name: string, call: AppToolInvocation): Promise<AppToolResult> {
   const { args, toolCallId } = call;
-  const approval = initialApprovalState(name, ctx.assistant, ctx.conversation, JSON.stringify(args));
+  const approval = decideAppToolPermission(name, ctx.assistant, ctx.conversation, JSON.stringify(args));
   const summary = summaryOf(args.command ?? args.path);
   // 返回 true = 用户对 pending 卡显式批准,是危险命令拦截的知情同意放行门
   // (workspace/runtime.ts),仅此路径可置 true。
@@ -174,7 +173,7 @@ async function callAskUser(ctx: AppToolsContext, call: AppToolInvocation): Promi
 async function callGeneralTool(ctx: AppToolsContext, call: AppToolInvocation): Promise<AppToolResult> {
   const { name, args, toolCallId } = call;
   const argsJson = JSON.stringify(args);
-  const approval = initialApprovalState(name, ctx.assistant, ctx.conversation, argsJson);
+  const approval = decideAppToolPermission(name, ctx.assistant, ctx.conversation, argsJson);
   const summary = summaryOf(args.url ?? args.query ?? args.content ?? args.path ?? args.command);
   await gateToolApproval(approval, {
     conversationId: ctx.conversation.id,
@@ -200,7 +199,8 @@ export function createAppToolCaller(ctx: AppToolsContext, specs: readonly AppToo
   return async (call) => {
     const group = groups.get(call.name);
     if (!group) throw new Error(`Unknown tool: ${call.name}`);
-    if (group === "workspace" && isWorkspaceToolName(call.name)) return callWorkspaceTool(ctx, call.name, call);
+    // 工作区组的名字由执行内核校验(executeWorkspaceToolCore 对未知名报错回灌模型)。
+    if (group === "workspace") return callWorkspaceTool(ctx, call.name, call);
     if (call.name === ASK_USER_TOOL_NAME) return callAskUser(ctx, call);
     return callGeneralTool(ctx, call);
   };

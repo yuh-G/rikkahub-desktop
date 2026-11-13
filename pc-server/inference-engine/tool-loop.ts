@@ -15,7 +15,7 @@
 //     冻结点——此前 Claude/Google 停止后本轮工具仍会执行,违背用户"停止"心智)。
 // 其余仍为纯参数化差异(文案/编码格式等),不做无谓统一。
 import type { Assistant, Message, Provider } from "../foundation/types";
-import { initialApprovalState } from "../tools/approval";
+import { decideAppToolPermission } from "../tools/approval";
 import { toolExecutionErrorPayload } from "../tools/format";
 import { finishReasoningParts } from "./parts";
 import type { StreamHooksWithSink, ToolCall, ToolDispatchContext, ToolResult } from "./events";
@@ -340,7 +340,7 @@ export async function runStreamingToolLoop(
     // balanced 档依赖参数：危险命令/区外写入才审批）。generateAnswer 看到
     // hasPendingToolApproval 会暂停等用户决定。
     const approvalByCall = new Map(
-      result.toolCalls.map((call) => [call.id, initialApprovalState(call.name, assistant, hooks.conversation, call.arguments)] as const),
+      result.toolCalls.map((call) => [call.id, decideAppToolPermission(call.name, assistant, hooks.conversation, call.arguments)] as const),
     );
     const hasPendingInBatch = [...approvalByCall.values()].some((state) => state.type === "pending");
     // 流内建卡的 provider（Claude）在参数未到时用无参数下界建卡；终局若上调为
@@ -378,7 +378,7 @@ export async function runStreamingToolLoop(
           input: call.arguments,
           output: [],
           // 循环层建卡时参数已齐，直接用终局审批态（含缘由）
-          approvalState: approvalByCall.get(call.id) ?? initialApprovalState(call.name, assistant, hooks.conversation, call.arguments),
+          approvalState: approvalByCall.get(call.id) ?? decideAppToolPermission(call.name, assistant, hooks.conversation, call.arguments),
         };
         finishReasoningParts(hooks.message);
         hooks.sink?.({
