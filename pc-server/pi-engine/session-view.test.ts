@@ -151,6 +151,66 @@ describe("createPiSessionFromView", () => {
   });
 });
 
+describe("压缩:原生条目与会话级记录配对(P3.5)", () => {
+  const nativeCompaction = (summary: string, tokensBefore: number): EngineEntry => ({
+    seq: 99,
+    format: PI_ENTRY_FORMAT,
+    entryId: "cmp-native",
+    payload: {
+      type: "compaction",
+      id: "cmp-native",
+      parentId: "n4",
+      timestamp: "2026-11-12T00:00:01.000Z",
+      summary,
+      firstKeptEntryId: "stale-first-kept",
+      tokensBefore,
+      details: { readFiles: ["a.ts"], modifiedFiles: ["b.ts"] },
+    },
+  });
+
+  function compactedView(record: { summary: string; tokensBefore: number }, native: EngineEntry) {
+    const user1 = userItem("旧问");
+    const ai1 = { message: assistantRow(), synthetic: false, native: [...nativeGroup(), native] };
+    const user2 = userItem("新问");
+    return { user2, ...load([user1, ai1, user2], { compactions: [{ cutMessageId: user2.message.id, ...record }] }) };
+  }
+
+  test("配得上生效记录:原样取用(id / details / 时间戳在),接在序列末尾,firstKept 按记录重定", () => {
+    const { user2, entries, messages } = compactedView({ summary: "旧史摘要", tokensBefore: 10 }, nativeCompaction("旧史摘要", 10));
+    const compactions = entries.filter((entry) => entry.type === "compaction");
+    expect(compactions.length).toBe(1);
+    expect(entries.at(-1)).toMatchObject({
+      type: "compaction",
+      id: "cmp-native",
+      parentId: `${user2.message.id}:0`,
+      timestamp: "2026-11-12T00:00:01.000Z",
+      firstKeptEntryId: `${user2.message.id}:0`,
+      details: { readFiles: ["a.ts"], modifiedFiles: ["b.ts"] },
+    });
+    const flat = JSON.stringify(messages);
+    expect(flat).toContain("旧史摘要");
+    expect(flat).not.toContain("原生结果");
+    expect(flat).toContain("新问");
+  });
+
+  test("配不上(摘要或用量不同):由记录重建,原生条目不进序列", () => {
+    for (const native of [nativeCompaction("另一份摘要", 10), nativeCompaction("旧史摘要", 11)]) {
+      const { user2, entries, messages } = compactedView({ summary: "旧史摘要", tokensBefore: 10 }, native);
+      const compactions = entries.filter((entry) => entry.type === "compaction");
+      expect(compactions.length).toBe(1);
+      expect(compactions[0]).toMatchObject({ summary: "旧史摘要", tokensBefore: 10, firstKeptEntryId: `${user2.message.id}:0` });
+      expect(compactions[0]!.id).not.toBe("cmp-native");
+      expect(JSON.stringify(messages)).not.toContain("另一份摘要");
+    }
+  });
+
+  test("没有生效记录(切点不在场):原生压缩条目不取用,不压缩", () => {
+    const { entries, messages } = load([userItem("旧问"), { message: assistantRow(), synthetic: false, native: [...nativeGroup(), nativeCompaction("旧史摘要", 10)] }]);
+    expect(entries.some((entry) => entry.type === "compaction")).toBe(false);
+    expect(JSON.stringify(messages)).toContain("原生结果");
+  });
+});
+
 describe("createPiEntrySync(写路径,P3.4)", () => {
   test("只交出装载之后的新条目;每轮重建的不写;重复对账不重发", async () => {
     const { manager } = load([userItem("旧问"), { message: assistantRow(), synthetic: false }]);
@@ -180,6 +240,22 @@ describe("createPiEntrySync(写路径,P3.4)", () => {
     expect(sent[0]!.every((entry) => entry.format === PI_ENTRY_FORMAT)).toBe(true);
     // 载荷就是 pi 条目本身:下一轮装载原样取用(签名在)。
     expect(sent[0]![0]!.payload).toEqual(manager.getEntry(answerId) as unknown as JsonValue);
+  });
+
+  test("压缩条目要写,去掉系统提示词快照,其余原样", async () => {
+    const { manager, entries } = load([userItem("旧问"), { message: assistantRow(), synthetic: false }]);
+    // 模拟会话里有 system 消息时的压缩:appendCompaction 会把它快照进 systemMessage。
+    manager.appendMessage({ role: "system", content: "系统提示词", timestamp: 1 } as never);
+    const sent: EngineEntryInput[] = [];
+    const sync = createPiEntrySync(manager, async (batch) => void sent.push(...batch), () => undefined);
+    const compactionId = manager.appendCompaction("摘要", entries[0]!.id, 42, { readFiles: ["a.ts"], modifiedFiles: [] });
+    expect(manager.getEntry(compactionId)).toHaveProperty("systemMessage");
+    await sync.flush();
+
+    expect(sent.map((entry) => entry.entryId)).toEqual([compactionId]);
+    const payload = sent[0]!.payload as Record<string, JsonValue>;
+    expect(payload).not.toHaveProperty("systemMessage");
+    expect(payload).toMatchObject({ type: "compaction", summary: "摘要", tokensBefore: 42, details: { readFiles: ["a.ts"], modifiedFiles: [] } });
   });
 
   test("送达失败只报一次,flush 不拒绝", async () => {

@@ -179,6 +179,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
           tokensBefore: result.tokensBefore,
           estimatedTokensAfter: result.estimatedTokensAfter,
           compaction: result.compaction,
+          ...(result.native ? { native: result.native } : {}),
         };
       } finally {
         run.release();

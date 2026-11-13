@@ -445,6 +445,14 @@ describe("引擎判定单源(审批旁路/压缩路由收编)", () => {
     // 压缩发生点注解落在"当时的最新一条消息"(工作区路径经 applyCapturedEngineCompactions)。
     const tail = conversation.messages.at(-1)!;
     expect(tail.messages[tail.selectIndex].annotations).toContainEqual({ type: "compaction_boundary" });
+    // P3.5:pi 的原生压缩条目锚定到同一条尾消息并当场封存(去掉系统提示词快照,带文件操作清单)。
+    const tailMessage = tail.messages[tail.selectIndex]!;
+    const groups = loadEngineEntries(db, conversation.id, "pi");
+    expect(groups.map((group) => [group.anchorMessageId, group.digest])).toEqual([[tailMessage.id, engineVisibleDigest([tailMessage])]]);
+    const payload = groups[0]!.entries[0]!.payload as Record<string, unknown>;
+    expect(payload).toMatchObject({ type: "compaction", summary: result!.summary, tokensBefore: result!.tokensBefore });
+    expect(payload.details).toMatchObject({ readFiles: [], modifiedFiles: [] });
+    expect(payload).not.toHaveProperty("systemMessage");
   }, 60_000);
 });
 

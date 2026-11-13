@@ -14,7 +14,8 @@
 // 本轮新增的 pi 条目经 ctx.appendEntries 交给应用(session-view 的 createPiEntrySync:事件边界、
 // 补发换绑之前、轮末三处对账),应用锚定到当前落点、正常结束后封存,下一轮装载时原样取用。
 // pi 自动压缩发生在 prompt 内部,结果捕获为 capturedCompactions(firstKeptEntryId 反查视图的
-// 条目映射回到消息 id),由调用方落 conversation.engineCompactions——下一轮由 session-view 重放。
+// 条目映射回到消息 id),由调用方落 conversation.engineCompactions;原生压缩条目随本轮的对账
+// 落进私有表。下一轮由 session-view 按记录决定压缩,配得上原生条目则原样取用(P3.5)。
 // 视图是富化全序列(含合成行,应用以压缩切点为富化窗口锚),聊天位注入/时间提醒在工作区会话
 // 与聊天引擎逐字同生效。
 //
@@ -53,7 +54,7 @@ import type {
   ModelGrant,
 } from "../engines/contract";
 import { createPiAppTools, type PiAppToolCaller } from "./app-tools";
-import { createPiEntrySync, createPiSessionFromView } from "./session-view";
+import { createPiEntrySync, createPiSessionFromView, toPiEngineEntry } from "./session-view";
 
 export interface PiGenerationContext {
   /** 本轮模型授权(应用侧 engines/model-grant 组装:上限/请求头已是终值)。limits.contextWindow
@@ -160,6 +161,20 @@ function createModelRuntimeFor(
   return createPiModelRuntime(mapping, ctx.credentialSource, outlet);
 }
 
+/** 会话装载完成后建对账器(不传 appendEntries = 不写)。送达失败报一次 warn。 */
+function entrySyncFor(manager: SessionManager, ctx: Pick<PiGenerationContext, "appendEntries" | "report">) {
+  const { appendEntries } = ctx;
+  if (!appendEntries) return undefined;
+  return createPiEntrySync(manager, appendEntries, (error) =>
+    ctx.report?.({
+      domain: "pi-engine",
+      severity: "warn",
+      message: "工作区会话的引擎记录未能保存,下一轮这部分历史按界面内容重建(思考签名等引擎数据不保留)",
+      detail: error instanceof Error ? error.message : String(error),
+    }),
+  );
+}
+
 export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
   if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
   const mapped = mapGrantToPi(ctx.grant);
@@ -175,17 +190,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   });
   const manager = seeded.manager;
   const seededEntryIds = new Set(manager.getEntries().map((entry) => entry.id));
-  const appendEntries = ctx.appendEntries;
-  const entrySync = appendEntries
-    ? createPiEntrySync(manager, appendEntries, (error) =>
-        ctx.report?.({
-          domain: "pi-engine",
-          severity: "warn",
-          message: "工作区会话的引擎记录未能保存,下一轮这部分历史按界面内容重建(思考签名等引擎数据不保留)",
-          detail: error instanceof Error ? error.message : String(error),
-        }),
-      )
-    : undefined;
+  const entrySync = entrySyncFor(manager, ctx);
 
   const { session } = await createAgentSession({
     cwd: ctx.cwd,
@@ -316,6 +321,8 @@ export interface PiCompactionResult {
   /** 本次压缩的切点(pi compact 在既有灌注条目里选 firstKeptEntryId,反查必命中;
    *  理论上查不到时为 null,调用方按外收拢语义落尾消息)。 */
   compaction: CapturedEngineCompaction;
+  /** pi 的原生压缩条目(details 里有文件操作清单,下一次压缩据此累计)。 */
+  native?: EngineEntryInput;
 }
 
 /** 手动压缩的保留窗口(pi chars/4 估算口径;settingsManager compaction.keepRecentTokens)。
@@ -396,11 +403,13 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
       // compact 成功却找不到新 compaction 条目 = pi 内部行为漂移,按失败处理比静默丢摘要安全。
       throw new Error("工作区引擎压缩完成但未产生压缩条目");
     }
+    const nativeEntry = manager.getEntries().findLast((entry) => entry.type === "compaction" && !seededEntryIds.has(entry.id));
     return {
       summary: result.summary,
       tokensBefore: result.tokensBefore,
       estimatedTokensAfter: result.estimatedTokensAfter ?? null,
       compaction: captured,
+      ...(nativeEntry ? { native: toPiEngineEntry(nativeEntry) } : {}),
     };
   } catch (err) {
     // 取消统一为 AbortError(compact 内部以普通 Error("Compaction cancelled") 上抛)。

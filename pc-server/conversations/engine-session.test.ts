@@ -7,7 +7,7 @@ import { Database } from "bun:sqlite";
 import { ensureConversationTables, upsertConversationRowInto } from "./index";
 import { ensureMessageFtsTable } from "./fts";
 import { appendEngineEntries, engineVisibleDigest, loadEngineEntries, sealEngineEntries } from "./engine-entries";
-import { buildEngineSessionView, createEngineSessionWriter, type EngineSessionSource } from "./engine-session";
+import { appendCompactionEntries, buildEngineSessionView, createEngineSessionWriter, type EngineSessionSource } from "./engine-session";
 import { appEngineHost, bindEngineTurn } from "../engines/host";
 import { message } from "../foundation/utils";
 import type { Conversation, Message, MessageNode } from "../foundation/types";
@@ -157,6 +157,36 @@ describe("createEngineSessionWriter", () => {
     expect(() => writer.append("ai1", [{ format: "f", entryId: "e2", payload: 1n as never }])).toThrow();
     writer.seal(c1);
     expect(loadEngineEntries(db, "c1", "pi").map((g) => [g.digest, g.entries.map((e) => e.entryId)])).toEqual([[null, ["e1"]]]);
+  });
+});
+
+describe("appendCompactionEntries(手动压缩的原生条目,P3.5)", () => {
+  test("锚定尾消息并当场封存,与尾消息已有的有效组合成一组;尾组无效则一并无效", () => {
+    const db = realSchemaDb();
+    const ai1 = msg("ai1", "ASSISTANT", "答一");
+    const ai2 = msg("ai2", "ASSISTANT", "答二");
+    upsertConversationRowInto(db, conv("c1", [ai1, ai2]));
+    appendEngineEntries(db, "c1", "pi", "ai1", [entry("e1")]);
+    sealEngineEntries(db, "c1", "pi", "ai1", engineVisibleDigest([ai1]));
+    appendCompactionEntries(db, "c1", "pi", ai1, [entry("cmp1")]);
+    // 尾组未封存(生成中崩溃):压缩条目随它一起作废,下一轮由压缩记录重建。
+    appendEngineEntries(db, "c1", "pi", "ai2", [entry("e2")]);
+    appendCompactionEntries(db, "c1", "pi", ai2, [entry("cmp2")]);
+    expect(loadEngineEntries(db, "c1", "pi").map((g) => [g.anchorMessageId, g.digest, g.entries.map((e) => e.entryId)])).toEqual([
+      ["ai1", engineVisibleDigest([ai1]), ["e1", "cmp1"]],
+      ["ai2", null, ["e2", "cmp2"]],
+    ]);
+  });
+
+  test("没有尾消息 / 空批次 / 会话已删除:不动库", () => {
+    const db = realSchemaDb();
+    const ai1 = msg("ai1", "ASSISTANT", "答");
+    upsertConversationRowInto(db, conv("c1", [ai1]));
+    appendCompactionEntries(db, "c1", "pi", undefined, [entry("x")]);
+    appendCompactionEntries(db, "c1", "pi", ai1, []);
+    appendCompactionEntries(db, "gone", "pi", ai1, [entry("y")]);
+    appendCompactionEntries(null, "c1", "pi", ai1, [entry("z")]);
+    expect(loadEngineEntries(db, "c1", "pi")).toEqual([]);
   });
 });
 

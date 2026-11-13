@@ -296,6 +296,9 @@ export interface CompactResult {
   /** 引擎对压缩后上下文的估算(拿不到为 null,仅展示用)。 */
   estimatedTokensAfter: number | null;
   compaction: CapturedEngineCompaction;
+  /** 引擎的原生压缩条目(可选)。压缩调用不经 session.append:应用落压缩记录的同时把它锚定到尾消息
+   *  并当场封存,之后随视图交回,由引擎与压缩记录配对取用。 */
+  native?: EngineEntryInput;
 }
 
 export interface EngineErrorReport {
@@ -336,7 +339,8 @@ export interface EngineHost {
   session: {
     /** 本次调用的会话视图。压缩调用的视图只含真实行(合成行不进摘要)。 */
     load(turn: TurnRef): Promise<EngineSessionView>;
-    /** 追加原生条目,锚定到应用的当前落点消息。压缩调用不接收(以错误拒绝)。 */
+    /** 追加原生条目,锚定到应用的当前落点消息。压缩调用不接收(以错误拒绝;原生压缩条目随
+     *  CompactResult.native 交回)。 */
     append(turn: TurnRef, entries: EngineEntryInput[]): Promise<void>;
   };
   tools: { call(call: AppToolCall): Promise<AppToolResult> };

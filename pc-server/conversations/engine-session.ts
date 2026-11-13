@@ -9,6 +9,7 @@
 // 封存:只在轮正常结束、应用收尾(输出变换、定格思考与工具卡、摘除占位)之后,按收尾后的内容
 // 封存本次写过的全部锚定。中止与失败不封存——这些轮次的原生条目可能停在半截(有工具调用没有
 // 结果),装载时作废,由中立内容回退编码。
+// 压缩调用的写入另走 appendCompactionEntries:锚定到尾消息、当场封存。
 
 import type { Database } from "bun:sqlite";
 import type {
@@ -106,4 +107,18 @@ export function createEngineSessionWriter(
       })();
     },
   };
+}
+
+/** 压缩调用的写入(P3.5):锚定到调用时的尾消息(压缩分割线所在的那条),按它此刻的内容直接封存——
+ *  压缩不改消息内容,不必等收尾。不清该锚定已有的条目(它们属于这条消息自己的那次生成);尾消息
+ *  的组若本就无效(编辑过、未封存),新行随组一起作废,压缩由会话级记录重建。 */
+export function appendCompactionEntries(
+  db: Db | null,
+  conversationId: string,
+  engine: EngineKind,
+  tail: Message | undefined,
+  entries: readonly EngineEntryInput[],
+): void {
+  if (!db || !tail || entries.length === 0 || !conversationExistsInDb(db, conversationId)) return;
+  appendEngineEntries(db, conversationId, engine, tail.id, entries, engineVisibleDigest([tail]));
 }

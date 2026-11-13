@@ -7,8 +7,9 @@
 //   应用物化,注入不沉淀为引擎记忆;
 // - 助手行带有效原生条目(应用已按摘要校验过)→ 原样取用;否则回退编码。原生组里刻意不取每轮
 //   重建的东西:用户消息(由前面的中立行给出)、system 消息(系统提示词每轮由 resources 重建,见
-//   model-bridge 的 supportsMidConvoSystemMessages)、模型与思考档位(由本轮授权给出)、压缩与分支
-//   摘要(压缩仍以会话级 engineCompactions 为准,重放在下方)。
+//   model-bridge 的 supportsMidConvoSystemMessages)、模型与思考档位(由本轮授权给出)、分支摘要。
+// - 压缩(P3.5):会话级 engineCompactions 决定是否压缩、切点在哪;原生压缩条目(details、用量、插件
+//   标记)不在组内原位取用,只在配上生效记录时接到序列末尾,配不上则由记录重建。
 // - 整组回退的情形:格式不识别、形状不对、组里没有助手消息,或原生内容与这一行的引擎可见文本不一致
 //   ——应用对助手内容的改写(输出变换、消息模板)要让模型看到改写后的内容,与保真注解失配同一语义。
 // - 条目 id:原生条目保留自身 id,回退条目由消息 id 确定性派生。整条序列按视图顺序重连成线性链
@@ -18,12 +19,14 @@
 // 写路径(P3.4,createPiEntrySync):装载之后 pi 新增的条目经 host.session.append 交给应用,锚定由
 // 应用按当前落点决定。pi 的追加大多不发 entry_appended(message_end 落库、模型/档位变更、压缩都不发),
 // 所以按 getEntries() 与已交出的 id 对账:条目只追加、id 唯一,对账是精确的。每轮重建的条目不写
-// (装载时同样剔除;用户消息还带着图片原文)。
+// (装载时同样剔除;用户消息还带着图片原文)。压缩条目要写:生成中的自动压缩随本轮落点,手动压缩
+// 由应用锚定到当时的尾消息。
 
 import {
   CURRENT_SESSION_VERSION,
   SessionManager,
   assertValidSessionId,
+  type CompactionEntry,
   type NewSessionOptions,
   type SessionEntry,
 } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
@@ -54,7 +57,6 @@ function isEntryShape(payload: unknown): boolean {
 
 function rebuiltEachTurn(entry: SessionEntry): boolean {
   switch (entry.type) {
-    case "compaction":
     case "branch_summary":
     case "model_change":
     case "thinking_level_change":
@@ -64,6 +66,16 @@ function rebuiltEachTurn(entry: SessionEntry): boolean {
     default:
       return false;
   }
+}
+
+/** 组里的原生压缩条目。不放回组内原位:压缩以会话级记录为准,配上对的才在序列末尾取用。 */
+function nativeCompactionsOf(item: EngineSessionItem): CompactionEntry[] {
+  if (item.synthetic || !item.native) return [];
+  return item.native.flatMap((raw) =>
+    raw.format === PI_ENTRY_FORMAT && isEntryShape(raw.payload) && (raw.payload as { type: string }).type === "compaction"
+      ? [raw.payload as unknown as CompactionEntry]
+      : [],
+  );
 }
 
 /** 原生助手消息的文本、思考与工具调用序列是否就是这一行(富化后)的内容。流式增量逐字并进 parts,
@@ -99,7 +111,7 @@ function nativeEntriesOf(item: EngineSessionItem): SessionEntry[] | null {
   for (const raw of item.native) {
     if (raw.format !== PI_ENTRY_FORMAT || !isEntryShape(raw.payload)) return null;
     const entry = raw.payload as unknown as SessionEntry;
-    if (!rebuiltEachTurn(entry)) entries.push(entry);
+    if (entry.type !== "compaction" && !rebuiltEachTurn(entry)) entries.push(entry);
   }
   const hasAssistant = entries.some((entry) => entry.type === "message" && entry.message.role === "assistant");
   return hasAssistant && matchesNeutral(entries, item.message) ? entries : null;
@@ -138,18 +150,17 @@ function sessionOptionsFor(conversationId: string): NewSessionOptions | undefine
  *    切点行的首条目。
  *  生效判定与应用侧 effectiveEngineCompaction(conversations/engine-compactions)必须一致,由
  *  context-encoder.test.ts 锁定。 */
-function replayCompaction(
-  manager: SessionManager,
+function applicableCompaction(
   compactions: readonly EngineCompactionRecord[],
   entryIdsByMessageId: ReadonlyMap<string, string[]>,
   firstEntryId: string | null,
   hasSynthetic: boolean,
-): void {
-  const applicable = compactions.filter((record) => entryIdsByMessageId.has(record.cutMessageId)).at(-1);
-  if (!applicable) return;
-  const cutEntryIds = entryIdsByMessageId.get(applicable.cutMessageId)!;
+): { record: EngineCompactionRecord; firstKeptEntryId: string } | null {
+  const record = compactions.filter((item) => entryIdsByMessageId.has(item.cutMessageId)).at(-1);
+  if (!record) return null;
+  const cutEntryIds = entryIdsByMessageId.get(record.cutMessageId)!;
   const boundary = hasSynthetic ? firstEntryId : cutEntryIds[0];
-  manager.appendCompaction(applicable.summary, boundary ?? cutEntryIds[0]!, applicable.tokensBefore);
+  return { record, firstKeptEntryId: boundary ?? cutEntryIds[0]! };
 }
 
 /** 视图 → 装载好的 pi 内存会话。视图不含本轮新用户输入(那条走 session.prompt)。 */
@@ -175,9 +186,28 @@ export function createPiSessionFromView(options: {
     // 合成行不进切点映射:它的 id 不是会话里的消息 id,切点经外收拢落上来时由调用方按尾消息兜底。
     if (group.length && !item.synthetic) entryIdsByMessageId.set(item.message.id, group.map((entry) => entry.id));
   }
+  // 压缩接在序列末尾(上下文与放在原位相同:摘要 + firstKept 起的条目)。生效的记录配得上原生条目
+  // (摘要与压缩前用量相同)→ 原样取用(id、时间戳、details、用量都在),只按上面的规则重定 firstKept;
+  // 否则由记录重建。
+  const compaction = applicableCompaction(view.compactions, entryIdsByMessageId, entries[0]?.id ?? null, view.items.some((item) => item.synthetic));
+  const native = compaction
+    ? view.items.flatMap(nativeCompactionsOf).findLast((entry) => entry.summary === compaction.record.summary && entry.tokensBefore === compaction.record.tokensBefore)
+    : undefined;
+  if (compaction && native) entries.push({ ...native, parentId: entries.at(-1)?.id ?? null, firstKeptEntryId: compaction.firstKeptEntryId });
   const manager = SessionManager.inMemory(options.cwd, sessionOptionsFor(options.conversationId), entries);
-  replayCompaction(manager, view.compactions, entryIdsByMessageId, entries[0]?.id ?? null, view.items.some((item) => item.synthetic));
+  if (compaction && !native) manager.appendCompaction(compaction.record.summary, compaction.firstKeptEntryId, compaction.record.tokensBefore);
   return { manager, entryIdsByMessageId, degradedMessageIds };
+}
+
+/** pi 条目 → 交给应用的条目(载荷即条目本身)。压缩条目去掉 systemMessage:那是压缩时刻系统提示词的
+ *  快照,而系统提示词每轮重建(与不存 system 消息同理;由记录重建的压缩也不带它)。 */
+export function toPiEngineEntry(entry: SessionEntry): EngineEntryInput {
+  let payload: SessionEntry = entry;
+  if (entry.type === "compaction") {
+    const { systemMessage: _snapshot, ...rest } = entry;
+    payload = rest;
+  }
+  return { format: PI_ENTRY_FORMAT, entryId: entry.id, payload: payload as unknown as JsonValue };
 }
 
 export interface PiEntrySync {
@@ -200,9 +230,7 @@ export function createPiEntrySync(
     flush() {
       const fresh = manager.getEntries().filter((entry) => !known.has(entry.id));
       for (const entry of fresh) known.add(entry.id);
-      const batch = fresh
-        .filter((entry) => !rebuiltEachTurn(entry))
-        .map((entry): EngineEntryInput => ({ format: PI_ENTRY_FORMAT, entryId: entry.id, payload: entry as unknown as JsonValue }));
+      const batch = fresh.filter((entry) => !rebuiltEachTurn(entry)).map(toPiEngineEntry);
       if (batch.length > 0) {
         const sent = append(batch).catch((error: unknown) => {
           if (reported) return;

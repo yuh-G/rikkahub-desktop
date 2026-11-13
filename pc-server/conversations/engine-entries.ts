@@ -154,18 +154,26 @@ export function loadEngineEntries(db: Db, conversationId: string, engine: string
   });
 }
 
-/** 追加到会话末尾(seq 续号),未封存。entry_id 已存在的条目跳过——对账重放幂等。返回新增行数。 */
-export function appendEngineEntries(db: Db, conversationId: string, engine: string, anchorMessageId: string, entries: readonly EngineEntryInput[]): number {
+/** 追加到会话末尾(seq 续号)。digest 缺省 = 未封存,由一轮结束时 sealEngineEntries 封存;给出则新行
+ *  直接按它封存(内容已定的追加,如原生压缩)。entry_id 已存在的条目跳过——对账重放幂等。返回新增行数。 */
+export function appendEngineEntries(
+  db: Db,
+  conversationId: string,
+  engine: string,
+  anchorMessageId: string,
+  entries: readonly EngineEntryInput[],
+  digest: string | null = null,
+): number {
   if (entries.length === 0) return 0;
   const insert = db.prepare(
-    "INSERT INTO pc_engine_entry (conversation_id, engine, seq, format, anchor_message_id, entry_id, payload, digest) VALUES (?, ?, ?, ?, ?, ?, ?, NULL) ON CONFLICT DO NOTHING",
+    "INSERT INTO pc_engine_entry (conversation_id, engine, seq, format, anchor_message_id, entry_id, payload, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
   );
   return db.transaction(() => {
     const last = db.prepare("SELECT MAX(seq) AS n FROM pc_engine_entry WHERE conversation_id = ? AND engine = ?").get(conversationId, engine) as { n: number | null };
     let seq = (last.n ?? -1) + 1;
     let added = 0;
     for (const entry of entries) {
-      const { changes } = insert.run(conversationId, engine, seq, entry.format, anchorMessageId, entry.entryId ?? null, JSON.stringify(entry.payload));
+      const { changes } = insert.run(conversationId, engine, seq, entry.format, anchorMessageId, entry.entryId ?? null, JSON.stringify(entry.payload), digest);
       seq += changes;
       added += changes;
     }

@@ -46,7 +46,7 @@ import { applyOutputTransforms } from "../assistants";
 import { TITLE_CHARACTER_LIMIT } from "../app-config/prompts";
 import { flushConvDirtyNow, getConversation, getConversationsDb, markConversationRowDirty, markMessageNodeDirty, persistConversation, scheduleThrottledConvFlush, selectedConversationMessages } from "./index";
 import { checkoutConversation, releaseConversation } from "./working-set";
-import { buildEngineSessionView, createEngineSessionWriter, type EngineSessionWriter } from "./engine-session";
+import { appendCompactionEntries, buildEngineSessionView, createEngineSessionWriter, type EngineSessionWriter } from "./engine-session";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
 import { abortGeneration, abortReasonOf, awaitingApproval, compressing, generating } from "./generation-state";
@@ -704,8 +704,11 @@ async function runPortableCompaction(
     providers: [ctx.provider, ctx.summarizer.provider],
   };
   const result = await callEngineDriver(driver, turn, binding, signal, "Compaction cancelled", () => compact(request));
-  // 产物落库与生成路径的压缩捕获同一落点、同一 helper。
+  // 产物落库与生成路径的压缩捕获同一落点、同一 helper;原生压缩条目锚定到同一条尾消息。
   applyCapturedEngineCompactions(conversation, [result.compaction]);
+  if (result.native) {
+    appendCompactionEntries(getConversationsDb(), conversation.id, driver.kind, selectedConversationMessages(conversation).at(-1), [result.native]);
+  }
   return result;
 }
 
