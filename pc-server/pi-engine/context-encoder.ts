@@ -16,7 +16,9 @@
 // contentPartsForApi,与生成入口同一母本),本编码器不读应用的文件表。模型切换会改历史
 // 用户消息的图片降级口径→前缀变化=一次性破缓存,与聊天引擎同语义,接受。
 //
-// 保真来源(P7 桥捕获,annotations["pi-fidelity"]):
+// [LEGACY-READ: pi-fidelity] 保真来源(P7 桥捕获,annotations["pi-fidelity"];P3.4 起不再写入,
+// 新轮次的块结构与签名在引擎私有条目里,有效时由 session-view 原样取用。老数据可能长期存在,
+// 读取不设拆除期限):
 // - 引擎消息分组:msg 序号数组,每条 = 块序列(parts 是合并视图——连续同类增量并入
 //   同一 part,且跨引擎消息的相邻同类文本也会并入;块 len 把合并文本按字符游标切回原块);
 // - 思维链签名:sig/redacted 逐块回填(Anthropic 签名/redacted 加密载荷,跨轮重放必需);
@@ -50,7 +52,7 @@ import type {
 import { isRecord, parseDataUrl } from "../foundation/utils";
 import { UNRESOLVED_TOOL_RESULT_TEXT, openAiToolOutput } from "../tools/format";
 
-// ----- 保真注解读取 -----
+// ----- 保真注解读取 [LEGACY-READ: pi-fidelity] -----
 
 interface FidelityBlock {
   type: string;

@@ -11,6 +11,8 @@
 // pi-engine/driver(EngineDriver 实现,输入全部来自契约)。
 //
 // 会话数据(方案 §4.7 / §5.4):引擎上下文每轮由会话视图重建,不再有会话↔jsonl 文件关联。
+// 本轮新增的 pi 条目经 ctx.appendEntries 交给应用(session-view 的 createPiEntrySync:事件边界、
+// 补发换绑之前、轮末三处对账),应用锚定到当前落点、正常结束后封存,下一轮装载时原样取用。
 // pi 自动压缩发生在 prompt 内部,结果捕获为 capturedCompactions(firstKeptEntryId 反查视图的
 // 条目映射回到消息 id),由调用方落 conversation.engineCompactions——下一轮由 session-view 重放。
 // 视图是富化全序列(含合成行,应用以压缩切点为富化窗口锚),聊天位注入/时间提醒在工作区会话
@@ -45,12 +47,13 @@ import type { PiSessionResources } from "./resources";
 import type {
   AppToolSpec,
   CapturedEngineCompaction,
+  EngineEntryInput,
   EngineErrorReport,
   EngineSessionView,
   ModelGrant,
 } from "../engines/contract";
 import { createPiAppTools, type PiAppToolCaller } from "./app-tools";
-import { createPiSessionFromView } from "./session-view";
+import { createPiEntrySync, createPiSessionFromView } from "./session-view";
 
 export interface PiGenerationContext {
   /** 本轮模型授权(应用侧 engines/model-grant 组装:上限/请求头已是终值)。limits.contextWindow
@@ -84,6 +87,9 @@ export interface PiGenerationContext {
   callTool?: PiAppToolCaller;
   /** 诊断出口(生产 = host.report;自动压缩失败等经它进应用错误中心)。 */
   report?: (report: EngineErrorReport) => void;
+  /** 本轮新增的 pi 原生条目交给应用(生产 = host.session.append,应用按当前落点锚定)。不传 = 不写
+   *  (测试/冒烟)。轮次返回前已全部送达。 */
+  appendEntries?: (entries: EngineEntryInput[]) => Promise<void>;
   /** 生成事件下沉(生产侧 = host.emit,应用侧接 conversations/generation-apply 的应用器)。 */
   sink: GenerationEventSink;
   signal?: AbortSignal;
@@ -169,6 +175,17 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   });
   const manager = seeded.manager;
   const seededEntryIds = new Set(manager.getEntries().map((entry) => entry.id));
+  const appendEntries = ctx.appendEntries;
+  const entrySync = appendEntries
+    ? createPiEntrySync(manager, appendEntries, (error) =>
+        ctx.report?.({
+          domain: "pi-engine",
+          severity: "warn",
+          message: "工作区会话的引擎记录未能保存,下一轮这部分历史按界面内容重建(思考签名等引擎数据不保留)",
+          detail: error instanceof Error ? error.message : String(error),
+        }),
+      )
+    : undefined;
 
   const { session } = await createAgentSession({
     cwd: ctx.cwd,
@@ -197,6 +214,10 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   const bridge = createPiEventBridge({ report: ctx.report });
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
+    // 流式增量之外的每个事件都是对账点。message_end 的落库在事件派发之后,那一条由下一个事件交出。
+    if (event.type !== "message_update" && event.type !== "tool_execution_update" && event.type !== "bash_execution_update") {
+      void entrySync?.flush();
+    }
   });
   // steering 轮边界(用户问题②):turn_end = 当前 assistant 消息结束、其工具批已执行完。
   // 挂在 agent 级监听器上而不是 session.subscribe:Agent.processEvents 逐个 await agent 级
@@ -214,9 +235,11 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   const unsubscribeSteer = onSteerBoundary
     ? session.agent.subscribe(async (event) => {
         if (event.type !== "turn_end") return;
+        // 应用在 take 里换绑落点,这一段的条目必须先落到旧落点上。
+        await entrySync?.flush();
         const texts = await onSteerBoundary();
         if (texts.length === 0) return;
-        // 注入即分段:应用已换绑落点,桥的终局文本/保真序号切到新气泡口径。
+        // 注入即分段:应用已换绑落点,桥的终局文本切到新气泡口径。
         bridge.beginSegment();
         for (const text of texts) {
           session.agent.steer({ role: "user", content: [{ type: "text", text }], timestamp: Date.now() });
@@ -242,6 +265,8 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     unsubscribeSteer?.();
     unsubscribe();
     session.dispose();
+    // 轮末对账:收尾前最后一批(含中止、失败的轮次;它们不会被封存,装载时作废)。
+    await entrySync?.flush();
   }
 
   const capturedCompactions = captureRoundCompactions(manager, seededEntryIds, seeded.entryIdsByMessageId);

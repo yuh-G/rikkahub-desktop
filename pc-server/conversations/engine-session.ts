@@ -58,7 +58,7 @@ export function buildEngineSessionView(db: Db | null, source: EngineSessionSourc
 
 export interface EngineSessionWriter {
   /** 追加到锚定消息(调用方传当前落点)。活库未打开或会话已删除时丢弃:删除会中止生成,
-   *  迟到的追加没有可挂的会话。 */
+   *  迟到的追加没有可挂的会话。写入失败照常抛出,且这个锚定本次不再封存。 */
   append(anchorMessageId: string, entries: readonly EngineEntryInput[]): void;
   /** 轮正常结束、应用收尾之后调用:每个写过的锚定按它现在的内容封存;锚定消息已不在会话里则跳过。 */
   seal(conversation: Conversation): void;
@@ -77,13 +77,20 @@ export function createEngineSessionWriter(
   options: EngineSessionWriterOptions = {},
 ): EngineSessionWriter {
   const anchors = new Set<string>();
+  /** 写入失败过的锚定:组里可能缺条目,不封存(装载时走回退编码)。 */
+  const broken = new Set<string>();
   return {
     append(anchorMessageId, entries) {
       if (!db || entries.length === 0 || !conversationExistsInDb(db, conversationId)) return;
-      db.transaction(() => {
-        if (!anchors.has(anchorMessageId)) clearEngineEntries(db, conversationId, engine, anchorMessageId);
-        appendEngineEntries(db, conversationId, engine, anchorMessageId, entries);
-      })();
+      try {
+        db.transaction(() => {
+          if (!anchors.has(anchorMessageId)) clearEngineEntries(db, conversationId, engine, anchorMessageId);
+          appendEngineEntries(db, conversationId, engine, anchorMessageId, entries);
+        })();
+      } catch (error) {
+        broken.add(anchorMessageId);
+        throw error;
+      }
       anchors.add(anchorMessageId);
     },
     seal(conversation) {
@@ -92,7 +99,7 @@ export function createEngineSessionWriter(
       db.transaction(() => {
         for (const anchor of anchors) {
           const message = byId.get(anchor);
-          if (message && anchor !== options.reusedMessageId) {
+          if (message && anchor !== options.reusedMessageId && !broken.has(anchor)) {
             sealEngineEntries(db, conversationId, engine, anchor, engineVisibleDigest([message]));
           }
         }

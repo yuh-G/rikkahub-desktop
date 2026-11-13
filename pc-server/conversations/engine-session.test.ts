@@ -145,6 +145,19 @@ describe("createEngineSessionWriter", () => {
     writer.append("ai1", [entry("e2")]);
     expect(loadEngineEntries(db, "c1", "pi")).toEqual([]);
   });
+
+  test("写入失败:照常抛出,这个锚定本次不封存(组里可能缺条目)", () => {
+    const db = realSchemaDb();
+    const ai1 = msg("ai1", "ASSISTANT", "答");
+    const c1 = conv("c1", [ai1]);
+    upsertConversationRowInto(db, c1);
+    const writer = createEngineSessionWriter(db, "c1", "pi");
+    writer.append("ai1", [entry("e1")]);
+    // BigInt 无法序列化:模拟写库失败。
+    expect(() => writer.append("ai1", [{ format: "f", entryId: "e2", payload: 1n as never }])).toThrow();
+    writer.seal(c1);
+    expect(loadEngineEntries(db, "c1", "pi").map((g) => [g.digest, g.entries.map((e) => e.entryId)])).toEqual([[null, ["e1"]]]);
+  });
 });
 
 describe("appEngineHost.session", () => {

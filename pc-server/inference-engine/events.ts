@@ -41,40 +41,9 @@ export type GenerationEvent =
   // 协调器直通 SSE 给前端状态条;busy=false 即清除。detail 是给状态条的展示参数。
   // 引擎中性契约——任何引擎(pi/未来子进程引擎)有瞬态状态都可发,不归属单一引擎。
   | { kind: "engine_status"; status: EngineStatus }
-  // 引擎消息保真(P7):一条 assistant 引擎消息的块结构。应用器落到
-  // 消息 annotations(type:"pi-fidelity",按 msg 序号幂等覆盖),供 DB→引擎上下文
-  // 重建逐字节复现;不产 part,不进安卓导出(export.ts PC_ONLY_ANNOTATION_TYPES)。
-  // 引擎中性契约——pi 目前是唯一消费方,但结构对任何需逐字节复现引擎消息块的引擎通用。
-  | { kind: "engine_fidelity"; message: EngineMessageFidelity }
   | { kind: "finished"; content: string; stopReason: string | null }
   | { kind: "error"; error: string }
   | { kind: "abort" };
-
-/** 引擎 assistant 消息的保真块(P7 会话数据统一)。parts 是合并视图(连续同类增量
- *  并入同一 part),blocks 记录引擎侧真实块边界:len 把合并后的 part 文本切回原块,
- *  sig/redacted 是思维链跨轮重放的签名载荷(Anthropic 签名/OpenAI reasoning id/
- *  redacted 加密载荷),toolCallId 对齐工具卡。conditional spread 保证无 undefined
- *  键,整体 JsonValue 可序列化。引擎中性——任何需逐字节复现引擎消息块的引擎通用。 */
-export interface EngineFidelityBlock {
-  type: "thinking" | "text" | "toolCall";
-  len?: number;
-  sig?: string;
-  redacted?: boolean;
-  toolCallId?: string;
-  [key: string]: JsonValue | undefined;
-}
-
-/** 一条 assistant 引擎消息的保真结构。msg 为本轮生成内的引擎消息序号(0 起;
- *  一轮代理循环可产多条 assistant 消息,序号即 DB→引擎重建时的分组依据)。
- *  api/provider/model:引擎 AssistantMessage 的必填元数据(不上线,但重建时用捕获值
- *  比占位符干净,且引擎会话上下文的 model 派生读它)。 */
-export interface EngineMessageFidelity {
-  msg: number;
-  api: string;
-  provider: string;
-  model: string;
-  blocks: EngineFidelityBlock[];
-}
 
 /** 引擎瞬态状态(会话级,SSE engine-status 事件载荷)。引擎中性——pi 目前消费
  *  compacting/retrying 两相,未来引擎可按需扩展 phase 枚举。 */

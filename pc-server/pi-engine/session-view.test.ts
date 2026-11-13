@@ -1,14 +1,14 @@
-// pi-engine/session-view.test.ts — 会话视图 → pi 会话(P3.3)的行为锁
+// pi-engine/session-view.test.ts — 会话视图 → pi 会话(P3.3)与写路径对账(P3.4)的行为锁
 //
 // 断言面:manager.getEntries()(装载后的条目与父链)与 buildSessionContext().messages(pi 将看到什么)。
 // 原生组原样取用(签名、工具结果 details、自定义条目);每轮重建的条目剔除;失配整组回退;
 // 回退条目 id 确定性;pi 会话 id = 应用会话 id。
 import { describe, expect, test } from "bun:test";
 
-import type { EngineEntry, EngineSessionItem, EngineSessionView, PromptInput } from "../engines/contract";
+import type { EngineEntry, EngineEntryInput, EngineSessionItem, EngineSessionView, PromptInput } from "../engines/contract";
 import type { JsonValue, Message, ToolPart } from "../foundation/types";
 import { message } from "../foundation/utils";
-import { PI_ENTRY_FORMAT, createPiSessionFromView } from "./session-view";
+import { PI_ENTRY_FORMAT, createPiEntrySync, createPiSessionFromView } from "./session-view";
 
 const CONVERSATION_ID = "0b7a9f3e-1c2d-4e5f-8a9b-0c1d2e3f4a5b";
 const usage = { input: 120, output: 30, cacheRead: 0, cacheWrite: 0, totalTokens: 150, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
@@ -148,5 +148,50 @@ describe("createPiSessionFromView", () => {
     expect(manager.getSessionId()).not.toBe("bad id!");
     expect(manager.getSessionId()).toMatch(/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/);
     expect(entries.length).toBe(1);
+  });
+});
+
+describe("createPiEntrySync(写路径,P3.4)", () => {
+  test("只交出装载之后的新条目;每轮重建的不写;重复对账不重发", async () => {
+    const { manager } = load([userItem("旧问"), { message: assistantRow(), synthetic: false }]);
+    const sent: EngineEntryInput[][] = [];
+    const sync = createPiEntrySync(manager, async (entries) => void sent.push(entries), () => undefined);
+    await sync.flush();
+    expect(sent).toEqual([]);
+
+    manager.appendModelChange("anthropic", "claude-x");
+    manager.appendMessage({ role: "user", content: [{ type: "text", text: "新问" }], timestamp: 1 });
+    const answerId = manager.appendMessage({
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "想", thinkingSignature: "sig-new" }, { type: "text", text: "新答" }],
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-x",
+      usage,
+      stopReason: "stop",
+      timestamp: 2,
+    });
+    const customId = manager.appendCustomEntry("my-ext", { k: 2 });
+    await sync.flush();
+    await sync.flush();
+
+    expect(sent.length).toBe(1);
+    expect(sent[0]!.map((entry) => entry.entryId)).toEqual([answerId, customId]);
+    expect(sent[0]!.every((entry) => entry.format === PI_ENTRY_FORMAT)).toBe(true);
+    // 载荷就是 pi 条目本身:下一轮装载原样取用(签名在)。
+    expect(sent[0]![0]!.payload).toEqual(manager.getEntry(answerId) as unknown as JsonValue);
+  });
+
+  test("送达失败只报一次,flush 不拒绝", async () => {
+    const { manager } = load([]);
+    const errors: unknown[] = [];
+    const sync = createPiEntrySync(manager, async () => {
+      throw new Error("会话已不接收");
+    }, (error) => errors.push(error));
+    manager.appendCustomEntry("a", 1);
+    await sync.flush();
+    manager.appendCustomEntry("b", 2);
+    await sync.flush();
+    expect(errors.length).toBe(1);
   });
 });

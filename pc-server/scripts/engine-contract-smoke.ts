@@ -6,7 +6,7 @@
 //   1. 工具调用 → 待审批(子进程的工具执行挂在跨进程的 host.tools.call 上,父进程在真实审批门
 //      inference-engine/approval-gate 登记等待)→ 批准 → 轮边界取补发 → 结束;
 //   2. 工具调用待审批时中止:父进程先收敛自己的审批等待(应用以生成信号做同一件事),再 driver.abort。
-// 断言事件带轮次身份、补发进了下一次模型请求、模型请求日志经 host.models.log 回到父进程。
+// 断言事件带轮次身份、补发进了下一次模型请求、模型请求日志与 pi 原生条目(P3.4)经 host 回到父进程。
 // 生产不走这条路;它证明「同进程 / 独立进程」只是部署选择(方案 D9)。
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -15,6 +15,7 @@ import { join, resolve } from "node:path";
 
 import type {
   AppToolCall,
+  EngineEntryInput,
   EngineHost,
   EngineInstructions,
   ModelGrant,
@@ -98,13 +99,17 @@ function inputFor(prompt: string): TurnInput {
 const events: Array<{ turn: TurnRef; event: GenerationEvent }> = [];
 const toolCalls: AppToolCall[] = [];
 const steerTakes: TurnRef[] = [];
+const appendedEntries: Array<{ turn: TurnRef; entries: EngineEntryInput[] }> = [];
 const requestLogs: Array<{ turn: TurnRef; record: ModelRequestRecord }> = [];
 const signals = new Map<string, AbortController>();
 let steerQueue: string[] = [];
 
 const host: EngineHost = {
   emit: (turn, event) => void events.push({ turn, event }),
-  session: { load: async () => ({ items: [], compactions: [] }), append: async () => undefined },
+  session: {
+    load: async () => ({ items: [], compactions: [] }),
+    append: async (turn, entries) => void appendedEntries.push({ turn, entries }),
+  },
   tools: {
     async call(call) {
       toolCalls.push(call);
@@ -197,6 +202,13 @@ try {
     check("补发在轮边界被取走并注入下一次模型请求", secondRequest.includes("跨进程补发") && steerTakes.length >= 1);
     check("事件全部带本轮身份", events.length > 0 && events.every((item) => item.turn.turnId === turn.turnId));
     check("流式文本事件跨进程到达", events.some((item) => item.event.kind === "text_delta"));
+    const firstTurnEntries = appendedEntries.filter((item) => item.turn.turnId === turn.turnId).flatMap((item) => item.entries);
+    check("原生条目经 host.session.append 回到父进程(助手消息与工具结果,带格式版本与条目 id)",
+      firstTurnEntries.length > 0
+        && firstTurnEntries.every((entry) => typeof entry.format === "string" && typeof entry.entryId === "string")
+        && JSON.stringify(firstTurnEntries).includes("已记录:跨进程")
+        && JSON.stringify(firstTurnEntries).includes("已记下,也看到了补发"),
+      firstTurnEntries);
     await waitUntil(() => requestLogs.length >= 2, "两条模型请求日志");
     check("模型请求日志经 host.models.log 回到父进程(带授权身份,流式不读体)",
       requestLogs.every(({ turn: logTurn, record }) => logTurn.turnId === turn.turnId && record.ok && record.status === 200

@@ -1,7 +1,7 @@
 // conversations/pi-route.test.ts — generateAnswer 路由切换端到端(P3;P7 改 unified 断言)
 //
 // 钉住编排器的三条 P3 不变式(方案 §六),P7 起观测点从 jsonl 换成会话行数据:
-//   1) 工作区会话 → pi 引擎:回答落 parts、保真注解(pi-fidelity)落消息、上下文从
+//   1) 工作区会话 → pi 引擎:回答落 parts、pi 原生条目落私有表并封存(P3.4)、上下文从
 //      DB 历史灌注回放(上游请求体携带历史即硬证据)、压缩记录字段就位;
 //   2) 非工作区会话 → 聊天引擎原路(同一编排器入口,零 pi 痕迹);
 //   3) 审批 API 全链路:pending 时生成保持在跑,POST tool-approval 原地放行,
@@ -29,6 +29,7 @@ const { model, provider } = await import("../model-providers");
 const { pendingToolApprovalCount } = await import("../inference-engine/approval-gate");
 const { handleConversationRoutes } = await import("../api/handlers/conversations");
 const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
+const { engineVisibleDigest, loadEngineEntries } = await import("./engine-entries");
 
 import type { Conversation, State } from "../foundation/types";
 import type { FakeOpenAiSseServer, FakeSseTurn } from "../test-utils/fake-openai-sse";
@@ -162,7 +163,7 @@ async function waitUntil(cond: () => boolean, timeoutMs = 10_000): Promise<void>
 }
 
 describe("generateAnswer P3 路由", () => {
-  test("工作区会话走 pi 引擎:回答落 parts,保真注解落消息,上下文从 DB 灌注回放", async () => {
+  test("工作区会话走 pi 引擎:回答落 parts,原生条目落私有表并封存,下一轮原样取用", async () => {
     const server = await installUpstream([{ content: "工作区回答" }, { content: "第二轮工作区回答" }]);
     const workspace = ws.createWorkspace({ type: "managed", name: "route-pi" });
     const conversation = seedConversation(workspace.id);
@@ -171,18 +172,23 @@ describe("generateAnswer P3 路由", () => {
     const answer = lastAssistantMessage(conversation);
     expect(partsText(conversation)).toContain("工作区回答");
     expect(answer.finishedAt).not.toBeNull();
-    // P7:引擎保真注解(P7 桥捕获)落在回答消息上——下一轮编码器靠它无损重建引擎消息。
-    const fidelity = (answer.annotations ?? []).find(
+    // P3.4:pi 条目经 host.session.append 锚定到回答消息,轮末封存;保真注解不再写入。
+    expect((answer.annotations ?? []).some(
       (item) => typeof item === "object" && item !== null && (item as { type?: unknown }).type === "pi-fidelity",
-    ) as { messages?: unknown } | undefined;
-    expect(Array.isArray(fidelity?.messages)).toBe(true);
+    )).toBe(false);
+    const groups = loadEngineEntries(db, conversation.id, "pi");
+    expect(groups.map((group) => group.anchorMessageId)).toEqual([answer.id]);
+    expect(groups[0]!.digest).toBe(engineVisibleDigest([answer]));
+    const payloads = groups[0]!.entries.map((entry) => entry.payload as { type: string; message?: { role: string } });
+    // 每轮重建的条目(用户消息、模型/档位变更)不写。
+    expect(payloads.map((payload) => payload.message?.role ?? payload.type)).toEqual(["assistant"]);
     // P7/T3:压缩记录字段就位(未触发自动压缩时保持 null——语义即"无压缩记录")。
     expect(conversation.engineCompactions ?? null).toBeNull();
     expect(getConversationMeta(db, conversation.id)?.engineCompactions ?? null).toBeNull();
     expect(generating.has(conversation.id)).toBe(false);
 
-    // P7 灌注回放硬证据:追加第二轮用户消息再生成,上游第二请求必须携带
-    // 第一轮的 prompt 与回答(历史从 DB 重建进引擎上下文,而不是靠 jsonl)。
+    // 灌注回放硬证据:追加第二轮用户消息再生成,上游第二请求必须携带第一轮的 prompt 与回答。
+    // 回答这次来自原生条目(视图给出、session-view 原样取用),不再走回退编码。
     appendUserNode(conversation, "接着干活");
     await generateAnswer(conversation);
     expect(partsText(conversation)).toContain("第二轮工作区回答");
@@ -191,6 +197,10 @@ describe("generateAnswer P3 路由", () => {
     expect(serialized).toContain("请干活");
     expect(serialized).toContain("工作区回答");
     expect(serialized).toContain("接着干活");
+    expect(loadEngineEntries(db, conversation.id, "pi").map((group) => group.anchorMessageId)).toEqual([
+      answer.id,
+      lastAssistantMessage(conversation).id,
+    ]);
   }, 30_000);
 
   test("推理模型的工作区请求:系统提示词恒 system 角色 + 上限恒 max_tokens(2.0.0 内测缺陷回归)", async () => {

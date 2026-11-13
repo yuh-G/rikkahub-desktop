@@ -352,7 +352,8 @@ export function filterMessagePartsForAndroid(
 
 /** PC-only 消息注解判别符(安卓 UIMessageAnnotation 只有 url_citation;PC 生成失败时
  *  写入的 model_call_error 若流入安卓即"会话打不开")。pi-fidelity 是 P7 引擎消息
- *  保真注解(块结构/思维链签名),纯 PC 工作区语义,同样不得流入安卓。steered 是
+ *  保真注解(块结构/思维链签名),纯 PC 工作区语义,同样不得流入安卓;P3.4 起不再写入,
+ *  老会话里仍有,剥离保留 [LEGACY-READ: pi-fidelity]。steered 是
  *  steer 插话用户消息的轻量标注(仅 PC 用于将来可选 UI 标记),同样不得流入安卓。 */
 export const PC_ONLY_ANNOTATION_TYPES: ReadonlySet<string> = new Set(["model_call_error", "pi-fidelity", "compaction_boundary", "steered"]);
 

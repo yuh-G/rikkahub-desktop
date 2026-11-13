@@ -14,6 +14,11 @@
 // - 条目 id:原生条目保留自身 id,回退条目由消息 id 确定性派生。整条序列按视图顺序重连成线性链
 //   (pi 一轮内的会话本就是线性的)。
 // pi 会话 id = 应用会话 id:prompt_cache_key 与会话亲和头跨轮稳定(§4.5)。
+//
+// 写路径(P3.4,createPiEntrySync):装载之后 pi 新增的条目经 host.session.append 交给应用,锚定由
+// 应用按当前落点决定。pi 的追加大多不发 entry_appended(message_end 落库、模型/档位变更、压缩都不发),
+// 所以按 getEntries() 与已交出的 id 对账:条目只追加、id 唯一,对账是精确的。每轮重建的条目不写
+// (装载时同样剔除;用户消息还带着图片原文)。
 
 import {
   CURRENT_SESSION_VERSION,
@@ -22,8 +27,8 @@ import {
   type NewSessionOptions,
   type SessionEntry,
 } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
-import type { EngineCompactionRecord, EngineSessionItem, EngineSessionView } from "../engines/contract";
-import type { Message } from "../foundation/types";
+import type { EngineCompactionRecord, EngineEntryInput, EngineSessionItem, EngineSessionView } from "../engines/contract";
+import type { JsonValue, Message } from "../foundation/types";
 import { isRecord } from "../foundation/utils";
 import { encodeNeutralMessage } from "./context-encoder";
 
@@ -173,4 +178,40 @@ export function createPiSessionFromView(options: {
   const manager = SessionManager.inMemory(options.cwd, sessionOptionsFor(options.conversationId), entries);
   replayCompaction(manager, view.compactions, entryIdsByMessageId, entries[0]?.id ?? null, view.items.some((item) => item.synthetic));
   return { manager, entryIdsByMessageId, degradedMessageIds };
+}
+
+export interface PiEntrySync {
+  /** 立即交出上次以来的新条目(应用在收到时按当时的落点锚定,所以必须在补发换绑之前调用)。
+   *  返回的 Promise 在已交出的各批都送达后兑现,从不拒绝。 */
+  flush(): Promise<void>;
+}
+
+/** 在会话装载完成之后创建:此刻已有的条目(视图装载的、压缩重放的)视为已在存储里。
+ *  送达失败经 onError 报一次;应用侧不封存写失败的锚定,那条消息下一轮走回退编码。 */
+export function createPiEntrySync(
+  manager: SessionManager,
+  append: (entries: EngineEntryInput[]) => Promise<void>,
+  onError: (error: unknown) => void,
+): PiEntrySync {
+  const known = new Set(manager.getEntries().map((entry) => entry.id));
+  let delivered: Promise<void> = Promise.resolve();
+  let reported = false;
+  return {
+    flush() {
+      const fresh = manager.getEntries().filter((entry) => !known.has(entry.id));
+      for (const entry of fresh) known.add(entry.id);
+      const batch = fresh
+        .filter((entry) => !rebuiltEachTurn(entry))
+        .map((entry): EngineEntryInput => ({ format: PI_ENTRY_FORMAT, entryId: entry.id, payload: entry as unknown as JsonValue }));
+      if (batch.length > 0) {
+        const sent = append(batch).catch((error: unknown) => {
+          if (reported) return;
+          reported = true;
+          onError(error);
+        });
+        delivered = Promise.all([delivered, sent]).then(() => undefined);
+      }
+      return delivered;
+    },
+  };
 }

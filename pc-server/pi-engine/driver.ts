@@ -127,6 +127,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
           tools: input.tools,
           callTool: (call) => host.tools.call({ ...turn, ...call }),
           report,
+          appendEntries: (entries) => host.session.append(turn, entries),
           sink: (event) => host.emit(turn, event),
           signal: run.signal,
           onSteerBoundary: () => host.steer.take(turn),

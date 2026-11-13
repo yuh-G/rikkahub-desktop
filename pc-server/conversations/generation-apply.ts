@@ -142,26 +142,6 @@ export function createGenerationEventApplier(target: GenerationApplyTarget): Gen
         // contextLimit(分母);已填则内部跳过,chat 路径幂等。
         fillContextLimit(currentMessage);
         break;
-      case "engine_fidelity": {
-        // P7 保真注解:引擎消息块结构落 assistant 消息 annotations(type:"pi-fidelity",
-        // 按 msg 序号幂等覆盖)。不产 part;安卓导出被 PC_ONLY_ANNOTATION_TYPES 拦截;
-        // DB→pi 重建时据此把合并 parts 切回引擎消息与原块(签名随 sig 回填)。
-        let record = currentMessage.annotations.find(
-          (a): a is { type: string; v: number; api: string; provider: string; model: string; messages: JsonValue[] } =>
-            isRecord(a) && a.type === "pi-fidelity" && Array.isArray(a.messages),
-        );
-        if (!record) {
-          record = { type: "pi-fidelity", v: 1, api: "", provider: "", model: "", messages: [] };
-          currentMessage.annotations.push(record);
-        }
-        // api/provider/model 同轮恒定,记录级存一份(后到覆盖,幂等)。
-        record.api = event.message.api;
-        record.provider = event.message.provider;
-        record.model = event.message.model;
-        record.messages[event.message.msg] = event.message.blocks as unknown as JsonValue;
-        touchStream(streamHooks as StreamHooksWithSink);
-        break;
-      }
       // engine_status:瞬态状态不落库不产 part,由协调器 sink 包装直通 SSE(P5)。
       case "engine_status":
         break;
