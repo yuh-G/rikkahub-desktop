@@ -54,6 +54,7 @@ import type {
   ModelGrant,
 } from "../engines/contract";
 import { createPiAppTools, type PiAppToolCaller } from "./app-tools";
+import { bindPiPluginSession, type PiPluginSessionBinding } from "./plugins/session-binding";
 import { createPiEntrySync, createPiSessionFromView, toPiEngineEntry } from "./session-view";
 
 export interface PiGenerationContext {
@@ -255,7 +256,10 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     void session.abort();
   };
   ctx.signal?.addEventListener("abort", onAbort, { once: true });
+  let pluginBinding: PiPluginSessionBinding | undefined;
   try {
+    // 插件的 session_start(状态重放)在首个请求之前;没有插件时是空操作。
+    pluginBinding = await bindPiPluginSession(session, ctx.resources?.plugins ?? [], ctx.report);
     if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
     // 当模板/扩展命令拦截(agent-session.ts prompt() 的 expandPromptTemplates 分支),我们的会话 UX 不走 pi 命令面。
@@ -268,6 +272,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   } finally {
     ctx.signal?.removeEventListener("abort", onAbort);
     unsubscribeSteer?.();
+    await pluginBinding?.shutdown();
     unsubscribe();
     session.dispose();
     // 轮末对账:收尾前最后一批(含中止、失败的轮次;它们不会被封存,装载时作废)。
@@ -393,7 +398,9 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
     session.abortCompaction();
   };
   ctx.signal?.addEventListener("abort", onAbort, { once: true });
+  let pluginBinding: PiPluginSessionBinding | undefined;
   try {
+    pluginBinding = await bindPiPluginSession(session, ctx.resources?.plugins ?? [], ctx.report);
     if (ctx.signal?.aborted) throw new DOMException("Compaction cancelled", "AbortError");
     const result = await runWithGoogleRequestLog(googleRequestLogContextFor(model.api, ctx.grant, ctx.requestLog), () =>
       session.compact(ctx.customInstructions?.trim() || undefined),
@@ -422,6 +429,7 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
     throw new Error(`工作区引擎压缩失败：${message}`);
   } finally {
     ctx.signal?.removeEventListener("abort", onAbort);
+    await pluginBinding?.shutdown();
     unsubscribe();
     session.dispose();
   }

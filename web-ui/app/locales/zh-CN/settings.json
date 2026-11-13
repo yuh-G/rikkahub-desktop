@@ -1182,6 +1182,9 @@
       "orphan_stats": "附件目录统计：{{orphans}} 个条目已无引用，约 {{orphanMb}} MB；另有 {{untracked}} 个无记录文件，约 {{untrackedMb}} MB。不会自动删除，如需清理请先备份",
       "hygiene_failed": "数据目录清理任务失败，不影响运行，下次启动重试",
       "output_limit_unknown": "模型 {{model}} 的最大输出长度未知，已按保守默认 {{fallback}} 发送。若该模型报「max_tokens 非法」，请在助手设置里手动指定最大输出长度",
+      "pi_plugin_load_failed": "插件 {{plugin}} 加载失败：{{error}}",
+      "pi_plugin_runtime_error": "插件 {{plugin}} 处理 {{event}} 时出错：{{error}}",
+      "pi_plugin_shutdown_failed": "会话结束时插件收尾失败，不影响会话",
       "voice_provider_preserved": "检测到来自 APP端的语音服务（{{types}}），桌面端暂不支持，已原样保留配置以便回传，不会丢失"
     }
   },

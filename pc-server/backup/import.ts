@@ -682,6 +682,8 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
         // memorySettings 同为 PC-only(APP Settings 无此字段),保 PC 设置,否则 normalizeState
         // 的 M1 推断会覆盖用户的 globalEnabled 选择。
         memorySettings: pc.memorySettings,
+        // devPiPluginPaths 是工作区引擎插件的本机路径(开发者字段,APP 导出已剥离),恒保桌面端的值。
+        devPiPluginPaths: pc.devPiPluginPaths,
       } as unknown as State["settings"];
       const adjusted = rewriteAvatarsInSettings(merged, ANDROID_AVATAR_TYPE_TO_PC, "to-pc");
       setState(normalizeState({ ...state, settings: adjusted as State["settings"] }));

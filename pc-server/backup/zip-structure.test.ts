@@ -139,6 +139,7 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
     proxyConfig: { host: "127.0.0.1" },
     preferredPort: 8080,
     shellPath: "D:\\SoftWare\\Git\\bin\\bash.exe",
+    devPiPluginPaths: ["D:\\plugins\\rpiv-todo"],
     assistants: [
       {
         id: "a1",
@@ -171,6 +172,8 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
     expect(out.preferredPort).toBeUndefined();
     // 机器级 bash 绝对路径随导出剥离(目标机走自动探测,不锁死)
     expect(out.shellPath).toBeUndefined();
+    // 工作区引擎插件的本机路径同理剥离(APP 无工作区引擎)
+    expect(out.devPiPluginPaths).toBeUndefined();
     // Android Uuid 反序列化拒空串 → 填随机 UUID
     expect(out.chatModelId).toMatch(/^[0-9a-f-]{36}$/);
     // 原对象不被就地修改

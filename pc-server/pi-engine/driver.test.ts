@@ -105,6 +105,7 @@ function inputFor(server: FakeOpenAiSseServer, prompt: string, tools: TurnInput[
     reasoningLevel: null,
     workspace: { cwd: root, root },
     instructions,
+    plugins: [],
     prompt: { text: prompt, images: [] },
     tools,
   };
@@ -267,6 +268,7 @@ describe("pi 驱动 × 契约(strict 回环)", () => {
         reasoningLevel: null,
         workspace: { cwd: root, root },
         instructions,
+        plugins: [],
         customInstructions: "",
       })
       .catch((err: unknown) => err);

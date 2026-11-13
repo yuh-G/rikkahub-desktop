@@ -79,6 +79,14 @@ describe("安卓独有字段透传(产品决策②)", () => {
       const port = await waitForServerReady(proc);
       const base = `http://127.0.0.1:${port}`;
 
+      // 桌面端独有的本机路径字段(工作区引擎插件清单):导入 APP 备份后保桌面端的值,导出给 APP 时剥离。
+      const pluginPathsRes = await fetch(`${base}/api/settings/dev/pi-plugin-paths`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths: [dataDir] }),
+      });
+      expect(pluginPathsRes.status).toBe(200);
+
       // 安卓 settings.json:PC 类型系统不认识的顶层字段 + 助手内字段
       const androidSettings = {
         fastModelId: "android-fast-model-uuid",
@@ -116,6 +124,7 @@ describe("安卓独有字段透传(产品决策②)", () => {
         .find((a) => a.id === "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
       expect(importedAssistant?.androidOnlyPerAssistantFlag).toBe("keep-me");
       expect((settings.displaySetting as Record<string, unknown>).showDateTimeInMessage).toBe(true);
+      expect(settings.devPiPluginPaths).toEqual([dataDir]);
 
       // PC 导出 zip → settings.json 原样携带(APP 全量替换导入时不归零)
       const exportRes = await fetch(`${base}/api/data/export`);
@@ -133,6 +142,7 @@ describe("安卓独有字段透传(产品决策②)", () => {
       const exportedAssistant = (exported.assistants as Array<Record<string, unknown>>)
         .find((a) => a.id === "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
       expect(exportedAssistant?.androidOnlyPerAssistantFlag).toBe("keep-me");
+      expect("devPiPluginPaths" in exported).toBe(false);
     } finally {
       proc.kill();
       await proc.exited;

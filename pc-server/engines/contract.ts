@@ -144,6 +144,13 @@ export interface EngineInstructions {
   skills: { dir: string; enabled: string[] };
 }
 
+/** 本轮要加载的引擎插件。id 由应用给(审计、否决署名、审批来源都用它),path 是插件在本机的
+ *  位置(入口文件或包目录)。空数组 = 不加载任何插件。 */
+export interface EnginePlugin {
+  id: string;
+  path: string;
+}
+
 // ---- 模型授权(§5.8) ----
 
 export type ModelProtocol = "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
@@ -258,6 +265,7 @@ export interface TurnInput {
   reasoningLevel: string | null;
   workspace: EngineWorkspace | null;
   instructions: EngineInstructions;
+  plugins: EnginePlugin[];
   prompt: PromptInput;
   tools: AppToolSpec[];
 }
@@ -287,6 +295,8 @@ export interface CompactRequest {
   reasoningLevel: string | null;
   workspace: EngineWorkspace | null;
   instructions: EngineInstructions;
+  /** 与生成同一套插件(插件能介入压缩,也会读写压缩前后的会话)。 */
+  plugins: EnginePlugin[];
   customInstructions: string;
 }
 

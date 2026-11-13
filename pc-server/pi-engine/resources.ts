@@ -18,22 +18,29 @@
 //   排序:全局件 unshift 在 override 输出首位 = pi 原生 agentDir 全局件的既有序。
 // - 人设+记忆:appendSystemPrompt 单一插槽(§3.4,只放应用自己的域:人设/记忆/
 //   搜索指引/教学行/注入面),内容由应用侧冻结(同会话逐字节稳定)。
-// - 扩展/prompt 模板/主题:v1 全关(noExtensions/noPromptTemplates/noThemes),
-//   pi 的资源面只开技能与上下文文件两类。
+// - 插件(P5.2):契约给的插件清单 → plugins/entries 展开成入口文件 → additionalExtensionPaths,
+//   加载结果经 extensionsOverride 交裁决层(plugins/arbiter);noExtensions:true 不变(只加载清单里的,
+//   不读 pi 设置里的包与默认扩展目录),内建扩展(mcp / llama / codemode / tool-search)只经
+//   extensionFactories 进入,我们不传,恒不加载。清单为空时这两项都不传,加载器配置与此前逐项相同。
+// - prompt 模板/主题:全关(noPromptTemplates/noThemes)。
 //
-// 上下文件与技能清单在 ResourceLoader.reload 时点定格(每轮生成装配一次,用户编辑下轮
+// 上下文件、技能清单与插件集合在 ResourceLoader.reload 时点定格(每轮生成装配一次,用户编辑下轮
 // 生效——与技能开关同语义)。
 
 import { isAbsolute, resolve, sep } from "node:path";
 import { DefaultResourceLoader } from "../../pi/packages/coding-agent/src/core/resource-loader.ts";
 import { SettingsManager } from "../../pi/packages/coding-agent/src/core/settings-manager.ts";
-import type { EngineErrorReport, EngineInstructions } from "../engines/contract";
+import type { EngineErrorReport, EngineInstructions, EnginePlugin } from "../engines/contract";
 import { piAgentDir } from "../foundation/paths";
 import { PI_THINKING_BUDGETS } from "./model-bridge";
+import { arbitratePiExtensions } from "./plugins/arbiter";
+import { pluginIdForExtensionPath, resolvePiPluginEntries, type PiPluginEntry } from "./plugins/entries";
 
 export interface PiSessionResources {
   resourceLoader: DefaultResourceLoader;
   settingsManager: SettingsManager;
+  /** 本轮加载的插件入口(入口文件 → 插件 id);空 = 无插件,runner 不做插件绑定。 */
+  plugins: PiPluginEntry[];
 }
 
 // ---- 边界过滤 ----
@@ -65,6 +72,8 @@ export async function createPiSessionResources(options: {
   /** 工作区边界根(AGENTS.md 过滤基准)。 */
   root: string;
   instructions: EngineInstructions;
+  /** 本轮插件清单(契约 TurnInput.plugins / CompactRequest.plugins);不传 = 无插件。 */
+  plugins?: EnginePlugin[];
   /** 压缩保留窗口覆盖(pi chars/4 估算口径)。手动压缩装配点传
    *  MANUAL_COMPACT_KEEP_RECENT_TOKENS(门槛/保留都调低,rationale 见 runner.ts 常量);
    *  不传 = pi 默认 20000(生成会话的 threshold/overflow 自动压缩用)。 */
@@ -72,7 +81,7 @@ export async function createPiSessionResources(options: {
   /** 技能加载诊断的上报出口(生产 = host.report)。 */
   report?: (report: EngineErrorReport) => void;
 }): Promise<PiSessionResources> {
-  const { cwd, root, instructions, compactionKeepRecentTokens, report } = options;
+  const { cwd, root, instructions, plugins = [], compactionKeepRecentTokens, report } = options;
   // inMemory:零文件 I/O(不读不写任何 settings.json);projectTrusted:false 是给
   // resource-loader 的发现逻辑看的(.pi/SYSTEM.md 门控)。压缩面 P5 接管:threshold/
   // overflow 自动压缩显式开启(数值与 pi 默认一致,但不再依赖库默认值漂移),
@@ -103,12 +112,19 @@ export async function createPiSessionResources(options: {
   );
   const enabledSkills = new Set(instructions.skills.enabled);
   const globalFile = instructions.globalAgentsFile;
+  const pluginEntries = resolvePiPluginEntries(plugins);
 
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: piAgentDir,
     settingsManager,
     noExtensions: true,
+    ...(pluginEntries.entries.length > 0
+      ? {
+          additionalExtensionPaths: pluginEntries.entries.map((entry) => entry.file),
+          extensionsOverride: arbitratePiExtensions,
+        }
+      : {}),
     noPromptTemplates: true,
     noThemes: true,
     noSkills: true,
@@ -144,5 +160,27 @@ export async function createPiSessionResources(options: {
     });
   }
 
-  return { resourceLoader, settingsManager };
+  // 插件加载失败(路径/入口问题 + pi 加载器报的模块错误、同名冲突)逐条进错误中心;其余插件照常加载。
+  const pluginErrors = [
+    ...pluginEntries.errors,
+    ...resourceLoader.getExtensions().errors.map((item) => ({
+      pluginId: pluginIdForExtensionPath(pluginEntries.entries, item.path) ?? "",
+      path: item.path,
+      error: item.error,
+    })),
+  ];
+  for (const item of pluginErrors) {
+    const key = `plugin|${item.pluginId}|${item.path}|${item.error}`;
+    if (reportedDiagnostics.has(key)) continue;
+    reportedDiagnostics.add(key);
+    report?.({
+      domain: "pi-engine",
+      severity: "warn",
+      message: `插件加载失败:${item.pluginId || item.path}:${item.error}`,
+      code: "pi_plugin_load_failed",
+      params: { plugin: item.pluginId || item.path, error: item.error },
+    });
+  }
+
+  return { resourceLoader, settingsManager, plugins: pluginEntries.entries };
 }

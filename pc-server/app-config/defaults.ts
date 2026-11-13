@@ -193,6 +193,7 @@ export function defaultSettings(): Settings {
     preferredPort: null,
     workspaceLastPermissionPreset: null,
     shellPath: "",
+    devPiPluginPaths: [],
     keybindings: {
       newConversation: { keys: ["Ctrl", "N"], enabled: true },
       prevConversation: { keys: ["Alt", "Up"], enabled: true },

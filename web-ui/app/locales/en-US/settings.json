@@ -1182,6 +1182,9 @@
       "orphan_stats": "Attachment stats: {{orphans}} entries no longer referenced (~{{orphanMb}} MB); {{untracked}} untracked files (~{{untrackedMb}} MB). Nothing is deleted automatically; back up first if you want to clean up",
       "hygiene_failed": "Data directory cleanup task failed; harmless, will retry on next launch",
       "output_limit_unknown": "The maximum output length for {{model}} is unknown; sent the conservative default {{fallback}}. If this model rejects it with an invalid max_tokens error, set the max output length manually in the assistant settings",
+      "pi_plugin_load_failed": "Plugin {{plugin}} failed to load: {{error}}",
+      "pi_plugin_runtime_error": "Plugin {{plugin}} raised an error while handling {{event}}: {{error}}",
+      "pi_plugin_shutdown_failed": "A plugin failed to clean up when the session ended; the conversation is not affected",
       "voice_provider_preserved": "Detected voice services from the mobile app ({{types}}) that this desktop app doesn't support yet. Their configuration is preserved as-is for round-trip and won't be lost"
     }
   },

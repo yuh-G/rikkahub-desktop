@@ -113,7 +113,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
         const { cwd, root } = input.workspace;
         await settledWithin(run.previous, PREVIOUS_RUN_GRACE_MS);
         const view = await host.session.load(turn);
-        const resources = await createPiSessionResources({ cwd, root, instructions: input.instructions, report });
+        const resources = await createPiSessionResources({ cwd, root, instructions: input.instructions, plugins: input.plugins, report });
         const result = await runPiGeneration({
           grant: input.model,
           credentialSource: credentialSourceFor(turn, input.model),
@@ -156,6 +156,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
           cwd,
           root,
           instructions: req.instructions,
+          plugins: req.plugins,
           // 手动压缩门槛/保留窗口调低(中文 chars/4 低估问题,rationale 见 runner.ts 常量)。
           compactionKeepRecentTokens: MANUAL_COMPACT_KEEP_RECENT_TOKENS,
           report,

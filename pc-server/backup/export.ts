@@ -216,6 +216,8 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     // shellPath 是机器级 bash 绝对路径,PC→APP/跨机恢复无意义;带到目标机反而因路径不存在
     // 锁死 bash(getShellConfig 对不存在的 customShellPath 抛错),故剥离,目标机走自动探测。
     delete copy.shellPath;
+    // devPiPluginPaths 是工作区引擎插件的本机路径(开发者字段),APP 无工作区引擎。
+    delete copy.devPiPluginPaths;
     // 专题3 S-1(机制,详见 filterSearchServicesForAndroid):PC-only 搜索服务过滤 +
     // 选中下标修正;全被过滤时删键,让安卓走自身默认值(避免空列表越界)。
     if (Array.isArray(copy.searchServices)) {

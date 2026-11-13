@@ -90,6 +90,7 @@ function inputFor(prompt: string): TurnInput {
     reasoningLevel: null,
     workspace: { cwd: workspaceRoot, root: workspaceRoot },
     instructions,
+    plugins: [],
     prompt: { text: prompt, images: [] },
     tools: [writeNote],
   };

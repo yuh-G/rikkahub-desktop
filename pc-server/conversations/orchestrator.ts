@@ -28,6 +28,7 @@ import { appToolSpecsFor, createAppToolCaller } from "../engines/app-tools";
 import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
 import { buildEngineInstructions } from "../engines/instructions";
+import { enginePluginsFor } from "../engines/plugins";
 import { bindEngineTurn, type EngineTurnBinding } from "../engines/host";
 import { promptInputFromParts, userInputsFor } from "../inference-engine/prompt-input";
 import type {
@@ -563,6 +564,7 @@ async function runPortableGeneration(
     reasoningLevel: deps.assistant.reasoningLevel,
     workspace: route.workspace ? { cwd: route.workspace.cwd, root: route.workspace.root } : null,
     instructions,
+    plugins: enginePluginsFor(driver.kind, state.settings),
     prompt: promptInput,
     tools,
   };
@@ -686,6 +688,7 @@ async function runPortableCompaction(
     reasoningLevel: assistant.reasoningLevel,
     workspace: route.workspace ? { cwd: route.workspace.cwd, root: route.workspace.root } : null,
     instructions: buildEngineInstructions(conversation, assistant, ctx.model, systemInjection ? [systemInjection] : undefined),
+    plugins: enginePluginsFor(driver.kind, state.settings),
     customInstructions: ctx.customInstructions,
   };
   const binding: EngineTurnBinding = {

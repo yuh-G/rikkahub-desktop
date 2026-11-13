@@ -3,6 +3,7 @@
 // 纪律：纯搬迁自 server.ts routeApi()；settings 数据契约冻结。
 
 import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import type { Assistant, JsonValue, Provider, ProxyConfig, SearchService } from "../../foundation/types";
 import type { Settings } from "../../foundation/types/settings";
 import { getStringArray, id, isRecord } from "../../foundation/utils";
@@ -1142,6 +1143,18 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     // shellPath 变了必须重探(清 shellAvailability 与 shell.ts 两级缓存),返回最新状态。
     refreshShellAvailability();
     return json({ status: "ok", shellPath, shell: shellStatusPayload() });
+  }
+  // 开发者字段(P5a,无界面):工作区引擎插件的本机位置清单。整表替换;每项须是存在的绝对路径。
+  if (path === "settings/dev/pi-plugin-paths" && request.method === "POST") {
+    const body = await readJson<{ paths?: unknown }>(request).catch(() => ({}) as { paths?: unknown });
+    if (!Array.isArray(body?.paths)) return error("paths 必须是字符串数组", 400);
+    const paths = uniqueStrings(getStringArray(body.paths));
+    for (const item of paths) {
+      if (!isAbsolute(item)) return error(`插件路径必须是绝对路径: ${item}`, 400);
+      if (!existsSync(item)) return error(`路径不存在: ${item}`, 400);
+    }
+    updateSettings({ ...state.settings, devPiPluginPaths: paths });
+    return json({ status: "ok", paths });
   }
   if (path === "settings/proxy/detect" && request.method === "POST") {
     // R1-7:探测函数已异步化;detectSystemProxy 按平台分发(Windows 注册表 / GNOME
