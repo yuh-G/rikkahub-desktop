@@ -1185,6 +1185,11 @@
       "pi_plugin_load_failed": "插件 {{plugin}} 加载失败：{{error}}",
       "pi_plugin_runtime_error": "插件 {{plugin}} 处理 {{event}} 时出错：{{error}}",
       "pi_plugin_shutdown_failed": "会话结束时插件收尾失败，不影响会话",
+      "pi_plugin_removed": "插件 {{plugin}} 的 {{subject}} 已拿掉：这部分由应用统一管理（模型、MCP、请求改写等）或与应用工具重名",
+      "pi_plugin_unsupported": "插件 {{plugin}} 的 {{subject}} 不会生效：桌面端没有终端界面",
+      "pi_plugin_disabled": "插件 {{plugin}} 的工具调用钩子已按设置停用",
+      "pi_plugin_discarded": "插件 {{plugin}} 在审核工具 {{subject}} 时弹了对话框，这次审核结果已作废",
+      "pi_plugin_vetoed": "插件 {{plugin}} 拒绝了工具 {{subject}}：{{detail}}",
       "voice_provider_preserved": "检测到来自 APP端的语音服务（{{types}}），桌面端暂不支持，已原样保留配置以便回传，不会丢失"
     }
   },

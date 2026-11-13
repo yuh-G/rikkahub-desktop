@@ -18,8 +18,9 @@
 //   排序:全局件 unshift 在 override 输出首位 = pi 原生 agentDir 全局件的既有序。
 // - 人设+记忆:appendSystemPrompt 单一插槽(§3.4,只放应用自己的域:人设/记忆/
 //   搜索指引/教学行/注入面),内容由应用侧冻结(同会话逐字节稳定)。
-// - 插件(P5.2):契约给的插件清单 → plugins/entries 展开成入口文件 → additionalExtensionPaths,
-//   加载结果经 extensionsOverride 交裁决层(plugins/arbiter);noExtensions:true 不变(只加载清单里的,
+// - 插件(P5.2/P5.3):契约给的插件清单 → plugins/entries 展开成入口文件 → additionalExtensionPaths,
+//   加载结果经 extensionsOverride 交裁决层(plugins/arbiter,策略含本轮应用工具名与手动停用的钩子;
+//   加载期审计在 reload 后上报);noExtensions:true 不变(只加载清单里的,
 //   不读 pi 设置里的包与默认扩展目录),内建扩展(mcp / llama / codemode / tool-search)只经
 //   extensionFactories 进入,我们不传,恒不加载。清单为空时这两项都不传,加载器配置与此前逐项相同。
 // - prompt 模板/主题:全关(noPromptTemplates/noThemes)。
@@ -29,11 +30,12 @@
 
 import { isAbsolute, resolve, sep } from "node:path";
 import { DefaultResourceLoader } from "../../pi/packages/coding-agent/src/core/resource-loader.ts";
+import type { LoadExtensionsResult } from "../../pi/packages/coding-agent/src/core/extensions/types.ts";
 import { SettingsManager } from "../../pi/packages/coding-agent/src/core/settings-manager.ts";
 import type { EngineErrorReport, EngineInstructions, EnginePlugin } from "../engines/contract";
 import { piAgentDir } from "../foundation/paths";
 import { PI_THINKING_BUDGETS } from "./model-bridge";
-import { arbitratePiExtensions } from "./plugins/arbiter";
+import { arbitratePiExtensions, piPluginAuditReport, type PiPluginAuditRecord, type PiPluginPolicy } from "./plugins/arbiter";
 import { pluginIdForExtensionPath, resolvePiPluginEntries, type PiPluginEntry } from "./plugins/entries";
 
 export interface PiSessionResources {
@@ -41,6 +43,8 @@ export interface PiSessionResources {
   settingsManager: SettingsManager;
   /** 本轮加载的插件入口(入口文件 → 插件 id);空 = 无插件,runner 不做插件绑定。 */
   plugins: PiPluginEntry[];
+  /** 裁决策略(会话建好后的运行期裁决也用它);无插件时为 null。 */
+  pluginPolicy: PiPluginPolicy | null;
 }
 
 // ---- 边界过滤 ----
@@ -74,6 +78,8 @@ export async function createPiSessionResources(options: {
   instructions: EngineInstructions;
   /** 本轮插件清单(契约 TurnInput.plugins / CompactRequest.plugins);不传 = 无插件。 */
   plugins?: EnginePlugin[];
+  /** 本轮应用工具名(插件工具与之同名即拿掉);不传 = 本轮没有应用工具。 */
+  appToolNames?: readonly string[];
   /** 压缩保留窗口覆盖(pi chars/4 估算口径)。手动压缩装配点传
    *  MANUAL_COMPACT_KEEP_RECENT_TOKENS(门槛/保留都调低,rationale 见 runner.ts 常量);
    *  不传 = pi 默认 20000(生成会话的 threshold/overflow 自动压缩用)。 */
@@ -81,7 +87,7 @@ export async function createPiSessionResources(options: {
   /** 技能加载诊断的上报出口(生产 = host.report)。 */
   report?: (report: EngineErrorReport) => void;
 }): Promise<PiSessionResources> {
-  const { cwd, root, instructions, plugins = [], compactionKeepRecentTokens, report } = options;
+  const { cwd, root, instructions, plugins = [], appToolNames = [], compactionKeepRecentTokens, report } = options;
   // inMemory:零文件 I/O(不读不写任何 settings.json);projectTrusted:false 是给
   // resource-loader 的发现逻辑看的(.pi/SYSTEM.md 门控)。压缩面 P5 接管:threshold/
   // overflow 自动压缩显式开启(数值与 pi 默认一致,但不再依赖库默认值漂移),
@@ -113,16 +119,31 @@ export async function createPiSessionResources(options: {
   const enabledSkills = new Set(instructions.skills.enabled);
   const globalFile = instructions.globalAgentsFile;
   const pluginEntries = resolvePiPluginEntries(plugins);
+  const pluginPolicy: PiPluginPolicy | null =
+    pluginEntries.entries.length > 0
+      ? {
+          entries: pluginEntries.entries,
+          appToolNames: new Set(appToolNames),
+          toolCallHooksDisabled: new Set(plugins.filter((plugin) => plugin.toolCallHookDisabled).map((plugin) => plugin.id)),
+          // 运行期审计(否决 / 作废 / 运行期登记)逐次上报,错误中心按码 + 参数合并风暴。
+          onAudit: (record) => report?.(piPluginAuditReport(record)),
+        }
+      : null;
+  let loadAudit: PiPluginAuditRecord[] = [];
 
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: piAgentDir,
     settingsManager,
     noExtensions: true,
-    ...(pluginEntries.entries.length > 0
+    ...(pluginPolicy
       ? {
           additionalExtensionPaths: pluginEntries.entries.map((entry) => entry.file),
-          extensionsOverride: arbitratePiExtensions,
+          extensionsOverride: (base: LoadExtensionsResult) => {
+            const arbitrated = arbitratePiExtensions(base, pluginPolicy);
+            loadAudit = arbitrated.audit;
+            return arbitrated.result;
+          },
         }
       : {}),
     noPromptTemplates: true,
@@ -182,5 +203,14 @@ export async function createPiSessionResources(options: {
     });
   }
 
-  return { resourceLoader, settingsManager, plugins: pluginEntries.entries };
+  // 加载期裁决的审计每轮相同,与加载失败同一去重口径(内容变了复报)。
+  for (const record of loadAudit) {
+    const audit = piPluginAuditReport(record);
+    const key = `plugin-audit|${audit.message}`;
+    if (reportedDiagnostics.has(key)) continue;
+    reportedDiagnostics.add(key);
+    report?.(audit);
+  }
+
+  return { resourceLoader, settingsManager, plugins: pluginEntries.entries, pluginPolicy };
 }

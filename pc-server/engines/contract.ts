@@ -149,6 +149,9 @@ export interface EngineInstructions {
 export interface EnginePlugin {
   id: string;
   path: string;
+  /** 用户手动停用了这个插件的工具调用钩子(行为裁决的兜底开关,方案 §5.5 D7;P5.8 起由插件记录给出)。
+   *  缺省 = 启用。 */
+  toolCallHookDisabled?: boolean;
 }
 
 // ---- 模型授权(§5.8) ----

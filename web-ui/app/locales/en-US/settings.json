@@ -1185,6 +1185,11 @@
       "pi_plugin_load_failed": "Plugin {{plugin}} failed to load: {{error}}",
       "pi_plugin_runtime_error": "Plugin {{plugin}} raised an error while handling {{event}}: {{error}}",
       "pi_plugin_shutdown_failed": "A plugin failed to clean up when the session ended; the conversation is not affected",
+      "pi_plugin_removed": "{{subject}} from plugin {{plugin}} was removed: the app manages this itself (models, MCP, request rewriting, etc.) or it clashes with an app tool",
+      "pi_plugin_unsupported": "{{subject}} from plugin {{plugin}} has no effect: the desktop app has no terminal UI",
+      "pi_plugin_disabled": "The tool-call hook of plugin {{plugin}} is turned off in settings",
+      "pi_plugin_discarded": "Plugin {{plugin}} opened a dialog while reviewing tool {{subject}}; that review was discarded",
+      "pi_plugin_vetoed": "Plugin {{plugin}} blocked tool {{subject}}: {{detail}}",
       "voice_provider_preserved": "Detected voice services from the mobile app ({{types}}) that this desktop app doesn't support yet. Their configuration is preserved as-is for round-trip and won't be lost"
     }
   },

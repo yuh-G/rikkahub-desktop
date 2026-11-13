@@ -113,7 +113,14 @@ export function createPiDriver(host: EngineHost): EngineDriver {
         const { cwd, root } = input.workspace;
         await settledWithin(run.previous, PREVIOUS_RUN_GRACE_MS);
         const view = await host.session.load(turn);
-        const resources = await createPiSessionResources({ cwd, root, instructions: input.instructions, plugins: input.plugins, report });
+        const resources = await createPiSessionResources({
+          cwd,
+          root,
+          instructions: input.instructions,
+          plugins: input.plugins,
+          appToolNames: input.tools.map((tool) => tool.name),
+          report,
+        });
         const result = await runPiGeneration({
           grant: input.model,
           credentialSource: credentialSourceFor(turn, input.model),
