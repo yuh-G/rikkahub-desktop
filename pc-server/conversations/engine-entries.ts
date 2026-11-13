@@ -226,6 +226,22 @@ export function pruneOrphanEngineEntries(db: Db, conversationId: string, liveMes
   }
 }
 
+/** 分叉:源会话里锚定在 messageIds 上的条目原样复制到新会话(seq、封存状态都不变)。分叉保留消息 id,
+ *  摘要按同样的内容算,锚定与封存无需改写。会话头不复制:头里是源会话的引擎会话身份,新会话由引擎自建。 */
+export function copyEngineEntries(db: Db, fromConversationId: string, toConversationId: string, messageIds: ReadonlySet<string>): number {
+  const rows = db
+    .prepare("SELECT engine, seq, format, anchor_message_id, entry_id, payload, digest FROM pc_engine_entry WHERE conversation_id = ? ORDER BY engine, seq")
+    .all(fromConversationId) as Omit<PcEngineEntryRow, "conversation_id">[];
+  const insert = db.prepare(`INSERT INTO pc_engine_entry (${ENGINE_TABLE_COLUMNS.pc_engine_entry}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+  let copied = 0;
+  for (const row of rows) {
+    if (!messageIds.has(row.anchor_message_id)) continue;
+    insert.run(toConversationId, row.engine, row.seq, row.format, row.anchor_message_id, row.entry_id, row.payload, row.digest);
+    copied += 1;
+  }
+  return copied;
+}
+
 // ----- 桌面端转储与重灌(给 APP 的导出从不经过这里) -----
 
 /** 在已 ATTACH 的转储库里建两表并整表复制。转储库不带外键,与它的节点表一致。 */

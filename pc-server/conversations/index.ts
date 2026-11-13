@@ -12,7 +12,7 @@ import { generating } from "./generation-state";
 import type { Conversation, ConversationListDto, JsonValue, Message, MessageNode, MessageNodeDto, PcConversationRow, PcEngineTablesRows, PcMessageNodeRow, PcWorkspaceRow } from "../foundation/types";
 import { clearAllFts, deleteConversationFts, ensureMessageFtsTable, ftsRowCount, rebuildFtsFromNodeTable, replaceNodeFts } from "./fts";
 import { reportError } from "../observability/app-errors";
-import { copyEngineTablesInto, ensureEngineEntryTables, pruneOrphanEngineEntries, refillEngineTables, snapshotLiveEngineTables } from "./engine-entries";
+import { copyEngineEntries, copyEngineTablesInto, ensureEngineEntryTables, pruneOrphanEngineEntries, refillEngineTables, snapshotLiveEngineTables } from "./engine-entries";
 import { collectPcFileRefs } from "../backup/file-refs";
 
 export const DEFAULT_ASSISTANT_ID = "0950e2dc-9bd5-4801-afa3-aa887aa36b4e";
@@ -446,6 +446,16 @@ export function persistConversation(conv: Conversation): void {
     pruneOrphanEngineEntries(db, conv.id, new Set((conv.messages ?? []).flatMap((node) => node.messages.map((message) => message.id))));
   });
   txn();
+}
+
+/** 分叉落库:新会话 + 源会话里锚定在被复制消息上的引擎私有条目,同一事务。分叉保留消息 id,锚定不用改。 */
+export function persistForkedConversation(fork: Conversation, sourceConversationId: string): void {
+  if (!conversationsDb) throw new Error("conversationsDb not open");
+  const db = conversationsDb;
+  db.transaction(() => {
+    persistConversation(fork);
+    copyEngineEntries(db, sourceConversationId, fork.id, new Set(fork.messages.flatMap((node) => node.messages.map((message) => message.id))));
+  })();
 }
 
 /** 删除会话(CASCADE 带走其节点行,依赖 foreign_keys=ON)。 */

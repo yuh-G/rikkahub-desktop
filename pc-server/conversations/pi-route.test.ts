@@ -203,6 +203,34 @@ describe("generateAnswer P3 路由", () => {
     ]);
   }, 30_000);
 
+  test("分叉(P3.6):被复制消息的私有条目随分支进新会话并保持封存,分叉点之后的不带,源会话不动", async () => {
+    await installUpstream([{ content: "第一轮回答" }, { content: "第二轮回答" }]);
+    const workspace = ws.createWorkspace({ type: "managed", name: "route-fork" });
+    const conversation = seedConversation(workspace.id);
+    await generateAnswer(conversation);
+    const firstAnswer = lastAssistantMessage(conversation);
+    appendUserNode(conversation, "第二问");
+    await generateAnswer(conversation);
+    const sourceGroups = loadEngineEntries(db, conversation.id, "pi");
+    expect(sourceGroups.length).toBe(2);
+
+    const fork = async (messageId: string) => {
+      const url = new URL(`http://localhost/api/conversations/${conversation.id}/fork`);
+      const response = await handleConversationRoutes(
+        new Request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ messageId }) }),
+        url,
+        `conversations/${conversation.id}/fork`,
+      );
+      return ((await response!.json()) as { conversationId: string }).conversationId;
+    };
+    const forkId = await fork(firstAnswer.id);
+    expect(loadEngineEntries(db, forkId, "pi")).toEqual([sourceGroups[0]!]);
+    expect(loadEngineEntries(db, forkId, "pi")[0]!.digest).toBe(engineVisibleDigest([firstAnswer]));
+    expect(loadEngineEntries(db, conversation.id, "pi")).toEqual(sourceGroups);
+    // 分叉在第一条用户消息上:没有被复制的条目。
+    expect(loadEngineEntries(db, await fork(conversation.messages[0]!.messages[0]!.id), "pi")).toEqual([]);
+  }, 30_000);
+
   test("推理模型的工作区请求:系统提示词恒 system 角色 + 上限恒 max_tokens(2.0.0 内测缺陷回归)", async () => {
     // 复现内测环境:第三方 OpenAI 兼容端点(假上游即"未知 baseUrl")+ 标 REASONING 的
     // 模型。修复前 pi 的 compat 自动探测按官方 OpenAI 假设:1)系统消息以 "developer"

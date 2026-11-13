@@ -9,6 +9,7 @@ import { state } from "../../persistence/json-store";
 import {
   getConversation,
   persistConversation,
+  persistForkedConversation,
   toListDto,
   toMessageNodeDtos,
   truncateConversationForRegenerate,
@@ -776,7 +777,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         // "切点在场"自校验自动跳过,fork 无需感知压缩语义(P5 的 jsonl 副本复制随层退役)。
       };
       registerConversation(fork); // fork 树复制自内存源会话,内存即权威
-      persistConversation(fork);
+      // 引擎私有条目随被复制的消息一起进新会话(P3.6),分支续聊仍能原样取用。
+      persistForkedConversation(fork, conversation.id);
       broadcastList();
       return json({ conversationId: fork.id });
     }

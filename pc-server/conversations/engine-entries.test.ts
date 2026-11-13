@@ -7,6 +7,7 @@ import { ensureConversationTables, migrateConversationsIntoDb, upsertConversatio
 import { ensureMessageFtsTable } from "./fts";
 import {
   appendEngineEntries,
+  copyEngineEntries,
   copyEngineTablesInto,
   engineVisibleDigest,
   loadEngineEntries,
@@ -183,6 +184,27 @@ describe("生命周期:级联 / 孤儿 / 转储 / 重灌", () => {
     pruneOrphanEngineEntries(db, "c1", new Set(["keep"]));
     expect(loadEngineEntries(db, "c1", "pi").map((g) => g.anchorMessageId)).toEqual(["keep"]);
     expect(countRows(db, "c2")).toBe(1);
+  });
+
+  test("分叉复制:只复制锚定在给定消息上的条目,seq / 封存 / 各引擎原样;会话头不复制,源会话不动", () => {
+    const db = realSchemaDb();
+    upsertConversationRowInto(db, conv("c1", []));
+    upsertConversationRowInto(db, conv("c2", []));
+    appendEngineEntries(db, "c1", "pi", "m1", [{ format: "f", entryId: "e1", payload: 1 }]);
+    sealEngineEntries(db, "c1", "pi", "m1", "d1");
+    appendEngineEntries(db, "c1", "pi", "m2", [{ format: "f", entryId: "e2", payload: 2 }]);
+    appendEngineEntries(db, "c1", "pi", "m3", [{ format: "f", entryId: "e3", payload: 3 }]);
+    appendEngineEntries(db, "c1", "dsh", "m1", [{ format: "g", payload: 4 }]);
+    writeEngineSessionHeader(db, "c1", "pi", { format: "f", header: { id: "c1" } });
+    const rowsOf = (conversationId: string) =>
+      db.prepare("SELECT engine, seq, anchor_message_id, entry_id, payload, digest FROM pc_engine_entry WHERE conversation_id = ? ORDER BY engine, seq").all(conversationId);
+    const before = rowsOf("c1");
+
+    expect(copyEngineEntries(db, "c1", "c2", new Set(["m1", "m2"]))).toBe(3);
+    expect(rowsOf("c2")).toEqual((before as Array<{ anchor_message_id: string }>).filter((row) => row.anchor_message_id !== "m3"));
+    expect(loadEngineEntries(db, "c2", "pi").map((g) => [g.anchorMessageId, g.digest])).toEqual([["m1", "d1"], ["m2", null]]);
+    expect(readEngineSessionHeader(db, "c2", "pi")).toBeNull();
+    expect(rowsOf("c1")).toEqual(before);
   });
 
   test("转储:ATTACH 库里两表逐行一致;无两表的库读出 null", () => {
