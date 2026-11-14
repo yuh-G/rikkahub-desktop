@@ -124,6 +124,11 @@ const host: EngineHost = {
       throw new Error("冒烟不加载插件");
     },
   },
+  interaction: {
+    dialog: async () => ({ cancelled: true }),
+    dismiss: () => undefined,
+    show: () => undefined,
+  },
   steer: {
     async take(turn) {
       steerTakes.push(turn);

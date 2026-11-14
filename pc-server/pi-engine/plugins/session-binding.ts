@@ -5,15 +5,17 @@
 // session_shutdown 由宿主在会话收尾时发出(pi 的 dispose 不发):插件按会话 id 存的内存态靠它清掉,
 // 否则每轮一个会话会一直累积。P5a 每轮一个 pi 会话,原因记 "quit"。
 // 没有插件时什么都不做:不 bind、不发事件,会话与插件接入前逐项相同。
-// mode 绑 "rpc";界面上下文(ctx.ui / hasUI)由 P5.5 的界面桥接上,此前插件看到的是 pi 的空界面。
+// mode 绑 "rpc";给了界面通道就接上界面桥(ui-bridge,先经裁决层的对话框守卫),ctx.hasUI 为真;
+// 不给(测试)则插件看到的是 pi 的空界面。
 // 裁决层的运行期部分(P5.3)也在这里装:会话建好后、session_start 之前覆盖保留域入口,session_start 之后
 // 补裁插件在其中补登记的钩子与指令。
 
 import type { AgentSession } from "../../../pi/packages/coding-agent/src/core/agent-session.ts";
 import { emitSessionShutdownEvent } from "../../../pi/packages/coding-agent/src/core/extensions/runner.ts";
 import type { EngineErrorReport } from "../../engines/contract";
-import { arbitrateLatePiRegistrations, guardPiPluginRuntime, type PiPluginPolicy } from "./arbiter";
+import { arbitrateLatePiRegistrations, guardPiPluginDialogs, guardPiPluginRuntime, type PiPluginPolicy } from "./arbiter";
 import { pluginIdForExtensionPath, type PiPluginEntry } from "./entries";
+import { createPiPluginUi, type PiPluginInteraction } from "./ui-bridge";
 
 export interface PiPluginSessionBinding {
   /** 会话收尾前调用(dispose 之前)。不抛错:收尾路径上不能让插件挡住 dispose。 */
@@ -27,11 +29,16 @@ export async function bindPiPluginSession(
   plugins: readonly PiPluginEntry[],
   policy: PiPluginPolicy | null,
   report?: (report: EngineErrorReport) => void,
+  interaction?: PiPluginInteraction,
 ): Promise<PiPluginSessionBinding> {
   if (plugins.length === 0) return NO_PLUGINS;
   const extensions = session.resourceLoader.getExtensions();
   if (policy) guardPiPluginRuntime(extensions, policy);
+  const ui = interaction
+    ? guardPiPluginDialogs(createPiPluginUi(interaction, { pluginIds: plugins.map((entry) => entry.pluginId), report }))
+    : undefined;
   await session.bindExtensions({
+    ...(ui ? { uiContext: ui } : {}),
     mode: "rpc",
     // 插件处理函数抛错不中断会话(pi 已捕获),只把它记进错误中心,署插件 id。
     onError: (error) => {

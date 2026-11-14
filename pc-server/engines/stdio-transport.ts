@@ -19,6 +19,7 @@ import type {
   AppToolResult,
   CompactResult,
   EngineCapabilities,
+  EngineDialogAnswer,
   EngineDriver,
   EngineHost,
   EngineKind,
@@ -191,6 +192,9 @@ export function connectDriverOverStdio(
       "host.session.append": (...args: Parameters<EngineHost["session"]["append"]>) => host.session.append(...args),
       "host.tools.call": (...args: Parameters<EngineHost["tools"]["call"]>) => host.tools.call(...args),
       "host.permission.check": (...args: Parameters<EngineHost["permission"]["check"]>) => host.permission.check(...args),
+      "host.interaction.dialog": (...args: Parameters<EngineHost["interaction"]["dialog"]>) => host.interaction.dialog(...args),
+      "host.interaction.dismiss": (...args: Parameters<EngineHost["interaction"]["dismiss"]>) => host.interaction.dismiss(...args),
+      "host.interaction.show": (...args: Parameters<EngineHost["interaction"]["show"]>) => host.interaction.show(...args),
       "host.steer.take": (...args: Parameters<EngineHost["steer"]["take"]>) => host.steer.take(...args),
       "host.models.credential": (...args: Parameters<EngineHost["models"]["credential"]>) => host.models.credential(...args),
       "host.models.log": (...args: Parameters<EngineHost["models"]["log"]>) => host.models.log(...args),
@@ -269,6 +273,11 @@ export function serveDriverOverStdio(
       check: async (req) => {
         await peer.request("host.permission.check", [req]);
       },
+    },
+    interaction: {
+      dialog: (call) => peer.request("host.interaction.dialog", [call]) as Promise<EngineDialogAnswer>,
+      dismiss: (call) => peer.notify("host.interaction.dismiss", [call]),
+      show: (call) => peer.notify("host.interaction.show", [call]),
     },
     steer: { take: (turn) => peer.request("host.steer.take", [turn]) as Promise<string[]> },
     models: {

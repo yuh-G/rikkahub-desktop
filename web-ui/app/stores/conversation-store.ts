@@ -17,7 +17,7 @@
 import { create } from "zustand";
 
 import { applyNodeUpdate, applyTextDelta, mergeConversationSnapshot, prependOlderNodes, replaceNodesRange } from "~/lib/conversation-sync";
-import type { ConversationDto, ConversationNodesPageDto, ConversationNodeUpdateEventDto, ConversationSnapshotMetaEventDto, ConversationTextDeltaEventDto, EngineStatusEventDto } from "~/types";
+import type { ConversationDto, ConversationNodesPageDto, ConversationNodeUpdateEventDto, ConversationSnapshotMetaEventDto, ConversationTextDeltaEventDto, EngineStatusEventDto, EngineUiStateEventDto } from "~/types";
 
 export interface ConversationEntry {
   /** 最后已知快照(含已应用的流式增量);null = 尚无内容(等快照)。 */
@@ -36,6 +36,8 @@ interface ConversationStoreState {
   /** 按会话的引擎瞬态状态(压缩中/自动重试)。SSE engine-status 帧驱动;不参与
    *  entries 的 LRU/缓存语义(瞬态,断流即清,不值得进快照协商)。 */
   engineStatus: Record<string, EngineBusyStatus>;
+  /** 按会话的插件界面(对话框 / 状态条目 / 挂件 / 进行中提示,SSE engine-ui 帧整份覆盖)。瞬态,断流即清。 */
+  engineUi: Record<string, EngineUiStateEventDto>;
 }
 
 const CACHE_MAX = 20;
@@ -85,6 +87,7 @@ const EMPTY_ENTRY: ConversationEntry = { detail: null, subscribing: false, error
 export const useConversationStore = create<ConversationStoreState>(() => ({
   entries: {},
   engineStatus: {},
+  engineUi: {},
 }));
 
 /** 快照落地:清错误、结束订阅建立态。窗口化快照(I-2)与本地已加载的更早历史做
@@ -303,19 +306,39 @@ export function useConversationEngineStatus(id: string | null): EngineBusyStatus
   return useConversationStore((state) => (id ? state.engineStatus[id] : undefined));
 }
 
+/** 插件界面落地(SSE engine-ui 帧 / 断流清理)。null 或空状态即删键。 */
+export function setConversationEngineUi(id: string, ui: EngineUiStateEventDto | null): void {
+  useConversationStore.setState((state) => {
+    const empty = !ui || (!ui.dialogs.length && !ui.statuses.length && !ui.widgets.length && ui.working === null);
+    if (empty) {
+      if (!(id in state.engineUi)) return state;
+      const next = { ...state.engineUi };
+      delete next[id];
+      return { engineUi: next };
+    }
+    return { engineUi: { ...state.engineUi, [id]: ui } };
+  });
+}
+
+export function useConversationEngineUi(id: string | null): EngineUiStateEventDto | undefined {
+  return useConversationStore((state) => (id ? state.engineUi[id] : undefined));
+}
+
 /** 删除会话/清库时显式驱逐(原 detailCache.delete + resetDetail 的合并语义)。 */
 export function evictConversations(ids: readonly string[]): void {
   useConversationStore.setState((state) => {
-    const present = ids.filter((id) => id in state.entries || id in state.engineStatus);
+    const present = ids.filter((id) => id in state.entries || id in state.engineStatus || id in state.engineUi);
     if (present.length === 0) return state;
     const next = { ...state.entries };
     const nextStatus = { ...state.engineStatus };
+    const nextUi = { ...state.engineUi };
     for (const id of present) {
       delete next[id];
       delete nextStatus[id];
+      delete nextUi[id];
       dropLru(id);
     }
-    return { entries: next, engineStatus: nextStatus };
+    return { entries: next, engineStatus: nextStatus, engineUi: nextUi };
   });
 }
 
@@ -347,5 +370,5 @@ export function useConversationEntry(id: string | null): ConversationEntry | und
 export function resetConversationStoreForTest(): void {
   cachedOrder.length = 0;
   retention.clear();
-  useConversationStore.setState({ entries: {}, engineStatus: {} });
+  useConversationStore.setState({ entries: {}, engineStatus: {}, engineUi: {} });
 }

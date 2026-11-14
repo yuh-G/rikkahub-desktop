@@ -55,6 +55,7 @@ import type {
 } from "../engines/contract";
 import { createPiAppTools, type PiAppToolCaller } from "./app-tools";
 import { bindPiPluginSession, type PiPluginSessionBinding } from "./plugins/session-binding";
+import type { PiPluginInteraction } from "./plugins/ui-bridge";
 import { createPiEntrySync, createPiSessionFromView, toPiEngineEntry } from "./session-view";
 
 export interface PiGenerationContext {
@@ -89,6 +90,8 @@ export interface PiGenerationContext {
   callTool?: PiAppToolCaller;
   /** 诊断出口(生产 = host.report;自动压缩失败等经它进应用错误中心)。 */
   report?: (report: EngineErrorReport) => void;
+  /** 插件的界面通道(生产 = host.interaction,绑本轮 turnId)。不传 = 插件看到 pi 的空界面(测试/冒烟)。 */
+  interaction?: PiPluginInteraction;
   /** 本轮新增的 pi 原生条目交给应用(生产 = host.session.append,应用按当前落点锚定)。不传 = 不写
    *  (测试/冒烟)。轮次返回前已全部送达。 */
   appendEntries?: (entries: EngineEntryInput[]) => Promise<void>;
@@ -259,7 +262,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   let pluginBinding: PiPluginSessionBinding | undefined;
   try {
     // 插件的 session_start(状态重放)在首个请求之前;没有插件时是空操作。
-    pluginBinding = await bindPiPluginSession(session, ctx.resources?.plugins ?? [], ctx.resources?.pluginPolicy ?? null, ctx.report);
+    pluginBinding = await bindPiPluginSession(session, ctx.resources?.plugins ?? [], ctx.resources?.pluginPolicy ?? null, ctx.report, ctx.interaction);
     if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
     // 当模板/扩展命令拦截(agent-session.ts prompt() 的 expandPromptTemplates 分支),我们的会话 UX 不走 pi 命令面。
@@ -315,6 +318,8 @@ export interface PiCompactionContext {
   /** 生成事件下沉:压缩路径只产 engine_status(压缩中/摘要重试),经桥同一映射。 */
   sink: GenerationEventSink;
   report?: (report: EngineErrorReport) => void;
+  /** 插件的界面通道(生产 = host.interaction,绑本次 turnId)。不传 = 插件看到 pi 的空界面。 */
+  interaction?: PiPluginInteraction;
   signal?: AbortSignal;
 }
 
@@ -400,7 +405,7 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
   ctx.signal?.addEventListener("abort", onAbort, { once: true });
   let pluginBinding: PiPluginSessionBinding | undefined;
   try {
-    pluginBinding = await bindPiPluginSession(session, ctx.resources?.plugins ?? [], ctx.resources?.pluginPolicy ?? null, ctx.report);
+    pluginBinding = await bindPiPluginSession(session, ctx.resources?.plugins ?? [], ctx.resources?.pluginPolicy ?? null, ctx.report, ctx.interaction);
     if (ctx.signal?.aborted) throw new DOMException("Compaction cancelled", "AbortError");
     const result = await runWithGoogleRequestLog(googleRequestLogContextFor(model.api, ctx.grant, ctx.requestLog), () =>
       session.compact(ctx.customInstructions?.trim() || undefined),

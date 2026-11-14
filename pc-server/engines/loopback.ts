@@ -131,6 +131,11 @@ export function connectHost(host: EngineHost, options: { strict: boolean }): Eng
     },
     tools: { call: strictCall("host.tools.call", host.tools.call.bind(host.tools)) },
     permission: { check: strictCall("host.permission.check", host.permission.check.bind(host.permission)) },
+    interaction: {
+      dialog: strictCall("host.interaction.dialog", host.interaction.dialog.bind(host.interaction)),
+      dismiss: strictCall("host.interaction.dismiss", host.interaction.dismiss.bind(host.interaction)),
+      show: strictCall("host.interaction.show", host.interaction.show.bind(host.interaction)),
+    },
     steer: { take: strictCall("host.steer.take", host.steer.take.bind(host.steer)) },
     models: {
       credential: strictCall("host.models.credential", host.models.credential.bind(host.models)),

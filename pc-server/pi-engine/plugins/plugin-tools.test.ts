@@ -76,6 +76,7 @@ function harness(conversationId: string) {
         await check({ toolCallId: req.toolCallId, toolName: req.toolName, pluginId: req.origin.pluginId, args: req.args });
       },
     },
+    interaction: { dialog: async () => ({ cancelled: true }), dismiss: () => undefined, show: () => undefined },
     steer: { take: async () => [] },
     models: { credential: async () => ({}), log: () => undefined },
     report: () => undefined,

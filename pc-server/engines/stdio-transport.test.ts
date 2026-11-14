@@ -20,6 +20,7 @@ function wire(createDriver: (host: EngineHost) => EngineDriver, host: Partial<En
     session: { load: async () => ({ items: [], compactions: [] }), append: async () => undefined },
     tools: { call: async () => ({ content: [] }) },
     permission: { check: async () => undefined },
+    interaction: { dialog: async () => ({ cancelled: true }), dismiss: () => undefined, show: () => undefined },
     steer: { take: async () => [] },
     models: { credential: async () => ({}), log: () => undefined },
     report: () => undefined,
@@ -148,6 +149,37 @@ describe("stdio 传输", () => {
     const driver = await app.ready;
     expect((await driver.startTurn(turn)).text).toBe("Tool execution denied by user. Reason: 不要");
     expect(seen).toEqual([check]);
+  });
+
+  test("插件界面跨通道:对话框请求-应答原样往返;dismiss / show 是单向通知", async () => {
+    const seen: unknown[] = [];
+    const dialog = { ...turn, requestId: "rq-1", source: "dev:asker", request: { kind: "select" as const, title: "选", options: ["a", "b"] } };
+    const notice = { ...turn, source: "dev:asker", notice: { kind: "status" as const, key: "k", text: "状态" } };
+    const { app } = wire(
+      (host) =>
+        baseDriver(host, {
+          async startTurn() {
+            host.interaction.show(notice);
+            const answer = await host.interaction.dialog(dialog);
+            host.interaction.dismiss({ ...turn, requestId: "rq-1" });
+            return { text: JSON.stringify(answer), stopReason: null, compactions: [] };
+          },
+        }),
+      {
+        interaction: {
+          dialog: async (call) => {
+            seen.push(["dialog", call]);
+            return { cancelled: false, value: "b" };
+          },
+          dismiss: (call) => void seen.push(["dismiss", call]),
+          show: (call) => void seen.push(["show", call]),
+        },
+      },
+    );
+    const driver = await app.ready;
+    expect(JSON.parse((await driver.startTurn(turn)).text)).toEqual({ cancelled: false, value: "b" });
+    await Bun.sleep(5);
+    expect(seen).toEqual([["show", notice], ["dialog", dialog], ["dismiss", { ...turn, requestId: "rq-1" }]]);
   });
 
   test("通道关闭:在途调用以错误拒绝,之后的调用立即拒绝", async () => {

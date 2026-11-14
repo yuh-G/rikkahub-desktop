@@ -31,6 +31,7 @@ import {
   releaseConversationEntry,
   retainConversationEntry,
   setConversationEngineStatus,
+  setConversationEngineUi,
   setConversationError,
   setConversationSubscribing,
   useConversationStore,
@@ -44,6 +45,8 @@ import type {
   ConversationSnapshotMetaEventDto,
   ConversationTextDeltaEventDto,
   EngineStatusEventDto,
+  EngineUiNotifyEventDto,
+  EngineUiStateEventDto,
 } from "~/types";
 
 export type ConversationStreamEvent =
@@ -268,6 +271,7 @@ function openStream(id: string, record: StreamRecord, options?: { negotiate?: bo
   // 不能让"压缩中"挂死),但连接建立与 openSse 入队连接期快照帧(压缩/审批注册表
   // 补发,域4-1)天然有先后——快照帧一到达即覆盖回真实状态,无竞态窗口。
   setConversationEngineStatus(id, { busy: false });
+  setConversationEngineUi(id, null);
 
   // 唯一数据路径:SSE 连接首帧即全量快照(服务端 openSse 保证),不发并行 GET
   // (连接预算纪律,见 services/app-events.ts 顶部注释)。
@@ -287,6 +291,18 @@ function openStream(id: string, record: StreamRecord, options?: { negotiate?: bo
         // 只进 engineStatus 侧栈,不触碰 detail/协商/轮询。
         if (event === "engine-status") {
           setConversationEngineStatus(id, data as unknown as EngineStatusEventDto);
+          return;
+        }
+
+        // 插件界面(P5.5):整份状态覆盖;通知只提示一次。
+        if (event === "engine-ui") {
+          setConversationEngineUi(id, data as unknown as EngineUiStateEventDto);
+          return;
+        }
+        if (event === "engine-notify") {
+          const notice = data as unknown as EngineUiNotifyEventDto;
+          const show = notice.level === "error" ? toast.error : notice.level === "warning" ? toast.warning : toast.info;
+          show(notice.message, notice.source ? { description: notice.source } : undefined);
           return;
         }
 
@@ -417,6 +433,7 @@ function closeStream(id: string, record: StreamRecord): void {
     record.pollTimer = null;
   }
   setConversationEngineStatus(id, { busy: false }); // 无订阅即无来源,不留残影
+  setConversationEngineUi(id, null);
   releaseConversationEntry(id);
 }
 

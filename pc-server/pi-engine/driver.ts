@@ -29,6 +29,7 @@ import type {
 } from "../engines/contract";
 import { bindPiAgentDir } from "./agent-dir";
 import { mapGrantToPi } from "./model-bridge";
+import type { PiPluginInteraction } from "./plugins/ui-bridge";
 import { createPiSessionResources } from "./resources";
 import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCompaction, runPiGeneration } from "./runner";
 
@@ -98,6 +99,11 @@ export function createPiDriver(host: EngineHost): EngineDriver {
   const report = (item: EngineErrorReport) => host.report(item);
   const credentialSourceFor = (turn: TurnRef, grant: ModelGrant) => () =>
     host.models.credential({ ...turn, providerId: grant.providerId });
+  const interactionFor = (turn: TurnRef): PiPluginInteraction => ({
+    dialog: (call) => host.interaction.dialog({ ...turn, ...call }),
+    dismiss: (requestId) => host.interaction.dismiss({ ...turn, requestId }),
+    show: (call) => host.interaction.show({ ...turn, ...call }),
+  });
 
   return {
     kind: "pi",
@@ -139,6 +145,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
           tools: input.tools,
           callTool: (call) => host.tools.call({ ...turn, ...call }),
           report,
+          interaction: interactionFor(turn),
           appendEntries: (entries) => host.session.append(turn, entries),
           sink: (event) => host.emit(turn, event),
           signal: run.signal,
@@ -185,6 +192,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
           customInstructions: req.customInstructions,
           sink: (event) => host.emit(turn, event),
           report,
+          interaction: interactionFor(turn),
           signal: run.signal,
         });
         return {

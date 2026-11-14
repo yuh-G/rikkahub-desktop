@@ -1,7 +1,7 @@
 // api/handlers/conversations.ts — 会话路由（stream、batch-delete、列表/分页/搜索、单会话子路由）
 // 纪律：纯搬迁自 server.ts routeApi()；生成编排（generateAnswer 等）仍在 server.ts，经导入使用。
 
-import type { Conversation, ConversationSnapshotEventDto, ConversationSnapshotMetaEventDto, EngineStatusEventDto, JsonValue, MessageNode, MessagePart } from "../../foundation/types";
+import type { Conversation, ConversationSnapshotEventDto, ConversationSnapshotMetaEventDto, EngineStatusEventDto, EngineUiResponseDto, JsonValue, MessageNode, MessagePart } from "../../foundation/types";
 import type { ConversationListDto, ConversationNodesPageDto, MessageSearchResultDto, PagedResult } from "../../foundation/types";
 import { applyPlaceholders, id, message, textFromParts } from "../../foundation/utils";
 import { CodedError } from "../../foundation/errors";
@@ -42,6 +42,7 @@ import { pushSteeringMessage, removeSteeringMessage } from "../../conversations/
 import { abortGeneration, awaitingApproval, compressing, generating } from "../../conversations/generation-state";
 import { getWorkspace } from "../../workspace";
 import { resolveToolApproval } from "../../inference-engine/approval-gate";
+import { engineDialogDecision, engineUiSnapshot, pendingEngineDialogKind } from "../../conversations/engine-interaction";
 import { finishToolParts, stripLoadingPlaceholder } from "../../inference-engine/parts";
 
 export async function handleConversationRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
@@ -142,6 +143,9 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         ...(pendingApproval.summary ? { summary: pendingApproval.summary } : {}),
       } satisfies EngineStatusEventDto]);
     }
+    // 插件界面(P5.5):开着的对话框、状态条目、挂件同样跨切页 / 重连恢复。
+    const engineUi = engineUiSnapshot(conversation.id);
+    if (engineUi) statusFrames.push(["engine-ui", engineUi]);
     const initialFrames: [string, JsonValue | object][] = [initialFrame, ...statusFrames];
     return openSse(
       () => initialFrames,
@@ -836,6 +840,24 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         return json({ status: "accepted" }, { status: 202 });
       }
       return json({ status: "updated" });
+    }
+    // 插件对话框的回答(P5.5)。对话框不是工具卡,不改会话数据,只唤醒在等的引擎侧调用。
+    if (sub === "ui-response" && request.method === "POST") {
+      const body = await readJson<Partial<EngineUiResponseDto>>(request);
+      const requestId = String(body.requestId ?? "");
+      const kind = pendingEngineDialogKind(conversation.id, requestId);
+      if (!kind) return error("Dialog not found", 404);
+      let decision;
+      if (body.cancelled === true) {
+        decision = engineDialogDecision({ cancelled: true });
+      } else {
+        const value = (body as { value?: unknown }).value;
+        const valid = kind === "confirm" ? typeof value === "boolean" : typeof value === "string";
+        if (!valid) return error("Invalid dialog answer", 400);
+        decision = engineDialogDecision({ cancelled: false, value: value as string | boolean });
+      }
+      resolveToolApproval(conversation.id, requestId, decision);
+      return json({ status: "accepted" }, { status: 202 });
     }
     } finally {
       releaseConversation(conversation.id);

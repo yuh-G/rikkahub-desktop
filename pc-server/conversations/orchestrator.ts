@@ -48,6 +48,7 @@ import { TITLE_CHARACTER_LIMIT } from "../app-config/prompts";
 import { flushConvDirtyNow, getConversation, getConversationsDb, markConversationRowDirty, markMessageNodeDirty, persistConversation, scheduleThrottledConvFlush, selectedConversationMessages } from "./index";
 import { checkoutConversation, releaseConversation } from "./working-set";
 import { appendCompactionEntries, buildEngineSessionView, createEngineSessionWriter, type EngineSessionWriter } from "./engine-session";
+import { createEngineInteraction } from "./engine-interaction";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
 import { abortGeneration, abortReasonOf, awaitingApproval, compressing, generating } from "./generation-state";
@@ -558,6 +559,7 @@ async function runPortableGeneration(
   const toolContext = { conversation, assistant: deps.assistant, sink, target, model: deps.selectedModel, signal };
   const tools = appToolSpecsFor(toolContext);
   const turn: TurnRef = { conversationId: conversation.id, turnId: id() };
+  const interaction = createEngineInteraction(conversation.id, sink, signal);
   const input: TurnInput = {
     model: engineGrantFor(deps.providerItem, deps.selectedModel, deps.assistant, conversation.id),
     // 思考强度与聊天引擎同源(助手设置),档位翻译归引擎。
@@ -585,6 +587,7 @@ async function runPortableGeneration(
     },
     callTool: createAppToolCaller(toolContext, tools),
     checkPermission: createPluginToolPermissionChecker(toolContext),
+    interaction: interaction.interaction,
     // steering 轮边界(用户问题②):编排层同一回调经 host.steer.take 直通引擎,在引擎轮边界
     // 调用(落库/队列联动/分裂在 steerBoundary,引擎只拿文本注入)。
     ...(ctx.onSteerBoundary ? { steer: ctx.onSteerBoundary } : {}),
@@ -593,6 +596,7 @@ async function runPortableGeneration(
   const result = await callEngineDriver(driver, turn, binding, signal, "Generation stopped", () =>
     driver.startTurn({ ...turn, input }),
   ).finally(() => {
+    interaction.close();
     // 审批等待者兜底清扫:正常路径下等待者随用户决定/中止即刻注销,这里只防实现疏漏把
     // 在途工具调用泄漏成永久悬挂(approval-gate 头注)。等待者由应用侧工具面登记,清扫归应用。
     clearToolApprovalWaiters(conversation.id);
@@ -680,6 +684,7 @@ async function runPortableCompaction(
   // 同一视角,勿随摘要模型漂移。
   const separateSummarizer = ctx.summarizer.model.id !== ctx.model.id;
   const turn: TurnRef = { conversationId: conversation.id, turnId: id() };
+  const interaction = createEngineInteraction(conversation.id, null, signal);
   const request: CompactRequest = {
     ...turn,
     model: engineGrantFor(ctx.provider, ctx.model, assistant, conversation.id),
@@ -705,9 +710,13 @@ async function runPortableCompaction(
         compactions: compactionRecords,
       }),
     },
+    // 插件在压缩会话里同样能弹对话框、设状态条目(插件能介入压缩)。
+    interaction: interaction.interaction,
     providers: [ctx.provider, ctx.summarizer.provider],
   };
-  const result = await callEngineDriver(driver, turn, binding, signal, "Compaction cancelled", () => compact(request));
+  const result = await callEngineDriver(driver, turn, binding, signal, "Compaction cancelled", () => compact(request)).finally(() =>
+    interaction.close(),
+  );
   // 产物落库与生成路径的压缩捕获同一落点、同一 helper;原生压缩条目锚定到同一条尾消息。
   applyCapturedEngineCompactions(conversation, [result.compaction]);
   if (result.native) {

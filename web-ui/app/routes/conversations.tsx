@@ -77,6 +77,7 @@ import { SidebarBrandRow } from "~/components/sidebar-brand";
 import { WindowControlsBar, windowDragRegionProps } from "~/components/window-controls";
 import { ConversationTabStrip } from "~/components/workspace/conversation-tab-strip";
 import { EngineStatusBar } from "~/components/workspace/engine-status-bar";
+import { EnginePluginPanel } from "~/components/workspace/engine-plugin-panel";
 import { PaneContainerProvider } from "~/components/workspace/pane-container-context";
 import { WorkspaceEmptyState } from "~/components/workspace/workspace-empty-state";
 import { useCompressStore, useConversationCompressing } from "~/stores/compress-store";
@@ -2089,6 +2090,8 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
           {focused ? <TtsPlayBar /> : null}
           {/* pi 引擎瞬态状态条(P5):按窗格各自订阅本会话状态,分栏互不串扰。 */}
           <EngineStatusBar conversationId={activeId} />
+          {/* 插件界面(P5.5):对话框卡、状态条目、挂件。同样按窗格订阅。 */}
+          <EnginePluginPanel conversationId={activeId} />
           {/* 语音模式横幅(免提对话循环;关闭时不渲染)。 */}
           {voiceActive && activeId ? (
             <VoiceModeBanner onEnd={() => voiceMode.stop()} onRetry={handleToggleVoiceMode} />

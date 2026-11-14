@@ -22,8 +22,11 @@
 // - 模型请求日志:引擎把请求交给引擎侧的模型出口(engines/model-outlet,带显式供应商身份的
 //   fetch),出口经 host.models.log 把每条请求的记录送回应用。fetch 本身不过契约(函数不可序列化),
 //   所以引擎搬进子进程后日志照常。
-// - 暂不定义,到对应阶段再加:permission.check(P4b,引擎自己执行的工具)、指令列举与执行
-//   (P5/P6)、界面请求(P5.4)、invalidate(P5.6 长驻会话)。
+// - 引擎自己执行的工具(插件工具)经 host.permission.check 过应用审批(P5.4)。
+// - 插件的界面请求(方案 §5.11,P5.5)分两条:对话框经 host.interaction.dialog 请求-应答(取消即答案,
+//   不以错误拒绝;引擎侧先放弃时经 dismiss 收起);通知 / 状态条目 / 挂件 / 进行中提示经 host.interaction.show
+//   单向通知(瞬态,不落库)。
+// - 暂不定义,到对应阶段再加:指令列举与执行(P5.7)、invalidate(P5.6 长驻会话)。
 
 import type { JsonValue, Message, OAuthFlowId, ToolOutputEntry } from "../foundation/types";
 import type { AppErrorDomain, AppErrorSeverity } from "../foundation/types/dto";
@@ -269,6 +272,42 @@ export interface PermissionCheck {
   args: Record<string, JsonValue>;
 }
 
+// ---- 界面请求(§5.11) ----
+
+/** 需要用户回答的对话框。select 的答案可以不在 options 里(插件自己约定自由输入的解读)。 */
+export type EngineDialogRequest =
+  | { kind: "select"; title: string; options: string[] }
+  | { kind: "confirm"; title: string; message: string }
+  | { kind: "input"; title: string; placeholder?: string };
+
+export interface EngineDialogCall extends TurnRef {
+  /** 引擎生成,本会话内唯一。 */
+  requestId: string;
+  /** 发起方插件 id;认领不到时为空串。 */
+  source: string;
+  request: EngineDialogRequest;
+}
+
+/** select / input 的答案是字符串,confirm 是布尔。 */
+export type EngineDialogAnswer = { cancelled: true } | { cancelled: false; value: string | boolean };
+
+/** 引擎侧先放弃了对话框(插件给的超时到了、插件自己取消),应用收起它。 */
+export interface EngineDialogDismiss extends TurnRef {
+  requestId: string;
+}
+
+/** 瞬态界面(不落库)。status / widget 按 (来源, key) 覆盖,text / lines 为 null 即清除;working 是生成中的进行提示。 */
+export type EngineUiNotice =
+  | { kind: "notify"; message: string; level: "info" | "warning" | "error" }
+  | { kind: "status"; key: string; text: string | null }
+  | { kind: "widget"; key: string; lines: string[] | null }
+  | { kind: "working"; text: string | null };
+
+export interface EngineUiNoticeCall extends TurnRef {
+  source: string;
+  notice: EngineUiNotice;
+}
+
 // ---- 请求与结果 ----
 
 /** portable 驱动一轮需要的全部输入(纯数据)。 */
@@ -369,6 +408,15 @@ export interface EngineHost {
   tools: { call(call: AppToolCall): Promise<AppToolResult> };
   /** 放行时返回;用户拒绝或中止时以错误拒绝,错误文本即给模型的工具结果(与 tools.call 同口径)。 */
   permission: { check(req: PermissionCheck): Promise<void> };
+  interaction: {
+    /** 插件对话框。用户取消、会话中止、轮次已结束都返回 { cancelled: true }(不以错误拒绝)。
+     *  插件给的超时与取消信号由引擎侧处理:到时按取消回答插件,再经 dismiss 让应用收起。 */
+    dialog(call: EngineDialogCall): Promise<EngineDialogAnswer>;
+    /** 单向通知。 */
+    dismiss(call: EngineDialogDismiss): void;
+    /** 单向通知:瞬态界面。轮次结束后迟到的丢弃;轮次结束时该轮设置的状态条目 / 挂件 / 进行中提示随之清除。 */
+    show(call: EngineUiNoticeCall): void;
+  };
   /** 轮边界取「生成中补发」的消息文本;应用在同一调用里完成数据层分裂。空数组 = 无补发。 */
   steer: { take(turn: TurnRef): Promise<string[]> };
   models: {

@@ -70,6 +70,7 @@ function fakeHost(options: { steer?: () => string[]; tool?: (call: AppToolCall) 
       },
     },
     permission: { check: async () => undefined },
+    interaction: { dialog: async () => ({ cancelled: true }), dismiss: () => undefined, show: () => undefined },
     steer: {
       take: async (turn) => {
         log.steerTakes.push(turn);

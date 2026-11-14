@@ -104,6 +104,14 @@ interface DialogProbe {
 
 const toolCallScope = new AsyncLocalStorage<DialogProbe>();
 
+/** 正在执行的插件代码属于哪个插件(插件工具的执行、tool_call 处理函数),界面请求据此署名。 */
+const pluginScope = new AsyncLocalStorage<string>();
+
+/** 当前调用链所属的插件 id;认领不到(插件在别的事件里调用界面)时为 undefined。 */
+export function activePiPluginId(): string | undefined {
+  return pluginScope.getStore();
+}
+
 /** 被吞掉的对话框按「取消」回答(与 pi 无界面时各方法的返回值一致)。 */
 const cancelledAnswer = (method: string) => Promise.resolve(method === "confirm" ? false : undefined);
 
@@ -123,7 +131,7 @@ function dialogGuard(ui: ExtensionUIContext, probeOf: () => DialogProbe | undefi
 }
 
 /** 会话级界面的兜底:插件在别处缓存了 ctx.ui、在 tool_call 处理期间调用对话框,同样吞掉并作废这次裁决。
- *  界面桥(P5.5)绑进会话前必须先经过它。 */
+ *  界面桥(ui-bridge)绑进会话前必须先经过它。 */
 export function guardPiPluginDialogs(ui: ExtensionUIContext): ExtensionUIContext {
   return dialogGuard(ui, () => toolCallScope.getStore());
 }
@@ -144,7 +152,7 @@ function arbitrateToolCallHook(pluginId: string, hook: HandlerFn, onAudit: PiPlu
     const draft = { ...event, input: structuredClone(event.input) } as ToolCallEvent;
     let verdict: unknown;
     try {
-      verdict = await toolCallScope.run(probe, () => hook(draft, tagged));
+      verdict = await pluginScope.run(pluginId, () => toolCallScope.run(probe, () => hook(draft, tagged)));
     } catch (err) {
       // 弹过对话框的处理函数抛错同样作废(插件多半是拿到取消值后放弃);没弹窗的抛错照 pi 原语义阻止执行。
       if (!probe.prompted) throw err;
@@ -176,7 +184,7 @@ function gatePluginTool(tool: RegisteredTool, pluginId: string, approve: PiPlugi
     executionMode: "sequential",
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       await approve({ toolCallId, toolName: definition.name, pluginId, args: (params ?? {}) as Record<string, JsonValue> });
-      return definition.execute(toolCallId, params, signal, onUpdate, ctx);
+      return pluginScope.run(pluginId, () => definition.execute(toolCallId, params, signal, onUpdate, ctx));
     },
   };
   tool.definition = Object.assign(gated, { [ARBITRATED]: true as const });

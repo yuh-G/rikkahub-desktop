@@ -95,6 +95,15 @@
       "notification_title": "AI 正在等待你的审批",
       "notification_body": "「{{summary}}」等待你审批"
     },
+    "plugin_dialog": {
+      "from": "来自插件 {{plugin}}",
+      "from_unknown": "来自插件",
+      "cancel": "取消",
+      "yes": "是",
+      "no": "否",
+      "submit": "提交",
+      "send_failed": "回答没有送达，请重试"
+    },
     "translate": {
       "dialog_title": "选择翻译语言",
       "dialog_description": "译文会保存在当前回复下方，不会进入下一轮上下文。",

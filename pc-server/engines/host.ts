@@ -2,8 +2,9 @@
 //
 // 应用只有一个宿主实例,交给每个驱动。每轮的应用侧上下文(事件下沉、工具调用口、补发排水、
 // 本轮授权涉及的供应商快照)按 turnId 绑定:编排器在 startTurn/compact 之前 bindEngineTurn,
-// 返回后解绑。解绑后迟到的回调落空:emit 与 session.append 丢弃、tools.call / permission.check 与
-// session.load 以错误拒绝、steer.take 返回空、credential 报凭据不可用——会话被接管时,旧轮的回调不会写进新轮。
+// 返回后解绑。解绑后迟到的回调落空:emit、session.append 与 interaction.show / dismiss 丢弃、tools.call /
+// permission.check 与 session.load 以错误拒绝、interaction.dialog 按取消回答、steer.take 返回空、credential
+// 报凭据不可用——会话被接管时,旧轮的回调不会写进新轮。
 // 引擎经 host.report 把诊断交给应用的错误中心,不直接 import observability。
 //
 // 进程内驱动(placement: "in-process-only",即聊天引擎)不收 TurnInput:它的循环直接读写活的
@@ -47,6 +48,8 @@ export interface EngineTurnBinding {
   callTool?: AppToolCaller;
   /** 引擎自己执行的工具(插件工具)的审批口。不传 = 本轮不接受这类工具(审批以错误拒绝)。 */
   checkPermission?: PluginToolPermissionChecker;
+  /** 插件的界面请求(conversations/engine-interaction)。不传 = 对话框按取消回答,通知丢弃。 */
+  interaction?: EngineHost["interaction"];
   /** 轮边界补发排水(同一调用里完成数据层分裂)。不传 = 本轮不接补发。 */
   steer?: () => string[];
   /** 本轮授权涉及的供应商快照(会话模型 + 摘要模型)。订阅令牌按授权的 providerId 在这里找,
@@ -105,6 +108,19 @@ export const appEngineHost: EngineHost = {
       const checkPermission = turns.get(req.turnId)?.checkPermission;
       if (!checkPermission) throw new Error(`审批通道未接线,无法执行 ${req.toolName}`);
       await checkPermission({ toolCallId: req.toolCallId, toolName: req.toolName, pluginId: req.origin.pluginId, args: req.args });
+    },
+  },
+  interaction: {
+    async dialog(call) {
+      const interaction = turns.get(call.turnId)?.interaction;
+      if (!interaction) return { cancelled: true };
+      return interaction.dialog(call);
+    },
+    dismiss(call) {
+      turns.get(call.turnId)?.interaction?.dismiss(call);
+    },
+    show(call) {
+      turns.get(call.turnId)?.interaction?.show(call);
     },
   },
   steer: {

@@ -6,7 +6,7 @@ import type { EngineStatus, StreamHooksWithSink } from "../inference-engine/even
 import { initWorkingSetSseGuard, markConversationRowDirty, markMessageNodeDirty, scheduleThrottledConvFlush } from "../conversations";
 import { initAppErrorBroadcast } from "../observability/app-errors";
 import { initProviderAuthBroadcast } from "../model-providers/auth";
-import type { Conversation, ConversationListInvalidateEventDto, ConversationNodeUpdateEventDto, ConversationSnapshotEventDto, ConversationTextDeltaEventDto, EngineStatusEventDto, JsonValue, MessageNode } from "../foundation/types";
+import type { Conversation, ConversationListInvalidateEventDto, ConversationNodeUpdateEventDto, ConversationSnapshotEventDto, ConversationTextDeltaEventDto, EngineStatusEventDto, EngineUiNotifyEventDto, EngineUiStateEventDto, JsonValue, MessageNode } from "../foundation/types";
 import { diffFingerprints, fingerprintNode, type NodeBroadcastFingerprint } from "./node-delta";
 import { conversationNegotiationToken } from "./snapshot-negotiation";
 import { stripAuthSecrets } from "./auth";
@@ -236,6 +236,15 @@ export function broadcastConversation(conversation: Conversation, event = "snaps
 export function broadcastEngineStatus(conversationId: string, status: EngineStatus) {
   const payload: EngineStatusEventDto = status; // 编译期契约:EngineStatus ≡ 线上 DTO
   broadcastTo(conversationClients.get(conversationId), sseFrame("engine-status", payload));
+}
+
+// P5.5:插件界面(对话框 / 状态条目 / 挂件 / 进行中提示)的整份状态与单发通知。瞬态,连接时补发见会话流端点。
+export function broadcastEngineUi(state: EngineUiStateEventDto) {
+  broadcastTo(conversationClients.get(state.conversationId), sseFrame("engine-ui", state));
+}
+
+export function broadcastEngineNotify(notice: EngineUiNotifyEventDto) {
+  broadcastTo(conversationClients.get(notice.conversationId), sseFrame("engine-notify", notice));
 }
 
 // ===== H-b(专题2):流式增量帧 =====

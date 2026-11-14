@@ -95,6 +95,15 @@
       "notification_title": "AI is waiting for your approval",
       "notification_body": "\"{{summary}}\" awaits your approval"
     },
+    "plugin_dialog": {
+      "from": "From plugin {{plugin}}",
+      "from_unknown": "From a plugin",
+      "cancel": "Cancel",
+      "yes": "Yes",
+      "no": "No",
+      "submit": "Submit",
+      "send_failed": "The answer wasn't delivered. Please try again."
+    },
     "translate": {
       "dialog_title": "Select translation language",
       "dialog_description": "The translation is saved below the current reply and won't enter the next round of context.",
