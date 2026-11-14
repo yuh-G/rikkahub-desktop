@@ -4,9 +4,9 @@
 // 执行、结果实体化在应用侧一次完成,执行中的部分输出直接写进工具卡(sink),不回绕引擎。
 //
 // 工具面:
-// - 工作区工具(group "workspace"):按 K3 挂载矩阵(bash 可用: read/bash/edit/write;不可用:
-//   read/edit/write/grep/find/ls),声明复用挂载层 openAiWorkspaceTools——与 pi 原版逐字一致。
-//   执行走 workspace/runtime.executeWorkspaceToolCore(三道闸/危险命令拦截/宽严边界/K3 shell)。
+// - 工作区工具:P4b 起由引擎自带(pi 内建工具定义 + 应用后端,pi-engine/builtin-tools.ts),不再作为应用工具
+//   下发;执行前经 host.permission.check 回到这里的 createToolPermissionChecker 审批。下面的 group "workspace"
+//   执行路径(executeWorkspaceToolCore)待 P4b.4 随移植层一并删除。
 // - 通用工具(group "general",§4.9 落定):search_web / scrape_web / save_memory / ask_user +
 //   按助手启用的 mcp__*。不挂 use_skill(pi 原生 <available_skills> 替代)、get_time_info
 //   (有 bash)、tts/clipboard(v1 收面)。声明用 tools/bound 的同一组装配函数(与聊天引擎
@@ -24,16 +24,17 @@
 //   content 即全部信息,不带 display(避免大文本在引擎记忆里双写)。
 // - details 是工作区工具的结构化细节(diff/exitCode,jsonSafeDetails 截断口径与聊天引擎同源)。
 
-import type { AppToolResult, AppToolSpec } from "./contract";
+import type { AppToolResult, AppToolSpec, PermissionCheck, PermissionGrant } from "./contract";
 import type { Assistant, Conversation, JsonValue, Model, ToolOutputEntry } from "../foundation/types";
 import type { GenerationEventSink, GenerationTarget } from "../inference-engine/events";
 import { gateToolApproval } from "../inference-engine/approval-flow";
 import { gateAskUser } from "../inference-engine/ask-user-flow";
-import { decideAppToolPermission, pluginToolApprovalState, pluginToolSessionKey } from "../tools/approval";
+import { decideAppToolPermission, decideEngineToolPermission, pluginToolApprovalState, pluginToolSessionKey } from "../tools/approval";
 import { ASK_USER_TOOL_NAME, normalizeAskUserQuestions, serializeAskUserAnswer } from "../tools/ask-user";
 import { openAiLocalTools, openAiMcpTools, openAiSearchTools } from "../tools/bound";
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
 import { openAiToolOutput } from "../tools/format";
+import { getWorkspace, touchWorkspaceAccess } from "../workspace";
 import { executeWorkspaceToolCore, jsonSafeDetails, openAiWorkspaceTools } from "../workspace/runtime";
 import type { WorkspaceToolOutput } from "../workspace/tools/types";
 
@@ -88,8 +89,10 @@ export function generalToolSpecs(assistant: Assistant, model?: Model | null): Ap
   return declarations.map((decl) => specFromDeclaration(decl.function as Record<string, unknown>, "general"));
 }
 
+/** 本轮下发给引擎的应用工具:只有通用工具。工作区工具由引擎自带(pi 内建工具,P4b),执行前经
+ *  host.permission.check 回应用审批。 */
 export function appToolSpecsFor(ctx: AppToolsContext): AppToolSpec[] {
-  return [...workspaceToolSpecs(ctx.conversation), ...generalToolSpecs(ctx.assistant, ctx.model)];
+  return generalToolSpecs(ctx.assistant, ctx.model);
 }
 
 /** 内核部分输出 → 工具卡条目:text 原样、图片封成 data URL、结构化细节挂首个 text 条目的
@@ -206,27 +209,39 @@ export function createAppToolCaller(ctx: AppToolsContext, specs: readonly AppToo
   };
 }
 
-export interface PluginToolPermissionRequest {
-  toolCallId: string;
-  toolName: string;
-  pluginId: string;
-  args: Record<string, JsonValue>;
-}
+/** 引擎自己执行的工具的审批请求(契约 PermissionCheck 去掉轮次归属,归属由本轮绑定给出)。 */
+export type ToolPermissionRequest = Omit<PermissionCheck, "conversationId" | "turnId">;
 
-export type PluginToolPermissionChecker = (req: PluginToolPermissionRequest) => Promise<void>;
+export type ToolPermissionChecker = (req: ToolPermissionRequest) => Promise<PermissionGrant>;
 
-/** 引擎自己执行的插件工具在执行前过应用审批(类别 plugin,默认询问;插件页免问或本会话已「总是允许」则
- *  免问)。工具卡由引擎事件建,这里只驱动它的审批态;拒绝与中止的语义与应用工具同一生命周期。 */
-export function createPluginToolPermissionChecker(ctx: AppToolsContext): PluginToolPermissionChecker {
+const DEFAULT_GRANT: PermissionGrant = { scope: "default" };
+
+/** 引擎自己执行的工具在执行前过应用审批。工具卡由引擎事件建,这里只驱动它的审批态;拒绝与中止的语义
+ *  与应用工具同一生命周期。
+ *  - 插件工具:类别 plugin,默认询问;插件页免问或本会话已「总是允许」则免问。放行范围恒为 default。
+ *  - 引擎自带工具(pi 的 read / bash 等):按引擎给的类别与对象走工作区三档矩阵。用户在卡上批准了这次调用
+ *    或档位是完全访问 → unrestricted(写入走宽界、危险命令放行),否则 default。 */
+export function createToolPermissionChecker(ctx: AppToolsContext): ToolPermissionChecker {
   return async (req) => {
-    const approval = pluginToolApprovalState(ctx.conversation.id, req.pluginId, req.toolName);
-    await gateToolApproval(approval, {
-      conversationId: ctx.conversation.id,
-      toolCallId: req.toolCallId,
-      sink: ctx.sink,
-      signal: ctx.signal,
-      toolName: req.toolName,
-      sessionAllowKey: pluginToolSessionKey(req.pluginId, req.toolName),
-    });
+    const flow = { conversationId: ctx.conversation.id, toolCallId: req.toolCallId, sink: ctx.sink, signal: ctx.signal, toolName: req.toolName };
+    if (req.origin.kind === "plugin") {
+      const { pluginId } = req.origin;
+      await gateToolApproval(pluginToolApprovalState(ctx.conversation.id, pluginId, req.toolName), {
+        ...flow,
+        sessionAllowKey: pluginToolSessionKey(pluginId, req.toolName),
+      });
+      return DEFAULT_GRANT;
+    }
+    if (!req.category || !req.target) throw new Error(`引擎工具 ${req.toolName} 的审批请求缺少类别或对象`);
+    const workspace = ctx.conversation.workspaceId ? getWorkspace(ctx.conversation.workspaceId) : null;
+    if (!workspace) {
+      throw new Error(`Tool '${req.toolName}' is unavailable: this conversation is no longer bound to an existing workspace.`);
+    }
+    const approval = decideEngineToolPermission(ctx.conversation, req.toolName, req.category, req.target);
+    const summary = summaryOf(req.args.command ?? req.args.path);
+    // 返回 true = 用户对 pending 卡显式批准:区外写入与危险命令的知情同意。
+    const userApproved = await gateToolApproval(approval, { ...flow, ...(summary ? { summary } : {}) });
+    touchWorkspaceAccess(workspace.id);
+    return userApproved || workspace.permissionPreset === "full_access" ? { scope: "unrestricted" } : DEFAULT_GRANT;
   };
 }

@@ -19,7 +19,7 @@ function wire(createDriver: (host: EngineHost) => EngineDriver, host: Partial<En
     emit: (_turn, event) => void order.push(`emit:${event.kind}`),
     session: { load: async () => ({ items: [], compactions: [] }), append: async () => undefined },
     tools: { call: async () => ({ content: [] }) },
-    permission: { check: async () => undefined },
+    permission: { check: async () => ({ scope: "default" }) },
     interaction: { dialog: async () => ({ cancelled: true }), dismiss: () => undefined, show: () => undefined },
     steer: { take: async () => [] },
     models: { credential: async () => ({}), log: () => undefined },

@@ -69,7 +69,7 @@ function fakeHost(options: { steer?: () => string[]; tool?: (call: AppToolCall) 
         return options.tool ? options.tool(call) : { content: [{ type: "text", text: "查到了" }] };
       },
     },
-    permission: { check: async () => undefined },
+    permission: { check: async () => ({ scope: "default" }) },
     interaction: { dialog: async () => ({ cancelled: true }), dismiss: () => undefined, show: () => undefined },
     steer: {
       take: async (turn) => {

@@ -34,6 +34,15 @@ import { formatSize } from "./tools/truncate";
 export const READ_HARD_LIMIT_BYTES = 512 * 1024; // 安卓口径:读 512KB
 export const WRITE_HARD_LIMIT_BYTES = 2 * 1024 * 1024; // 安卓口径:写 2MB
 
+/** bash 超时硬上限(秒,§5.1):pi 无默认 timeout,应用加 30min 保护罩——
+ *  模型没传或传了无效值 → 取硬上限;传了 → 夹到硬上限以内。 */
+export const BASH_HARD_TIMEOUT_SECONDS = 30 * 60;
+
+export function clampBashTimeoutSeconds(timeout: number | undefined): number {
+  if (timeout === undefined || !Number.isFinite(timeout) || timeout <= 0) return BASH_HARD_TIMEOUT_SECONDS;
+  return Math.min(timeout, BASH_HARD_TIMEOUT_SECONDS);
+}
+
 /** realpath 化;目标不存在时取最深存在祖先的 realpath 拼回剩余段(write 新文件场景)。 */
 function canonicalizeWithNonexistentTail(path: string): string {
   let current = path;

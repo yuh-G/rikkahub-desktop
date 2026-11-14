@@ -116,7 +116,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
         const input = req.input;
         if (!input) throw new Error("pi 驱动缺少 TurnInput(portable 驱动必须收完整输入)。");
         if (!input.workspace) throw new Error(MISSING_WORKSPACE);
-        const { cwd, root } = input.workspace;
+        const { cwd, root, shell } = input.workspace;
         await settledWithin(run.previous, PREVIOUS_RUN_GRACE_MS);
         const view = await host.session.load(turn);
         const resources = await createPiSessionResources({
@@ -142,6 +142,12 @@ export function createPiDriver(host: EngineHost): EngineDriver {
           promptText: input.prompt.text,
           images: input.prompt.images,
           resources,
+          // 工作区工具 = pi 内建工具 + 应用后端;执行前回应用审批(来源 engine,类别与对象来自 builtin-tools 的映射表)。
+          workspaceTools: {
+            root,
+            ...(shell ? { shell } : {}),
+            approve: (req) => host.permission.check({ ...turn, ...req, origin: { kind: "engine" } }),
+          },
           tools: input.tools,
           callTool: (call) => host.tools.call({ ...turn, ...call }),
           report,

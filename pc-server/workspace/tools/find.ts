@@ -70,6 +70,34 @@ function compileFindPattern(pattern: string): { globs: Glob[]; fullPath: boolean
   return { globs: [new Glob(pattern)], fullPath: false };
 }
 
+/** 纯 TS 的 glob 搜索(fs-walk 遍历 + Bun.Glob):目录条目带尾 `/`,最多 limit 条。pi 内建 find 的自定义
+ *  glob 后端也用它(pi-engine/builtin-tools.ts),不依赖外部程序 fd。模式非法时抛错。 */
+export function collectFindMatches(
+  pattern: string,
+  searchPath: string,
+  limit: number,
+  signal?: AbortSignal,
+): { matches: string[]; visitCapReached: boolean } {
+  let compiled: { globs: Glob[]; fullPath: boolean };
+  try {
+    compiled = compileFindPattern(pattern);
+  } catch {
+    throw new Error(`Invalid glob pattern: ${pattern}`);
+  }
+  const matches: string[] = [];
+  const walk = walkDirectory(searchPath, {
+    signal,
+    includeDirectories: true,
+    onEntry({ relativePath, isDirectory }) {
+      const target = compiled.fullPath ? relativePath : (relativePath.split("/").pop() ?? relativePath);
+      if (!compiled.globs.some((g) => g.match(target))) return;
+      matches.push(isDirectory ? `${relativePath}/` : relativePath);
+      if (matches.length >= limit) return false;
+    },
+  });
+  return { matches, visitCapReached: walk.visitCapReached };
+}
+
 export function createFindTool(
   cwd: string,
   options?: FindToolOptions,
@@ -88,24 +116,8 @@ export function createFindTool(
       }
 
       const effectiveLimit = Math.max(1, limit ?? DEFAULT_LIMIT);
-      let compiled: { globs: Glob[]; fullPath: boolean };
-      try {
-        compiled = compileFindPattern(pattern);
-      } catch {
-        throw new Error(`Invalid glob pattern: ${pattern}`);
-      }
-
-      const matches: string[] = [];
-      const walk = walkDirectory(searchPath, {
-        signal,
-        includeDirectories: true,
-        onEntry({ relativePath, isDirectory }) {
-          const target = compiled.fullPath ? relativePath : (relativePath.split("/").pop() ?? relativePath);
-          if (!compiled.globs.some((g) => g.match(target))) return;
-          matches.push(isDirectory ? `${relativePath}/` : relativePath);
-          if (matches.length >= effectiveLimit) return false;
-        },
-      });
+      const { matches, visitCapReached } = collectFindMatches(pattern, searchPath, effectiveLimit, signal);
+      const walk = { visitCapReached };
 
       if (matches.length === 0) {
         return { content: [{ type: "text", text: "No files found matching pattern" }], details: undefined };

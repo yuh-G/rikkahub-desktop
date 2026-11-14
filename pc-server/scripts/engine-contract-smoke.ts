@@ -121,7 +121,7 @@ const host: EngineHost = {
   },
   permission: {
     async check() {
-      throw new Error("冒烟不加载插件");
+      throw new Error("冒烟不调用插件工具与引擎自带工具");
     },
   },
   interaction: {

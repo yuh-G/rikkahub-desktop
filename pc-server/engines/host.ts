@@ -16,7 +16,7 @@ import type { GenerationEventSink, GenerationTarget, ToolExecutor } from "../inf
 import { addLog } from "../api/logs";
 import { freshSubscriptionCredential } from "../model-providers/auth/resolve";
 import { reportError } from "../observability/app-errors";
-import type { AppToolCaller, PluginToolPermissionChecker } from "./app-tools";
+import type { AppToolCaller, ToolPermissionChecker } from "./app-tools";
 import type { EngineEntryInput, EngineErrorReport, EngineHost, EngineSessionView, SubscriptionCredential, TurnRef } from "./contract";
 
 /** 进程内驱动一轮的会话上下文(活对象,不经契约)。 */
@@ -46,8 +46,8 @@ export interface EngineTurnBinding {
   session?: EngineSessionBinding;
   /** 应用工具调用口(审批/执行/实体化在应用侧)。不传 = 本轮没有应用工具。 */
   callTool?: AppToolCaller;
-  /** 引擎自己执行的工具(插件工具)的审批口。不传 = 本轮不接受这类工具(审批以错误拒绝)。 */
-  checkPermission?: PluginToolPermissionChecker;
+  /** 引擎自己执行的工具(插件工具、引擎自带的工作区工具)的审批口。不传 = 本轮不接受这类工具(审批以错误拒绝)。 */
+  checkPermission?: ToolPermissionChecker;
   /** 插件的界面请求(conversations/engine-interaction)。不传 = 对话框按取消回答,通知丢弃。 */
   interaction?: EngineHost["interaction"];
   /** 轮边界补发排水(同一调用里完成数据层分裂)。不传 = 本轮不接补发。 */
@@ -107,7 +107,8 @@ export const appEngineHost: EngineHost = {
     async check(req) {
       const checkPermission = turns.get(req.turnId)?.checkPermission;
       if (!checkPermission) throw new Error(`审批通道未接线,无法执行 ${req.toolName}`);
-      await checkPermission({ toolCallId: req.toolCallId, toolName: req.toolName, pluginId: req.origin.pluginId, args: req.args });
+      const { conversationId: _conversationId, turnId: _turnId, ...rest } = req;
+      return checkPermission(rest);
     },
   },
   interaction: {

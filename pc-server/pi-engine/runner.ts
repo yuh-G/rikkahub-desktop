@@ -19,15 +19,17 @@
 // 视图是富化全序列(含合成行,应用以压缩切点为富化窗口锚),聊天位注入/时间提醒在工作区会话
 // 与聊天引擎逐字同生效。
 //
-// P3 工具面:noTools:"builtin"——pi 内建 read/bash/edit/write 一律不启用(它们绕开
-// 我们的审批与边界壳),应用工具规格(ctx.tools)经 pi-engine/app-tools 包成 customTools,
-// 调用交回应用(ctx.callTool,审批与执行在应用侧)。不传 tools 即纯对话
-// (无任何激活工具,系统提示词 Available tools 为 "(none)")。
+// 工具面(P4b):工作区工具是 pi 的内建工具定义,但由我们创建(builtin-tools:应用后端 + 执行前审批),
+// 以 customTools 进会话;noTools:"builtin" 保持不变——pi 自己不创建任何默认后端的内建工具,本轮不提供的
+// 内建工具名经 excludeTools 连登记都拿掉。应用工具规格(ctx.tools,通用工具 / MCP 桥)经 app-tools 包成
+// customTools,调用交回应用(ctx.callTool)。会话就绪后 assertPiToolsGated 核对每个已登记工具都带应用
+// 闸门标记,否则不开跑。都不传即纯对话(无任何激活工具,系统提示词 Available tools 为 "(none)")。
 
 import { createAgentSession } from "../../pi/packages/coding-agent/src/core/sdk.ts";
 import { markRuntimeStreamFunction } from "../../pi/packages/coding-agent/src/core/agent-session.ts";
 import type { ModelRuntime } from "../../pi/packages/coding-agent/src/core/model-runtime.ts";
 import type { StreamFn } from "../../pi/packages/agent/src/types.ts";
+import { allToolNames } from "../../pi/packages/coding-agent/src/core/tools/index.ts";
 
 import type { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
 import type { GenerationEventSink } from "../inference-engine/events";
@@ -54,6 +56,8 @@ import type {
   ModelGrant,
 } from "../engines/contract";
 import { createPiAppTools, type PiAppToolCaller } from "./app-tools";
+import { createPiBuiltinTools, excludedPiBuiltinToolNames, type PiBuiltinToolApprover } from "./builtin-tools";
+import { assertPiToolsGated } from "./tool-gate";
 import { bindPiPluginSession, type PiPluginSessionBinding } from "./plugins/session-binding";
 import type { PiPluginInteraction } from "./plugins/ui-bridge";
 import { createPiEntrySync, createPiSessionFromView, toPiEngineEntry } from "./session-view";
@@ -84,10 +88,18 @@ export interface PiGenerationContext {
    *  生产侧 = createPiSessionResources;不传 = 纯对话,pi 默认资源面全关不了——
    *  仅测试/冒烟场景使用,生产路由必须传)。 */
   resources?: PiSessionResources;
-  /** 应用工具规格(生产侧 = 工作区工具 + 通用工具/MCP 桥;不传 = 纯对话)。 */
+  /** 应用工具规格(生产侧 = 通用工具/MCP 桥;不传 = 没有应用工具)。 */
   tools?: AppToolSpec[];
   /** 应用工具调用口(生产 = host.tools.call:审批/执行/实体化在应用侧)。 */
   callTool?: PiAppToolCaller;
+  /** 工作区工具(pi 内建定义 + 应用后端)。不传 = 没有工作区工具(纯对话 / 测试)。 */
+  workspaceTools?: {
+    root: string;
+    /** 可用 bash;缺省挂 grep / find / ls 兜底。 */
+    shell?: string;
+    /** 执行前审批(生产 = host.permission.check,来源 engine)。 */
+    approve: PiBuiltinToolApprover;
+  };
   /** 诊断出口(生产 = host.report;自动压缩失败等经它进应用错误中心)。 */
   report?: (report: EngineErrorReport) => void;
   /** 插件的界面通道(生产 = host.interaction,绑本轮 turnId)。不传 = 插件看到 pi 的空界面(测试/冒烟)。 */
@@ -196,6 +208,10 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   const seededEntryIds = new Set(manager.getEntries().map((entry) => entry.id));
   const entrySync = entrySyncFor(manager, ctx);
 
+  const workspaceTools = ctx.workspaceTools;
+  const builtinTools = workspaceTools
+    ? createPiBuiltinTools({ cwd: ctx.cwd, root: workspaceTools.root, shell: workspaceTools.shell, approve: workspaceTools.approve })
+    : [];
   const { session } = await createAgentSession({
     cwd: ctx.cwd,
     agentDir: piAgentDir,
@@ -203,10 +219,11 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     model,
     sessionManager: manager,
     thinkingLevel: piThinkingLevelFor(ctx.reasoningLevel),
-    // "builtin" 只关内建工具;customTools 经 includeAllExtensionTools 全部激活
-    // (agent-session.ts 的 includeAllExtensionTools + _refreshToolRegistry,§七-3 实证)。
+    // "builtin" 只关 pi 默认后端的内建工具;customTools 经 includeAllExtensionTools 全部激活
+    // (agent-session.ts 的 includeAllExtensionTools + _refreshToolRegistry,§七-3 实证),同名即顶替内建定义。
     noTools: "builtin",
-    customTools: createPiAppTools(ctx.tools ?? [], ctx.callTool),
+    excludeTools: workspaceTools ? excludedPiBuiltinToolNames(workspaceTools.shell) : [...allToolNames],
+    customTools: [...builtinTools, ...createPiAppTools(ctx.tools ?? [], ctx.callTool)],
     // P4 资源统一:受控 ResourceLoader(技能白名单/AGENTS.md 边界过滤/appendSystemPrompt)
     // + 受控 SettingsManager(inMemory,封死 .pi/settings.json 注入面)。
     // 注意 sdk 只对自建 loader 调 reload,resources 在装配处已 reload 完毕。
@@ -220,7 +237,9 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   session.agent.steeringMode = "all";
   applyPromptCachePolicy(session.agent, runtime, ctx.grant);
 
-  const bridge = createPiEventBridge({ report: ctx.report, appToolNames: new Set((ctx.tools ?? []).map((tool) => tool.name)) });
+  // 工作区工具与应用工具的 details 都是我们打的标记;其余(插件工具)只按 content 映射。
+  const markedToolNames = new Set([...builtinTools, ...(ctx.tools ?? [])].map((tool) => tool.name));
+  const bridge = createPiEventBridge({ report: ctx.report, appToolNames: markedToolNames });
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
     // 流式增量之外的每个事件都是对账点。message_end 的落库在事件派发之后,那一条由下一个事件交出。
@@ -263,6 +282,8 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   try {
     // 插件的 session_start(状态重放)在首个请求之前;没有插件时是空操作。
     pluginBinding = await bindPiPluginSession(session, ctx.resources?.plugins ?? [], ctx.resources?.pluginPolicy ?? null, ctx.report, ctx.interaction);
+    // 插件的 session_start 可能补登记工具,所以闸门核对放在绑定之后、首个请求之前。
+    assertPiToolsGated(session);
     if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
     // 当模板/扩展命令拦截(agent-session.ts prompt() 的 expandPromptTemplates 分支),我们的会话 UX 不走 pi 命令面。
@@ -389,6 +410,7 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
     // 压缩会话同档位:摘要质量受益于推理,且与主会话口径一致(勿分叉)。
     thinkingLevel: piThinkingLevelFor(ctx.reasoningLevel),
     noTools: "builtin",
+    excludeTools: [...allToolNames],
     customTools: [],
     ...(ctx.resources
       ? { resourceLoader: ctx.resources.resourceLoader, settingsManager: ctx.resources.settingsManager }

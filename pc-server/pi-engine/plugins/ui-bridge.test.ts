@@ -144,7 +144,7 @@ function harness(answer: (call: EngineDialogCall) => Promise<EngineDialogAnswer>
         throw new Error("本测试没有应用工具");
       },
     },
-    permission: { check: async () => undefined },
+    permission: { check: async () => ({ scope: "default" }) },
     interaction: {
       dialog: (call) => {
         dialogs.push(call);

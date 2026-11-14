@@ -31,6 +31,7 @@ import { BUILTIN_SLASH_COMMANDS } from "../../../pi/packages/coding-agent/src/co
 import { allToolNames } from "../../../pi/packages/coding-agent/src/core/tools/index.ts";
 import type { EngineErrorReport } from "../../engines/contract";
 import type { JsonValue } from "../../foundation/types";
+import { markToolGated } from "../tool-gate";
 import { pluginIdForExtensionPath, type PiPluginEntry } from "./entries";
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
@@ -55,8 +56,8 @@ export interface PiPluginToolApproval {
   args: Record<string, JsonValue>;
 }
 
-/** 放行时返回;拒绝 / 中止时以错误拒绝,错误文本即给模型的工具结果。 */
-export type PiPluginToolApprover = (req: PiPluginToolApproval) => Promise<void>;
+/** 放行时兑现(放行结果对插件工具没有意义,不读);拒绝 / 中止时以错误拒绝,错误文本即给模型的工具结果。 */
+export type PiPluginToolApprover = (req: PiPluginToolApproval) => Promise<unknown>;
 
 export interface PiPluginPolicy {
   entries: readonly PiPluginEntry[];
@@ -187,7 +188,7 @@ function gatePluginTool(tool: RegisteredTool, pluginId: string, approve: PiPlugi
       return pluginScope.run(pluginId, () => definition.execute(toolCallId, params, signal, onUpdate, ctx));
     },
   };
-  tool.definition = Object.assign(gated, { [ARBITRATED]: true as const });
+  tool.definition = markToolGated(Object.assign(gated, { [ARBITRATED]: true as const }));
 }
 
 /** 工具规则:保留名拿掉并记审计;没有审批口(压缩会话)时一律不进会话;其余包上执行前审批。 */

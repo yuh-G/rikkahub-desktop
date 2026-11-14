@@ -18,6 +18,8 @@ import { state } from "../persistence/json-store";
 import { getWorkspace, touchWorkspaceAccess, workspaceStatus, workspaceTmpDir } from "./index";
 import {
   assertInsideWorkspace,
+  BASH_HARD_TIMEOUT_SECONDS,
+  clampBashTimeoutSeconds,
   createBoundedEditOperations,
   createBoundedFindOperations,
   createBoundedGrepOperations,
@@ -38,18 +40,19 @@ import { createFindTool } from "./tools/find";
 import { createLsTool } from "./tools/ls";
 import { getShellConfig, resetShellConfigCache } from "./tools/shell";
 import type { WorkspaceToolDefinition, WorkspaceToolOutput } from "./tools/types";
+import { jsonSafeDetails } from "../tools/format";
 
 // ----- shell 可用性探针(进程级缓存;Windows 无 Git Bash → bash 工具不挂载,§5.1) -----
 
-let shellProbe: { available: boolean; error?: string } | null = null;
+let shellProbe: { available: boolean; shell?: string; error?: string } | null = null;
 
-export function shellAvailability(): { available: boolean; error?: string } {
+/** shell 是探测到的 bash 路径(available 时必有),工作区引擎经契约 EngineWorkspace.shell 拿到它。 */
+export function shellAvailability(): { available: boolean; shell?: string; error?: string } {
   if (!shellProbe) {
     try {
       // 空串 → undefined 走自动探测;非空 = 用户显式指定的 bash 路径(最高优先级)。
       // state?. 可选链对齐 workspace/index.ts 范式:测试/未初始化时 state 为空,取 undefined。
-      getShellConfig(state?.settings?.shellPath || undefined);
-      shellProbe = { available: true };
+      shellProbe = { available: true, shell: getShellConfig(state?.settings?.shellPath || undefined).shell };
     } catch (err) {
       shellProbe = { available: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -193,37 +196,11 @@ export function openAiWorkspaceTools(
 
 // ----- 执行分发 -----
 
-/** bash 超时硬上限(秒,§5.1):pi 原样无默认 timeout,PC 加 30min 保护罩——
- *  模型没传 → 取硬上限;传了 → 夹到硬上限以内(无效值透传给 pi 内核报错)。 */
-export const BASH_HARD_TIMEOUT_SECONDS = 30 * 60;
+/** bash 超时硬上限:口径在 boundary.ts(pi 内建 bash 的后端同用)。 */
+export { BASH_HARD_TIMEOUT_SECONDS, clampBashTimeoutSeconds };
 
-export function clampBashTimeoutSeconds(timeout: number | undefined): number {
-  if (timeout === undefined || !Number.isFinite(timeout) || timeout <= 0) return BASH_HARD_TIMEOUT_SECONDS;
-  return Math.min(timeout, BASH_HARD_TIMEOUT_SECONDS);
-}
-
-/** details 里可能带整文件 diff;落库/广播前截断,保护消息体与前端渲染(§4.5 有界渲染)。
- *  P3 起导出:pi 引擎 customTools 把 details 打包给事件桥还原成 part metadata,截断
- *  口径必须与聊天引擎同源。 */
-const DETAILS_TEXT_CAP = 100_000;
-
-export function jsonSafeDetails(details: unknown): Record<string, JsonValue> | null {
-  if (details == null || typeof details !== "object") return null;
-  const out: Record<string, JsonValue> = {};
-  for (const [key, value] of Object.entries(details as Record<string, unknown>)) {
-    if (value === undefined) continue;
-    if (typeof value === "string" && value.length > DETAILS_TEXT_CAP) {
-      out[key] = `${value.slice(0, DETAILS_TEXT_CAP)}\n[... truncated]`;
-      continue;
-    }
-    try {
-      out[key] = JSON.parse(JSON.stringify(value)) as JsonValue;
-    } catch {
-      // 不可序列化的字段直接丢弃(details 只服务渲染/导出,非正确性数据)
-    }
-  }
-  return Object.keys(out).length ? out : null;
-}
+/** details 里可能带整文件 diff;截断口径在 tools/format.ts(两个工作区工具实现同源)。 */
+export { jsonSafeDetails };
 
 /** pi WorkspaceToolOutput → 调度器 ToolResult 形状(output 数组直通 toolResultToParts 首分支)。
  *  结构化 details 挂首个 text part 的 metadata.workspace(parts.ts 明示的扩展点),

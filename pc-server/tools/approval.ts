@@ -11,7 +11,14 @@ import { state } from "../persistence/json-store";
 import { lexicalWorkspaceCwd } from "../workspace/approval";
 import { getWorkspace } from "../workspace";
 import { isToolAllowedForSession } from "../inference-engine/approval-gate";
-import { decidePermission, type PermissionDecision, type PermissionPolicy, type WorkspacePolicy } from "./permission";
+import {
+  decidePermission,
+  type PermissionDecision,
+  type PermissionPolicy,
+  type PermissionTarget,
+  type ToolCategory,
+  type WorkspacePolicy,
+} from "./permission";
 import { classifyAppTool } from "./tool-categories";
 
 type ConversationWorkspacePick = Pick<Conversation, "id" | "workspaceId" | "workspaceCwd">;
@@ -123,6 +130,19 @@ export function decideAppToolPermission(
     },
     policy,
   );
+}
+
+/** 引擎自带工具(pi 的 read / bash 等)的审批判定:类别与对象由引擎按自己的映射表给出,这里不认工具名。
+ *  对象恒已齐备(执行前才问),得到的就是终局。 */
+export function decideEngineToolPermission(
+  conversation: ConversationWorkspacePick,
+  toolName: string,
+  category: ToolCategory,
+  target: PermissionTarget,
+): PermissionDecision {
+  const policy: PermissionPolicy = {};
+  if (category === "write" || category === "execute") policy.workspace = workspacePolicy(conversation);
+  return decidePermission({ conversationId: conversation.id, toolName, category, target, origin: { kind: "engine" } }, policy);
 }
 
 /** 插件工具的会话级免问键(审批卡「此会话内总是允许该工具」记在这个键上)。 */

@@ -1,7 +1,7 @@
 // pi-engine/plugins/plugin-tools.test.ts — 插件工具进会话 + 执行前审批(P5.4)
 //
 // 锁定:①裁决后的插件工具进入上游请求的工具声明,执行前经 host.permission.check(带 turnId、来源 = 插件 id);
-// ②应用侧审批口(createPluginToolPermissionChecker)默认询问:待审卡 → 批准后执行、拒绝则不执行且拒绝理由
+// ②应用侧审批口(createToolPermissionChecker)默认询问:待审卡 → 批准后执行、拒绝则不执行且拒绝理由
 // 回给模型;选了「此会话内总是允许」后同会话同工具不再询问;③事件桥给插件工具建通用工具卡,结果只按 content
 // 映射(插件自己的 details 不进卡);④没有审批口的会话(压缩)不声明插件工具。
 import { afterAll, describe, expect, test } from "bun:test";
@@ -11,7 +11,8 @@ import { join } from "node:path";
 
 process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-pi-plugin-tools-"));
 
-const { createPluginToolPermissionChecker } = await import("../../engines/app-tools");
+const { createToolPermissionChecker } = await import("../../engines/app-tools");
+const { piBuiltinToolNames } = await import("../builtin-tools");
 const { resolveToolApproval, forgetSessionToolAllowances } = await import("../../inference-engine/approval-gate");
 const { connectDriver, connectHost } = await import("../../engines/loopback");
 const { modelGrantFor } = await import("../../engines/model-grant");
@@ -61,7 +62,7 @@ function harness(conversationId: string) {
   const checks: PermissionCheck[] = [];
   const sink = (event: GenerationEvent) => void events.push(event);
   // 应用侧审批口(生产 = 编排器给本轮绑定的 checkPermission,经 host.permission.check 到达)。
-  const check = createPluginToolPermissionChecker({ conversation: { id: conversationId } as never, assistant: {} as never, sink });
+  const check = createToolPermissionChecker({ conversation: { id: conversationId } as never, assistant: {} as never, sink });
   const host: EngineHost = {
     emit: (_turn, event) => sink(event),
     session: { load: async () => ({ items: [], compactions: [] }), append: async () => undefined },
@@ -73,7 +74,8 @@ function harness(conversationId: string) {
     permission: {
       check: async (req) => {
         checks.push(req);
-        await check({ toolCallId: req.toolCallId, toolName: req.toolName, pluginId: req.origin.pluginId, args: req.args });
+        const { conversationId: _conversationId, turnId: _turnId, ...call } = req;
+        return check(call);
       },
     },
     interaction: { dialog: async () => ({ cancelled: true }), dismiss: () => undefined, show: () => undefined },
@@ -133,7 +135,8 @@ describe("插件工具 × 应用审批", () => {
     expect((await run).text).toBe("加好了");
 
     const declared = (server.requests[0]!.tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name);
-    expect(declared).toEqual(["counter_add"]);
+    // 工作区会话照常带 pi 内建工具(测试 TurnInput 没有 shell → 兜底组)。
+    expect(declared.toSorted()).toEqual(["counter_add", ...piBuiltinToolNames(undefined)].toSorted());
     expect(checks).toEqual([
       { ...turn, toolCallId: "tc-add-1", toolName: "counter_add", origin: { kind: "plugin", pluginId: "dev:counter" }, args: { n: 2 } },
     ]);

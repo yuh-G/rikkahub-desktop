@@ -24,6 +24,7 @@ import type {
   EngineHost,
   EngineKind,
   EngineSessionView,
+  PermissionGrant,
   SubscriptionCredential,
   TurnResult,
 } from "./contract";
@@ -269,11 +270,7 @@ export function serveDriverOverStdio(
       },
     },
     tools: { call: (call) => peer.request("host.tools.call", [call]) as Promise<AppToolResult> },
-    permission: {
-      check: async (req) => {
-        await peer.request("host.permission.check", [req]);
-      },
-    },
+    permission: { check: (req) => peer.request("host.permission.check", [req]) as Promise<PermissionGrant> },
     interaction: {
       dialog: (call) => peer.request("host.interaction.dialog", [call]) as Promise<EngineDialogAnswer>,
       dismiss: (call) => peer.notify("host.interaction.dismiss", [call]),

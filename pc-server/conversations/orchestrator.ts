@@ -24,9 +24,10 @@ import { apiToolCallFromPart, toolExecutionErrorPayload, toolResultTextForApi } 
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
 import { resolveEngine, type EngineRoute } from "../engines";
 import { modelGrantFor } from "../engines/model-grant";
-import { appToolSpecsFor, createAppToolCaller, createPluginToolPermissionChecker } from "../engines/app-tools";
+import { appToolSpecsFor, createAppToolCaller, createToolPermissionChecker } from "../engines/app-tools";
 import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
+import { shellAvailability } from "../workspace/runtime";
 import { buildEngineInstructions } from "../engines/instructions";
 import { enginePluginsFor } from "../engines/plugins";
 import { bindEngineTurn, type EngineTurnBinding } from "../engines/host";
@@ -40,6 +41,7 @@ import type {
   ModelGrant,
   TurnInput,
   TurnRef,
+  EngineWorkspace,
 } from "../engines/contract";
 import { effectiveEngineCompaction, parseEngineCompactions } from "./engine-compactions";
 import { encodableMessages, enrichMessages, applyTemplateToMessage } from "../inference-engine/message-enrichment";
@@ -412,6 +414,14 @@ function engineGrantFor(provider: Provider, model: Model, assistant: Assistant, 
   return grant;
 }
 
+/** 会话工作区(契约 EngineWorkspace)。shell 是本机探测到的 bash(与聊天引擎挂载 bash 同一探针),
+ *  没有则不带,引擎挂兜底搜索工具。 */
+function engineWorkspaceFor(route: EngineRoute): EngineWorkspace | null {
+  if (!route.workspace) return null;
+  const { shell } = shellAvailability();
+  return { cwd: route.workspace.cwd, root: route.workspace.root, ...(shell ? { shell } : {}) };
+}
+
 /** P7:本轮压缩产物落 conversation.engineCompactions。cutMessageId 为 null(pi 自动压缩
  *  的切点可能落在本轮 prompt 之后,而本轮消息尚未入库)按"外收拢"落当前尾消息
  *  id——只多保不少保,下一轮编码器按"切点在场"自校验生效。 */
@@ -564,7 +574,7 @@ async function runPortableGeneration(
     model: engineGrantFor(deps.providerItem, deps.selectedModel, deps.assistant, conversation.id),
     // 思考强度与聊天引擎同源(助手设置),档位翻译归引擎。
     reasoningLevel: deps.assistant.reasoningLevel,
-    workspace: route.workspace ? { cwd: route.workspace.cwd, root: route.workspace.root } : null,
+    workspace: engineWorkspaceFor(route),
     instructions,
     plugins: enginePluginsFor(driver.kind, state.settings),
     prompt: promptInput,
@@ -586,7 +596,7 @@ async function runPortableGeneration(
       append: (entries) => ctx.sessionWriter.append(target.message.id, entries),
     },
     callTool: createAppToolCaller(toolContext, tools),
-    checkPermission: createPluginToolPermissionChecker(toolContext),
+    checkPermission: createToolPermissionChecker(toolContext),
     interaction: interaction.interaction,
     // steering 轮边界(用户问题②):编排层同一回调经 host.steer.take 直通引擎,在引擎轮边界
     // 调用(落库/队列联动/分裂在 steerBoundary,引擎只拿文本注入)。
@@ -692,7 +702,7 @@ async function runPortableCompaction(
       ? engineGrantFor(ctx.summarizer.provider, ctx.summarizer.model, assistant, conversation.id)
       : null,
     reasoningLevel: assistant.reasoningLevel,
-    workspace: route.workspace ? { cwd: route.workspace.cwd, root: route.workspace.root } : null,
+    workspace: engineWorkspaceFor(route),
     instructions: buildEngineInstructions(conversation, assistant, ctx.model, systemInjection ? [systemInjection] : undefined),
     plugins: enginePluginsFor(driver.kind, state.settings),
     customInstructions: ctx.customInstructions,

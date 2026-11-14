@@ -1,26 +1,20 @@
 // pi-engine/app-tools.test.ts — 应用工具规格 → pi customTools 的包装(契约对照 + 结果标记)
 //
 // 两类保障:
-// 1) 升级回归门:我们移植工具(工作区工具声明来源)与 pi 原版工厂的 name/description/
-//    parameters 必须语义全等(键序无关;TypeBox 先 required 后 properties,纯序差);
-//    promptSnippet/promptGuidelines 逐字镜像 pi 常量。pi 升级改工具面 → 本测试红,倒逼重新
-//    对齐移植层(方案 §〇 升级纪律)。
+// 1) 升级回归门:移植工具(聊天引擎侧的工作区工具,P4b.4 随移植层删除)与 pi 原版工厂的 name/description/
+//    parameters 必须语义全等(键序无关;TypeBox 先 required 后 properties,纯序差)。pi 内建工具本身的
+//    包装见 builtin-tools.test.ts。
 // 2) 包装语义:execute 只把调用交给应用;应用结果的三种形态(display / details / 纯 content)
-//    按约定打 details 标记,事件桥据此还原工具卡。
-import { beforeAll, describe, expect, test } from "bun:test";
+//    按约定打 details 标记,事件桥据此还原工具卡;应用工具不带提示词摘要、全部顺序执行、带审批闸门标记。
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-piapptools-test-"));
 
-const conversations = await import("../conversations");
-const { configureWorkingSet } = await import("../conversations/working-set");
-const { getConversationMeta } = await import("../conversations/read-queries");
-const ws = await import("../workspace");
-const runtime = await import("../workspace/runtime");
-const { workspaceToolSpecs } = await import("../engines/app-tools");
 const { createPiAppTools } = await import("./app-tools");
+const { isToolGated } = await import("./tool-gate");
 const ourTools = {
   read: (await import("../workspace/tools/read")).createReadTool,
   bash: (await import("../workspace/tools/bash")).createBashTool,
@@ -31,55 +25,7 @@ const ourTools = {
   ls: (await import("../workspace/tools/ls")).createLsTool,
 };
 const pi = await import("../../pi/packages/coding-agent/src/core/sdk.ts");
-const piPromptContributions: Record<string, { snippet: string; guidelines: readonly string[] }> = {
-  read: (await import("../../pi/packages/coding-agent/src/core/tools/read.ts")).readToolSystemPromptContribution,
-  bash: (await import("../../pi/packages/coding-agent/src/core/tools/bash.ts")).bashToolSystemPromptContribution,
-  edit: (await import("../../pi/packages/coding-agent/src/core/tools/edit.ts")).editToolSystemPromptContribution,
-  write: (await import("../../pi/packages/coding-agent/src/core/tools/write.ts")).writeToolSystemPromptContribution,
-  grep: (await import("../../pi/packages/coding-agent/src/core/tools/grep.ts")).grepToolSystemPromptContribution,
-  find: (await import("../../pi/packages/coding-agent/src/core/tools/find.ts")).findToolSystemPromptContribution,
-  ls: (await import("../../pi/packages/coding-agent/src/core/tools/ls.ts")).lsToolSystemPromptContribution,
-};
 import type { AppToolResult, AppToolSpec } from "../engines/contract";
-
-const db = conversations.openConversationsDb();
-
-function installWorkingSet() {
-  configureWorkingSet({
-    loadConversation: (convId) => {
-      const meta = getConversationMeta(db, convId);
-      if (!meta) return undefined;
-      meta.messages = conversations.loadConversationNodesFromDb(db, convId);
-      return meta;
-    },
-    isGenerating: () => false,
-    hasSseClients: () => false,
-    hasDirty: () => false,
-  });
-}
-installWorkingSet();
-beforeAll(installWorkingSet);
-
-let seq = 0;
-function workspaceSpecs(): AppToolSpec[] {
-  seq += 1;
-  const workspace = ws.createWorkspace({ type: "managed", name: `pi-app-tools-${seq}` });
-  const conversation = {
-    id: `piapptools-conv-${seq}`,
-    assistantId: "a1",
-    systemPrompt: null,
-    title: `t-${seq}`,
-    messages: [],
-    chatSuggestions: [],
-    isPinned: false,
-    createAt: 1000,
-    updateAt: 2000,
-    workspaceId: workspace.id,
-    workspaceCwd: null,
-  };
-  conversations.persistConversation(conversation);
-  return workspaceToolSpecs(conversation as never);
-}
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -124,39 +70,6 @@ describe("契约对照(pi 升级回归门)", () => {
     expect(piBash.promptSnippet).toBe("Execute bash commands (ls, grep, find, etc.)");
   });
 
-  test("工作区规格包装:挂载矩阵 + sequential + snippet + edit prepareArguments", () => {
-    const tools = createPiAppTools(workspaceSpecs(), undefined);
-    expect(tools.map((tool) => tool.name)).toEqual(runtime.mountedWorkspaceToolNames());
-    for (const tool of tools) {
-      expect(tool.executionMode).toBe("sequential");
-      expect(typeof tool.promptSnippet).toBe("string");
-      expect((tool.promptSnippet ?? "").length).toBeGreaterThan(0);
-      expect(tool.label).toBe(tool.name);
-      if (tool.name === "edit") expect(typeof tool.prepareArguments).toBe("function");
-      else expect(tool.prepareArguments).toBeUndefined();
-    }
-  });
-
-  test("promptSnippet/promptGuidelines 逐字镜像 pi 各工具的 SystemPromptContribution 常量(bash 不镜像 PI_* 条目)", () => {
-    for (const tool of createPiAppTools(workspaceSpecs(), undefined)) {
-      const contribution = piPromptContributions[tool.name];
-      expect(contribution).toBeDefined();
-      expect(tool.promptSnippet).toBe(contribution!.snippet);
-      const expectedGuidelines = tool.name === "bash" || contribution!.guidelines.length === 0 ? undefined : [...contribution!.guidelines];
-      expect(tool.promptGuidelines).toEqual(expectedGuidelines);
-    }
-  });
-
-  test("通用工具(group general)不带 snippet/guidelines,同名也不挂 prepareArguments", () => {
-    const [tool] = createPiAppTools(
-      [{ name: "edit", description: "d", parameters: { type: "object", properties: {} }, group: "general" }],
-      undefined,
-    );
-    expect(tool?.promptSnippet).toBeUndefined();
-    expect(tool?.promptGuidelines).toBeUndefined();
-    expect(tool?.prepareArguments).toBeUndefined();
-    expect(tool?.executionMode).toBe("sequential");
-  });
 });
 
 describe("包装语义", () => {
@@ -171,6 +84,16 @@ describe("包装语义", () => {
     const out = await execOf(tool!)("call-1", { q: "hi" });
     return { calls, out };
   }
+
+  test("形状:不带提示词摘要、不挂 prepareArguments、顺序执行、带审批闸门标记", () => {
+    const [tool] = createPiAppTools([spec], undefined);
+    expect(tool?.promptSnippet).toBeUndefined();
+    expect(tool?.promptGuidelines).toBeUndefined();
+    expect(tool?.prepareArguments).toBeUndefined();
+    expect(tool?.executionMode).toBe("sequential");
+    expect(tool?.label).toBe("mcp__x");
+    expect(isToolGated(tool)).toBe(true);
+  });
 
   test("调用原样交给应用:toolCallId/name/args", async () => {
     const { calls } = await run({ content: [{ type: "text", text: "ok" }] });

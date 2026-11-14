@@ -22,7 +22,7 @@
 // - 模型请求日志:引擎把请求交给引擎侧的模型出口(engines/model-outlet,带显式供应商身份的
 //   fetch),出口经 host.models.log 把每条请求的记录送回应用。fetch 本身不过契约(函数不可序列化),
 //   所以引擎搬进子进程后日志照常。
-// - 引擎自己执行的工具(插件工具)经 host.permission.check 过应用审批(P5.4)。
+// - 引擎自己执行的工具(插件工具 P5.4;引擎自带的工作区工具 P4b)经 host.permission.check 过应用审批。
 // - 插件的界面请求(方案 §5.11,P5.5)分两条:对话框经 host.interaction.dialog 请求-应答(取消即答案,
 //   不以错误拒绝;引擎侧先放弃时经 dismiss 收起);通知 / 状态条目 / 挂件 / 进行中提示经 host.interaction.show
 //   单向通知(瞬态,不落库)。
@@ -31,6 +31,7 @@
 import type { JsonValue, Message, OAuthFlowId, ToolOutputEntry } from "../foundation/types";
 import type { AppErrorDomain, AppErrorSeverity } from "../foundation/types/dto";
 import type { GenerationEvent } from "../inference-engine/events";
+import type { PermissionTarget, ToolCategory } from "../tools/permission";
 
 /** 引擎种类(开放枚举)。新增引擎 = 追加一个字面量 + 一个驱动 + 注册表一行。 */
 export type EngineKind = "chat" | "pi" | "dsh" | "codex" | "claude-code" | (string & {});
@@ -135,6 +136,8 @@ export interface EngineSessionView {
 export interface EngineWorkspace {
   cwd: string;
   root: string;
+  /** 本机可用的 bash(应用探测:用户指定路径 → 已知位置 → 内嵌 bash 兜底)。缺省 = 没有可用的 bash。 */
+  shell?: string;
 }
 
 /** 系统提示词侧的应用资产。人设、记忆、搜索指引、注入面等文本由应用组装并在会话内冻结
@@ -262,14 +265,27 @@ export interface AppToolResult {
   details?: { tool: string; details: Record<string, JsonValue> };
 }
 
-/** 引擎自己执行的工具(插件工具)执行前的应用审批。审批卡与会话级「总是允许」按来源认领。 */
+/** 引擎自己执行的工具执行前的应用审批。两种来源:插件工具(审批卡与会话级「总是允许」按插件认领);
+ *  引擎自带的工具(pi 的 read / bash 等),类别与对象由引擎按自己的映射表给出,路径是引擎实际要
+ *  操作的绝对路径——应用只按类别与对象判定,不认引擎的工具名。 */
 export interface PermissionCheck {
   conversationId: string;
   turnId: string;
   toolCallId: string;
   toolName: string;
-  origin: { kind: "plugin"; pluginId: string };
+  origin: { kind: "plugin"; pluginId: string } | { kind: "engine" };
+  /** 引擎自带工具必带;插件工具恒为 plugin,不必带。 */
+  category?: ToolCategory;
+  /** 引擎自带工具必带(没有对象时为空对象)。 */
+  target?: PermissionTarget;
   args: Record<string, JsonValue>;
+}
+
+/** 放行结果。scope 是这次调用的放行范围:default = 写入只许落在工作区边界内(按真实路径校验,软链
+ *  逃逸也拦得住)、危险命令不执行;unrestricted = 不设这两道限制(用户在审批卡上批准了这次调用,
+ *  或档位是完全访问)。插件工具恒为 default。 */
+export interface PermissionGrant {
+  scope: "default" | "unrestricted";
 }
 
 // ---- 界面请求(§5.11) ----
@@ -406,8 +422,8 @@ export interface EngineHost {
     append(turn: TurnRef, entries: EngineEntryInput[]): Promise<void>;
   };
   tools: { call(call: AppToolCall): Promise<AppToolResult> };
-  /** 放行时返回;用户拒绝或中止时以错误拒绝,错误文本即给模型的工具结果(与 tools.call 同口径)。 */
-  permission: { check(req: PermissionCheck): Promise<void> };
+  /** 放行时返回放行结果;用户拒绝或中止时以错误拒绝,错误文本即给模型的工具结果(与 tools.call 同口径)。 */
+  permission: { check(req: PermissionCheck): Promise<PermissionGrant> };
   interaction: {
     /** 插件对话框。用户取消、会话中止、轮次已结束都返回 { cancelled: true }(不以错误拒绝)。
      *  插件给的超时与取消信号由引擎侧处理:到时按取消回答插件,再经 dismiss 让应用收起。 */
