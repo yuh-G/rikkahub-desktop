@@ -235,13 +235,12 @@ export type SubscriptionCredential = Record<string, JsonValue>;
 
 // ---- 应用工具 ----
 
-/** 应用提供给引擎的工具。group 区分工作区工具(引擎可按自己的约定补提示词摘要)与其它应用工具。 */
+/** 应用提供给引擎的工具(通用工具 / MCP / ask_user;工作区工具由引擎自带,经 permission.check 审批)。 */
 export interface AppToolSpec {
   name: string;
   description: string;
   /** JSON Schema。 */
   parameters: Record<string, JsonValue>;
-  group: "workspace" | "general";
 }
 
 export interface AppToolCall {
@@ -261,8 +260,6 @@ export interface AppToolResult {
   content: ToolContentBlock[];
   /** 工具卡展示条目(已实体化);缺省 = 由 content 直接映射。 */
   display?: ToolOutputEntry[];
-  /** 工作区工具的结构化细节(diff / exitCode 等,前端渲染契约)。 */
-  details?: { tool: string; details: Record<string, JsonValue> };
 }
 
 /** 引擎自己执行的工具执行前的应用审批。两种来源:插件工具(审批卡与会话级「总是允许」按插件认领);

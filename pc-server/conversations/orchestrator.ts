@@ -111,9 +111,8 @@ export async function executeApprovedToolPart(
     const reason = String((part.approvalState as Record<string, JsonValue>)?.reason ?? "").trim() || "No reason provided";
     return { error: `Tool execution denied by user. Reason: ${reason}` };
   }
-  // 走到这里 = 用户对 pending 卡显式批准：userApproved 是危险命令拦截的
-  // 知情同意放行门（workspace/runtime.ts），仅此路径可置 true。
-  return executeToolCall(apiToolCallFromPart(part), assistant, { ...context, userApproved: true });
+  // 走到这里 = 用户对 pending 卡显式批准。
+  return executeToolCall(apiToolCallFromPart(part), assistant, context);
 }
 
 export async function resumeApprovedToolParts(
@@ -896,13 +895,8 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     // 这里保留对全局 state 的读写（如 saveToolBinaryContent），因为协调器仍然是唯一拥有
     // state 写权限的层；后续 Phase 会再把文件落盘拆到 files/ 模块。
     const executeTool: ToolExecutor = async (toolCall, context) => {
-      // 注入生成级 signal（工作区工具据此取消，bash 连杀进程树）与部分输出回写
-      // （bash 执行中把尾部输出写进 tool part，走现有 touchStream 合帧管线）。
-      const raw = await executeToolCall(toolCall, assistant, {
-        ...context,
-        signal: controller.signal,
-        onToolPartialOutput: (output) => applyEvent({ kind: "tool_result", toolCallId: toolCall.id, output, final: false }),
-      });
+      // 注入生成级 signal(停止生成时随之中止)。
+      const raw = await executeToolCall(toolCall, assistant, { ...context, signal: controller.signal });
       // ask_user / MCP 审批等 pending 状态直接作为单 output 载荷返回，让协调器走暂停路径。
       if (isRecord(raw) && "pending" in raw) {
         return { output: [raw as unknown as ToolPendingOutput] };

@@ -167,7 +167,6 @@ const WRITE_NOTE: AppToolSpec = {
   name: "write_note",
   description: "write a note",
   parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
-  group: "general",
 };
 
 const DIALOG_HOOK = `

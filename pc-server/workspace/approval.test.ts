@@ -1,22 +1,12 @@
-// workspace/approval.test.ts — 工作区工具名单、cwd 词法解析与危险命令清单单测(纯函数层)
+// workspace/approval.test.ts — cwd 词法解析与危险命令清单单测(纯函数层)
 // 三档矩阵、下界与终局、免审前缀的判定测试在 tools/permission.test.ts(判定改按类别后)。
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { findDangerousCommandReason, isWorkspaceToolName, lexicalWorkspaceCwd } from "./approval";
+import { findDangerousCommandReason, lexicalWorkspaceCwd } from "./approval";
 
 // 词法判定不碰文件系统,root 无需真实存在
 const ROOT = join(tmpdir(), "rkh-approval-root");
-
-describe("工具名单", () => {
-  test("工具名判别", () => {
-    expect(isWorkspaceToolName("read")).toBe(true);
-    expect(isWorkspaceToolName("bash")).toBe(true);
-    expect(isWorkspaceToolName("search_web")).toBe(false);
-    expect(isWorkspaceToolName("mcp__read")).toBe(false);
-    expect(isWorkspaceToolName("")).toBe(false);
-  });
-});
 
 describe("会话 cwd 词法解析", () => {
   test("空值回 root;相对值按 root 解析;词法越界回 root", () => {

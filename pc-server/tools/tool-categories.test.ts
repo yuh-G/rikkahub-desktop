@@ -1,6 +1,5 @@
-// tools/tool-categories.test.ts — 应用工具映射表:声明出来的每个工具都有类别,类别与按名判定时逐项相同
+// tools/tool-categories.test.ts — 应用工具映射表:声明出来的每个工具都有类别;工作区工具名不在表里(由 pi 驱动带表)
 import { describe, expect, test } from "bun:test";
-import { WORKSPACE_TOOL_NAMES } from "../workspace/approval";
 import { openAiLocalTools, openAiMcpTools, openAiSearchTools, openAiSkillTools } from "./definitions";
 import type { ToolCategory } from "./permission";
 import { classifyAppTool } from "./tool-categories";
@@ -25,15 +24,13 @@ function declaredGeneralToolNames(): string[] {
 
 describe("应用工具映射表", () => {
   test("声明出来的每个应用工具都在表里(新增工具必须登记类别)", () => {
-    const names = [...WORKSPACE_TOOL_NAMES, ...declaredGeneralToolNames()];
+    const names = declaredGeneralToolNames();
     expect(names).toContain("mcp__do_it");
     for (const name of names) expect(classifyAppTool(name)).not.toBeNull();
   });
 
-  test("类别:工作区按读 / 写 / 执行分;联网工具 network;应用自己的功能 local;ask_user 是 ask;mcp__* 是 mcp", () => {
+  test("类别:联网工具 network;应用自己的功能 local;ask_user 是 ask;mcp__* 是 mcp", () => {
     const expected: Record<string, ToolCategory> = {
-      read: "read", grep: "read", find: "read", ls: "read",
-      write: "write", edit: "write", bash: "execute",
       search_web: "network", scrape_web: "network",
       use_skill: "local", save_memory: "local", get_time_info: "local", clipboard_tool: "local", text_to_speech: "local",
       ask_user: "ask", mcp__do_it: "mcp",
@@ -41,16 +38,15 @@ describe("应用工具映射表", () => {
     for (const [name, category] of Object.entries(expected)) expect(classifyAppTool(name)?.category).toBe(category);
   });
 
-  test("对象提取:写入 / 读取取 path,执行取 command,抓取取 url;形状不对时不编造", () => {
-    expect(classifyAppTool("write")!.target({ path: "a.txt", content: "x" })).toEqual({ path: "a.txt" });
-    expect(classifyAppTool("edit")!.target({ path: 3 })).toEqual({});
-    expect(classifyAppTool("bash")!.target({ command: "ls" })).toEqual({ command: "ls" });
-    expect(classifyAppTool("bash")!.target({})).toEqual({ command: "" });
+  test("对象提取:抓取取 url;形状不对时不编造", () => {
     expect(classifyAppTool("scrape_web")!.target({ url: "https://example.com" })).toEqual({ url: "https://example.com" });
+    expect(classifyAppTool("scrape_web")!.target({ url: 3 })).toEqual({});
     expect(classifyAppTool("save_memory")!.target({ content: "x" })).toEqual({});
   });
 
-  test("不认识的名字不在表里(原型链上的键也不算)", () => {
-    for (const name of ["", "unknown_tool", "constructor", "toString", "__proto__"]) expect(classifyAppTool(name)).toBeNull();
+  test("不认识的名字不在表里(原型链上的键也不算);工作区工具名归 pi 驱动的表,这里不认", () => {
+    for (const name of ["", "unknown_tool", "constructor", "toString", "__proto__", "read", "write", "edit", "bash", "grep", "find", "ls"]) {
+      expect(classifyAppTool(name)).toBeNull();
+    }
   });
 });

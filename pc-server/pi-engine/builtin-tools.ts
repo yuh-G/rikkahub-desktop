@@ -48,7 +48,7 @@ import {
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
 import { createLocalBashOperations } from "../workspace/tools/bash";
 import { collectFindMatches } from "../workspace/tools/find";
-import { createGrepTool } from "../workspace/tools/grep";
+import { createGrepSearch, type GrepToolInput } from "../workspace/tools/grep";
 import { markToolGated } from "./tool-gate";
 
 type PiToolResult = Awaited<ReturnType<ToolDefinition["execute"]>>;
@@ -168,10 +168,10 @@ function bashOperations(shell: string): BashOperations {
 }
 
 function grepDefinition(cwd: string, root: string): ToolDef {
-  const fallback = createGrepTool(cwd, { operations: createBoundedGrepOperations(root) });
+  const search = createGrepSearch(cwd, { operations: createBoundedGrepOperations(root) });
   return {
     ...(createGrepToolDefinition(cwd) as ToolDef),
-    execute: async (_toolCallId, params, signal) => (await fallback.execute(params as never, signal)) as PiToolResult,
+    execute: async (_toolCallId, params, signal) => (await search(params as GrepToolInput, signal)) as PiToolResult,
   };
 }
 

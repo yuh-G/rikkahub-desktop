@@ -81,7 +81,6 @@ const writeNote: TurnInput["tools"][number] = {
   name: "write_note",
   description: "记一条笔记",
   parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
-  group: "general",
 };
 
 function inputFor(prompt: string): TurnInput {

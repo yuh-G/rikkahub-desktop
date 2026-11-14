@@ -1,6 +1,6 @@
 // workspace/boundary.test.ts — 边界校验与限额单测(M1-3)
 // §5.3 要求全覆盖:../ 穿越、绝对路径、符号链接逃逸、Windows 盘符兄弟目录、
-// 不存在尾段(write 新文件)、限额闸门(读 512KB/写 2MB)、经工具全链路的越界拒绝。
+// 不存在尾段(write 新文件)、限额闸门(读 512KB/写 2MB)、经工具全链路的越界拒绝(工具是 pi 内建定义)。
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,9 +16,11 @@ import {
   WorkspaceBoundaryError,
   WRITE_HARD_LIMIT_BYTES,
 } from "./boundary";
-import { createReadTool } from "./tools/read";
-import { createWriteTool } from "./tools/write";
-import { createEditTool } from "./tools/edit";
+import { createEditToolDefinition, createReadToolDefinition, createWriteToolDefinition } from "../../pi/packages/coding-agent/src/core/tools/index.ts";
+
+type ToolResult = { content: Array<{ type: string; text?: string }> };
+const run = (definition: { execute: unknown }, params: unknown) =>
+  (definition.execute as (id: string, params: unknown) => Promise<ToolResult>)("call", params);
 
 const host = mkdtempSync(join(tmpdir(), "rkh-boundary-"));
 const root = join(host, "ws");
@@ -150,27 +152,27 @@ describe("限额闸门", () => {
   });
 });
 
-describe("工具全链路(内核 pi 原样 + 有界 Operations)", () => {
+describe("工具全链路(pi 内建工具 + 有界 Operations)", () => {
   test("read:区内与区外均可读(三档全宽,2026-08-01 拍板);缺失文件报常规错误", async () => {
-    const tool = createReadTool(root, { operations: createWideReadOperations() });
-    const ok = await tool.execute({ path: "inside.txt" });
+    const tool = createReadToolDefinition(root, { operations: createWideReadOperations(), autoResizeImages: false });
+    const ok = await run(tool, { path: "inside.txt" });
     expect(ok.content[0]).toEqual({ type: "text", text: "inside content" });
-    const out = await tool.execute({ path: "../outside/secret.txt" });
+    const out = await run(tool, { path: "../outside/secret.txt" });
     expect(out.content[0]).toEqual({ type: "text", text: "secret" });
     // 不存在的文件报常规 not-found,而非边界拒绝
-    await expect(tool.execute({ path: "../outside/missing.txt" })).rejects.toThrow(/no such file|not found|ENOENT/i);
+    await expect(run(tool, { path: "../outside/missing.txt" })).rejects.toThrow(/no such file|not found|ENOENT/i);
   });
 
   test("write:区外绝对路径被拒,mkdir 不落地", async () => {
-    const tool = createWriteTool(root, { operations: createBoundedWriteOperations(root) });
-    await expect(tool.execute({ path: join(outside, "evil/pwn.txt"), content: "x" })).rejects.toThrow("Access denied");
-    const ok = await tool.execute({ path: "sub/ok.txt", content: "fine" });
-    expect(ok.content[0].type).toBe("text");
+    const tool = createWriteToolDefinition(root, { operations: createBoundedWriteOperations(root) });
+    await expect(run(tool, { path: join(outside, "evil/pwn.txt"), content: "x" })).rejects.toThrow("Access denied");
+    const ok = await run(tool, { path: "sub/ok.txt", content: "fine" });
+    expect(ok.content[0]?.type).toBe("text");
   });
 
   test("edit:区外文件被拒", async () => {
-    const tool = createEditTool(root, { operations: createBoundedEditOperations(root) });
-    await expect(tool.execute({ path: join(outside, "secret.txt"), edits: [{ oldText: "secret", newText: "x" }] }))
+    const tool = createEditToolDefinition(root, { operations: createBoundedEditOperations(root) });
+    await expect(run(tool, { path: join(outside, "secret.txt"), edits: [{ oldText: "secret", newText: "x" }] }))
       .rejects.toThrow(/Access denied|Could not edit/);
   });
 });

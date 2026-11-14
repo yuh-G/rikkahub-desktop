@@ -1,17 +1,9 @@
-// workspace/approval.ts — 工作区工具名单、词法路径判定与危险命令识别(纯函数层,不碰文件系统)
-// 审批判定不在这里:三档矩阵读「类别 + 对象」,在 tools/permission.ts;工作区工具名 → 类别的知识在
-// tools/tool-categories.ts。本模块给两边供料:词法越界判定与 cwd 解析(审批与执行同口径),
+// workspace/approval.ts — 工作区的词法路径判定与危险命令识别(纯函数层,不碰文件系统)
+// 审批判定不在这里:三档矩阵读「类别 + 对象」,在 tools/permission.ts;工作区工具(pi 内建)名 → 类别的知识在
+// pi-engine/builtin-tools.ts。本模块给两边供料:词法越界判定与 cwd 解析(审批与执行同口径),
 // 危险命令清单(审批缘由与执行层兜底拦截共用)。
 
 import { isAbsolute, resolve, sep } from "node:path";
-
-export const WORKSPACE_TOOL_NAMES = ["read", "write", "edit", "bash", "grep", "find", "ls"] as const;
-
-export type WorkspaceToolName = (typeof WORKSPACE_TOOL_NAMES)[number];
-
-export function isWorkspaceToolName(name: string): name is WorkspaceToolName {
-  return (WORKSPACE_TOOL_NAMES as readonly string[]).includes(name);
-}
 
 /** 词法越界判定:与 boundary.ts 同前缀语义(Windows 大小写不敏感),但不做 realpath。 */
 export function isLexicallyOutsideRoot(absolutePath: string, root: string): boolean {

@@ -1,5 +1,5 @@
-// 展示型 diff 解析(M2-3):格式来自 pc-server/workspace/tools/edit-diff.ts
-// generateDiffString——`+12 内容`/`-12 内容`/` 12 上下文`/`    ...` 跳行标记。
+// 展示型 diff 解析(M2-3):格式来自 pi 内建 edit 工具的 generateDiffString(pi/packages/coding-agent/src/core/tools/edit-diff.ts)
+// ——`+12 内容`/`-12 内容`/` 12 上下文`/`    ...` 跳行标记。
 import { describe, expect, test } from "bun:test";
 
 import { parseDiffLines, parseDiffStats } from "~/components/workspace/diff-view";

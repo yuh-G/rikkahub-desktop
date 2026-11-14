@@ -114,7 +114,6 @@ describe("工具面枚举", () => {
     const { ctx: withMcp } = fixture();
     const alpha = specsOf(withMcp).find((tool) => tool.name === "mcp__alpha");
     expect(alpha?.description).toBe("Alpha tool");
-    expect(alpha?.group).toBe("general");
     expect((alpha?.parameters as { properties?: Record<string, unknown> }).properties).toHaveProperty("q");
   });
 

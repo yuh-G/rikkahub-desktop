@@ -1,10 +1,9 @@
-// pi-engine/builtin-tools-parity.test.ts — 工作区工具切换前后的平价(P4b.3)
+// pi-engine/builtin-tools-parity.test.ts — 工作区工具切换前后的平价(P4b.3,P4b.4 起只锁内建版)
 //
 // 一组固定用例,每个用例的期望写死:审批卡经历的状态(含缘由)、成败与模型可见结果、工具卡细节、文件副作用。
-// 两套实现都要命中同一期望:移植版(应用工具时期的路径:decideAppToolPermission → 审批生命周期 →
-// executeWorkspaceToolCore)与 pi 内建版(createPiBuiltinTools,执行前经 createToolPermissionChecker 审批)。
-// 每个用例末尾再逐项对照两套实现的结果(路径换成占位符);已知差异只有 write 的结果文本(P4b.2 差异①)。
-// P4b.4 删除移植层时,移植版跑法与逐项对照一并删除,固定期望留下来锁内建版。
+// 这些期望是 P4b.3 时移植版(应用工具时期的路径)与 pi 内建版逐项对照、两边都命中的结果;P4b.4 删除移植层后
+// 留下来锁 pi 内建版(createPiBuiltinTools,执行前经生产同款 createToolPermissionChecker 审批)。
+// 已知差异只有 write 的结果文本(移植版带字节数,内建版字节数在工具卡细节里,P4b.2)。
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,15 +16,8 @@ const { configureWorkingSet } = await import("../conversations/working-set");
 const { getConversationMeta } = await import("../conversations/read-queries");
 const ws = await import("../workspace");
 const { shellAvailability } = await import("../workspace/runtime");
-const { createAppToolCaller, createToolPermissionChecker } = await import("../engines/app-tools");
+const { createToolPermissionChecker } = await import("../engines/app-tools");
 const { resolveToolApproval } = await import("../inference-engine/approval-gate");
-const { gateToolApproval } = await import("../inference-engine/approval-flow");
-const { decideAppToolPermission } = await import("../tools/approval");
-const { jsonSafeDetails } = await import("../tools/format");
-const { createBoundedFindOperations, createBoundedGrepOperations, createBoundedLsOperations } = await import("../workspace/boundary");
-const { createGrepTool } = await import("../workspace/tools/grep");
-const { createFindTool } = await import("../workspace/tools/find");
-const { createLsTool } = await import("../workspace/tools/ls");
 const { createPiBuiltinTools } = await import("./builtin-tools");
 import type { AppToolsContext } from "../engines/app-tools";
 import type { GenerationEvent } from "../inference-engine/events";
@@ -64,7 +56,7 @@ function canSymlink(): boolean {
   }
 }
 
-// ----- 两套实现的统一跑法 -----
+// ----- 统一跑法 -----
 
 type Block = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 type Card = { tool: string; details: Record<string, JsonValue> };
@@ -88,8 +80,6 @@ interface Call {
   name: string;
   args: Record<string, JsonValue>;
 }
-
-type Impl = (fx: Fixture, call: Call) => Promise<Outcome>;
 
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 const textOf = (content: Block[]) => content.map((block) => (block.type === "text" ? block.text : "")).join("");
@@ -126,8 +116,8 @@ function fixture(preset: WorkspacePermissionPreset, withShell: boolean): Fixture
 
 type PiExec = (toolCallId: string, params: unknown) => Promise<{ content: Block[]; details?: Record<string, unknown>; isError?: boolean }>;
 
-/** pi 内建版:生产同款审批口(createToolPermissionChecker,来源 engine)。isError 结果与抛错一样落 {error}。 */
-const builtin: Impl = async (fx, call) => {
+/** 生产同款审批口(createToolPermissionChecker,来源 engine)。isError 结果与抛错一样落 {error}。 */
+async function execute(fx: Fixture, call: Call): Promise<Outcome> {
   const check = createToolPermissionChecker(fx.ctx);
   const tools = createPiBuiltinTools({
     cwd: fx.root,
@@ -145,47 +135,7 @@ const builtin: Impl = async (fx, call) => {
   } catch (err) {
     return { ok: false, error: messageOf(err) };
   }
-};
-
-const FALLBACK_SEARCH = new Set(["grep", "find", "ls"]);
-
-type PortedSearchTool = { execute(args: unknown): Promise<{ content: Block[]; details?: unknown }> };
-
-function portedSearchTool(name: string, root: string): PortedSearchTool {
-  switch (name) {
-    case "grep":
-      return createGrepTool(root, { operations: createBoundedGrepOperations(root) }) as unknown as PortedSearchTool;
-    case "find":
-      return createFindTool(root, { operations: createBoundedFindOperations(root) }) as unknown as PortedSearchTool;
-    default:
-      return createLsTool(root, { operations: createBoundedLsOperations(root) }) as unknown as PortedSearchTool;
-  }
 }
-
-/** 移植版:应用工具时期的路径(工作区组 → decideAppToolPermission → 审批生命周期 → executeWorkspaceToolCore)。
- *  grep / find / ls 例外:那个执行内核没给这三个工具传参数(只在无 bash 的机器上挂载,一调用就报错),
- *  这里按同样的审批走法直接调工具本体。 */
-const ported: Impl = async (fx, call) => {
-  try {
-    if (FALLBACK_SEARCH.has(call.name)) {
-      const approval = decideAppToolPermission(call.name, fakeAssistant, fx.ctx.conversation, JSON.stringify(call.args));
-      await gateToolApproval(approval, { conversationId: fx.conversationId, toolCallId: call.id, sink: fx.ctx.sink, toolName: call.name });
-      const output = await portedSearchTool(call.name, fx.root).execute(call.args);
-      const details = jsonSafeDetails(output.details);
-      return { ok: true, content: output.content, ...(details ? { card: { tool: call.name, details } } : {}) };
-    }
-    const caller = createAppToolCaller(fx.ctx, [{ name: call.name, description: "", parameters: {}, group: "workspace" }]);
-    const result = await caller({ toolCallId: call.id, name: call.name, args: call.args });
-    return { ok: true, content: result.content as Block[], ...(result.details ? { card: result.details } : {}) };
-  } catch (err) {
-    return { ok: false, error: messageOf(err) };
-  }
-};
-
-const IMPLS: ReadonlyArray<readonly ["ported" | "builtin", Impl]> = [
-  ["ported", ported],
-  ["builtin", builtin],
-];
 
 async function waitUntil(cond: () => boolean, timeoutMs = 5000): Promise<void> {
   const start = Date.now();
@@ -202,23 +152,14 @@ function approvalsOf(fx: Fixture): Run["approvals"] {
 }
 
 /** 跑一次;带 decide 的用例要先看到 pending 卡,再按 decide 作答。 */
-async function runOnce(impl: Impl, fx: Fixture, call: Call, decide?: { approved: boolean; reason?: string }): Promise<Run> {
-  const running = impl(fx, call);
+async function runOnce(fx: Fixture, call: Call, decide?: { approved: boolean; reason?: string }): Promise<Run> {
+  const running = execute(fx, call);
   if (decide) {
     await waitUntil(() => approvalsOf(fx).some((state) => state.type === "pending"));
     expect(resolveToolApproval(fx.conversationId, call.id, decide)).toBe(true);
   }
   const outcome = await running;
   return { approvals: approvalsOf(fx), outcome };
-}
-
-/** 两套实现各用一个新工作区;对照前把各自的根目录与区外目录换成占位符。 */
-function normalized(run: Run, fx: Fixture): Run {
-  let json = JSON.stringify(run);
-  for (const [path, label] of [[fx.root, "<root>"], [fx.outside, "<outside>"]] as const) {
-    json = json.split(JSON.stringify(path).slice(1, -1)).join(label);
-  }
-  return JSON.parse(json) as Run;
 }
 
 // ----- 固定用例 -----
@@ -234,8 +175,6 @@ interface Case {
   call: (fx: Fixture) => Call;
   decide?: { approved: boolean; reason?: string };
   check: (run: Run, fx: Fixture) => void;
-  /** 逐项对照前的投影(已知差异在这里抹掉);缺省 = 整份结果。 */
-  project?: (run: Run) => unknown;
 }
 
 function okContent(run: Run): Block[] {
@@ -253,9 +192,10 @@ const DENIED_TEXT = "Tool execution denied by user. Reason: 不行";
 const DENY = { approved: false, reason: "不行" };
 const APPROVE = { approved: true };
 
-/** write 的已知差异:结果文本是否带字节数、细节里是否带 bytes(工具卡两代都显示字节数,见 P4b.2)。 */
-const writeReceipt = (run: Run): unknown =>
-  run.outcome.ok ? { approvals: run.approvals, ok: true, text: textOf(run.outcome.content).replace(/ \d+ bytes to /, " to ") } : run;
+/** write 的结果:文本不带字节数,字节数在工具卡细节里(P4b.2)。 */
+function expectWriteReceipt(run: Run, path: string, bytes: number): void {
+  expect(run.outcome).toEqual({ ok: true, content: [{ type: "text", text: `Successfully wrote to ${path}` }], card: { tool: "write", details: { bytes } } });
+}
 
 const CASES: Case[] = [
   {
@@ -315,10 +255,9 @@ const CASES: Case[] = [
     call: () => ({ id: "c-write", name: "write", args: { path: "src/new.txt", content: "hello\n" } }),
     check: (run, fx) => {
       expect(run.approvals).toEqual([]);
-      expect(textOf(okContent(run))).toMatch(/^Successfully wrote (6 bytes )?to src\/new\.txt$/);
+      expectWriteReceipt(run, "src/new.txt", 6);
       expect(readFileSync(join(fx.root, "src", "new.txt"), "utf-8")).toBe("hello\n");
     },
-    project: writeReceipt,
   },
   {
     name: "写入超过 2MB:体积闸门报错,不落盘",
@@ -334,9 +273,9 @@ const CASES: Case[] = [
     decide: APPROVE,
     check: (run, fx) => {
       expect(run.approvals).toEqual([{ type: "pending", reason: `Writes outside the workspace: ${join(fx.outside, "w.txt")}` }, { type: "approved" }]);
+      expectWriteReceipt(run, join(fx.outside, "w.txt"), 4);
       expect(readFileSync(join(fx.outside, "w.txt"), "utf-8")).toBe("wide");
     },
-    project: writeReceipt,
   },
   {
     name: "balanced 区外写入:拒绝 → 历史契约文案,不落盘",
@@ -355,9 +294,9 @@ const CASES: Case[] = [
     call: (fx) => ({ id: "c-write-full", name: "write", args: { path: join(fx.outside, "f.txt"), content: "full" } }),
     check: (run, fx) => {
       expect(run.approvals).toEqual([]);
+      expectWriteReceipt(run, join(fx.outside, "f.txt"), 4);
       expect(readFileSync(join(fx.outside, "f.txt"), "utf-8")).toBe("full");
     },
-    project: writeReceipt,
   },
   {
     name: "confirm_each 区内写入:每次都问(无缘由)→ 批准后落盘",
@@ -366,9 +305,9 @@ const CASES: Case[] = [
     decide: APPROVE,
     check: (run, fx) => {
       expect(run.approvals).toEqual(PENDING_THEN_APPROVED);
+      expectWriteReceipt(run, "c.txt", 2);
       expect(readFileSync(join(fx.root, "c.txt"), "utf-8")).toBe("ok");
     },
-    project: writeReceipt,
   },
   {
     name: "软链逃逸:词法在区内故免审,严界按真实路径拒绝",
@@ -526,24 +465,13 @@ const CASES: Case[] = [
   })),
 ];
 
-describe("切换前后逐项相同(固定用例 × 移植版 / pi 内建版)", () => {
+describe("固定用例(切换前后平价的期望)", () => {
   for (const testCase of CASES) {
     const skip = Boolean(testCase.skip) || (testCase.bash === true && !shellPath);
     test.skipIf(skip)(testCase.name, async () => {
-      const runs: Run[] = [];
-      for (const [label, impl] of IMPLS) {
-        const fx = fixture(testCase.preset ?? "balanced", testCase.bash === true);
-        testCase.prepare?.(fx);
-        const run = await runOnce(impl, fx, testCase.call(fx), testCase.decide);
-        try {
-          testCase.check(run, fx);
-        } catch (err) {
-          throw new Error(`[${label}] ${messageOf(err)}`);
-        }
-        runs.push(normalized(run, fx));
-      }
-      const project = testCase.project ?? ((run: Run) => run);
-      expect(project(runs[1]!)).toEqual(project(runs[0]!));
+      const fx = fixture(testCase.preset ?? "balanced", testCase.bash === true);
+      testCase.prepare?.(fx);
+      testCase.check(await runOnce(fx, testCase.call(fx), testCase.decide), fx);
     }, 15_000);
   }
 });

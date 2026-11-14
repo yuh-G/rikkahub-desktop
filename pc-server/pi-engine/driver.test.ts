@@ -117,7 +117,6 @@ const lookupTool: TurnInput["tools"][number] = {
   name: "lookup",
   description: "查资料",
   parameters: { type: "object", properties: { q: { type: "string" } } },
-  group: "general",
 };
 
 describe("pi 驱动 × 契约(strict 回环)", () => {

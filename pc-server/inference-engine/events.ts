@@ -84,18 +84,12 @@ export interface ToolCall {
   };
 }
 
-/** 传给工具执行的上下文信息。tracing / 记忆来源之外，M1-4 起承载工作区执行语境：
- *  signal 由协调器注入（bash 取消杀进程树的前提）；userApproved 仅在审批恢复路径
- *  为 true（危险命令拦截的知情同意放行门，workspace/runtime.ts）。 */
+/** 传给工具执行的上下文信息(tracing / 记忆来源 / 生成级取消信号)。 */
 export interface ToolContext {
   conversationId?: string;
   conversationTitle?: string;
   messageNodeId?: string;
   signal?: AbortSignal;
-  userApproved?: boolean;
-  /** 执行中部分输出回写（bash 流式输出，M1-5）：写回当前 tool part 的 output，
-   *  走现有 node_update 关键帧管线（pi 内核 100ms 节流 + touchStream 33ms 合帧）。 */
-  onToolPartialOutput?: (output: ToolOutputEntry[]) => void;
 }
 
 /** 工具执行的标准化返回值。

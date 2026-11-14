@@ -16,9 +16,9 @@
 //   tool_execution_end             → tool_result(成功 → content 映射;失败 → {error} 载荷,
 //     与聊天引擎 toolExecutionErrorPayload 的历史契约形状一致)
 //   插件工具(P5.4,不在本轮应用工具名里)→ 通用工具卡:建卡同上,结果只按 content 映射(details 归插件)
-//   result.details.workspace       → 首个 text 条目的 metadata.workspace(P3:我们的
-//     customTools 打包的 diff/exitCode 等结构化细节,还原口径与聊天引擎
-//     runtime.toToolResult 逐字一致——前端渲染器与安卓导出适配层吃同一形状)
+//   result.details.workspace       → 首个 text 条目的 metadata.workspace(pi 内建工作区工具在
+//     builtin-tools 打包的 diff/exitCode/bytes 等结构化细节,与应用工具时期落库的形状相同——
+//     前端渲染器与安卓导出适配层吃同一形状)
 //   bash_execution_update          → tool_result(增量累加;仅当该工具卡未被
 //     tool_execution_update 通道认领,防双写。P3 我们的 bash customTool 若经
 //     session.executeBash({id: toolCallId}) 流式输出,即由此通道回写)

@@ -15,15 +15,15 @@
 // realpath 断言),照样被拒。
 
 import type { WorkspacePermissionPreset } from "../foundation/types";
+import { resolveToCwd } from "../../pi/packages/coding-agent/src/core/tools/path-utils.ts";
 import { findDangerousCommandReason, isLexicallyOutsideRoot } from "../workspace/approval";
-import { resolveToCwd } from "../workspace/tools/path-utils";
 
 /** read 读文件 / 搜索 / 列目录;write 改文件;execute 跑命令;network 联网搜索与抓取;mcp MCP 工具;
  *  plugin 插件登记的工具;ask 向用户提问;local 应用自己的功能(记忆、时间、剪贴板、朗读、技能读取),
  *  各由自己的设置把关,不挂审批。 */
 export type ToolCategory = "read" | "write" | "execute" | "network" | "mcp" | "plugin" | "ask" | "local";
 
-/** 操作对象的原值。路径相对会话工作目录的解析在判定处做,与执行内核同一函数(含 ~ 展开),
+/** 操作对象的原值。路径相对会话工作目录的解析在判定处做,与执行内核(pi 内建工具)同一函数(含 ~ 展开),
  *  审批眼中的目标与实际写入目标一致。 */
 export interface PermissionTarget {
   path?: string;

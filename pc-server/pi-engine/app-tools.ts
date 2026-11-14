@@ -14,8 +14,7 @@
 //   节奏、MCP 慢调用不并发抢跑,都靠它。
 //
 // 结果回到 pi 时按应用给的形态打 details 标记,事件桥(event-bridge.mapPiToolResult)据此还原工具卡:
-// display(应用已实体化的卡片条目)→ {app:{output}};结构化细节 → {workspace:{tool,details}};
-// 都没有则按 content 映射。
+// display(应用已实体化的卡片条目)→ {app:{output}};没有则按 content 映射。
 
 import type { ToolDefinition } from "../../pi/packages/coding-agent/src/core/extensions/types.ts";
 import type { AppToolResult, AppToolSpec } from "../engines/contract";
@@ -35,11 +34,7 @@ export interface PiAppToolInvocation {
 export type PiAppToolCaller = (call: PiAppToolInvocation) => Promise<AppToolResult>;
 
 function toPiToolResult(result: AppToolResult): PiToolResult {
-  const details = result.display
-    ? { app: { output: result.display } }
-    : result.details
-      ? { workspace: result.details }
-      : {};
+  const details = result.display ? { app: { output: result.display } } : {};
   return { content: result.content, details } as PiToolResult;
 }
 

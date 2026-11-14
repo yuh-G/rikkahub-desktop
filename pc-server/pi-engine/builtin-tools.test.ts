@@ -140,7 +140,7 @@ describe("工具卡形状(P4b.2)", () => {
     ]);
   });
 
-  test("没有结构化细节的工具(read / ls 等)不带 metadata,与移植版同形", async () => {
+  test("没有结构化细节的工具(read / ls 等)不带 metadata,与应用工具时期落库的工具卡同形", async () => {
     const { root, exec } = setup();
     writeFileSync(join(root, "r.txt"), "line\n");
     const result = await exec("read")("tc-r", { path: "r.txt" });
