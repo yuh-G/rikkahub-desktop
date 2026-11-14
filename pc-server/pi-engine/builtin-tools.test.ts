@@ -3,8 +3,8 @@
 // 锁定:①挂载矩阵(有 bash 四件、无 bash 六件)与排除名单互补;②每个工具带审批闸门标记、顺序执行,
 // 提示词摘要取 pi 常量原值(bash 不暴露 PI_* 会话环境条目);③执行前先审批,类别与对象来自映射表
 // (路径是 pi 实际要操作的绝对路径);④放行范围决定边界:default 写入出界被拒、unrestricted 走宽界;
-// 危险命令没拿到 unrestricted 不执行;⑤结果细节打成 {workspace:{tool,details}},bash 终局补 exitCode;
-// ⑥grep / find 不依赖外部程序 rg / fd。
+// 危险命令没拿到 unrestricted 不执行;⑤结果细节打成 {workspace:{tool,details}},bash 终局补 exitCode,
+// write 补写入字节数(工具卡形状,P4b.2);⑥grep / find 不依赖外部程序 rg / fd。
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +14,7 @@ process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-pibuiltin-tes
 
 const { createPiBuiltinTools, excludedPiBuiltinToolNames, piBuiltinToolNames } = await import("./builtin-tools");
 const { isToolGated } = await import("./tool-gate");
+const { mapPiToolResult } = await import("./event-bridge");
 const { shellAvailability } = await import("../workspace/runtime");
 const { allToolNames } = await import("../../pi/packages/coding-agent/src/core/tools/index.ts");
 const piContributions: Record<string, { snippet: string; guidelines: readonly string[] }> = {
@@ -125,6 +126,26 @@ describe("执行前审批与放行范围", () => {
     const marker = result.details.workspace as { tool: string; details: Record<string, unknown> };
     expect(marker.tool).toBe("edit");
     expect(typeof marker.details.diff).toBe("string");
+  });
+});
+
+describe("工具卡形状(P4b.2)", () => {
+  test("write:结果文本是 pi 原文,字节数进细节;经事件桥落成首个 text 条目的 metadata.workspace", async () => {
+    const { exec } = setup();
+    const result = await exec("write")("tc-w", { path: "w.txt", content: "你好\n" });
+    expect(text(result)).toBe("Successfully wrote to w.txt");
+    expect(result.details).toEqual({ workspace: { tool: "write", details: { bytes: 7 } } });
+    expect(mapPiToolResult(result as never)).toEqual([
+      { type: "text", text: "Successfully wrote to w.txt", metadata: { workspace: { tool: "write", details: { bytes: 7 } } } },
+    ]);
+  });
+
+  test("没有结构化细节的工具(read / ls 等)不带 metadata,与移植版同形", async () => {
+    const { root, exec } = setup();
+    writeFileSync(join(root, "r.txt"), "line\n");
+    const result = await exec("read")("tc-r", { path: "r.txt" });
+    expect(result.details).toEqual({});
+    expect(mapPiToolResult(result as never)).toEqual([{ type: "text", text: "line\n" }]);
   });
 });
 

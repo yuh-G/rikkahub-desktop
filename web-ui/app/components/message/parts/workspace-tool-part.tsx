@@ -151,9 +151,13 @@ function useWorkspaceActionView(
   const patch = model.details && typeof model.details.patch === "string" ? (model.details.patch as string) : "";
   const stats = React.useMemo(() => (diff ? parseDiffStats(diff) : null), [diff]);
   const writtenBytes = React.useMemo(() => {
+    // 写入字节数:结构化细节优先(pi 内建 write 的结果文本不带字节数);老会话的移植版文本带
+    // 「Successfully wrote N bytes」,回退解析它。
+    const bytes = model.details?.bytes;
+    if (typeof bytes === "number" && Number.isFinite(bytes)) return bytes;
     const match = model.text.match(/Successfully wrote (\d+) bytes/);
     return match ? Number(match[1]) : null;
-  }, [model.text]);
+  }, [model.details, model.text]);
 
   // H7:标题遵循全应用"工具名:操作对象"规则(同 联网搜索:词 / 加载技能:名)。
   const title =

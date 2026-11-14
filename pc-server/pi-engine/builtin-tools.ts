@@ -13,7 +13,7 @@
 // 挂载:有可用 bash 时 read / bash / edit / write(pi 默认四件);没有时 read / edit / write / grep / find / ls。
 // 全部顺序执行:审批卡逐个弹、命令输出不交错(批内任一 sequential 即整批顺序)。
 // 结果的结构化细节打成 {workspace:{tool,details}} 标记,事件桥还原成工具卡(与应用工具时期的形状相同,
-// 老会话照常渲染);bash 终局补 exitCode(工具卡据此判定完成与成败)。
+// 老会话照常渲染);bash 终局补 exitCode(工具卡据此判定完成与成败),write 补写入字节数(工具卡的字节徽标)。
 
 import type { ToolDefinition } from "../../pi/packages/coding-agent/src/core/extensions/types.ts";
 import {
@@ -101,11 +101,17 @@ export function excludedPiBuiltinToolNames(shell: string | undefined): string[] 
   return [...allToolNames].filter((name) => !provided.has(name));
 }
 
-function withDetailsMarker(name: string, result: PiToolResult, final: boolean): PiToolResult {
+function withDetailsMarker(name: string, result: PiToolResult, final: boolean, extra?: Record<string, JsonValue>): PiToolResult {
   const raw = (result.details ?? {}) as Record<string, unknown>;
   const exitCode = name === "bash" && final ? (result.isError ? exitCodeOf(result) : 0) : undefined;
-  const details = jsonSafeDetails(exitCode === undefined ? raw : { ...raw, exitCode });
+  const details = jsonSafeDetails({ ...raw, ...extra, ...(exitCode === undefined ? {} : { exitCode }) });
   return { ...result, details: details ? { workspace: { tool: name, details } } : {} } as PiToolResult;
+}
+
+/** 工具卡要的、pi 结果里没有的细节。write:写入字节数(pi 的结果文本不再带字节数,工具卡的字节徽标读这里)。 */
+function cardExtras(name: string, args: ToolArgs): Record<string, JsonValue> | undefined {
+  if (name === "write" && typeof args.content === "string") return { bytes: Buffer.byteLength(args.content, "utf-8") };
+  return undefined;
 }
 
 function exitCodeOf(result: PiToolResult): number | null {
@@ -142,7 +148,7 @@ function gate(variants: Variants, options: PiBuiltinToolsOptions): ToolDefinitio
       }
       const definition = grant.scope === "unrestricted" && variants.unrestricted ? variants.unrestricted : base;
       const update = onUpdate ? (partial: PiToolResult) => onUpdate(withDetailsMarker(name, partial, false)) : undefined;
-      return withDetailsMarker(name, await definition.execute(toolCallId, params, signal, update, ctx), true);
+      return withDetailsMarker(name, await definition.execute(toolCallId, params, signal, update, ctx), true, cardExtras(name, args));
     },
   } as ToolDefinition);
 }
