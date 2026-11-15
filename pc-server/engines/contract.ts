@@ -26,7 +26,11 @@
 // - 插件的界面请求(方案 §5.11,P5.5)分两条:对话框经 host.interaction.dialog 请求-应答(取消即答案,
 //   不以错误拒绝;引擎侧先放弃时经 dismiss 收起);通知 / 状态条目 / 挂件 / 进行中提示经 host.interaction.show
 //   单向通知(瞬态,不落库)。
-// - 暂不定义,到对应阶段再加:指令列举与执行(P5.7)、invalidate(P5.6 长驻会话)。
+// - 引擎可以跨轮保留会话对象(P5.6 长驻会话):应用经 driver.invalidate 让它丢掉某个会话的长驻状态
+//   (会话删除、插件绑定变化);是否复用由引擎按每轮的视图自行判定,应用不通知编辑、分支切换等改动。
+// - 引擎发起的轮次(插件在空闲时要求模型再答一轮):引擎经 host.turn.request 提出,应用决定是否开轮;
+//   开轮时分配落点并走正常生成流程,TurnInput.trigger 带回请求 id。应用不开轮时引擎自行把内容并进下一轮。
+// - 暂不定义,到对应阶段再加:指令列举与执行(P5.7)。
 
 import type { JsonValue, Message, OAuthFlowId, ToolOutputEntry } from "../foundation/types";
 import type { AppErrorDomain, AppErrorSeverity } from "../foundation/types/dto";
@@ -333,6 +337,20 @@ export interface TurnInput {
   plugins: EnginePlugin[];
   prompt: PromptInput;
   tools: AppToolSpec[];
+  /** 缺省 = 用户输入开启的轮次(prompt 即本轮输入)。engine = 应用响应 host.turn.request 开的轮次:
+   *  prompt 为空,本轮由引擎按请求 id 取回自己挂起的内容。 */
+  trigger?: { kind: "engine"; requestId: string };
+}
+
+/** 引擎请求应用开一轮(单向通知)。source 是发起方插件 id,认领不到时为空串。 */
+export interface EngineTurnRequest {
+  engine: EngineKind;
+  conversationId: string;
+  requestId: string;
+  source: string;
+  /** 插件以用户身份发的消息:应用把它落成一条用户消息再按普通轮次生成(忙时进发送队列),引擎不再保留它。
+   *  缺省 = 引擎自己挂着内容,应用开轮时经 TurnInput.trigger 带回 requestId;忙时可以不开。 */
+  prompt?: string;
 }
 
 export interface TurnRequest {
@@ -404,6 +422,8 @@ export interface EngineDriver {
   abort(conversationId: string, reason: string): Promise<void>;
   /** capabilities.nativeCompaction 为 true 时必须实现。 */
   compact?(req: CompactRequest): Promise<CompactResult>;
+  /** 丢掉该会话的长驻状态(会话删除、插件绑定变化后调用;正在进行的轮次不受影响)。没有长驻状态的引擎无事。 */
+  invalidate(conversationId: string): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -432,6 +452,8 @@ export interface EngineHost {
   };
   /** 轮边界取「生成中补发」的消息文本;应用在同一调用里完成数据层分裂。空数组 = 无补发。 */
   steer: { take(turn: TurnRef): Promise<string[]> };
+  /** 单向通知:引擎请求开一轮(不带 turnId,发生在轮次之外)。应用忙或会话已不归该引擎时忽略。 */
+  turn: { request(req: EngineTurnRequest): void };
   models: {
     credential(req: CredentialRequest): Promise<SubscriptionCredential>;
     /** 单向通知:一条模型请求的日志(引擎侧出口记录,应用落请求日志)。 */

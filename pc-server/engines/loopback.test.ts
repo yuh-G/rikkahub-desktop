@@ -12,6 +12,7 @@ function fakeDriver(overrides: Partial<EngineDriver> = {}): EngineDriver {
     capabilities: { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, workspace: "none", placement: "portable" },
     startTurn: async () => ({ text: "ok", stopReason: "stop", compactions: [] }),
     abort: async () => undefined,
+    invalidate: async () => undefined,
     dispose: async () => undefined,
     ...overrides,
   };
@@ -108,6 +109,7 @@ describe("connectDriver / connectHost", () => {
       permission: { check: async () => ({ scope: "default" }) },
       interaction: { dialog: async () => ({ cancelled: true }), dismiss: () => undefined, show: () => undefined },
       steer: { take: async () => [] },
+      turn: { request: () => undefined },
       models: { credential: async () => ({}), log: () => undefined },
       report: () => undefined,
     };

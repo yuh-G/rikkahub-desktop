@@ -16,6 +16,7 @@ import { workspaceRuntimeForConversation, type WorkspaceRuntime } from "../works
 import { createChatDriver } from "./chat-driver";
 import type { EngineDriver } from "./contract";
 import { appEngineHost } from "./host";
+import { reportError } from "../observability/app-errors";
 import { connectDriver, connectHost, STRICT_CONTRACT_TRANSPORT } from "./loopback";
 
 const strict = { strict: STRICT_CONTRACT_TRANSPORT };
@@ -36,4 +37,11 @@ export function resolveEngine(conversation: Conversation): EngineRoute {
   const wanted = runtime ? "required" : "none";
   const driver = ENGINE_DRIVERS.find((item) => item.capabilities.workspace === wanted) ?? ENGINE_DRIVERS.at(-1)!;
   return { driver, workspace: driver.capabilities.workspace === "required" ? runtime : null };
+}
+
+/** 让各引擎丢掉该会话的长驻状态(会话删除时)。失败只上报:删除本身不受影响。 */
+export function invalidateEngineSessions(conversationId: string): void {
+  for (const driver of ENGINE_DRIVERS) {
+    driver.invalidate(conversationId).catch((err: unknown) => reportError("internal", "info", "引擎会话状态清理失败", err));
+  }
 }

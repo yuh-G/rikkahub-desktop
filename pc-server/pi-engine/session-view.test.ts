@@ -114,9 +114,14 @@ describe("createPiSessionFromView", () => {
       expect(degradedMessageIds).toEqual([ai.id]);
     });
 
+    // 合成行不取原生条目、不进会话条目:编码后作为逐请求注入的行交给 runner(插在本轮起始之前)。
     const synthetic = assistantRow();
-    const { entries, degradedMessageIds } = load([{ message: synthetic, synthetic: true, native: nativeGroup() }]);
-    expect(entries.every((entry) => entry.id.startsWith(`${synthetic.id}:`))).toBe(true);
+    const { entries, degradedMessageIds, syntheticRows } = load([{ message: synthetic, synthetic: true, native: nativeGroup() }]);
+    expect(entries).toEqual([]);
+    expect(syntheticRows).toHaveLength(1);
+    expect(syntheticRows[0]!.beforeMessageId).toBeNull();
+    expect(JSON.stringify(syntheticRows[0]!.messages)).toContain("中立结果");
+    expect(JSON.stringify(syntheticRows[0]!.messages)).not.toContain("sig-1");
     expect(degradedMessageIds).toEqual([]);
   });
 

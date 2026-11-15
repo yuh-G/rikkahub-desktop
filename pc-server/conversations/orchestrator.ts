@@ -30,7 +30,7 @@ import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
 import { shellAvailability } from "../workspace/runtime";
 import { buildEngineInstructions } from "../engines/instructions";
 import { enginePluginsFor } from "../engines/plugins";
-import { bindEngineTurn, type EngineTurnBinding } from "../engines/host";
+import { bindEngineTurn, setEngineTurnRequestHandler, type EngineTurnBinding } from "../engines/host";
 import { promptInputFromParts, userInputsFor } from "../inference-engine/prompt-input";
 import type {
   CapturedEngineCompaction,
@@ -38,6 +38,7 @@ import type {
   CompactResult,
   EngineDriver,
   EngineKind,
+  EngineTurnRequest,
   ModelGrant,
   TurnInput,
   TurnRef,
@@ -54,7 +55,7 @@ import { createEngineInteraction } from "./engine-interaction";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
 import { abortGeneration, abortReasonOf, awaitingApproval, compressing, generating } from "./generation-state";
-import { deliverQueuedReply, holdMessageQueue, isQueueHeldByInterrupt, isQueuePaused, notifyQueuedGenerationDispatched, pauseMessageQueue, queueSnapshotFor, removeQueuedMessage, setOnQueuedGenerationDispatched, shiftNextQueued } from "./message-queue";
+import { deliverQueuedReply, enqueueMessage, holdMessageQueue, isQueueHeldByInterrupt, isQueuePaused, notifyQueuedGenerationDispatched, pauseMessageQueue, queueSnapshotFor, removeQueuedMessage, setOnQueuedGenerationDispatched, shiftNextQueued } from "./message-queue";
 import { clearSteeringChannel, drainSteeringMessages } from "./steering-channel";
 import {
   appendTextPart,
@@ -331,6 +332,24 @@ setOnQueuedGenerationDispatched((conversationId, item) => {
   if (item.waitingReply) queuedGenerationSource.set(conversationId, item.id);
 });
 
+/** 引擎发起的轮次(host.turn.request)。插件以用户身份发的消息进发送队列,按普通轮次派发(空闲即发、
+ *  忙时排队)。其余请求只在会话空闲时开轮:忙、压缩中、队列暂停或被打断冻结时不开,引擎把挂起的内容
+ *  并进下一轮。会话已不归发起的引擎(切了工作区)时一律忽略。 */
+function handleEngineTurnRequest(req: EngineTurnRequest): void {
+  const conversation = getConversation(req.conversationId);
+  if (!conversation || resolveEngine(conversation).driver.kind !== req.engine) return;
+  if (req.prompt !== undefined) {
+    enqueueMessage(req.conversationId, [{ type: "text", text: req.prompt }]);
+    broadcastQueueState(req.conversationId);
+    dispatchMessageQueue(req.conversationId);
+    return;
+  }
+  if (generating.has(req.conversationId) || compressing.has(req.conversationId)) return;
+  if (isQueuePaused(req.conversationId) || isQueueHeldByInterrupt(req.conversationId)) return;
+  void generateAnswer(conversation, undefined, { engineTrigger: { requestId: req.requestId } });
+}
+setEngineTurnRequestHandler(handleEngineTurnRequest);
+
 async function runPostGenerationTasks(conversationId: string, snapshot: Conversation, assistantMessageId: string) {
   const liveConversation = () => getConversation(conversationId);
   // 快速模型解析一次,两个后台任务共用。null = 没配(空/出厂哨兵/指向已删模型)或对应
@@ -485,6 +504,8 @@ interface GenerationTurnContext {
   /** steering 轮边界:只下发给声明 steering:"boundary" 的驱动。调用即排水并完成数据层分裂
    *  (落库补发、换绑落点、通知 FIFO 队列移除),返回补发文本;空数组 = 无补发。 */
   onSteerBoundary?: () => string[];
+  /** 引擎发起的轮次(响应 host.turn.request):本轮没有用户输入,引擎按请求 id 取回自己挂起的内容。 */
+  engineTrigger?: { requestId: string };
 }
 
 /** 一次引擎原生压缩的应用侧输入。 */
@@ -525,9 +546,10 @@ async function runPortableGeneration(
   const { conversation, target } = ctx;
   const { driver } = route;
   const deps = { assistant: ctx.assistant, providerItem: ctx.provider, selectedModel: ctx.model };
-  const lastUserNode = [...conversation.messages]
-    .reverse()
-    .find((node) => (node.messages[node.selectIndex] ?? node.messages[0])?.role === "USER");
+  // 引擎发起的轮次没有本轮用户输入:历史就是整条选中路径,内容由引擎按请求 id 取回。
+  const lastUserNode = ctx.engineTrigger
+    ? undefined
+    : [...conversation.messages].reverse().find((node) => (node.messages[node.selectIndex] ?? node.messages[0])?.role === "USER");
   const promptMessage = lastUserNode ? (lastUserNode.messages[lastUserNode.selectIndex] ?? lastUserNode.messages[0]) : null;
   // prompt 文本先经消息模板渲染(与历史消息同一富化口径),再走附件文本化。
   const template = deps.assistant.messageTemplate?.trim() || "{{ message }}";
@@ -537,7 +559,7 @@ async function runPortableGeneration(
   const promptInput = promptMessage
     ? promptInputFromParts(templatedPromptParts, deps.selectedModel)
     : { text: "", images: [] };
-  if (!promptInput.text && !promptInput.images.length) {
+  if (!ctx.engineTrigger && !promptInput.text && !promptInput.images.length) {
     // 无文本且无图片输入直接走失败分支给出人话。
     throw new Error("工作区会话缺少可发送的用户消息内容,无法驱动工作区引擎。");
   }
@@ -578,6 +600,7 @@ async function runPortableGeneration(
     plugins: enginePluginsFor(driver.kind, state.settings),
     prompt: promptInput,
     tools,
+    ...(ctx.engineTrigger ? { trigger: { kind: "engine" as const, requestId: ctx.engineTrigger.requestId } } : {}),
   };
   const binding: EngineTurnBinding = {
     sink,
@@ -791,7 +814,11 @@ export function resolveEngineForConversation(conversation: Conversation): Engine
   return resolveEngine(conversation).driver;
 }
 
-export async function generateAnswer(conversation: Conversation, regenerateAtNodeId?: string) {
+export async function generateAnswer(
+  conversation: Conversation,
+  regenerateAtNodeId?: string,
+  options: { engineTrigger?: { requestId: string } } = {},
+) {
   // R2-3:入口自带"先中止旧流"不变式。端点级守卫(send/edit/regenerate 的先 abort)挡不住
   // OCR 续体窗口:两条消息的续体先后异步触发本函数时,后者若直接 generating.set 会顶掉
   // 前者的 controller——前者成无主流,两路流式交错写同一节点(parts 交叉污染)、且无人能停。
@@ -819,6 +846,9 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
   if (regenerateAtNodeId) {
     const found = conversation.messages.find((n) => n.id === regenerateAtNodeId);
     assistantNode = found ?? ensureAssistantGenerationNode(conversation, picked.model.id);
+  } else if (options.engineTrigger) {
+    // 引擎发起的轮次接在上一条回答之后,另起一个回答节点(不复用末尾的助手消息)。
+    assistantNode = appendAssistantGenerationNode(conversation, picked.model.id);
   } else {
     assistantNode = ensureAssistantGenerationNode(conversation, picked.model.id);
   }
@@ -941,6 +971,7 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
         // 声明 steering:"none" 的引擎不下发——排水即分裂,不能注入的引擎不该有机会排水;
         // 其补发留在队列由收尾派发兜底。
         ...(capabilities.steering === "boundary" ? { onSteerBoundary: () => steerBoundary(conversation.id, session) } : {}),
+        ...(options.engineTrigger ? { engineTrigger: options.engineTrigger } : {}),
       },
       route,
       sink,
@@ -1085,6 +1116,10 @@ export function ensureAssistantGenerationNode(conversation: Conversation, modelI
     msg.modelId = modelId;
     return last;
   }
+  return appendAssistantGenerationNode(conversation, modelId);
+}
+
+function appendAssistantGenerationNode(conversation: Conversation, modelId: string): MessageNode {
   const assistantNode: MessageNode = {
     id: id(),
     messages: [message("ASSISTANT", [], modelId)],

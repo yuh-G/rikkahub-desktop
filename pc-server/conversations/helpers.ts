@@ -13,6 +13,7 @@ import { findAssistant as findAssistantCore } from "../assistants";
 import { fillContextLimit } from "../inference-engine/providers";
 import { finishToolParts } from "../inference-engine/parts";
 import { forgetSessionToolAllowances } from "../inference-engine/approval-gate";
+import { invalidateEngineSessions } from "../engines";
 
 /** 删会话路径的中止(唯一调用方 deleteConversationsById):意图 deleted——队列随会话清除,
  *  旧流收尾无事可做。 */
@@ -41,6 +42,8 @@ export function deleteConversationsById(ids: Set<string>) {
     // 会话删除即清其发送队列(纯内存态,孤儿队列只是泄漏,顺手清)。
     clearMessageQueue(conversationId);
     forgetSessionToolAllowances(conversationId);
+    // 长驻引擎会话(P5.6)随会话删除关掉;正在跑的那轮已被上面中止,收尾时关。
+    invalidateEngineSessions(conversationId);
   }
   // P7:引擎会话状态(压缩记录)在会话行内(engine_compactions 列),随行删除天然级联,
   // 无文件生命周期可管——P2 的 jsonl 收集/删除逻辑随层退役。

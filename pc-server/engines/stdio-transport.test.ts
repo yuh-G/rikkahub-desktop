@@ -22,6 +22,7 @@ function wire(createDriver: (host: EngineHost) => EngineDriver, host: Partial<En
     permission: { check: async () => ({ scope: "default" }) },
     interaction: { dialog: async () => ({ cancelled: true }), dismiss: () => undefined, show: () => undefined },
     steer: { take: async () => [] },
+    turn: { request: () => undefined },
     models: { credential: async () => ({}), log: () => undefined },
     report: () => undefined,
     ...host,
@@ -43,6 +44,7 @@ function baseDriver(host: EngineHost, overrides: Partial<EngineDriver> = {}): En
     capabilities: { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, workspace: "none", placement: "portable" },
     startTurn: async () => ({ text: "", stopReason: null, compactions: [] }),
     abort: async () => {},
+    invalidate: async () => {},
     dispose: async () => {},
     ...overrides,
   };

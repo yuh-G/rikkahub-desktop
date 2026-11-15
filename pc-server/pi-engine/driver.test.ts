@@ -18,6 +18,7 @@ import type {
   AppToolCall,
   AppToolResult,
   EngineErrorReport,
+  EngineTurnRequest,
   EngineHost,
   EngineInstructions,
   EngineSessionView,
@@ -50,10 +51,11 @@ interface HostLog {
   steerTakes: TurnRef[];
   reports: EngineErrorReport[];
   requests: Array<{ turn: TurnRef; record: ModelRequestRecord }>;
+  turnRequests: EngineTurnRequest[];
 }
 
 function fakeHost(options: { steer?: () => string[]; tool?: (call: AppToolCall) => Promise<AppToolResult>; view?: EngineSessionView } = {}) {
-  const log: HostLog = { events: [], sessionLoads: [], toolCalls: [], steerTakes: [], reports: [], requests: [] };
+  const log: HostLog = { events: [], sessionLoads: [], toolCalls: [], steerTakes: [], reports: [], requests: [], turnRequests: [] };
   const host: EngineHost = {
     emit: (turn, event) => void log.events.push({ turn, event }),
     session: {
@@ -77,6 +79,7 @@ function fakeHost(options: { steer?: () => string[]; tool?: (call: AppToolCall) 
         return options.steer?.() ?? [];
       },
     },
+    turn: { request: (req) => void log.turnRequests.push(req) },
     models: {
       credential: async () => ({}),
       log: (turn, record) => void log.requests.push({ turn, record }),

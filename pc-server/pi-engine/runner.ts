@@ -17,13 +17,19 @@
 // 条目映射回到消息 id),由调用方落 conversation.engineCompactions;原生压缩条目随本轮的对账
 // 落进私有表。下一轮由 session-view 按记录决定压缩,配得上原生条目则原样取用(P3.5)。
 // 视图是富化全序列(含合成行,应用以压缩切点为富化窗口锚),聊天位注入/时间提醒在工作区会话
-// 与聊天引擎逐字同生效。
+// 与聊天引擎逐字同生效。合成行不进会话条目,每次请求前经 transformContext 插到锚点之前。
+//
+// 长驻会话(P5.6,ctx.sessions):活会话与本轮视图重建出的会话按模型可见内容逐条相同、配置键也相同时
+// 接着用(插件内存态、模型运行时、工具定义都留着),否则关掉重建;复用与回收见 session-host。不给
+// sessions 时每轮新建、轮末关掉,与 P5.6 之前相同。
 //
 // 工具面(P4b):工作区工具是 pi 的内建工具定义,但由我们创建(builtin-tools:应用后端 + 执行前审批),
 // 以 customTools 进会话;noTools:"builtin" 保持不变——pi 自己不创建任何默认后端的内建工具,本轮不提供的
 // 内建工具名经 excludeTools 连登记都拿掉。应用工具规格(ctx.tools,通用工具 / MCP 桥)经 app-tools 包成
 // customTools,调用交回应用(ctx.callTool)。会话就绪后 assertPiToolsGated 核对每个已登记工具都带应用
 // 闸门标记,否则不开跑。都不传即纯对话(无任何激活工具,系统提示词 Available tools 为 "(none)")。
+
+import { createHash } from "node:crypto";
 
 import { createAgentSession } from "../../pi/packages/coding-agent/src/core/sdk.ts";
 import { markRuntimeStreamFunction } from "../../pi/packages/coding-agent/src/core/agent-session.ts";
@@ -59,8 +65,19 @@ import { createPiAppTools, type PiAppToolCaller } from "./app-tools";
 import { createPiBuiltinTools, excludedPiBuiltinToolNames, type PiBuiltinToolApprover } from "./builtin-tools";
 import { assertPiToolsGated } from "./tool-gate";
 import { bindPiPluginSession, type PiPluginSessionBinding } from "./plugins/session-binding";
+import type { PiPluginToolApprover } from "./plugins/arbiter";
 import type { PiPluginInteraction } from "./plugins/ui-bridge";
-import { createPiEntrySync, createPiSessionFromView, toPiEngineEntry } from "./session-view";
+import {
+  EMPTY_SYNTHETIC_PLAN,
+  createPiEntrySync,
+  createPiSessionFromView,
+  matchLiveSession,
+  planSyntheticRows,
+  toPiEngineEntry,
+  type PiEntrySync,
+  type PiSessionFromView,
+} from "./session-view";
+import { clearTurnRoutes, createPiLiveSession, type PiLiveSession, type PiSessionHost, type PiTurnRoutes } from "./session-host";
 
 export interface PiGenerationContext {
   /** 本轮模型授权(应用侧 engines/model-grant 组装:上限/请求头已是终值)。limits.contextWindow
@@ -86,8 +103,9 @@ export interface PiGenerationContext {
   images?: Array<{ type: "image"; data: string; mimeType: string }>;
   /** 资源装配(P4:技能/AGENTS.md/appendSystemPrompt/受控 settings,
    *  生产侧 = createPiSessionResources;不传 = 纯对话,pi 默认资源面全关不了——
-   *  仅测试/冒烟场景使用,生产路由必须传)。 */
-  resources?: PiSessionResources;
+   *  仅测试/冒烟场景使用,生产路由必须传)。传函数 = 只在新建会话时装配(接着用活会话时不调),
+   *  参数是委托到当前轮的插件工具审批口。 */
+  resources?: PiSessionResources | ((approvePluginTool: PiPluginToolApprover) => Promise<PiSessionResources>);
   /** 应用工具规格(生产侧 = 通用工具/MCP 桥;不传 = 没有应用工具)。 */
   tools?: AppToolSpec[];
   /** 应用工具调用口(生产 = host.tools.call:审批/执行/实体化在应用侧)。 */
@@ -118,6 +136,13 @@ export interface PiGenerationContext {
    *  调用位、Codex 的 pending_input 排水位同构。不传 = 无 steering 能力(消息留在 FIFO
    *  队列收尾派发兜底)。落库/队列联动在应用侧,runner 零副作用。 */
   onSteerBoundary?: () => string[] | Promise<string[]>;
+  /** 插件工具执行前的应用审批(生产 = host.permission.check,来源 plugin)。resources 传函数时经它委托。 */
+  approvePluginTool?: PiPluginToolApprover;
+  /** 长驻会话(P5.6):给了就跨轮复用活会话(session-host);key 是调用方给的、配置键里 ctx 看不到的
+   *  部分(指令、插件清单)。不给 = 每轮新建、轮末关掉(测试/冒烟)。 */
+  sessions?: { host: PiSessionHost; key: string };
+  /** 应用响应 host.turn.request 开的轮次:本轮跑插件挂起的那条消息,promptText 不用。 */
+  trigger?: { requestId: string };
 }
 
 export interface PiGenerationResult {
@@ -177,41 +202,79 @@ function createModelRuntimeFor(
   return createPiModelRuntime(mapping, ctx.credentialSource, outlet);
 }
 
-/** 会话装载完成后建对账器(不传 appendEntries = 不写)。送达失败报一次 warn。 */
-function entrySyncFor(manager: SessionManager, ctx: Pick<PiGenerationContext, "appendEntries" | "report">) {
+/** 会话装载完成后建对账器(不传 appendEntries = 不写)。送达失败报一次 warn。pending = 接着用的会话
+ *  上一轮没交出的条目。 */
+function entrySyncFor(
+  manager: SessionManager,
+  ctx: Pick<PiGenerationContext, "appendEntries" | "report">,
+  pending?: ReadonlySet<string>,
+): PiEntrySync | undefined {
   const { appendEntries } = ctx;
   if (!appendEntries) return undefined;
-  return createPiEntrySync(manager, appendEntries, (error) =>
-    ctx.report?.({
-      domain: "pi-engine",
-      severity: "warn",
-      message: "工作区会话的引擎记录未能保存,下一轮这部分历史按界面内容重建(思考签名等引擎数据不保留)",
-      detail: error instanceof Error ? error.message : String(error),
-    }),
+  return createPiEntrySync(
+    manager,
+    appendEntries,
+    (error) =>
+      ctx.report?.({
+        domain: "pi-engine",
+        severity: "warn",
+        message: "工作区会话的引擎记录未能保存,下一轮这部分历史按界面内容重建(思考签名等引擎数据不保留)",
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+    pending,
   );
 }
 
-export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
-  if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
+/** 复用判定的配置键:建会话时定下、之后不再读的输入,任何一项变了都重建。只留摘要(授权里有密钥)。 */
+function configKeyOf(ctx: PiGenerationContext, extra: string): string {
+  const material = JSON.stringify({
+    grant: ctx.grant,
+    reasoningLevel: ctx.reasoningLevel ?? null,
+    cwd: ctx.cwd,
+    workspace: ctx.workspaceTools ? { root: ctx.workspaceTools.root, shell: ctx.workspaceTools.shell ?? null } : null,
+    tools: ctx.tools ?? [],
+    wired: {
+      credential: Boolean(ctx.credentialSource),
+      log: Boolean(ctx.requestLog),
+      callTool: Boolean(ctx.callTool),
+      interaction: Boolean(ctx.interaction),
+    },
+    extra,
+  });
+  return createHash("sha256").update(material).digest("hex");
+}
+
+const unwired = (what: string) => Promise.reject(new Error(`${what}通道未接线(不在轮次之内)`));
+
+/** 新建会话。每轮变化的接线都委托到 routes(见 session-host 头注)。 */
+async function buildLiveSession(
+  ctx: PiGenerationContext,
+  manager: SessionManager,
+  configKey: string | undefined,
+  routes: PiTurnRoutes,
+): Promise<PiLiveSession> {
   const mapped = mapGrantToPi(ctx.grant);
   if (!mapped.ok) throw new Error(`该模型无法在工作区引擎使用：${mapped.reason}`);
-  const { runtime, model } = await createModelRuntimeFor(mapped.mapping, ctx);
-
-  // 引擎上下文每轮由会话视图重建,inMemory 会话零文件生命周期。
-  const seeded = createPiSessionFromView({
-    cwd: ctx.cwd,
-    conversationId: ctx.conversationId,
-    view: ctx.view,
-    fallbackModelId: ctx.grant.modelId,
+  const { runtime, model } = await createModelRuntimeFor(mapped.mapping, {
+    grant: ctx.grant,
+    ...(ctx.credentialSource ? { credentialSource: () => routes.credentialSource?.() ?? unwired("订阅凭据") } : {}),
+    ...(ctx.requestLog ? { requestLog: (record) => routes.requestLog?.(record) } : {}),
   });
-  const manager = seeded.manager;
-  const seededEntryIds = new Set(manager.getEntries().map((entry) => entry.id));
-  const entrySync = entrySyncFor(manager, ctx);
 
   const workspaceTools = ctx.workspaceTools;
   const builtinTools = workspaceTools
-    ? createPiBuiltinTools({ cwd: ctx.cwd, root: workspaceTools.root, shell: workspaceTools.shell, approve: workspaceTools.approve })
+    ? createPiBuiltinTools({
+        cwd: ctx.cwd,
+        root: workspaceTools.root,
+        shell: workspaceTools.shell,
+        approve: (req) => routes.approveWorkspaceTool?.(req) ?? unwired("审批"),
+      })
     : [];
+  const callTool: PiAppToolCaller | undefined = ctx.callTool
+    ? (call) => routes.callTool?.(call) ?? unwired(`应用工具 ${call.name} 的`)
+    : undefined;
+  const resources =
+    typeof ctx.resources === "function" ? await ctx.resources((req) => routes.approvePluginTool?.(req) ?? unwired("审批")) : ctx.resources;
   const { session } = await createAgentSession({
     cwd: ctx.cwd,
     agentDir: piAgentDir,
@@ -223,13 +286,11 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     // (agent-session.ts 的 includeAllExtensionTools + _refreshToolRegistry,§七-3 实证),同名即顶替内建定义。
     noTools: "builtin",
     excludeTools: workspaceTools ? excludedPiBuiltinToolNames(workspaceTools.shell) : [...allToolNames],
-    customTools: [...builtinTools, ...createPiAppTools(ctx.tools ?? [], ctx.callTool)],
+    customTools: [...builtinTools, ...createPiAppTools(ctx.tools ?? [], callTool)],
     // P4 资源统一:受控 ResourceLoader(技能白名单/AGENTS.md 边界过滤/appendSystemPrompt)
     // + 受控 SettingsManager(inMemory,封死 .pi/settings.json 注入面)。
     // 注意 sdk 只对自建 loader 调 reload,resources 在装配处已 reload 完毕。
-    ...(ctx.resources
-      ? { resourceLoader: ctx.resources.resourceLoader, settingsManager: ctx.resources.settingsManager }
-      : {}),
+    ...(resources ? { resourceLoader: resources.resourceLoader, settingsManager: resources.settingsManager } : {}),
   });
 
   // steering 一次吸收全部:与聊天引擎 steerBoundary 整批排水、Codex pending_input
@@ -239,7 +300,93 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
 
   // 工作区工具与应用工具的 details 都是我们打的标记;其余(插件工具)只按 content 映射。
   const markedToolNames = new Set([...builtinTools, ...(ctx.tools ?? [])].map((tool) => tool.name));
-  const bridge = createPiEventBridge({ report: ctx.report, appToolNames: markedToolNames });
+  const live = createPiLiveSession(
+    { conversationId: ctx.conversationId, configKey, session, manager, runtime, model, markedToolNames, routes },
+    ctx.sessions?.host,
+  );
+  try {
+    const interaction: PiPluginInteraction | undefined = ctx.interaction
+      ? {
+          dialog: (call) => routes.interaction?.dialog(call) ?? Promise.resolve({ cancelled: true }),
+          dismiss: (requestId) => routes.interaction?.dismiss(requestId),
+          show: (call) => routes.interaction?.show(call),
+        }
+      : undefined;
+    // 插件的 session_start(状态重放)在首个请求之前;没有插件时是空操作。
+    live.attachPlugins(await bindPiPluginSession(session, resources?.plugins ?? [], resources?.pluginPolicy ?? null, ctx.report, interaction));
+    // 插件的 session_start 可能补登记工具,所以闸门核对放在绑定之后、首个请求之前。
+    assertPiToolsGated(session);
+  } catch (err) {
+    await live.close();
+    throw err;
+  }
+  return live;
+}
+
+/** 接着用活会话:配置键相同,且活会话与本轮视图重建出的会话模型可见内容逐条相同。返回本轮的消息 id →
+ *  活会话条目 id;不能接着用时关掉它。 */
+async function reuseLiveSession(
+  ctx: PiGenerationContext,
+  seeded: PiSessionFromView,
+  configKey: string | undefined,
+): Promise<{ live: PiLiveSession; entryIdsByMessageId: Map<string, string[]> } | undefined> {
+  const live = ctx.sessions?.host.checkout(ctx.conversationId);
+  if (!live) return undefined;
+  const mapping = live.configKey === configKey ? matchLiveSession(live.manager, seeded.manager, live.lastSync?.undelivered() ?? new Set()) : null;
+  if (!mapping) {
+    await live.close();
+    return undefined;
+  }
+  const entryIdsByMessageId = new Map(
+    [...seeded.entryIdsByMessageId].map(([messageId, entryIds]) => [
+      messageId,
+      entryIds.flatMap((entryId) => {
+        const liveId = mapping.get(entryId);
+        return liveId ? [liveId] : [];
+      }),
+    ]),
+  );
+  return { live, entryIdsByMessageId };
+}
+
+export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
+  if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
+  // 每轮由会话视图重建一份 inMemory 会话(零文件):新建时直接用它,有活会话时拿它比对。
+  const seeded = createPiSessionFromView({
+    cwd: ctx.cwd,
+    conversationId: ctx.conversationId,
+    view: ctx.view,
+    fallbackModelId: ctx.grant.modelId,
+  });
+  const sessions = ctx.sessions?.host;
+  const configKey = ctx.sessions ? configKeyOf(ctx, ctx.sessions.key) : undefined;
+  const routes: PiTurnRoutes = {
+    credentialSource: ctx.credentialSource,
+    requestLog: ctx.requestLog,
+    approveWorkspaceTool: ctx.workspaceTools?.approve,
+    approvePluginTool: ctx.approvePluginTool,
+    callTool: ctx.callTool,
+    interaction: ctx.interaction,
+  };
+  const triggered = ctx.trigger ? sessions?.takePendingTurn(ctx.conversationId, ctx.trigger.requestId) : undefined;
+  if (ctx.trigger && !triggered) throw new Error("插件请求的这一轮已失效(会话已被回收或删除)");
+  const reused = await reuseLiveSession(ctx, seeded, configKey);
+  const manager = reused?.live.manager ?? seeded.manager;
+  const entryIdsByMessageId = reused?.entryIdsByMessageId ?? seeded.entryIdsByMessageId;
+  // 对账器建在新会话之前:插件在 session_start 里追加的条目也要交出。
+  const seededEntryIds = new Set(manager.getEntries().map((entry) => entry.id));
+  const entrySync = entrySyncFor(manager, ctx, reused?.live.lastSync?.undelivered());
+  let live: PiLiveSession;
+  if (reused) {
+    live = reused.live;
+    Object.assign(live.routes, routes);
+  } else {
+    live = await buildLiveSession(ctx, manager, configKey, routes);
+  }
+  const { session } = live;
+  live.synthetic = planSyntheticRows(manager, seeded.syntheticRows, (messageId) => entryIdsByMessageId.get(messageId));
+
+  const bridge = createPiEventBridge({ report: ctx.report, appToolNames: live.markedToolNames });
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
     // 流式增量之外的每个事件都是对账点。message_end 的落库在事件派发之后,那一条由下一个事件交出。
@@ -278,32 +425,39 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     void session.abort();
   };
   ctx.signal?.addEventListener("abort", onAbort, { once: true });
-  let pluginBinding: PiPluginSessionBinding | undefined;
+  let healthy = false;
   try {
-    // 插件的 session_start(状态重放)在首个请求之前;没有插件时是空操作。
-    pluginBinding = await bindPiPluginSession(session, ctx.resources?.plugins ?? [], ctx.resources?.pluginPolicy ?? null, ctx.report, ctx.interaction);
-    // 插件的 session_start 可能补登记工具,所以闸门核对放在绑定之后、首个请求之前。
-    assertPiToolsGated(session);
+    // 应用没为它们开轮的挂起消息并进本轮(pi 的 nextTurn:随本轮起始消息一起进上下文)。
+    for (const pending of sessions?.drainPendingTurns(ctx.conversationId) ?? []) {
+      await live.sendCustomMessage(pending.message, { ...pending.options, deliverAs: "nextTurn" });
+    }
     if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
-    // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
-    // 当模板/扩展命令拦截(agent-session.ts prompt() 的 expandPromptTemplates 分支),我们的会话 UX 不走 pi 命令面。
+    const { model } = live;
     await runWithGoogleRequestLog(googleRequestLogContextFor(model.api, ctx.grant, ctx.requestLog), () =>
-      session.prompt(ctx.promptText, {
-        expandPromptTemplates: false,
-        ...(ctx.images?.length ? { images: ctx.images } : {}),
-      }),
+      triggered
+        ? live.sendCustomMessage(triggered.message, triggered.options)
+        : // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
+          // 当模板/扩展命令拦截(agent-session.ts prompt() 的 expandPromptTemplates 分支),我们的会话 UX 不走 pi 命令面。
+          session.prompt(ctx.promptText, {
+            expandPromptTemplates: false,
+            ...(ctx.images?.length ? { images: ctx.images } : {}),
+          }),
     );
+    healthy = true;
   } finally {
     ctx.signal?.removeEventListener("abort", onAbort);
     unsubscribeSteer?.();
-    await pluginBinding?.shutdown();
     unsubscribe();
-    session.dispose();
+    live.synthetic = EMPTY_SYNTHETIC_PLAN;
+    clearTurnRoutes(live.routes);
+    if (!sessions || !healthy) await live.close();
     // 轮末对账:收尾前最后一批(含中止、失败的轮次;它们不会被封存,装载时作废)。
     await entrySync?.flush();
+    live.lastSync = entrySync;
+    if (sessions && healthy) await sessions.checkin(live);
   }
 
-  const capturedCompactions = captureRoundCompactions(manager, seededEntryIds, seeded.entryIdsByMessageId);
+  const capturedCompactions = captureRoundCompactions(manager, seededEntryIds, entryIdsByMessageId);
 
   const outcome = bridge.outcome();
   // 上游失败且非用户中止 → 抛给调用方失败分支(与聊天引擎 throw 语义一致)。

@@ -7,7 +7,7 @@
 //   3) 审批 API 全链路:pending 时生成保持在跑,POST tool-approval 原地放行,
 //      不重触发生成(上游请求数不涨即硬证据)。
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -338,6 +338,30 @@ describe("generateAnswer P3 路由", () => {
     const request = server.requests[0] as { max_tokens?: number; max_completion_tokens?: number };
     expect(request.max_tokens).toBeUndefined();
     expect(request.max_completion_tokens).toBeUndefined();
+  }, 30_000);
+
+  test("引擎发起的轮次(P5.6):插件在轮次之间要求再答 → 应用另起回答节点开轮,插件的消息进请求", async () => {
+    const server = await installUpstream([{ content: "第一轮回答" }, { content: "插件轮回答" }]);
+    const pluginPath = join(process.env.RIKKAHUB_PC_DATA_DIR!, "trigger-plugin.js");
+    writeFileSync(pluginPath, "export default function (pi) { globalThis.__rkhRoutePi = pi; }\n");
+    jsonStore.state.settings.devPiPluginPaths = [pluginPath];
+    const workspace = ws.createWorkspace({ type: "managed", name: "route-trigger" });
+    const conversation = seedConversation(workspace.id);
+    await generateAnswer(conversation);
+    expect(partsText(conversation)).toContain("第一轮回答");
+    const first = lastAssistantMessage(conversation);
+
+    const pi = (globalThis as Record<string, unknown>).__rkhRoutePi as { sendMessage: (message: unknown, options?: unknown) => void };
+    pi.sendMessage({ customType: "bg-result", content: "后台任务完成", display: true }, { triggerTurn: true });
+    await waitUntil(() => server.requests.length === 2 && !generating.has(conversation.id));
+
+    expect(conversation.messages).toHaveLength(3);
+    expect(lastAssistantMessage(conversation).id).not.toBe(first.id);
+    expect(partsText(conversation)).toContain("插件轮回答");
+    const sent = JSON.stringify((server.requests[1] as { messages?: unknown }).messages ?? []);
+    expect(sent.indexOf("第一轮回答")).toBeGreaterThan(-1);
+    expect(sent.indexOf("后台任务完成")).toBeGreaterThan(sent.indexOf("第一轮回答"));
+    jsonStore.state.settings.devPiPluginPaths = [];
   }, 30_000);
 
   test("非工作区会话走聊天引擎原路:零 pi 痕迹", async () => {

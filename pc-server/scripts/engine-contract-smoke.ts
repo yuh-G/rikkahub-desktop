@@ -136,6 +136,7 @@ const host: EngineHost = {
       return taken;
     },
   },
+  turn: { request: () => undefined },
   models: {
     credential: async () => {
       throw new Error("冒烟只用 API Key 授权");

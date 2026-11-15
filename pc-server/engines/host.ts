@@ -17,7 +17,15 @@ import { addLog } from "../api/logs";
 import { freshSubscriptionCredential } from "../model-providers/auth/resolve";
 import { reportError } from "../observability/app-errors";
 import type { AppToolCaller, ToolPermissionChecker } from "./app-tools";
-import type { EngineEntryInput, EngineErrorReport, EngineHost, EngineSessionView, SubscriptionCredential, TurnRef } from "./contract";
+import type {
+  EngineEntryInput,
+  EngineErrorReport,
+  EngineHost,
+  EngineSessionView,
+  EngineTurnRequest,
+  SubscriptionCredential,
+  TurnRef,
+} from "./contract";
 
 /** 进程内驱动一轮的会话上下文(活对象,不经契约)。 */
 export interface InProcessTurnContext {
@@ -74,6 +82,13 @@ export function boundTurn(turnId: string): EngineTurnBinding | undefined {
   return turns.get(turnId);
 }
 
+/** 引擎发起轮次的处理方(编排器在模块初始化时登记;本模块不 import 编排器,免得成环)。 */
+let engineTurnRequestHandler: ((req: EngineTurnRequest) => void) | null = null;
+
+export function setEngineTurnRequestHandler(handler: ((req: EngineTurnRequest) => void) | null): void {
+  engineTurnRequestHandler = handler;
+}
+
 export function reportEngineError(report: EngineErrorReport): void {
   reportError(report.domain, report.severity, report.message, report.detail, report.code, report.params);
 }
@@ -127,6 +142,11 @@ export const appEngineHost: EngineHost = {
   steer: {
     async take(turn) {
       return turns.get(turn.turnId)?.steer?.() ?? [];
+    },
+  },
+  turn: {
+    request(req) {
+      engineTurnRequestHandler?.(req);
     },
   },
   models: {

@@ -116,6 +116,7 @@ export function connectDriver(driver: EngineDriver, options: { strict: boolean }
     startTurn: strictCall(label("startTurn"), driver.startTurn.bind(driver)),
     abort: strictCall(label("abort"), driver.abort.bind(driver)),
     ...(driver.compact ? { compact: strictCall(label("compact"), driver.compact.bind(driver)) } : {}),
+    invalidate: strictCall(label("invalidate"), driver.invalidate.bind(driver)),
     dispose: strictCall(label("dispose"), driver.dispose.bind(driver)),
   };
 }
@@ -137,6 +138,7 @@ export function connectHost(host: EngineHost, options: { strict: boolean }): Eng
       show: strictCall("host.interaction.show", host.interaction.show.bind(host.interaction)),
     },
     steer: { take: strictCall("host.steer.take", host.steer.take.bind(host.steer)) },
+    turn: { request: strictCall("host.turn.request", host.turn.request.bind(host.turn)) },
     models: {
       credential: strictCall("host.models.credential", host.models.credential.bind(host.models)),
       log: strictCall("host.models.log", host.models.log.bind(host.models)),

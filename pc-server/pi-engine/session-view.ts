@@ -3,8 +3,9 @@
 // 每轮由应用给的会话视图(host.session.load)重建 pi 会话,经 pi 自己的恢复路径装载:
 // SessionManager.inMemory(cwd, {id}, entries) 在条目里没有会话头时按 id 生成头,叶 = 最后一条。
 // 逐项规则:
-// - 用户行与合成行(时间提醒、聊天位注入)恒由中立内容编码(context-encoder):用户输入每轮由
-//   应用物化,注入不沉淀为引擎记忆;
+// - 用户行恒由中立内容编码(context-encoder):用户输入每轮由应用物化。合成行(时间提醒、聊天位注入)
+//   编码后不进会话条目,作为 syntheticRows 交给 runner,每次请求前插到锚点消息之前:注入不沉淀为引擎记忆,
+//   会话跨轮复用(P5.6)时也不会因为注入位置随对话增长而移动就判为不一致;
 // - 助手行带有效原生条目(应用已按摘要校验过)→ 原样取用;否则回退编码。原生组里刻意不取每轮
 //   重建的东西:用户消息(由前面的中立行给出)、system 消息(系统提示词每轮由 resources 重建,见
 //   model-bridge 的 supportsMidConvoSystemMessages)、模型与思考档位(由本轮授权给出)、分支摘要。
@@ -33,18 +34,28 @@ import {
 import type { EngineCompactionRecord, EngineEntryInput, EngineSessionItem, EngineSessionView } from "../engines/contract";
 import type { JsonValue, Message } from "../foundation/types";
 import { isRecord } from "../foundation/utils";
+import type { AgentMessage } from "../../pi/packages/agent/src/types.ts";
+import type { Message as PiAgentMessage } from "../../pi/packages/ai/src/types.ts";
 import { encodeNeutralMessage } from "./context-encoder";
 
 /** pi 原生条目的格式版本(EngineEntryInput.format)。随 pi 会话版本走:pi 升级改了条目形状时
  *  旧条目不再被识别,整组回退一次。 */
 export const PI_ENTRY_FORMAT = `pi-session-v${CURRENT_SESSION_VERSION}`;
 
+/** 逐请求注入的合成行(时间提醒、聊天位注入):不进会话条目,每次请求前插到锚点消息之前。 */
+export interface PiSyntheticRows {
+  /** 插在这条应用消息的首条模型可见消息之前;null = 插在本轮起始消息(本轮用户输入)之前。 */
+  beforeMessageId: string | null;
+  messages: PiAgentMessage[];
+}
+
 export interface PiSessionFromView {
   manager: SessionManager;
-  /** 消息 id → 它在会话里的条目 id(压缩切点映射用;合成行不在内)。 */
+  /** 消息 id → 它在会话里的条目 id(压缩切点映射、合成行锚点用;合成行不在内)。 */
   entryIdsByMessageId: Map<string, string[]>;
   /** 走了 legacy 退化的助手行(诊断;合成行不在内,legacy 是它们的设计路径)。 */
   degradedMessageIds: string[];
+  syntheticRows: PiSyntheticRows[];
 }
 
 function isEntryShape(payload: unknown): boolean {
@@ -175,17 +186,28 @@ export function createPiSessionFromView(options: {
   const entries: SessionEntry[] = [];
   const entryIdsByMessageId = new Map<string, string[]>();
   const degradedMessageIds: string[] = [];
+  const syntheticRows: PiSyntheticRows[] = [];
+  let pendingSynthetic: PiAgentMessage[] = [];
   for (const item of view.items) {
+    if (item.synthetic) {
+      pendingSynthetic.push(...encodeNeutralMessage(item.message, item.input, fallbackModelId).messages);
+      continue;
+    }
     let group = nativeEntriesOf(item);
     if (!group) {
       const fallback = fallbackEntriesOf(item, fallbackModelId);
       group = fallback.entries;
-      if (fallback.degraded && !item.synthetic) degradedMessageIds.push(item.message.id);
+      if (fallback.degraded) degradedMessageIds.push(item.message.id);
     }
     for (const entry of group) entries.push({ ...entry, parentId: entries.at(-1)?.id ?? null });
-    // 合成行不进切点映射:它的 id 不是会话里的消息 id,切点经外收拢落上来时由调用方按尾消息兜底。
-    if (group.length && !item.synthetic) entryIdsByMessageId.set(item.message.id, group.map((entry) => entry.id));
+    if (group.length === 0) continue;
+    entryIdsByMessageId.set(item.message.id, group.map((entry) => entry.id));
+    if (pendingSynthetic.length > 0) {
+      syntheticRows.push({ beforeMessageId: item.message.id, messages: pendingSynthetic });
+      pendingSynthetic = [];
+    }
   }
+  if (pendingSynthetic.length > 0) syntheticRows.push({ beforeMessageId: null, messages: pendingSynthetic });
   // 压缩接在序列末尾(上下文与放在原位相同:摘要 + firstKept 起的条目)。生效的记录配得上原生条目
   // (摘要与压缩前用量相同)→ 原样取用(id、时间戳、details、用量都在),只按上面的规则重定 firstKept;
   // 否则由记录重建。
@@ -196,7 +218,104 @@ export function createPiSessionFromView(options: {
   if (compaction && native) entries.push({ ...native, parentId: entries.at(-1)?.id ?? null, firstKeptEntryId: compaction.firstKeptEntryId });
   const manager = SessionManager.inMemory(options.cwd, sessionOptionsFor(options.conversationId), entries);
   if (compaction && !native) manager.appendCompaction(compaction.record.summary, compaction.firstKeptEntryId, compaction.record.tokensBefore);
-  return { manager, entryIdsByMessageId, degradedMessageIds };
+  return { manager, entryIdsByMessageId, degradedMessageIds, syntheticRows };
+}
+
+function visibleMessagesOf(messages: readonly AgentMessage[]): string {
+  return messages
+    .filter((message) => message.role !== "system")
+    .map((message) => {
+      const { timestamp: _timestamp, ...rest } = message as AgentMessage & { timestamp?: number };
+      return JSON.stringify(rest);
+    })
+    .join("\n");
+}
+
+/** 活会话能否接着用(P5.6):把视图重建出的会话与活会话按模型可见的消息逐条比对。相同就接着用;任何不同
+ *  (编辑、重新生成、分支切换、没封存的中止或失败轮次、别的引擎写的回答、压缩)都重建。比对忽略 system 消息
+ *  (系统提示词由资源给出)、时间戳(不进请求)、不产生消息的条目,以及活会话里还没交给应用的条目(轮次之间
+ *  插件追加的,下一轮第一次对账时交出)。返回 重建会话条目 id → 活会话条目 id;不能接着用时为 null。 */
+export function matchLiveSession(live: SessionManager, fresh: SessionManager, pending: ReadonlySet<string>): Map<string, string> | null {
+  const rows = (manager: SessionManager, skip?: ReadonlySet<string>) =>
+    manager.buildSessionProjection().entries.flatMap((entry) => {
+      if (skip?.has(entry.sourceEntry.id)) return [];
+      const visible = visibleMessagesOf(entry.messages);
+      return visible ? [{ id: entry.sourceEntry.id, visible }] : [];
+    });
+  const liveRows = rows(live, pending);
+  const freshRows = rows(fresh);
+  if (liveRows.length !== freshRows.length) return null;
+  const mapping = new Map<string, string>();
+  for (const [index, row] of freshRows.entries()) {
+    const other = liveRows[index]!;
+    if (row.visible !== other.visible) return null;
+    mapping.set(row.id, other.id);
+  }
+  return mapping;
+}
+
+/** 一轮的合成行插入计划。按消息对象定位:会话条目里的 message 条目的消息对象就是投影与请求里的那个对象
+ *  (custom_message 等每次投影新建对象的条目不能当锚点)。 */
+export interface PiSyntheticPlan {
+  before: Map<object, AgentMessage[]>;
+  /** 插在本轮之前的历史之后(本轮起始消息可能是插件消息,每次投影都是新对象,所以按「前一条」定位)。 */
+  atTurnStart: AgentMessage[];
+  /** 本轮开始前最后一条 message 条目的消息对象;null = 本轮之前没有历史,插在开头的 system 消息之后。 */
+  after: object | null;
+}
+
+export const EMPTY_SYNTHETIC_PLAN: PiSyntheticPlan = { before: new Map(), atTurnStart: [], after: null };
+
+/** 在本轮开跑之前调用(after 取此刻会话的最后一条 message 条目)。entryIdsOf:应用消息 id → 它在这个
+ *  会话里的条目 id(接着用的活会话要先换成活会话的 id)。锚点找不到(不该发生)的行并到本轮之前,
+ *  宁可错位也不丢。 */
+export function planSyntheticRows(
+  manager: SessionManager,
+  rows: readonly PiSyntheticRows[],
+  entryIdsOf: (messageId: string) => readonly string[] | undefined,
+): PiSyntheticPlan {
+  const last = manager.getEntries().findLast((entry) => entry.type === "message");
+  const plan: PiSyntheticPlan = { before: new Map(), atTurnStart: [], after: last?.type === "message" ? last.message : null };
+  for (const row of rows) {
+    const anchor = row.beforeMessageId
+      ? entryIdsOf(row.beforeMessageId)
+          ?.map((entryId) => manager.getEntry(entryId))
+          .find((entry) => entry?.type === "message")
+      : undefined;
+    if (anchor?.type === "message") plan.before.set(anchor.message, [...(plan.before.get(anchor.message) ?? []), ...row.messages]);
+    else plan.atTurnStart.push(...row.messages);
+  }
+  return plan;
+}
+
+/** 每次请求前把合成行插进上下文(不改会话条目)。本轮之前的那条消息找不到时,起始那批放在末尾;
+ *  锚点不在本次上下文里的行(不该发生)并进起始那批,宁可错位也不丢。 */
+export function injectSyntheticRows(messages: readonly AgentMessage[], plan: PiSyntheticPlan): AgentMessage[] {
+  if (plan.before.size === 0 && plan.atTurnStart.length === 0) return [...messages];
+  const present = new Set<object>(messages);
+  const orphans = [...plan.before].flatMap(([anchor, rows]) => (present.has(anchor) ? [] : rows));
+  const atTurnStart = [...orphans, ...plan.atTurnStart];
+  const out: AgentMessage[] = [];
+  let placed = atTurnStart.length === 0;
+  let rest = messages;
+  if (!placed && plan.after === null) {
+    const head = messages.findIndex((message) => message.role !== "system");
+    const split = head === -1 ? messages.length : head;
+    out.push(...messages.slice(0, split), ...atTurnStart);
+    placed = true;
+    rest = messages.slice(split);
+  }
+  for (const message of rest) {
+    const rows = plan.before.get(message);
+    if (rows) out.push(...rows);
+    out.push(message);
+    if (!placed && message === plan.after) {
+      out.push(...atTurnStart);
+      placed = true;
+    }
+  }
+  if (!placed) out.push(...atTurnStart);
+  return out;
 }
 
 /** pi 条目 → 交给应用的条目(载荷即条目本身)。压缩条目去掉 systemMessage:那是压缩时刻系统提示词的
@@ -214,16 +333,20 @@ export interface PiEntrySync {
   /** 立即交出上次以来的新条目(应用在收到时按当时的落点锚定,所以必须在补发换绑之前调用)。
    *  返回的 Promise 在已交出的各批都送达后兑现,从不拒绝。 */
   flush(): Promise<void>;
+  /** 还没交出的条目 id(会话跨轮复用时,轮次之间插件追加的条目要到下一轮的对账才交出)。 */
+  undelivered(): Set<string>;
 }
 
-/** 在会话装载完成之后创建:此刻已有的条目(视图装载的、压缩重放的)视为已在存储里。
- *  送达失败经 onError 报一次;应用侧不封存写失败的锚定,那条消息下一轮走回退编码。 */
+/** 在会话装载完成之后创建:此刻已有的条目(视图装载的、压缩重放的)视为已在存储里,pending 里的除外
+ *  (接着用的会话在轮次之间由插件追加、还没交出的条目,本轮交出)。送达失败经 onError 报一次;应用侧
+ *  不封存写失败的锚定,那条消息下一轮走回退编码。 */
 export function createPiEntrySync(
   manager: SessionManager,
   append: (entries: EngineEntryInput[]) => Promise<void>,
   onError: (error: unknown) => void,
+  pending: ReadonlySet<string> = new Set(),
 ): PiEntrySync {
-  const known = new Set(manager.getEntries().map((entry) => entry.id));
+  const known = new Set(manager.getEntries().flatMap((entry) => (pending.has(entry.id) ? [] : [entry.id])));
   let delivered: Promise<void> = Promise.resolve();
   let reported = false;
   return {
@@ -240,6 +363,9 @@ export function createPiEntrySync(
         delivered = Promise.all([delivered, sent]).then(() => undefined);
       }
       return delivered;
+    },
+    undelivered() {
+      return new Set(manager.getEntries().flatMap((entry) => (known.has(entry.id) ? [] : [entry.id])));
     },
   };
 }

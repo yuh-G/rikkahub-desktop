@@ -80,6 +80,7 @@ function harness(conversationId: string) {
     },
     interaction: { dialog: async () => ({ cancelled: true }), dismiss: () => undefined, show: () => undefined },
     steer: { take: async () => [] },
+    turn: { request: () => undefined },
     models: { credential: async () => ({}), log: () => undefined },
     report: () => undefined,
   };

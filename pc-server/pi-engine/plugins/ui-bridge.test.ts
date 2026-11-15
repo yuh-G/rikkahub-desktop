@@ -154,6 +154,7 @@ function harness(answer: (call: EngineDialogCall) => Promise<EngineDialogAnswer>
       show: (call) => void notices.push(call),
     },
     steer: { take: async () => [] },
+    turn: { request: () => undefined },
     models: { credential: async () => ({}), log: () => undefined },
     report: () => undefined,
   };

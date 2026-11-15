@@ -56,6 +56,9 @@ export function createChatDriver(): EngineDriver {
       running.get(conversationId)?.abort(new DOMException(`Generation ${reason}`, "AbortError"));
     },
 
+    // 没有跨轮状态:每轮从界面历史构建请求。
+    async invalidate(): Promise<void> {},
+
     async dispose(): Promise<void> {
       for (const controller of running.values()) controller.abort();
       running.clear();

@@ -197,6 +197,7 @@ export function connectDriverOverStdio(
       "host.interaction.dismiss": (...args: Parameters<EngineHost["interaction"]["dismiss"]>) => host.interaction.dismiss(...args),
       "host.interaction.show": (...args: Parameters<EngineHost["interaction"]["show"]>) => host.interaction.show(...args),
       "host.steer.take": (...args: Parameters<EngineHost["steer"]["take"]>) => host.steer.take(...args),
+      "host.turn.request": (...args: Parameters<EngineHost["turn"]["request"]>) => host.turn.request(...args),
       "host.models.credential": (...args: Parameters<EngineHost["models"]["credential"]>) => host.models.credential(...args),
       "host.models.log": (...args: Parameters<EngineHost["models"]["log"]>) => host.models.log(...args),
       "host.report": (...args: Parameters<EngineHost["report"]>) => host.report(...args),
@@ -215,6 +216,9 @@ export function connectDriverOverStdio(
       ...(capabilities.nativeCompaction
         ? { compact: (req) => peer.request("driver.compact", [req]) as Promise<CompactResult> }
         : {}),
+      invalidate: async (conversationId) => {
+        await peer.request("driver.invalidate", [conversationId]);
+      },
       dispose: async () => {
         await peer.request("driver.dispose", []);
       },
@@ -257,6 +261,7 @@ export function serveDriverOverStdio(
         if (!current.compact) throw new Error(`引擎 ${current.kind} 未实现原生压缩`);
         return current.compact(...args);
       },
+      "driver.invalidate": (...args: Parameters<EngineDriver["invalidate"]>) => target().invalidate(...args),
       "driver.dispose": () => target().dispose(),
     },
     onProtocolError,
@@ -277,6 +282,7 @@ export function serveDriverOverStdio(
       show: (call) => peer.notify("host.interaction.show", [call]),
     },
     steer: { take: (turn) => peer.request("host.steer.take", [turn]) as Promise<string[]> },
+    turn: { request: (req) => peer.notify("host.turn.request", [req]) },
     models: {
       credential: (req) => peer.request("host.models.credential", [req]) as Promise<SubscriptionCredential>,
       log: (turn, record) => peer.notify("host.models.log", [turn, record]),

@@ -12,6 +12,10 @@
 // 资源(Codex WebSocket 连接等),落在已开始的新轮上会掐断它的在途连接。所以新一轮先等旧轮收尾
 // (应用接管时已先中止旧轮),最多等 PREVIOUS_RUN_GRACE_MS,防旧轮卡死拖住新轮。
 //
+// 长驻会话(P5.6):生成轮跨轮复用活的 pi 会话(session-host;复用判定在 runner)。会话删除时应用调
+// invalidate;手动压缩前先作废,压缩自己用一次性会话。引擎发起的轮次经 host.turn.request 请应用开轮,
+// 开轮时 TurnInput.trigger 带回请求 id。
+//
 // 压缩的摘要模型回退在这里做:摘要模型映射不进 pi 时改用会话模型,并经 host.report 上报
 // warn——公共压缩模型是偏好不是硬约束,压缩必须总能进行。
 
@@ -32,6 +36,7 @@ import { mapGrantToPi } from "./model-bridge";
 import type { PiPluginInteraction } from "./plugins/ui-bridge";
 import { createPiSessionResources } from "./resources";
 import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCompaction, runPiGeneration } from "./runner";
+import { createPiSessionHost } from "./session-host";
 
 const PI_CAPABILITIES: EngineCapabilities = {
   // 生成保持在跑,单个工具调用挂起等应用侧审批放行,不整批暂停重触发。
@@ -75,6 +80,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
   const running = new Map<string, AbortController>();
   /** 每会话最近一次运行的收尾(见头注「同会话串行」)。 */
   const lastRun = new Map<string, Promise<void>>();
+  const sessions = createPiSessionHost({ onTurnRequest: (req) => host.turn.request({ engine: "pi", ...req }) });
 
   /** 同会话已有登记时覆盖(旧轮已被应用中止);释放按控制器身份,旧轮收尾不会误删新登记。
    *  previous = 上一次运行的收尾,调用方在建 pi 会话之前等它。 */
@@ -119,17 +125,6 @@ export function createPiDriver(host: EngineHost): EngineDriver {
         const { cwd, root, shell } = input.workspace;
         await settledWithin(run.previous, PREVIOUS_RUN_GRACE_MS);
         const view = await host.session.load(turn);
-        const resources = await createPiSessionResources({
-          cwd,
-          root,
-          instructions: input.instructions,
-          plugins: input.plugins,
-          appToolNames: input.tools.map((tool) => tool.name),
-          // 插件工具由 pi 执行,执行前回应用审批(类别 plugin,来源带插件 id)。
-          approvePluginTool: ({ pluginId, ...call }) =>
-            host.permission.check({ ...turn, ...call, origin: { kind: "plugin", pluginId } }),
-          report,
-        });
         const result = await runPiGeneration({
           grant: input.model,
           credentialSource: credentialSourceFor(turn, input.model),
@@ -141,7 +136,21 @@ export function createPiDriver(host: EngineHost): EngineDriver {
           view,
           promptText: input.prompt.text,
           images: input.prompt.images,
-          resources,
+          // 资源只在新建会话时装配;指令或插件清单变了即重建(配置键)。
+          resources: (approvePluginTool) =>
+            createPiSessionResources({
+              cwd,
+              root,
+              instructions: input.instructions,
+              plugins: input.plugins,
+              appToolNames: input.tools.map((tool) => tool.name),
+              approvePluginTool,
+              report,
+            }),
+          sessions: { host: sessions, key: JSON.stringify({ instructions: input.instructions, plugins: input.plugins ?? [] }) },
+          ...(input.trigger ? { trigger: { requestId: input.trigger.requestId } } : {}),
+          // 插件工具由 pi 执行,执行前回应用审批(类别 plugin,来源带插件 id)。
+          approvePluginTool: ({ pluginId, ...call }) => host.permission.check({ ...turn, ...call, origin: { kind: "plugin", pluginId } }),
           // 工作区工具 = pi 内建工具 + 应用后端;执行前回应用审批(来源 engine,类别与对象来自 builtin-tools 的映射表)。
           workspaceTools: {
             root,
@@ -174,6 +183,8 @@ export function createPiDriver(host: EngineHost): EngineDriver {
         if (!req.workspace) throw new Error(MISSING_WORKSPACE);
         const { cwd, root } = req.workspace;
         await settledWithin(run.previous, PREVIOUS_RUN_GRACE_MS);
+        // 压缩用一次性会话;同一个 pi 会话 id 下不留长驻会话(压缩后视图也对不上它了)。
+        await sessions.invalidate(req.conversationId);
         const view = await host.session.load(turn);
         const resources = await createPiSessionResources({
           cwd,
@@ -213,9 +224,14 @@ export function createPiDriver(host: EngineHost): EngineDriver {
       }
     },
 
+    async invalidate(conversationId: string): Promise<void> {
+      await sessions.invalidate(conversationId);
+    },
+
     async dispose(): Promise<void> {
       for (const controller of running.values()) controller.abort();
       running.clear();
+      await sessions.dispose();
     },
   };
 }

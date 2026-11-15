@@ -12,7 +12,7 @@ import type { JsonValue, Message, Model, ToolPart } from "../foundation/types";
 import { message } from "../foundation/utils";
 import { effectiveEngineCompaction } from "../conversations/engine-compactions";
 import { sessionViewOf } from "../test-utils/engine-session-view";
-import { createPiSessionFromView } from "./session-view";
+import { createPiSessionFromView, injectSyntheticRows, planSyntheticRows } from "./session-view";
 
 const model = { modelId: "test-model", inputModalities: ["TEXT", "IMAGE"] } as unknown as Model;
 
@@ -23,7 +23,9 @@ function seed(history: Message[], compactions?: EngineCompactionRecord[], synthe
     view: sessionViewOf(history, { model, syntheticIds, compactions }),
     fallbackModelId: model.modelId,
   });
-  return { manager: result.manager, result, messages: result.manager.buildSessionContext().messages };
+  // 模型看到的上下文 = 会话条目 + 逐请求注入的合成行(runner 每次请求前同一函数插入)。
+  const plan = planSyntheticRows(result.manager, result.syntheticRows, (messageId) => result.entryIdsByMessageId.get(messageId));
+  return { manager: result.manager, result, messages: injectSyntheticRows(result.manager.buildSessionContext().messages, plan) };
 }
 
 function toolPart(partial: Partial<ToolPart> & Pick<ToolPart, "toolCallId" | "toolName">): ToolPart {
@@ -324,6 +326,8 @@ describe("DB→pi 编码器:P9 合成行灌注", () => {
     expect(flat).toContain("TOP_INJECTION");
     expect(flat).toContain("ASSISTANT_INJECTION");
     expect(flat).toContain("BOTTOM_INJECTION");
+    // 合成行逐请求注入,不进会话条目(会话跨轮复用时注入位置随对话变化不影响比对)。
+    expect(JSON.stringify(result.manager.getEntries())).not.toContain("_INJECTION");
     // 登记排除:切点映射只认真实行,退化名单不含合成行(legacy 是其设计路径)。
     expect([...result.entryIdsByMessageId.keys()]).toEqual([user2.id, asst2.id]);
     expect(result.degradedMessageIds).toEqual([asst2.id]);
