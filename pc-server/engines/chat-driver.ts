@@ -22,6 +22,8 @@ const CHAT_CAPABILITIES: EngineCapabilities = {
   // 不用工作区:工作区不可用(无工作区、缺根、未信任)的会话都由它兜底。
   workspace: "none",
   placement: "in-process-only",
+  // 只有应用的通用指令(注册表),没有引擎特色指令。
+  commands: false,
 };
 
 export function createChatDriver(): EngineDriver {

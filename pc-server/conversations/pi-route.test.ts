@@ -28,6 +28,7 @@ const jsonStore = await import("../persistence/json-store");
 const { model, provider } = await import("../model-providers");
 const { pendingToolApprovalCount } = await import("../inference-engine/approval-gate");
 const { handleConversationRoutes } = await import("../api/handlers/conversations");
+const { handleCommandRoutes } = await import("../api/handlers/commands");
 const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
 const { appendEngineEntries, engineVisibleDigest, loadEngineEntries, readEngineSessionHeader, writeEngineSessionHeader } = await import("./engine-entries");
 
@@ -361,6 +362,70 @@ describe("generateAnswer P3 路由", () => {
     const sent = JSON.stringify((server.requests[1] as { messages?: unknown }).messages ?? []);
     expect(sent.indexOf("第一轮回答")).toBeGreaterThan(-1);
     expect(sent.indexOf("后台任务完成")).toBeGreaterThan(sent.indexOf("第一轮回答"));
+    jsonStore.state.settings.devPiPluginPaths = [];
+  }, 30_000);
+
+  test("插件指令(P5.7):清单合并通用与插件指令;经 API 执行零模型请求,处理函数要的那一轮在指令结束后开;忙时 409", async () => {
+    const server = await installUpstream([{ content: "第一轮回答" }, { content: "指令要的回答" }]);
+    const pluginPath = join(process.env.RIKKAHUB_PC_DATA_DIR!, "cmd-plugin.js");
+    writeFileSync(
+      pluginPath,
+      `const log = (globalThis.__rkhRouteCommands ??= []);
+export default function (pi) {
+  pi.registerCommand("compact", { description: "按待办压缩", handler: async () => {} });
+  pi.registerCommand("model", { handler: async () => {} });
+  pi.registerCommand("todos", { handler: async (args) => { log.push(args); } });
+  pi.registerCommand("again", { handler: async () => {
+    pi.sendMessage({ customType: "todo-nudge", content: "继续处理待办", display: true }, { triggerTurn: true });
+  } });
+}
+`,
+    );
+    jsonStore.state.settings.devPiPluginPaths = [pluginPath];
+    const workspace = ws.createWorkspace({ type: "managed", name: "route-commands" });
+    const conversation = seedConversation(workspace.id);
+    await generateAnswer(conversation);
+    const nodesBefore = conversation.messages.length;
+
+    const listUrl = new URL(`http://localhost/api/commands?conversationId=${conversation.id}`);
+    const listed = (await (await handleCommandRoutes(new Request(listUrl), listUrl, "commands"))!.json()) as {
+      commands: Array<{ name: string; source: string; invocation: string; executionTarget: string; commandId?: string }>;
+    };
+    expect(listed.commands.map((command) => `${command.source} /${command.invocation}`)).toEqual([
+      "app /compact",
+      "plugin:dev:cmd-plugin /compact:cmd-plugin",
+      "plugin:dev:cmd-plugin /todos",
+      "plugin:dev:cmd-plugin /again",
+    ]);
+    const idOf = (name: string) => listed.commands.find((command) => command.source !== "app" && command.name === name)!.commandId!;
+
+    const runUrl = new URL("http://localhost/api/commands/run");
+    const run = (commandId: string, args?: string) =>
+      handleCommandRoutes(
+        new Request(runUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ conversationId: conversation.id, commandId, args }) }),
+        runUrl,
+        "commands/run",
+      );
+    const done = await run(idOf("todos"), "  本周 ");
+    expect(done?.status).toBe(200);
+    expect(await done?.json()).toEqual({ status: "done" });
+    expect((globalThis as Record<string, unknown>).__rkhRouteCommands).toEqual(["本周"]);
+    expect(server.requests).toHaveLength(1);
+    expect(conversation.messages).toHaveLength(nodesBefore);
+
+    // 处理函数要模型再答:指令结束后应用另起回答节点开轮,插件的消息进请求。
+    expect((await run(idOf("again")))?.status).toBe(200);
+    await waitUntil(() => server.requests.length === 2 && !generating.has(conversation.id));
+    expect(conversation.messages).toHaveLength(nodesBefore + 1);
+    expect(partsText(conversation)).toContain("指令要的回答");
+    expect(JSON.stringify((server.requests[1] as { messages?: unknown }).messages ?? [])).toContain("继续处理待办");
+
+    // 生成中不执行指令。
+    generating.set(conversation.id, new AbortController());
+    const busy = await run(idOf("todos"));
+    expect(busy?.status).toBe(409);
+    expect(await busy?.json()).toMatchObject({ errorCode: "command_busy" });
+    generating.delete(conversation.id);
     jsonStore.state.settings.devPiPluginPaths = [];
   }, 30_000);
 

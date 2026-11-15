@@ -5,6 +5,7 @@ import type { ApiMessage, Assistant, Conversation, JsonValue, Message, MessageNo
 import { bumpAnalyticsErrCount } from "../app-config/analytics";
 import type { GenerationEventSink, GenerationTarget, ToolExecutor } from "../inference-engine/events";
 import { id, isRecord, message, textFromParts } from "../foundation/utils";
+import { CodedError } from "../foundation/errors";
 import { classifyProxyError, resolveUserAgent } from "../foundation/net";
 import { classifyContextOverflowError, classifyOAuthCredentialError, classifyOutputCapError, classifyRateLimitError } from "../inference-engine/provider-errors";
 import { state } from "../persistence/json-store";
@@ -24,7 +25,7 @@ import { apiToolCallFromPart, toolExecutionErrorPayload, toolResultTextForApi } 
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
 import { resolveEngine, type EngineRoute } from "../engines";
 import { modelGrantFor } from "../engines/model-grant";
-import { appToolSpecsFor, createAppToolCaller, createToolPermissionChecker } from "../engines/app-tools";
+import { appToolSpecsFor, createAppToolCaller, createToolPermissionChecker, type AppToolsContext } from "../engines/app-tools";
 import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
 import { shellAvailability } from "../workspace/runtime";
@@ -33,11 +34,14 @@ import { enginePluginsFor } from "../engines/plugins";
 import { bindEngineTurn, setEngineTurnRequestHandler, type EngineTurnBinding } from "../engines/host";
 import { promptInputFromParts, userInputsFor } from "../inference-engine/prompt-input";
 import type {
+  AppToolSpec,
   CapturedEngineCompaction,
   CompactRequest,
   CompactResult,
+  EngineCommand,
   EngineDriver,
   EngineKind,
+  EngineSessionView,
   EngineTurnRequest,
   ModelGrant,
   TurnInput,
@@ -332,9 +336,12 @@ setOnQueuedGenerationDispatched((conversationId, item) => {
   if (item.waitingReply) queuedGenerationSource.set(conversationId, item.id);
 });
 
+/** 正在执行引擎特色指令的会话 → 执行期间引擎请求开的轮次(指令正常结束后按到达顺序处理)。 */
+const commandTurnRequests = new Map<string, EngineTurnRequest[]>();
+
 /** 引擎发起的轮次(host.turn.request)。插件以用户身份发的消息进发送队列,按普通轮次派发(空闲即发、
  *  忙时排队)。其余请求只在会话空闲时开轮:忙、压缩中、队列暂停或被打断冻结时不开,引擎把挂起的内容
- *  并进下一轮。会话已不归发起的引擎(切了工作区)时一律忽略。 */
+ *  并进下一轮;正在执行指令时先记下,指令结束后再判。会话已不归发起的引擎(切了工作区)时一律忽略。 */
 function handleEngineTurnRequest(req: EngineTurnRequest): void {
   const conversation = getConversation(req.conversationId);
   if (!conversation || resolveEngine(conversation).driver.kind !== req.engine) return;
@@ -342,6 +349,11 @@ function handleEngineTurnRequest(req: EngineTurnRequest): void {
     enqueueMessage(req.conversationId, [{ type: "text", text: req.prompt }]);
     broadcastQueueState(req.conversationId);
     dispatchMessageQueue(req.conversationId);
+    return;
+  }
+  const deferred = commandTurnRequests.get(req.conversationId);
+  if (deferred) {
+    deferred.push(req);
     return;
   }
   if (generating.has(req.conversationId) || compressing.has(req.conversationId)) return;
@@ -521,6 +533,60 @@ interface CompactionContext {
   customInstructions: string;
 }
 
+interface PortableCallDeps {
+  assistant: Assistant;
+  providerItem: Provider;
+  selectedModel: Model;
+}
+
+/** portable 驱动一次调用(生成 / 指令执行)除本轮输入之外的装配:会话视图、指令面、工具面、插件。指令执行与
+ *  紧接着的一轮生成用同一套输入,引擎才能接着用同一个长驻会话。excludeMessageId = 本轮 prompt 消息(不进历史)。 */
+function assemblePortableCall(
+  conversation: Conversation,
+  deps: PortableCallDeps,
+  route: EngineRoute,
+  toolContext: AppToolsContext,
+  excludeMessageId: string | undefined,
+): { base: Omit<TurnInput, "prompt" | "trigger">; view: EngineSessionView; tools: AppToolSpec[] } {
+  const { driver } = route;
+  // 四件套富化(P9 灌注统一):历史消息(不含本轮 prompt)经共享层裁决;压缩切点
+  // (effectiveEngineCompaction 单源判定)作为富化窗口锚——注入行/提醒恒在窗口内、恒在
+  // 切点之后:既进模型视野,又永不落进被摘要吸收的旧历史。富化全序列(含合成行)
+  // 进引擎,每轮从 DB 原文重新裁决,DB 零沉淀。
+  const historySource = selectedConversationMessages(conversation).filter((msg) => msg.id !== excludeMessageId);
+  const compactionRecords = parseEngineCompactions(conversation.engineCompactions);
+  const cut = effectiveEngineCompaction(compactionRecords, historySource, deps.selectedModel);
+  const enriched = enrichMessages(historySource, {
+    conversation,
+    assistant: deps.assistant,
+    model: deps.selectedModel,
+    windowStartMessageId: cut?.cutMessageId,
+  });
+  // 系统位注入(before/after_system_prompt)经 appendSystemPrompt 进引擎系统面——
+  // 与人设/记忆/搜索指引同一插槽。
+  const systemInjection = [enriched.systemInjectionBefore, enriched.systemInjectionAfter].filter(Boolean).join("\n");
+  const tools = appToolSpecsFor(toolContext);
+  const base = {
+    model: engineGrantFor(deps.providerItem, deps.selectedModel, deps.assistant, conversation.id),
+    // 思考强度与聊天引擎同源(助手设置),档位翻译归引擎。
+    reasoningLevel: deps.assistant.reasoningLevel,
+    workspace: engineWorkspaceFor(route),
+    instructions: buildEngineInstructions(conversation, deps.assistant, deps.selectedModel, systemInjection ? [systemInjection] : undefined),
+    plugins: enginePluginsFor(driver.kind, state.settings),
+    tools,
+  };
+  const view = buildEngineSessionView(getConversationsDb(), {
+    conversationId: conversation.id,
+    engine: driver.kind,
+    neutral: historySource,
+    enriched: enriched.messages,
+    syntheticIds: enriched.syntheticIds,
+    userInputs: userInputsFor(enriched.messages, deps.selectedModel),
+    compactions: compactionRecords,
+  });
+  return { base, view, tools };
+}
+
 /** portable 引擎(工作区会话)一轮生成的应用侧装配(P3 路由 + P4 资源统一 + P7 会话数据统一
  *  + P8/P9 注入面统一;P2.2 起组成契约 TurnInput 交给驱动)。输入是本轮的应用侧上下文 + 入口
  *  路由判定出的驱动与工作区运行时。
@@ -545,7 +611,7 @@ async function runPortableGeneration(
 ): Promise<string> {
   const { conversation, target } = ctx;
   const { driver } = route;
-  const deps = { assistant: ctx.assistant, providerItem: ctx.provider, selectedModel: ctx.model };
+  const deps: PortableCallDeps = { assistant: ctx.assistant, providerItem: ctx.provider, selectedModel: ctx.model };
   // 引擎发起的轮次没有本轮用户输入:历史就是整条选中路径,内容由引擎按请求 id 取回。
   const lastUserNode = ctx.engineTrigger
     ? undefined
@@ -564,56 +630,23 @@ async function runPortableGeneration(
     throw new Error("工作区会话缺少可发送的用户消息内容,无法驱动工作区引擎。");
   }
 
-  // 四件套富化(P9 灌注统一):历史消息(不含本轮 prompt)经共享层裁决;压缩切点
-  // (effectiveEngineCompaction 单源判定)作为富化窗口锚——注入行/提醒恒在窗口内、恒在
-  // 切点之后:既进模型视野,又永不落进被摘要吸收的旧历史。富化全序列(含合成行)
-  // 进引擎,每轮从 DB 原文重新裁决,DB 零沉淀。
-  const historySource = selectedConversationMessages(conversation).filter((msg) => msg.id !== promptMessage?.id);
-  const compactionRecords = parseEngineCompactions(conversation.engineCompactions);
-  const cut = effectiveEngineCompaction(compactionRecords, historySource, deps.selectedModel);
-  const enriched = enrichMessages(historySource, {
-    conversation,
-    assistant: deps.assistant,
-    model: deps.selectedModel,
-    windowStartMessageId: cut?.cutMessageId,
-  });
-
-  // 系统位注入(before/after_system_prompt)经 appendSystemPrompt 进引擎系统面——
-  // 与人设/记忆/搜索指引同一插槽。
-  const systemInjection = [enriched.systemInjectionBefore, enriched.systemInjectionAfter].filter(Boolean).join("\n");
-  const instructions = buildEngineInstructions(conversation, deps.assistant, deps.selectedModel, systemInjection ? [systemInjection] : undefined);
-
   // 问题4(2.0.0 内测):每轮生成前清扫工作区根的 Windows 保留设备名残留(nul 等)——
   // 兼作存量自愈:内测期已产生的残留在用户下次使用该工作区时自动消失。
   if (route.workspace) sweepWorkspaceReservedNameArtifacts(route.workspace.cwd);
 
   const toolContext = { conversation, assistant: deps.assistant, sink, target, model: deps.selectedModel, signal };
-  const tools = appToolSpecsFor(toolContext);
+  const { base, view, tools } = assemblePortableCall(conversation, deps, route, toolContext, promptMessage?.id);
   const turn: TurnRef = { conversationId: conversation.id, turnId: id() };
   const interaction = createEngineInteraction(conversation.id, sink, signal);
   const input: TurnInput = {
-    model: engineGrantFor(deps.providerItem, deps.selectedModel, deps.assistant, conversation.id),
-    // 思考强度与聊天引擎同源(助手设置),档位翻译归引擎。
-    reasoningLevel: deps.assistant.reasoningLevel,
-    workspace: engineWorkspaceFor(route),
-    instructions,
-    plugins: enginePluginsFor(driver.kind, state.settings),
+    ...base,
     prompt: promptInput,
-    tools,
     ...(ctx.engineTrigger ? { trigger: { kind: "engine" as const, requestId: ctx.engineTrigger.requestId } } : {}),
   };
   const binding: EngineTurnBinding = {
     sink,
     session: {
-      view: buildEngineSessionView(getConversationsDb(), {
-        conversationId: conversation.id,
-        engine: driver.kind,
-        neutral: historySource,
-        enriched: enriched.messages,
-        syntheticIds: enriched.syntheticIds,
-        userInputs: userInputsFor(enriched.messages, deps.selectedModel),
-        compactions: compactionRecords,
-      }),
+      view,
       // 锚定 = 调用时的落点(补发分裂后是续写消息),每次现读。
       append: (entries) => ctx.sessionWriter.append(target.message.id, entries),
     },
@@ -804,6 +837,93 @@ export async function compactEngineConversation(
     };
   } finally {
     broadcastEngineStatus(conversation.id, { busy: false });
+  }
+}
+
+// ---- 引擎特色指令(P5.7) ----
+
+/** 会话此刻的引擎特色指令(驱动没有这项能力、或工作区不可用时为空)。驱动出错只上报,指令面照常给通用指令。 */
+export async function listEngineCommands(conversation: Conversation): Promise<{ engine: EngineKind; commands: EngineCommand[] }> {
+  const route = resolveEngine(conversation);
+  const { driver } = route;
+  if (!driver.capabilities.commands || !driver.listCommands) return { engine: driver.kind, commands: [] };
+  try {
+    const commands = await driver.listCommands({
+      conversationId: conversation.id,
+      plugins: enginePluginsFor(driver.kind, state.settings),
+      workspace: engineWorkspaceFor(route),
+    });
+    return { engine: driver.kind, commands };
+  } catch (err) {
+    reportError("internal", "warn", `引擎 ${driver.kind} 的指令清单取不到`, err, "engine_commands_unavailable", { engine: driver.kind });
+    return { engine: driver.kind, commands: [] };
+  }
+}
+
+/** 执行一条引擎特色指令。指令不是一轮生成:不开回答节点、不进发送队列,但执行期间会话算「在生成」(与生成同一个
+ *  登记:停止键中止它,发送进队列,侧栏绿灯亮),处理函数里的对话框照常进「等待用户」。处理函数要模型再答一轮时
+ *  经 host.turn.request 回来,先记下,指令正常结束后再开轮;期间排队的消息随后照常派发。
+ *  生成或压缩进行中时以 command_busy 拒绝。 */
+export async function runEngineCommand(conversation: Conversation, commandId: string, args: string): Promise<void> {
+  if (generating.has(conversation.id) || compressing.has(conversation.id)) {
+    throw new CodedError("会话正在生成或压缩,稍后再执行指令", "command_busy");
+  }
+  const route = resolveEngine(conversation);
+  const { driver } = route;
+  if (!driver.capabilities.commands || !driver.runCommand) throw new Error(`引擎 ${driver.kind} 没有引擎特色指令`);
+  const runCommand = driver.runCommand.bind(driver);
+  const controller = new AbortController();
+  generating.set(conversation.id, controller);
+  commandTurnRequests.set(conversation.id, []);
+  checkoutConversation(conversation.id);
+  broadcastList();
+  broadcastConversation(conversation);
+  const { signal } = controller;
+  const interaction = createEngineInteraction(conversation.id, (event) => {
+    if (event.kind === "engine_status") broadcastEngineStatus(conversation.id, event.status);
+  }, signal);
+  let completed = false;
+  try {
+    const assistant = findAssistant(conversation.assistantId);
+    const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
+    const deps: PortableCallDeps = { assistant, providerItem: picked.provider, selectedModel: picked.model };
+    const sink: GenerationEventSink = (event) => {
+      if (event.kind === "engine_status") broadcastEngineStatus(conversation.id, event.status);
+    };
+    const toolContext: AppToolsContext = { conversation, assistant, sink, model: picked.model, signal };
+    // 工具面照常给(与生成同一套输入,引擎才接着用同一个会话),但不接调用与审批:指令的处理函数调不到工具,
+    // 工具只在随后的模型轮次里跑;万一有调用,以错误拒绝而不是挂一张没有卡片可点的审批。
+    const { base, view } = assemblePortableCall(conversation, deps, route, toolContext, undefined);
+    const turn: TurnRef = { conversationId: conversation.id, turnId: id() };
+    const db = getConversationsDb();
+    const binding: EngineTurnBinding = {
+      sink,
+      // 指令里追加的原生条目(插件的状态条目、压缩)锚定到调用时的尾消息并当场封存——指令不改消息内容。
+      session: { view, append: (entries) => appendCompactionEntries(db, conversation.id, driver.kind, selectedConversationMessages(conversation).at(-1), entries) },
+      interaction: interaction.interaction,
+      providers: [picked.provider],
+    };
+    const result = await callEngineDriver(driver, turn, binding, signal, "Command cancelled", () =>
+      runCommand({ ...turn, input: { ...base, prompt: { text: "", images: [] } }, commandId, args }),
+    );
+    applyCapturedEngineCompactions(conversation, result.compactions);
+    completed = true;
+  } finally {
+    interaction.close();
+    clearToolApprovalWaiters(conversation.id);
+    awaitingApproval.delete(conversation.id);
+    broadcastEngineStatus(conversation.id, { busy: false });
+    // 执行期间进 steering 通道的补发不注入随后开的轮次(队列里还有同一条,收尾派发)。
+    clearSteeringChannel(conversation.id);
+    const deferred = commandTurnRequests.get(conversation.id) ?? [];
+    commandTurnRequests.delete(conversation.id);
+    const owned = generating.get(conversation.id) === controller;
+    completeConversationGeneration(conversation.id, controller);
+    if (conversationStillExists(conversation.id)) broadcastConversation(conversation);
+    releaseConversation(conversation.id);
+    // 被停止、接管或删除时不开插件要的轮次(挂起的内容由引擎并进下一轮)。
+    if (completed && owned) for (const req of deferred) handleEngineTurnRequest(req);
+    if (owned) dispatchMessageQueue(conversation.id);
   }
 }
 

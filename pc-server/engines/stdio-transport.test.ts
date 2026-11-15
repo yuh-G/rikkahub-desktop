@@ -41,7 +41,7 @@ function wire(createDriver: (host: EngineHost) => EngineDriver, host: Partial<En
 function baseDriver(host: EngineHost, overrides: Partial<EngineDriver> = {}): EngineDriver {
   return {
     kind: "fake",
-    capabilities: { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, workspace: "none", placement: "portable" },
+    capabilities: { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, workspace: "none", placement: "portable", commands: false },
     startTurn: async () => ({ text: "", stopReason: null, compactions: [] }),
     abort: async () => {},
     invalidate: async () => {},
@@ -92,6 +92,25 @@ describe("stdio 传输", () => {
     const coded = await driver.startTurn(turn).catch((err) => err);
     expect(coded).toBeInstanceOf(CodedError);
     expect(coded.errorCode).toBe("compact_context_too_short");
+  });
+
+  test("指令(P5.7):声明 commands 才有 listCommands / runCommand 代理,调用跨通道往返", async () => {
+    const plain = await wire((host) => baseDriver(host)).app.ready;
+    expect(plain.listCommands).toBeUndefined();
+    expect(plain.runCommand).toBeUndefined();
+    const { app } = wire((host) =>
+      baseDriver(host, {
+        capabilities: { ...baseDriver(host).capabilities, commands: true },
+        listCommands: async (req) => [{ id: "c1", name: "todos", source: "plugin:dev:todo", description: req.conversationId }],
+        runCommand: async (req) => ({ compactions: [{ cutMessageId: null, summary: `ran ${req.commandId} ${req.args}`, tokensBefore: 1 }] }),
+      }),
+    );
+    const driver = await app.ready;
+    expect(await driver.listCommands!({ conversationId: "conv-stdio", plugins: [], workspace: null })).toEqual([
+      { id: "c1", name: "todos", source: "plugin:dev:todo", description: "conv-stdio" },
+    ]);
+    const input = { model: {} as never, reasoningLevel: null, workspace: null, instructions: { appendSystemPrompt: [], globalAgentsFile: null, skills: { dir: "", enabled: [] } }, plugins: [], prompt: { text: "", images: [] }, tools: [] };
+    expect((await driver.runCommand!({ ...turn, input, commandId: "c1", args: "x" })).compactions[0]!.summary).toBe("ran c1 x");
   });
 
   test("不可序列化的载荷在发出端失败(不让 JSON 静默丢字段)", async () => {

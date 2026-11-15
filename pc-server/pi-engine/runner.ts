@@ -65,7 +65,8 @@ import { createPiAppTools, type PiAppToolCaller } from "./app-tools";
 import { createPiBuiltinTools, excludedPiBuiltinToolNames, type PiBuiltinToolApprover } from "./builtin-tools";
 import { assertPiToolsGated } from "./tool-gate";
 import { bindPiPluginSession, type PiPluginSessionBinding } from "./plugins/session-binding";
-import type { PiPluginToolApprover } from "./plugins/arbiter";
+import { runAsPiPlugin, type PiPluginToolApprover } from "./plugins/arbiter";
+import { findPiPluginCommand } from "./plugins/commands";
 import type { PiPluginInteraction } from "./plugins/ui-bridge";
 import {
   EMPTY_SYNTHETIC_PLAN,
@@ -144,6 +145,9 @@ export interface PiGenerationContext {
   /** 应用响应 host.turn.request 开的轮次:本轮跑插件挂起的那条消息,promptText 不用。 */
   trigger?: { requestId: string };
 }
+
+/** 建会话 / 判定复用要用的输入(生成与指令执行共用;本轮输入、补发、开轮请求只属于生成)。 */
+export type PiSessionInputs = Omit<PiGenerationContext, "promptText" | "images" | "trigger" | "onSteerBoundary">;
 
 export interface PiGenerationResult {
   /** 全程 assistant 可见文本(镜像聊天引擎 allContent 口径:trim,空则占位)。 */
@@ -226,7 +230,7 @@ function entrySyncFor(
 }
 
 /** 复用判定的配置键:建会话时定下、之后不再读的输入,任何一项变了都重建。只留摘要(授权里有密钥)。 */
-function configKeyOf(ctx: PiGenerationContext, extra: string): string {
+function configKeyOf(ctx: PiSessionInputs, extra: string): string {
   const material = JSON.stringify({
     grant: ctx.grant,
     reasoningLevel: ctx.reasoningLevel ?? null,
@@ -248,7 +252,7 @@ const unwired = (what: string) => Promise.reject(new Error(`${what}通道未接�
 
 /** 新建会话。每轮变化的接线都委托到 routes(见 session-host 头注)。 */
 async function buildLiveSession(
-  ctx: PiGenerationContext,
+  ctx: PiSessionInputs,
   manager: SessionManager,
   configKey: string | undefined,
   routes: PiTurnRoutes,
@@ -301,7 +305,7 @@ async function buildLiveSession(
   // 工作区工具与应用工具的 details 都是我们打的标记;其余(插件工具)只按 content 映射。
   const markedToolNames = new Set([...builtinTools, ...(ctx.tools ?? [])].map((tool) => tool.name));
   const live = createPiLiveSession(
-    { conversationId: ctx.conversationId, configKey, session, manager, runtime, model, markedToolNames, routes },
+    { conversationId: ctx.conversationId, configKey, session, manager, runtime, model, markedToolNames, pluginEntries: resources?.plugins ?? [], routes },
     ctx.sessions?.host,
   );
   try {
@@ -326,7 +330,7 @@ async function buildLiveSession(
 /** 接着用活会话:配置键相同,且活会话与本轮视图重建出的会话模型可见内容逐条相同。返回本轮的消息 id →
  *  活会话条目 id;不能接着用时关掉它。 */
 async function reuseLiveSession(
-  ctx: PiGenerationContext,
+  ctx: PiSessionInputs,
   seeded: PiSessionFromView,
   configKey: string | undefined,
 ): Promise<{ live: PiLiveSession; entryIdsByMessageId: Map<string, string[]> } | undefined> {
@@ -349,16 +353,26 @@ async function reuseLiveSession(
   return { live, entryIdsByMessageId };
 }
 
-export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
-  if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
-  // 每轮由会话视图重建一份 inMemory 会话(零文件):新建时直接用它,有活会话时拿它比对。
+/** 一次调用取到的会话:接着用的活会话,或按本次视图新建的。 */
+interface AcquiredPiSession {
+  live: PiLiveSession;
+  manager: SessionManager;
+  seeded: PiSessionFromView;
+  entryIdsByMessageId: Map<string, string[]>;
+  /** 本次调用开始前已有的条目(压缩捕获据此认新条目)。 */
+  seededEntryIds: Set<string>;
+  entrySync: PiEntrySync | undefined;
+}
+
+/** 由会话视图重建一份 inMemory 会话(零文件):新建时直接用它,有活会话时拿它比对。接线装进 routes,
+ *  合成行计划随之定下。check 在复用判定之前调用(它失败时活会话不受影响)。 */
+async function acquirePiSession(ctx: PiSessionInputs, check?: () => void): Promise<AcquiredPiSession> {
   const seeded = createPiSessionFromView({
     cwd: ctx.cwd,
     conversationId: ctx.conversationId,
     view: ctx.view,
     fallbackModelId: ctx.grant.modelId,
   });
-  const sessions = ctx.sessions?.host;
   const configKey = ctx.sessions ? configKeyOf(ctx, ctx.sessions.key) : undefined;
   const routes: PiTurnRoutes = {
     credentialSource: ctx.credentialSource,
@@ -368,8 +382,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     callTool: ctx.callTool,
     interaction: ctx.interaction,
   };
-  const triggered = ctx.trigger ? sessions?.takePendingTurn(ctx.conversationId, ctx.trigger.requestId) : undefined;
-  if (ctx.trigger && !triggered) throw new Error("插件请求的这一轮已失效(会话已被回收或删除)");
+  check?.();
   const reused = await reuseLiveSession(ctx, seeded, configKey);
   const manager = reused?.live.manager ?? seeded.manager;
   const entryIdsByMessageId = reused?.entryIdsByMessageId ?? seeded.entryIdsByMessageId;
@@ -383,16 +396,40 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   } else {
     live = await buildLiveSession(ctx, manager, configKey, routes);
   }
-  const { session } = live;
   live.synthetic = planSyntheticRows(manager, seeded.syntheticRows, (messageId) => entryIdsByMessageId.get(messageId));
+  return { live, manager, seeded, entryIdsByMessageId, seededEntryIds, entrySync };
+}
+
+/** 调用收尾:清掉本次接线;没有会话宿主或本次不健康时关掉会话,否则交还复用。 */
+async function releasePiSession(ctx: PiSessionInputs, acquired: AcquiredPiSession, healthy: boolean): Promise<void> {
+  const { live, entrySync } = acquired;
+  const sessions = ctx.sessions?.host;
+  live.synthetic = EMPTY_SYNTHETIC_PLAN;
+  clearTurnRoutes(live.routes);
+  if (!sessions || !healthy) await live.close();
+  // 收尾前最后一批(含中止、失败的轮次;它们不会被封存,装载时作废)。
+  await entrySync?.flush();
+  live.lastSync = entrySync;
+  if (sessions && healthy) await sessions.checkin(live);
+}
+
+/** 流式增量之外的每个事件都是对账点。message_end 的落库在事件派发之后,那一条由下一个事件交出。 */
+const isReconcilePoint = (type: string) => type !== "message_update" && type !== "tool_execution_update" && type !== "bash_execution_update";
+
+export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
+  if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
+  const sessions = ctx.sessions?.host;
+  const triggered = ctx.trigger ? sessions?.takePendingTurn(ctx.conversationId, ctx.trigger.requestId) : undefined;
+  const acquired = await acquirePiSession(ctx, () => {
+    if (ctx.trigger && !triggered) throw new Error("插件请求的这一轮已失效(会话已被回收或删除)");
+  });
+  const { live, manager, seeded, entryIdsByMessageId, seededEntryIds, entrySync } = acquired;
+  const { session } = live;
 
   const bridge = createPiEventBridge({ report: ctx.report, appToolNames: live.markedToolNames });
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
-    // 流式增量之外的每个事件都是对账点。message_end 的落库在事件派发之后,那一条由下一个事件交出。
-    if (event.type !== "message_update" && event.type !== "tool_execution_update" && event.type !== "bash_execution_update") {
-      void entrySync?.flush();
-    }
+    if (isReconcilePoint(event.type)) void entrySync?.flush();
   });
   // steering 轮边界(用户问题②):turn_end = 当前 assistant 消息结束、其工具批已执行完。
   // 挂在 agent 级监听器上而不是 session.subscribe:Agent.processEvents 逐个 await agent 级
@@ -426,6 +463,7 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   };
   ctx.signal?.addEventListener("abort", onAbort, { once: true });
   let healthy = false;
+  live.turnActive = true;
   try {
     // 应用没为它们开轮的挂起消息并进本轮(pi 的 nextTurn:随本轮起始消息一起进上下文)。
     for (const pending of sessions?.drainPendingTurns(ctx.conversationId) ?? []) {
@@ -445,16 +483,11 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     );
     healthy = true;
   } finally {
+    live.turnActive = false;
     ctx.signal?.removeEventListener("abort", onAbort);
     unsubscribeSteer?.();
     unsubscribe();
-    live.synthetic = EMPTY_SYNTHETIC_PLAN;
-    clearTurnRoutes(live.routes);
-    if (!sessions || !healthy) await live.close();
-    // 轮末对账:收尾前最后一批(含中止、失败的轮次;它们不会被封存,装载时作废)。
-    await entrySync?.flush();
-    live.lastSync = entrySync;
-    if (sessions && healthy) await sessions.checkin(live);
+    await releasePiSession(ctx, acquired, healthy);
   }
 
   const capturedCompactions = captureRoundCompactions(manager, seededEntryIds, entryIdsByMessageId);
@@ -471,6 +504,65 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     stopReason: outcome.stopReason,
     capturedCompactions,
   };
+}
+
+// ===== P5.7:插件指令 =====
+
+export interface PiCommandContext extends PiSessionInputs {
+  /** plugins/commands 的 piCommandId。 */
+  commandId: string;
+  args: string;
+}
+
+export interface PiCommandResult {
+  /** 处理函数里 ctx.compact() 产生的压缩(切点映射同生成路径)。 */
+  capturedCompactions: CapturedEngineCompaction[];
+}
+
+/** 在长驻会话上执行一条插件指令:与生成同一套取会话 / 复用判定 / 接线,但不 prompt——处理函数自己决定做什么。
+ *  它要模型再答一轮(sendMessage 带 triggerTurn、sendUserMessage)时经会话宿主变成开轮请求(在应用的轮次之外);
+ *  它调 ctx.compact() 时等压缩做完再返回。处理函数抛错以错误拒绝(错误文本带插件 id),会话照常留着复用。 */
+export async function runPiCommand(ctx: PiCommandContext): Promise<PiCommandResult> {
+  if (ctx.signal?.aborted) throw new DOMException("Command cancelled", "AbortError");
+  const acquired = await acquirePiSession(ctx);
+  const { live, manager, entryIdsByMessageId, seededEntryIds, entrySync } = acquired;
+  const { session } = live;
+  // 引擎状态(压缩中等)照常经桥上报;指令不产生回答内容,其余事件丢弃。
+  const bridge = createPiEventBridge({ report: ctx.report, appToolNames: live.markedToolNames });
+  const unsubscribe = session.subscribe((event) => {
+    for (const generationEvent of bridge.handle(event)) if (generationEvent.kind === "engine_status") ctx.sink(generationEvent);
+    if (isReconcilePoint(event.type)) void entrySync?.flush();
+  });
+  const onAbort = () => {
+    void session.abort();
+  };
+  ctx.signal?.addEventListener("abort", onAbort, { once: true });
+  let healthy = false;
+  let failure: Error | undefined;
+  try {
+    const found = findPiPluginCommand(session.resourceLoader.getExtensions().extensions, live.pluginEntries, ctx.commandId);
+    if (!found) throw new Error("该指令已不可用(插件已卸载或停用)");
+    const { pluginId, command } = found;
+    await runWithGoogleRequestLog(googleRequestLogContextFor(live.model.api, ctx.grant, ctx.requestLog), async () => {
+      try {
+        await runAsPiPlugin(pluginId, () => command.handler(ctx.args, session.extensionRunner.createCommandContext()));
+      } catch (err) {
+        failure = new Error(`插件 ${pluginId} 的指令 /${command.name} 出错:${err instanceof Error ? err.message : String(err)}`);
+      }
+      // ctx.compact() 不等完成就返回,而且压缩要过几个微任务才把会话标成「不空闲」:先让出一次,再等它(以及
+      // 处理函数留下的其它运行)做完,压缩条目才能交出。
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await session.waitForIdle();
+    });
+    if (ctx.signal?.aborted) throw new DOMException("Command cancelled", "AbortError");
+    healthy = true;
+  } finally {
+    ctx.signal?.removeEventListener("abort", onAbort);
+    unsubscribe();
+    await releasePiSession(ctx, acquired, healthy);
+  }
+  if (failure) throw failure;
+  return { capturedCompactions: captureRoundCompactions(manager, seededEntryIds, entryIdsByMessageId) };
 }
 
 // ===== P5:pi 原生手动压缩(P7:压缩记录以会话行为事实源) =====

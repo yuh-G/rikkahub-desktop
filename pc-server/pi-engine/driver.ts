@@ -16,17 +16,23 @@
 // invalidate;手动压缩前先作废,压缩自己用一次性会话。引擎发起的轮次经 host.turn.request 请应用开轮,
 // 开轮时 TurnInput.trigger 带回请求 id。
 //
+// 指令(P5.7):listCommands 读活会话的插件登记表,没有活会话时由 plugins/commands 单独加载一次插件(缓存)。
+// runCommand 与生成同一套会话装配(同会话串行、长驻会话复用判定),在会话上直接调插件的处理函数,不开模型轮次。
+//
 // 压缩的摘要模型回退在这里做:摘要模型映射不进 pi 时改用会话模型,并经 host.report 上报
 // warn——公共压缩模型是偏好不是硬约束,压缩必须总能进行。
 
 import type {
+  CommandRunResult,
   CompactRequest,
   CompactResult,
   EngineCapabilities,
   EngineDriver,
   EngineErrorReport,
   EngineHost,
+  EngineSessionView,
   ModelGrant,
+  TurnInput,
   TurnRef,
   TurnRequest,
   TurnResult,
@@ -34,8 +40,9 @@ import type {
 import { bindPiAgentDir } from "./agent-dir";
 import { mapGrantToPi } from "./model-bridge";
 import type { PiPluginInteraction } from "./plugins/ui-bridge";
+import { createPiCommandCatalog } from "./plugins/commands";
 import { createPiSessionResources } from "./resources";
-import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCompaction, runPiGeneration } from "./runner";
+import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCommand, runPiCompaction, runPiGeneration, type PiSessionInputs } from "./runner";
 import { createPiSessionHost } from "./session-host";
 
 const PI_CAPABILITIES: EngineCapabilities = {
@@ -48,6 +55,8 @@ const PI_CAPABILITIES: EngineCapabilities = {
   // 工作区引擎:请求必带 cwd/root(缺则以错误拒绝)。
   workspace: "required",
   placement: "portable",
+  // 插件登记的指令(裁决层已拿掉入口类名字);pi 自带的指令名归应用或不在本应用里出现,不列。
+  commands: true,
 };
 
 const MISSING_WORKSPACE = "pi 引擎被选中但请求未带工作区(路由判定与执行不一致)。";
@@ -81,6 +90,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
   /** 每会话最近一次运行的收尾(见头注「同会话串行」)。 */
   const lastRun = new Map<string, Promise<void>>();
   const sessions = createPiSessionHost({ onTurnRequest: (req) => host.turn.request({ engine: "pi", ...req }) });
+  const commandCatalog = createPiCommandCatalog();
 
   /** 同会话已有登记时覆盖(旧轮已被应用中止);释放按控制器身份,旧轮收尾不会误删新登记。
    *  previous = 上一次运行的收尾,调用方在建 pi 会话之前等它。 */
@@ -111,6 +121,48 @@ export function createPiDriver(host: EngineHost): EngineDriver {
     show: (call) => host.interaction.show({ ...turn, ...call }),
   });
 
+  /** 一次调用(生成 / 指令执行)的会话装配输入,全部来自契约。 */
+  function sessionInputsFor(turn: TurnRef, input: TurnInput, view: EngineSessionView, signal: AbortSignal): PiSessionInputs {
+    const { cwd, root, shell } = input.workspace!;
+    return {
+      grant: input.model,
+      credentialSource: credentialSourceFor(turn, input.model),
+      requestLog: (record) => host.models.log(turn, record),
+      // 思考强度与聊天引擎同源(助手设置);pi 档位翻译见 model-bridge piThinkingLevelFor。
+      reasoningLevel: input.reasoningLevel,
+      conversationId: turn.conversationId,
+      cwd,
+      view,
+      // 资源只在新建会话时装配;指令或插件清单变了即重建(配置键)。
+      resources: (approvePluginTool) =>
+        createPiSessionResources({
+          cwd,
+          root,
+          instructions: input.instructions,
+          plugins: input.plugins,
+          appToolNames: input.tools.map((tool) => tool.name),
+          approvePluginTool,
+          report,
+        }),
+      sessions: { host: sessions, key: JSON.stringify({ instructions: input.instructions, plugins: input.plugins ?? [] }) },
+      // 插件工具由 pi 执行,执行前回应用审批(类别 plugin,来源带插件 id)。
+      approvePluginTool: ({ pluginId, ...call }) => host.permission.check({ ...turn, ...call, origin: { kind: "plugin", pluginId } }),
+      // 工作区工具 = pi 内建工具 + 应用后端;执行前回应用审批(来源 engine,类别与对象来自 builtin-tools 的映射表)。
+      workspaceTools: {
+        root,
+        ...(shell ? { shell } : {}),
+        approve: (req) => host.permission.check({ ...turn, ...req, origin: { kind: "engine" } }),
+      },
+      tools: input.tools,
+      callTool: (call) => host.tools.call({ ...turn, ...call }),
+      report,
+      interaction: interactionFor(turn),
+      appendEntries: (entries) => host.session.append(turn, entries),
+      sink: (event) => host.emit(turn, event),
+      signal,
+    };
+  }
+
   return {
     kind: "pi",
     capabilities: PI_CAPABILITIES,
@@ -122,48 +174,13 @@ export function createPiDriver(host: EngineHost): EngineDriver {
         const input = req.input;
         if (!input) throw new Error("pi 驱动缺少 TurnInput(portable 驱动必须收完整输入)。");
         if (!input.workspace) throw new Error(MISSING_WORKSPACE);
-        const { cwd, root, shell } = input.workspace;
         await settledWithin(run.previous, PREVIOUS_RUN_GRACE_MS);
         const view = await host.session.load(turn);
         const result = await runPiGeneration({
-          grant: input.model,
-          credentialSource: credentialSourceFor(turn, input.model),
-          requestLog: (record) => host.models.log(turn, record),
-          // 思考强度与聊天引擎同源(助手设置);pi 档位翻译见 model-bridge piThinkingLevelFor。
-          reasoningLevel: input.reasoningLevel,
-          conversationId: req.conversationId,
-          cwd,
-          view,
+          ...sessionInputsFor(turn, input, view, run.signal),
           promptText: input.prompt.text,
           images: input.prompt.images,
-          // 资源只在新建会话时装配;指令或插件清单变了即重建(配置键)。
-          resources: (approvePluginTool) =>
-            createPiSessionResources({
-              cwd,
-              root,
-              instructions: input.instructions,
-              plugins: input.plugins,
-              appToolNames: input.tools.map((tool) => tool.name),
-              approvePluginTool,
-              report,
-            }),
-          sessions: { host: sessions, key: JSON.stringify({ instructions: input.instructions, plugins: input.plugins ?? [] }) },
           ...(input.trigger ? { trigger: { requestId: input.trigger.requestId } } : {}),
-          // 插件工具由 pi 执行,执行前回应用审批(类别 plugin,来源带插件 id)。
-          approvePluginTool: ({ pluginId, ...call }) => host.permission.check({ ...turn, ...call, origin: { kind: "plugin", pluginId } }),
-          // 工作区工具 = pi 内建工具 + 应用后端;执行前回应用审批(来源 engine,类别与对象来自 builtin-tools 的映射表)。
-          workspaceTools: {
-            root,
-            ...(shell ? { shell } : {}),
-            approve: (req) => host.permission.check({ ...turn, ...req, origin: { kind: "engine" } }),
-          },
-          tools: input.tools,
-          callTool: (call) => host.tools.call({ ...turn, ...call }),
-          report,
-          interaction: interactionFor(turn),
-          appendEntries: (entries) => host.session.append(turn, entries),
-          sink: (event) => host.emit(turn, event),
-          signal: run.signal,
           onSteerBoundary: () => host.steer.take(turn),
         });
         return { text: result.text, stopReason: result.stopReason, compactions: result.capturedCompactions };
@@ -228,9 +245,34 @@ export function createPiDriver(host: EngineHost): EngineDriver {
       await sessions.invalidate(conversationId);
     },
 
+    async listCommands(req) {
+      if (!req.workspace) return [];
+      const live = sessions.peek(req.conversationId);
+      return commandCatalog.list(
+        req.plugins,
+        req.workspace.cwd,
+        live ? { extensions: live.session.resourceLoader.getExtensions().extensions, entries: live.pluginEntries } : undefined,
+      );
+    },
+
+    async runCommand(req): Promise<CommandRunResult> {
+      const turn: TurnRef = { conversationId: req.conversationId, turnId: req.turnId };
+      const run = register(req.conversationId);
+      try {
+        if (!req.input.workspace) throw new Error(MISSING_WORKSPACE);
+        await settledWithin(run.previous, PREVIOUS_RUN_GRACE_MS);
+        const view = await host.session.load(turn);
+        const result = await runPiCommand({ ...sessionInputsFor(turn, req.input, view, run.signal), commandId: req.commandId, args: req.args });
+        return { compactions: result.capturedCompactions };
+      } finally {
+        run.release();
+      }
+    },
+
     async dispose(): Promise<void> {
       for (const controller of running.values()) controller.abort();
       running.clear();
+      commandCatalog.clear();
       await sessions.dispose();
     },
   };

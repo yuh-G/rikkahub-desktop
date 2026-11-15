@@ -9,11 +9,13 @@
 // 不给(测试)则插件看到的是 pi 的空界面。
 // 裁决层的运行期部分(P5.3)也在这里装:会话建好后、session_start 之前覆盖保留域入口,session_start 之后
 // 补裁插件在其中补登记的钩子与指令。
+// 插件指令(P5.7)上下文里的会话管理动作(新建 / 分叉 / 树导航 / 切换会话 / 重载)归应用:一律按「取消」回答并记
+// 审计(pi 不绑时的默认实现是什么都不做却回答「没取消」,插件会以为成功了)。waitForIdle 等会话真正空闲。
 
 import type { AgentSession } from "../../../pi/packages/coding-agent/src/core/agent-session.ts";
 import { emitSessionShutdownEvent } from "../../../pi/packages/coding-agent/src/core/extensions/runner.ts";
 import type { EngineErrorReport } from "../../engines/contract";
-import { arbitrateLatePiRegistrations, guardPiPluginDialogs, guardPiPluginRuntime, type PiPluginPolicy } from "./arbiter";
+import { activePiPluginId, arbitrateLatePiRegistrations, guardPiPluginDialogs, guardPiPluginRuntime, type PiPluginPolicy } from "./arbiter";
 import { pluginIdForExtensionPath, type PiPluginEntry } from "./entries";
 import { createPiPluginUi, type PiPluginInteraction } from "./ui-bridge";
 
@@ -37,9 +39,22 @@ export async function bindPiPluginSession(
   const ui = interaction
     ? guardPiPluginDialogs(createPiPluginUi(interaction, { pluginIds: plugins.map((entry) => entry.pluginId), report }))
     : undefined;
+  const refused = (subject: string) => policy?.onAudit({ pluginId: activePiPluginId() ?? "", action: "removed", subject });
+  const cancelled = (subject: string) => async () => {
+    refused(subject);
+    return { cancelled: true };
+  };
   await session.bindExtensions({
     ...(ui ? { uiContext: ui } : {}),
     mode: "rpc",
+    commandContextActions: {
+      waitForIdle: () => session.waitForIdle(),
+      newSession: cancelled("new-session"),
+      fork: cancelled("fork"),
+      navigateTree: cancelled("navigate-tree"),
+      switchSession: cancelled("switch-session"),
+      reload: async () => refused("reload"),
+    },
     // 插件处理函数抛错不中断会话(pi 已捕获),只把它记进错误中心,署插件 id。
     onError: (error) => {
       const pluginId = pluginIdForExtensionPath(plugins, error.extensionPath) ?? error.extensionPath;

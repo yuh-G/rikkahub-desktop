@@ -2,6 +2,7 @@
 //
 // 可用性由服务端权威判定(GET /api/commands,引擎路由材料在服务端;方案 §3.3),
 // 前端只消费。切会话自动重取;取失败按空清单处理(指令面整体关闭,不打扰输入)。
+// 引擎特色指令(插件指令,P5.7)的分组显示与执行随 P6.4 落地,在那之前只取应用的通用指令。
 
 import * as React from "react";
 
@@ -22,7 +23,7 @@ export function useAvailableCommands(conversationId: string | null): SlashComman
     api
       .get<{ commands?: SlashCommandDto[] }>(`commands?conversationId=${encodeURIComponent(conversationId)}`)
       .then((result) => {
-        if (!cancelled) setCommands(result.commands ?? EMPTY);
+        if (!cancelled) setCommands((result.commands ?? EMPTY).filter((command) => command.source === "app"));
       })
       .catch(() => {
         if (!cancelled) setCommands(EMPTY);

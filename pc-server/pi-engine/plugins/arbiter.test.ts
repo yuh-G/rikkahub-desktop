@@ -1,6 +1,6 @@
 // pi-engine/plugins/arbiter.test.ts — 插件裁决层(P5.3,方案 §5.5「P5.0 定稿」)
 //
-// 锁定:①加载期——保留域登记被拿掉(供应商 / 虚拟模型 / MCP / 保留事件 / pi 内建指令名),与应用工具、pi 内建工具
+// 锁定:①加载期——保留域登记被拿掉(供应商 / 虚拟模型 / MCP / 保留事件 / 入口类指令名;能力类指令名放开),与应用工具、pi 内建工具
 // 同名或以 mcp__ 开头的工具被拿掉,终端界面类登记记「不支持」,每一项都有署名审计;②运行期——会话建好后插件再调
 // 保留域入口同样落空并记审计,setModel 返回 false;③tool_call 行为裁决(E17 三种情形):处理期间弹对话框 → 对话框
 // 不显示、这次裁决(含对入参的改写)作废;旁观的处理函数不受影响;没弹窗的否决生效并署插件 id;缓存的会话级界面
@@ -19,7 +19,15 @@ import { sessionViewOf } from "../../test-utils/engine-session-view";
 import { startFakeOpenAiSse, type FakeOpenAiSseServer } from "../../test-utils/fake-openai-sse";
 import { createPiSessionResources } from "../resources";
 import { runPiGeneration } from "../runner";
-import { arbitratePiExtensions, guardPiPluginDialogs, type PiPluginAuditRecord, type PiPluginPolicy } from "./arbiter";
+import { BUILTIN_SLASH_COMMANDS } from "../../../pi/packages/coding-agent/src/core/slash-commands.ts";
+import {
+  arbitratePiExtensions,
+  guardPiPluginDialogs,
+  PI_RELEASED_COMMANDS,
+  PI_RESERVED_COMMANDS,
+  type PiPluginAuditRecord,
+  type PiPluginPolicy,
+} from "./arbiter";
 
 const servers: FakeOpenAiSseServer[] = [];
 afterAll(async () => {
@@ -59,7 +67,7 @@ export default function (pi) {
   const tool = (name) => ({ name, label: name, description: name, parameters: { type: "object", properties: {} },
     async execute() { return { content: [{ type: "text", text: name }], details: {} }; } });
   for (const name of ["write_note", "read", "mcp__jira__search", "todo_ok"]) pi.registerTool(tool(name));
-  for (const name of ["model", "mcp", "skill", "skill:sneaky", "my-cmd"]) pi.registerCommand(name, { handler: async () => {} });
+  for (const name of ["model", "mcp", "skill", "skill:sneaky", "my-cmd", "compact", "export"]) pi.registerCommand(name, { handler: async () => {} });
   for (const event of ["project_trust", "resources_discover", "cache_warming_decision", "before_provider_request",
     "before_provider_headers", "mcp_servers_change", "agent_start"]) pi.on(event, async () => {});
   pi.registerProvider("evil", { baseUrl: "http://127.0.0.1:1", apiKey: "k", api: "openai-completions", models: [] });
@@ -74,6 +82,18 @@ export default function (pi) {
   pi.registerMarkdownTransformer((text) => text);
 }
 `;
+
+describe("指令名归类(D17)", () => {
+  test("pi 的每个内建指令名要么是入口类(插件不能用),要么放开给插件,不重叠;pi 升级新增的名字必须先归类", () => {
+    const builtin = BUILTIN_SLASH_COMMANDS.map((command) => command.name);
+    const unclassified = builtin.filter((name) => !PI_RESERVED_COMMANDS.has(name) && !PI_RELEASED_COMMANDS.has(name));
+    expect(unclassified).toEqual([]);
+    expect([...PI_RELEASED_COMMANDS].filter((name) => PI_RESERVED_COMMANDS.has(name))).toEqual([]);
+    expect([...PI_RELEASED_COMMANDS].filter((name) => !builtin.includes(name))).toEqual([]);
+    // 应用自己的入口(MCP 与技能页)不是 pi 内建名,同样保留。
+    expect(PI_RESERVED_COMMANDS.has("mcp") && PI_RESERVED_COMMANDS.has("skill")).toBe(true);
+  });
+});
 
 describe("加载期裁决", () => {
   test("保留域登记与重名工具被拿掉,终端界面类登记记「不支持」,每项都署插件 id", async () => {
@@ -115,7 +135,8 @@ describe("加载期裁决", () => {
     const extension = result.extensions[0]!;
     // 没有审批口(压缩会话即如此)时插件工具一律不进会话;不重名的 todo_ok 不记审计。
     expect([...extension.tools.keys()]).toEqual([]);
-    expect([...extension.commands.keys()]).toEqual(["my-cmd"]);
+    // 能力类名字(compact / export…)放开给插件,与应用的同名通用指令并列(D17)。
+    expect([...extension.commands.keys()]).toEqual(["my-cmd", "compact", "export"]);
     expect([...extension.handlers.keys()]).toEqual(["agent_start"]);
     expect(result.runtime.pendingProviderRegistrations).toEqual([]);
     expect(result.runtime.pendingNativeProviderRegistrations).toEqual([]);
@@ -288,6 +309,7 @@ export default function (pi) {
       async execute() { return { content: [{ type: "text", text: name }], details: {} }; } });
     pi.registerTool(tool("write_note"));
     pi.registerTool(tool("late_ok"));
+    pi.registerCommand("new", { handler: async () => {} });
     pi.registerCommand("compact", { handler: async () => {} });
     pi.on("tool_call", async (event) => {
       if (event.input.text === "late-forbidden") return { block: true, reason: "late veto" };
@@ -317,7 +339,7 @@ describe("运行期裁决", () => {
       "pi_plugin_removed dev:late provider:late-provider",
       "pi_plugin_removed dev:late mcp:late-mcp",
       "pi_plugin_removed dev:late tool:write_note",
-      "pi_plugin_removed dev:late command:compact",
+      "pi_plugin_removed dev:late command:new",
       "pi_plugin_vetoed dev:late write_note late veto",
     ]);
   }, 20_000);

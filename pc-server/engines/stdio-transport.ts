@@ -17,8 +17,10 @@
 import { parseJsonRpcLine, type JsonRpcErrorObject } from "../subprocess-engine/protocol";
 import type {
   AppToolResult,
+  CommandRunResult,
   CompactResult,
   EngineCapabilities,
+  EngineCommand,
   EngineDialogAnswer,
   EngineDriver,
   EngineHost,
@@ -219,6 +221,12 @@ export function connectDriverOverStdio(
       invalidate: async (conversationId) => {
         await peer.request("driver.invalidate", [conversationId]);
       },
+      ...(capabilities.commands
+        ? {
+            listCommands: (req) => peer.request("driver.listCommands", [req]) as Promise<EngineCommand[]>,
+            runCommand: (req) => peer.request("driver.runCommand", [req]) as Promise<CommandRunResult>,
+          }
+        : {}),
       dispose: async () => {
         await peer.request("driver.dispose", []);
       },
@@ -262,6 +270,16 @@ export function serveDriverOverStdio(
         return current.compact(...args);
       },
       "driver.invalidate": (...args: Parameters<EngineDriver["invalidate"]>) => target().invalidate(...args),
+      "driver.listCommands": (...args: Parameters<NonNullable<EngineDriver["listCommands"]>>) => {
+        const current = target();
+        if (!current.listCommands) throw new Error(`引擎 ${current.kind} 没有引擎特色指令`);
+        return current.listCommands(...args);
+      },
+      "driver.runCommand": (...args: Parameters<NonNullable<EngineDriver["runCommand"]>>) => {
+        const current = target();
+        if (!current.runCommand) throw new Error(`引擎 ${current.kind} 没有引擎特色指令`);
+        return current.runCommand(...args);
+      },
       "driver.dispose": () => target().dispose(),
     },
     onProtocolError,

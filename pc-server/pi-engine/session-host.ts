@@ -26,6 +26,7 @@ import type { PiAppToolCaller } from "./app-tools";
 import type { PiBuiltinToolApprover } from "./builtin-tools";
 import type { SubscriptionCredentialSource } from "./model-bridge";
 import { activePiPluginId, type PiPluginToolApprover } from "./plugins/arbiter";
+import type { PiPluginEntry } from "./plugins/entries";
 import type { PiPluginSessionBinding } from "./plugins/session-binding";
 import type { PiPluginInteraction } from "./plugins/ui-bridge";
 import { EMPTY_SYNTHETIC_PLAN, injectSyntheticRows, type PiEntrySync, type PiSyntheticPlan } from "./session-view";
@@ -63,14 +64,20 @@ export interface PiLiveSession {
   readonly model: PiModel<Api>;
   /** 带应用标记的工具名(工作区工具 + 应用工具),事件桥据此映射 details。 */
   readonly markedToolNames: ReadonlySet<string>;
+  /** 会话加载的插件入口(插件指令的列举与执行按它认领插件 id)。 */
+  readonly pluginEntries: readonly PiPluginEntry[];
   readonly routes: PiTurnRoutes;
   /** 本轮的合成行插入计划(建会话时装的上下文变换每次请求读它)。 */
   synthetic: PiSyntheticPlan;
   /** 上一轮的对账器:它没交出的条目(轮次之间插件追加的)由下一轮交出。 */
   lastSync?: PiEntrySync;
+  /** 应用的一轮生成正在用它(runner 在开跑前置位、收尾时清掉)。指令执行与轮次之间都是 false。 */
+  turnActive: boolean;
   /** 不经截取的 sendCustomMessage(跑引擎发起的轮次、并进挂起消息用它)。 */
   readonly sendCustomMessage: SendCustomMessage;
   attachPlugins(binding: PiPluginSessionBinding): void;
+  /** 已关掉(或正在关)。 */
+  readonly closed: boolean;
   close(): Promise<void>;
 }
 
@@ -82,6 +89,7 @@ export interface PiLiveSessionParts {
   runtime: ModelRuntime;
   model: PiModel<Api>;
   markedToolNames: ReadonlySet<string>;
+  pluginEntries: readonly PiPluginEntry[];
   routes: PiTurnRoutes;
 }
 
@@ -93,9 +101,13 @@ export function createPiLiveSession(parts: PiLiveSessionParts, host: PiSessionHo
   const live: PiLiveSession = {
     ...parts,
     synthetic: EMPTY_SYNTHETIC_PLAN,
+    turnActive: false,
     sendCustomMessage: session.sendCustomMessage.bind(session),
     attachPlugins(binding) {
       pluginBinding = binding;
+    },
+    get closed() {
+      return closed !== undefined;
     },
     close() {
       closed ??= (async () => {
@@ -116,16 +128,18 @@ export function createPiLiveSession(parts: PiLiveSessionParts, host: PiSessionHo
   if (host) {
     const sendUserMessage = session.sendUserMessage.bind(session);
     // pi 把插件的 sendMessage / sendUserMessage 转到会话实例上现查的方法,覆盖实例属性即可截住。没在跑
-    // (含一轮的开头与收尾)时一律交给应用:应用忙就不开轮,消息在下一轮并进来。
+    // (含一轮的开头与收尾)或不在应用的轮次里(指令执行中插件触发的压缩也让会话「不空闲」)时一律交给应用:
+    // 应用忙就不开轮,消息在下一轮并进来。
+    const outsideTurn = () => session.isIdle || !live.turnActive;
     session.sendCustomMessage = (async (message, options) => {
-      if (session.isIdle && options?.triggerTurn && options.deliverAs !== "nextTurn") {
+      if (outsideTurn() && options?.triggerTurn && options.deliverAs !== "nextTurn") {
         host.holdTurn(live, { message, options });
         return;
       }
       return live.sendCustomMessage(message, options);
     }) as SendCustomMessage;
     session.sendUserMessage = (async (content, options) => {
-      if (session.isIdle) {
+      if (outsideTurn()) {
         const text = typeof content === "string" ? content : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
         host.forwardUserTurn(live, text);
         return;
@@ -140,6 +154,8 @@ export function createPiLiveSession(parts: PiLiveSessionParts, host: PiSessionHo
 export interface PiSessionHost {
   /** 取出该会话空闲的活会话(取出即停止回收计时);没有返回 undefined。 */
   checkout(conversationId: string): PiLiveSession | undefined;
+  /** 该会话当前的活会话(在跑或空闲),只读,不取出。 */
+  peek(conversationId: string): PiLiveSession | undefined;
   /** 登记为该会话当前的活会话(新建时)。 */
   claim(live: PiLiveSession): void;
   /** 轮末交还:一次性会话、期间被作废、或已被更新的会话顶替时关掉,否则开始回收计时。 */
@@ -179,6 +195,11 @@ export function createPiSessionHost(options: {
       const live = take(conversationId);
       if (live) owners.set(conversationId, live);
       return live;
+    },
+
+    peek(conversationId) {
+      const live = owners.get(conversationId);
+      return live && !live.closed ? live : undefined;
     },
 
     claim(live) {

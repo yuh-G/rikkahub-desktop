@@ -1,7 +1,7 @@
 // pi-engine/plugins/arbiter.ts — 插件裁决层(方案 §5.5「P5.0 定稿」;资源加载器的 extensionsOverride 接在这里)
 //
 // 裁决只针对插件经 pi 接口登记的东西,插件自身的代码不管(D6)。两种时机:
-// - 加载期(arbitratePiExtensions):与本轮应用工具 / pi 内建工具同名、以 mcp__ 开头的工具,pi 内建指令名,
+// - 加载期(arbitratePiExtensions):与本轮应用工具 / pi 内建工具同名、以 mcp__ 开头的工具,入口类指令名,
 //   保留事件的处理函数,排队中的供应商 / 虚拟模型 / MCP 登记,都拿掉;终端界面类登记记「不支持」;
 //   其余插件工具包上执行前审批(P5.4,类别 plugin,经应用审批流程,来源带插件 id)后进会话;
 //   tool_call 处理函数逐个包一层做行为裁决(D7)。
@@ -27,7 +27,6 @@ import type {
   ToolCallEventResult,
   ToolDefinition,
 } from "../../../pi/packages/coding-agent/src/core/extensions/types.ts";
-import { BUILTIN_SLASH_COMMANDS } from "../../../pi/packages/coding-agent/src/core/slash-commands.ts";
 import { allToolNames } from "../../../pi/packages/coding-agent/src/core/tools/index.ts";
 import type { EngineErrorReport } from "../../engines/contract";
 import type { JsonValue } from "../../foundation/types";
@@ -43,7 +42,8 @@ export interface PiPluginAuditRecord {
    *  discarded = 处理期间弹了对话框,这次裁决作废;vetoed = 没弹窗的否决,已生效。 */
   action: "removed" | "unsupported" | "disabled" | "discarded" | "vetoed";
   /** removed / unsupported / disabled:tool:<名>、command:<名>、event:<名>、provider:<id>、model:<供应商>/<id>、
-   *  mcp:<名>、set-model、set-thinking-level、shortcut / flag / *-renderer…;discarded / vetoed:工具名。 */
+   *  mcp:<名>、set-model、set-thinking-level、指令里的会话管理动作(new-session / fork / navigate-tree /
+   *  switch-session / reload)、shortcut / flag / *-renderer…;discarded / vetoed:工具名。 */
   subject: string;
   /** vetoed:插件给的理由。 */
   detail?: string;
@@ -81,9 +81,17 @@ const RESERVED_EVENTS = [
   "mcp_servers_change",
 ];
 
-const RESERVED_COMMANDS = new Set([...BUILTIN_SLASH_COMMANDS.map((command) => command.name), "mcp", "skill"]);
+/** 插件不能用的指令名 = 入口类(通往应用资产的入口,谁来做都一样;方案 §5.9 D17)。pi 内建指令名逐个归类:
+ *  入口类在这里,能力类在 PI_RELEASED_COMMANDS(放开给插件,与应用的同名通用指令并列显示)。pi 升级新增的
+ *  内建名必须二选一(arbiter.test 锁定)。 */
+export const PI_RESERVED_COMMANDS: ReadonlySet<string> = new Set([
+  "settings", "model", "scoped-models", "thinking", "new", "resume", "fork", "clone", "tree", "name",
+  "import", "login", "logout", "trust", "reload", "quit", "mcp", "skill",
+]);
 
-const isReservedCommand = (name: string) => RESERVED_COMMANDS.has(name) || name.startsWith("skill:");
+export const PI_RELEASED_COMMANDS: ReadonlySet<string> = new Set(["compact", "export", "share", "copy", "session", "bug", "changelog", "hotkeys"]);
+
+export const isReservedPiCommand = (name: string) => PI_RESERVED_COMMANDS.has(name) || name.startsWith("skill:");
 
 function isReservedToolName(name: string, appToolNames: ReadonlySet<string>): boolean {
   return appToolNames.has(name) || (allToolNames as ReadonlySet<string>).has(name) || name.startsWith("mcp__");
@@ -111,6 +119,11 @@ const pluginScope = new AsyncLocalStorage<string>();
 /** 当前调用链所属的插件 id;认领不到(插件在别的事件里调用界面)时为 undefined。 */
 export function activePiPluginId(): string | undefined {
   return pluginScope.getStore();
+}
+
+/** 以某个插件的名义执行它的代码(插件指令的处理函数),界面请求与审计据此署名。 */
+export function runAsPiPlugin<T>(pluginId: string, fn: () => T): T {
+  return pluginScope.run(pluginId, fn);
 }
 
 /** 被吞掉的对话框按「取消」回答(与 pi 无界面时各方法的返回值一致)。 */
@@ -237,7 +250,7 @@ export function arbitratePiExtensions(
 
     arbitrateTools(extension, pluginId, policy, (item) => audit.push(item));
     for (const name of [...extension.commands.keys()]) {
-      if (!isReservedCommand(name)) continue;
+      if (!isReservedPiCommand(name)) continue;
       extension.commands.delete(name);
       record("removed", `command:${name}`);
     }
@@ -316,7 +329,7 @@ export function arbitrateLatePiRegistrations(result: LoadExtensionsResult, polic
   for (const extension of result.extensions) {
     const pluginId = pluginIdOf(policy, extension.path);
     for (const name of [...extension.commands.keys()]) {
-      if (!isReservedCommand(name)) continue;
+      if (!isReservedPiCommand(name)) continue;
       extension.commands.delete(name);
       policy.onAudit({ pluginId, action: "removed", subject: `command:${name}` });
     }

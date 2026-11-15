@@ -3,8 +3,8 @@ import { describe, expect, test } from "bun:test";
 
 import { filterSlashCommands, parseSlashCommand, slashMenuQuery, type SlashCommandDto } from "~/lib/slash-commands";
 
-const compact: SlashCommandDto = { name: "compact", hasArgument: true, executionTarget: "server" };
-const copy: SlashCommandDto = { name: "copy", hasArgument: false, executionTarget: "client" };
+const compact: SlashCommandDto = { name: "compact", hasArgument: true, executionTarget: "server", source: "app", invocation: "compact" };
+const copy: SlashCommandDto = { name: "copy", hasArgument: false, executionTarget: "client", source: "app", invocation: "copy" };
 const commands = [compact, copy];
 
 describe("slashMenuQuery:菜单触发判定", () => {

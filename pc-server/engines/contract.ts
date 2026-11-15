@@ -30,7 +30,9 @@
 //   (会话删除、插件绑定变化);是否复用由引擎按每轮的视图自行判定,应用不通知编辑、分支切换等改动。
 // - 引擎发起的轮次(插件在空闲时要求模型再答一轮):引擎经 host.turn.request 提出,应用决定是否开轮;
 //   开轮时分配落点并走正常生成流程,TurnInput.trigger 带回请求 id。应用不开轮时引擎自行把内容并进下一轮。
-// - 暂不定义,到对应阶段再加:指令列举与执行(P5.7)。
+// - 引擎特色指令(P5.7,方案 §5.9):capabilities.commands 为 true 的驱动经 listCommands 按会话列出(插件指令、
+//   引擎自带指令),经 runCommand 执行。指令不是一轮生成:没有用户输入、不开回答节点;处理函数要模型再答一轮时
+//   走 host.turn.request。与应用通用指令的重名、显示与调用写法由应用决定,引擎只给原始清单。
 
 import type { JsonValue, Message, OAuthFlowId, ToolOutputEntry } from "../foundation/types";
 import type { AppErrorDomain, AppErrorSeverity } from "../foundation/types/dto";
@@ -64,6 +66,8 @@ export interface EngineCapabilities {
   /** portable = 必须能搬进独立进程:收完整的 TurnInput,只经 EngineHost 拿应用的东西。
    *  in-process-only = 应用自研的循环(聊天引擎),经进程内绑定直接读会话,不收 TurnInput。 */
   readonly placement: "in-process-only" | "portable";
+  /** 有引擎特色指令(listCommands / runCommand 必须实现)。 */
+  readonly commands: boolean;
 }
 
 /** 用户输入的模型可见形态(文档/OCR 已文本化,图片已物化为 base64)。图片随消息整体后置,
@@ -394,6 +398,41 @@ export interface CompactResult {
   native?: EngineEntryInput;
 }
 
+// ---- 指令(P5.7) ----
+
+/** 引擎特色指令。id 是引擎内的调用键(应用原样带回 runCommand,不解释);name 是用户输入的名字(不带斜杠,
+ *  可能与应用的通用指令或别的插件的指令同名)。 */
+export interface EngineCommand {
+  id: string;
+  name: string;
+  /** 引擎或插件给的说明原文。 */
+  description?: string;
+  /** engine = 引擎自带;plugin:<插件 id> = 插件登记的。 */
+  source: "engine" | `plugin:${string}`;
+}
+
+export interface CommandListRequest {
+  conversationId: string;
+  plugins: EnginePlugin[];
+  workspace: EngineWorkspace | null;
+}
+
+export interface CommandRunRequest {
+  conversationId: string;
+  turnId: string;
+  /** 与这个会话一轮生成相同的输入(执行要用引擎的长驻会话,输入相同才接着用;没有就按它新建);prompt 为空。
+   *  会话视图经 host.session.load 取,追加的原生条目经 host.session.append 交回(应用锚定到调用时的尾消息)。 */
+  input: TurnInput;
+  commandId: string;
+  /** 指令名之后的参数原文(已去掉首尾空白)。 */
+  args: string;
+}
+
+export interface CommandRunResult {
+  /** 处理函数里经引擎原生压缩产生的压缩记录(应用落库同生成路径;原生压缩条目照常经 session.append 交回)。 */
+  compactions: CapturedEngineCompaction[];
+}
+
 export interface EngineErrorReport {
   domain: AppErrorDomain;
   severity: AppErrorSeverity;
@@ -424,6 +463,10 @@ export interface EngineDriver {
   compact?(req: CompactRequest): Promise<CompactResult>;
   /** 丢掉该会话的长驻状态(会话删除、插件绑定变化后调用;正在进行的轮次不受影响)。没有长驻状态的引擎无事。 */
   invalidate(conversationId: string): Promise<void>;
+  /** capabilities.commands 为 true 时必须实现。会话所用的插件等没有就绪时可以返回空清单。 */
+  listCommands?(req: CommandListRequest): Promise<EngineCommand[]>;
+  /** capabilities.commands 为 true 时必须实现。处理函数出错或指令已不存在时以错误拒绝。 */
+  runCommand?(req: CommandRunRequest): Promise<CommandRunResult>;
   dispose(): Promise<void>;
 }
 
