@@ -572,7 +572,7 @@ function assemblePortableCall(
     reasoningLevel: deps.assistant.reasoningLevel,
     workspace: engineWorkspaceFor(route),
     instructions: buildEngineInstructions(conversation, deps.assistant, deps.selectedModel, systemInjection ? [systemInjection] : undefined),
-    plugins: enginePluginsFor(driver.kind, state.settings),
+    plugins: enginePluginsFor(driver.kind, state.settings, deps.assistant),
     tools,
   };
   const view = buildEngineSessionView(getConversationsDb(), {
@@ -759,7 +759,7 @@ async function runPortableCompaction(
     reasoningLevel: assistant.reasoningLevel,
     workspace: engineWorkspaceFor(route),
     instructions: buildEngineInstructions(conversation, assistant, ctx.model, systemInjection ? [systemInjection] : undefined),
-    plugins: enginePluginsFor(driver.kind, state.settings),
+    plugins: enginePluginsFor(driver.kind, state.settings, assistant),
     customInstructions: ctx.customInstructions,
   };
   const binding: EngineTurnBinding = {
@@ -850,7 +850,7 @@ export async function listEngineCommands(conversation: Conversation): Promise<{ 
   try {
     const commands = await driver.listCommands({
       conversationId: conversation.id,
-      plugins: enginePluginsFor(driver.kind, state.settings),
+      plugins: enginePluginsFor(driver.kind, state.settings, findAssistant(conversation.assistantId)),
       workspace: engineWorkspaceFor(route),
     });
     return { engine: driver.kind, commands };

@@ -49,6 +49,7 @@ export function defaultAssistant(): Assistant {
     modeInjectionIds: [],
     lorebookIds: [],
     enabledSkills: [],
+    enginePluginIds: [],
     enableTimeReminder: false,
     allowConversationSystemPrompt: false,
     allowConversationPromptInjection: false,

@@ -98,9 +98,11 @@ describe("合并:重名规则", () => {
 });
 
 describe("插件短名", () => {
-  test("去掉命名空间前缀;没有前缀原样", () => {
+  test("去掉命名空间前缀与包的作用域;没有前缀原样", () => {
     expect(pluginShortName("dev:todo")).toBe("todo");
     expect(pluginShortName("todo")).toBe("todo");
     expect(pluginShortName("dev:")).toBe("dev:");
+    expect(pluginShortName("pi:@juicesharp/rpiv-todo")).toBe("rpiv-todo");
+    expect(pluginShortName("pi:rpiv-todo#2")).toBe("rpiv-todo#2");
   });
 });

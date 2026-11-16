@@ -429,6 +429,41 @@ export default function (pi) {
     jsonStore.state.settings.devPiPluginPaths = [];
   }, 30_000);
 
+  test("插件记录(P5.8):会话只加载全局已启用且会话助手已绑定的插件;解绑、停用后下一次装配即不再加载", async () => {
+    await installUpstream([{ content: "第一轮回答" }]);
+    const pluginPath = join(process.env.RIKKAHUB_PC_DATA_DIR!, "record-plugin.js");
+    writeFileSync(pluginPath, `export default function (pi) { pi.registerCommand("hello", { handler: async () => {} }); }\n`);
+    jsonStore.state.settings.enginePlugins = [{
+      id: "pi:record-plugin",
+      engine: "pi",
+      name: "record-plugin",
+      source: { kind: "local", spec: pluginPath },
+      version: null,
+      enabled: true,
+      hookSwitches: { toolCall: true },
+      toolSwitches: {},
+      installedAt: "2026-11-16T00:00:00.000Z",
+    }];
+    const workspace = ws.createWorkspace({ type: "managed", name: "route-records" });
+    const conversation = seedConversation(workspace.id);
+    const listUrl = new URL(`http://localhost/api/commands?conversationId=${conversation.id}`);
+    const pluginCommands = async () => {
+      const listed = (await (await handleCommandRoutes(new Request(listUrl), listUrl, "commands"))!.json()) as {
+        commands: Array<{ source: string; invocation: string }>;
+      };
+      return listed.commands.filter((command) => command.source !== "app").map((command) => `${command.source} /${command.invocation}`);
+    };
+    const assistant = jsonStore.state.settings.assistants[0]!;
+
+    expect(await pluginCommands()).toEqual([]);
+    assistant.enginePluginIds = ["pi:record-plugin"];
+    expect(await pluginCommands()).toEqual(["plugin:pi:record-plugin /hello"]);
+    jsonStore.state.settings.enginePlugins[0]!.enabled = false;
+    expect(await pluginCommands()).toEqual([]);
+    jsonStore.state.settings.enginePlugins = [];
+    assistant.enginePluginIds = [];
+  }, 30_000);
+
   test("非工作区会话走聊天引擎原路:零 pi 痕迹", async () => {
     const server = await installUpstream([{ content: "聊天回答" }]);
     const conversation = seedConversation(null);

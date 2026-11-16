@@ -65,6 +65,8 @@ export interface PiPluginPolicy {
   appToolNames: ReadonlySet<string>;
   /** 用户手动停用了工具调用钩子的插件 id(D7 的兜底开关)。 */
   toolCallHooksDisabled: ReadonlySet<string>;
+  /** 插件 id → 用户逐个关掉的工具名(插件页的逐工具开关)。不给 = 全部启用。 */
+  toolsDisabled?: ReadonlyMap<string, ReadonlySet<string>>;
   /** 插件工具执行前的应用审批(生产 = host.permission.check)。不给 = 插件工具不进会话(压缩会话不执行工具)。 */
   approveTool?: PiPluginToolApprover;
   /** 运行期审计(否决、作废、运行期登记)的出口;加载期的审计随裁决结果返回。 */
@@ -204,7 +206,7 @@ function gatePluginTool(tool: RegisteredTool, pluginId: string, approve: PiPlugi
   tool.definition = markToolGated(Object.assign(gated, { [ARBITRATED]: true as const }));
 }
 
-/** 工具规则:保留名拿掉并记审计;没有审批口(压缩会话)时一律不进会话;其余包上执行前审批。 */
+/** 工具规则:保留名拿掉、用户关掉的停用,都记审计;没有审批口(压缩会话)时一律不进会话;其余包上执行前审批。 */
 function arbitrateTools(
   extension: Extension,
   pluginId: string,
@@ -215,6 +217,9 @@ function arbitrateTools(
     if (isReservedToolName(name, policy.appToolNames)) {
       extension.tools.delete(name);
       onAudit({ pluginId, action: "removed", subject: `tool:${name}` });
+    } else if (policy.toolsDisabled?.get(pluginId)?.has(name)) {
+      extension.tools.delete(name);
+      onAudit({ pluginId, action: "disabled", subject: `tool:${name}` });
     } else if (!policy.approveTool) {
       extension.tools.delete(name);
     } else {

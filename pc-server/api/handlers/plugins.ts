@@ -1,0 +1,222 @@
+// api/handlers/plugins.ts — 引擎插件管理(P5.8,方案 §5.9):列表 / 详情 / 审计 / 安装 / 重装 / 卸载 / 启停 / 开关
+//
+// 插件记录住 settings.enginePlugins,助手绑定住 assistant.enginePluginIds(绑定的端点在 settings 路由)。
+// 安装:npm / git 来源经 engines/plugin-installer 装进 <数据目录>/engines/<engine>/npm,本地来源原地使用;
+// 装完校验包里有 pi 扩展入口,没有就卸掉并报错。插件 id = `<engine>:<包名>`(本地来源取包名或目录名),
+// 同名的 npm / git 记录即同一个安装位置,再装一次 = 重装 / 升级,沿用原记录的启停、开关与绑定。
+// 目前只有 pi 引擎有插件运行时。
+
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+import { updateSettings } from "../../app-config";
+import { pluginAudit } from "../../engines/plugin-audit";
+import { installEnginePluginPackage, normalizeGitSpec, uninstallEnginePluginPackage } from "../../engines/plugin-installer";
+import { locateEnginePlugin, pluginNameFromPath } from "../../engines/plugins";
+import { CodedError } from "../../foundation/errors";
+import { resolveEffectiveProxy } from "../../foundation/net";
+import { piAgentDir } from "../../foundation/paths";
+import type { EnginePluginRecord, EnginePluginSource } from "../../foundation/types/settings";
+import { state } from "../../persistence/json-store";
+import { inspectPiPlugin, piPluginEntryError } from "../../pi-engine/plugins/inspect";
+import { error, json, readJson } from "../request";
+
+const SUPPORTED_ENGINES = new Set(["pi"]);
+
+function records(): EnginePluginRecord[] {
+  return state.settings.enginePlugins ?? [];
+}
+
+function findRecord(pluginId: unknown): EnginePluginRecord | undefined {
+  return typeof pluginId === "string" ? records().find((record) => record.id === pluginId) : undefined;
+}
+
+function pluginView(record: EnginePluginRecord) {
+  const path = locateEnginePlugin(record);
+  return { ...record, path, installed: existsSync(path) };
+}
+
+function saveRecords(next: EnginePluginRecord[], assistantsPatch?: (pluginIds: string[]) => string[]) {
+  updateSettings({
+    ...state.settings,
+    enginePlugins: next,
+    ...(assistantsPatch
+      ? { assistants: state.settings.assistants.map((assistant) => ({ ...assistant, enginePluginIds: assistantsPatch(assistant.enginePluginIds ?? []) })) }
+      : {}),
+  });
+}
+
+function upsertRecord(record: EnginePluginRecord) {
+  const list = records();
+  const index = list.findIndex((item) => item.id === record.id);
+  saveRecords(index >= 0 ? list.map((item, i) => (i === index ? record : item)) : [...list, record]);
+}
+
+function proxyOptions() {
+  const { url } = resolveEffectiveProxy(state.settings.proxyConfig);
+  return url ? { proxyUrl: url } : {};
+}
+
+function parseSource(value: unknown): EnginePluginSource {
+  const raw = (value ?? {}) as Partial<EnginePluginSource>;
+  const spec = typeof raw.spec === "string" ? raw.spec.trim() : "";
+  if (!spec || /[\r\n]/.test(spec)) throw new CodedError("来源不能为空", "plugin_source_invalid");
+  // 以 - 开头会被包管理器当成选项。
+  if (spec.startsWith("-")) throw new CodedError(`来源写法不对:${spec}`, "plugin_source_invalid");
+  if (raw.kind === "npm") return { kind: "npm", spec };
+  if (raw.kind === "git") return { kind: "git", spec: normalizeGitSpec(spec) };
+  if (raw.kind === "local") {
+    if (!isAbsolute(spec)) throw new CodedError(`本地插件必须是绝对路径:${spec}`, "plugin_source_invalid");
+    if (!existsSync(spec)) throw new CodedError(`路径不存在:${spec}`, "plugin_source_invalid");
+    return { kind: "local", spec };
+  }
+  throw new CodedError("来源类型只能是 npm / git / local", "plugin_source_invalid");
+}
+
+/** 本地插件的包名与版本(目录里有 package.json 时取它的,否则按路径取名)。 */
+function localPackageInfo(path: string): { name: string; version: string | null } {
+  try {
+    if (statSync(path).isDirectory()) {
+      const pkg = JSON.parse(readFileSync(join(path, "package.json"), "utf8")) as { name?: unknown; version?: unknown };
+      if (typeof pkg.name === "string" && pkg.name) return { name: pkg.name, version: typeof pkg.version === "string" ? pkg.version : null };
+    }
+  } catch {
+    // 没有或读不懂 package.json:按路径取名
+  }
+  return { name: pluginNameFromPath(path), version: null };
+}
+
+function freeId(base: string): string {
+  const taken = new Set(records().map((record) => record.id));
+  let pluginId = base;
+  for (let n = 2; taken.has(pluginId); n++) pluginId = `${base}#${n}`;
+  return pluginId;
+}
+
+/** 装好(或定位好)来源,返回新的记录;existing = 重装的那条。 */
+async function install(engine: string, source: EnginePluginSource, existing?: EnginePluginRecord): Promise<EnginePluginRecord> {
+  const installedAt = new Date().toISOString();
+  if (source.kind === "local") {
+    const info = localPackageInfo(source.spec);
+    const pluginId = existing?.id ?? freeId(`${engine}:${info.name}`);
+    const entryError = piPluginEntryError({ id: pluginId, path: source.spec });
+    if (entryError) throw new CodedError(entryError, "plugin_entry_missing");
+    return { ...(existing ?? defaults(pluginId, engine)), name: existing?.name ?? info.name, source, version: info.version, installedAt };
+  }
+  const { name, version } = await installEnginePluginPackage(engine, source.spec, { ...proxyOptions(), ...(existing ? { knownName: existing.name } : {}) });
+  const same = existing ?? records().find((record) => record.engine === engine && record.source.kind !== "local" && record.name === name);
+  const pluginId = same?.id ?? freeId(`${engine}:${name}`);
+  const entryError = piPluginEntryError({ id: pluginId, path: locateEnginePlugin({ engine, name, source }) });
+  if (entryError) {
+    // 不是 pi 插件:新装的卸掉;重装的保留(原记录还指着它,用户可以再卸)。
+    if (!same) await uninstallEnginePluginPackage(engine, name, proxyOptions());
+    throw new CodedError(`${name} 不是可用的插件:${entryError}`, "plugin_entry_missing");
+  }
+  return { ...(same ?? defaults(pluginId, engine)), name, source, version, installedAt };
+}
+
+function defaults(pluginId: string, engine: string): EnginePluginRecord {
+  return { id: pluginId, engine, name: pluginId, source: { kind: "local", spec: "" }, version: null, enabled: true, hookSwitches: { toolCall: true }, toolSwitches: {}, installedAt: "" };
+}
+
+function failure(err: unknown): Response {
+  if (err instanceof CodedError) return error(err.message, 400, err.errorCode);
+  throw err;
+}
+
+export async function handlePluginRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
+  if (path === "plugins" && request.method === "GET") {
+    return json({ plugins: records().map(pluginView) });
+  }
+  // 插件登记的工具与指令(加载一次插件代码)+ 审计。
+  if (path === "plugins/detail" && request.method === "GET") {
+    const record = findRecord(url.searchParams.get("id"));
+    if (!record) return error("Plugin not found", 404);
+    const view = pluginView(record);
+    const inspection = view.installed
+      ? await inspectPiPlugin({ id: record.id, path: view.path }, piAgentDir).catch((err: unknown) => ({
+          tools: [],
+          commands: [],
+          errors: [err instanceof Error ? err.message : String(err)],
+        }))
+      : { tools: [], commands: [], errors: [] };
+    return json({ plugin: view, ...inspection, audit: pluginAudit(record.id) });
+  }
+  if (path === "plugins/audit" && request.method === "GET") {
+    const pluginId = url.searchParams.get("id") ?? "";
+    return json({ audit: pluginAudit(pluginId) });
+  }
+  if (path === "plugins/install" && request.method === "POST") {
+    const body = await readJson<{ engine?: unknown; source?: unknown }>(request);
+    const engine = typeof body.engine === "string" && body.engine ? body.engine : "pi";
+    if (!SUPPORTED_ENGINES.has(engine)) return error(`引擎 ${engine} 没有插件运行时`, 400, "plugin_engine_unsupported");
+    try {
+      const record = await install(engine, parseSource(body.source));
+      upsertRecord(record);
+      return json({ plugin: pluginView(record) });
+    } catch (err) {
+      return failure(err);
+    }
+  }
+  // 按记录里的来源再装一次(升级、换机恢复后补装、本地插件改过代码)。
+  if (path === "plugins/reinstall" && request.method === "POST") {
+    const body = await readJson<{ id?: unknown }>(request);
+    const record = findRecord(body.id);
+    if (!record) return error("Plugin not found", 404);
+    try {
+      const next = await install(record.engine, record.source, record);
+      upsertRecord(next);
+      return json({ plugin: pluginView(next) });
+    } catch (err) {
+      return failure(err);
+    }
+  }
+  // 卸载:npm / git 来源删掉装的包,本地来源只删记录(不动用户的文件);所有助手的绑定一并解除。
+  if (path === "plugins/uninstall" && request.method === "POST") {
+    const body = await readJson<{ id?: unknown }>(request);
+    const record = findRecord(body.id);
+    if (!record) return error("Plugin not found", 404);
+    const sharesPackage = records().some((item) => item.id !== record.id && item.engine === record.engine && item.source.kind !== "local" && item.name === record.name);
+    try {
+      if (record.source.kind !== "local" && !sharesPackage) await uninstallEnginePluginPackage(record.engine, record.name, proxyOptions());
+    } catch (err) {
+      return failure(err);
+    }
+    saveRecords(
+      records().filter((item) => item.id !== record.id),
+      (pluginIds) => pluginIds.filter((pluginId) => pluginId !== record.id),
+    );
+    return json({ status: "ok" });
+  }
+  if (path === "plugins/enabled" && request.method === "POST") {
+    const body = await readJson<{ id?: unknown; enabled?: unknown }>(request);
+    const record = findRecord(body.id);
+    if (!record) return error("Plugin not found", 404);
+    if (typeof body.enabled !== "boolean") return error("enabled 必须是布尔值", 400);
+    upsertRecord({ ...record, enabled: body.enabled });
+    return json({ plugin: pluginView({ ...record, enabled: body.enabled }) });
+  }
+  // 钩子开关与逐工具开关(只改给出的项)。
+  if (path === "plugins/switches" && request.method === "POST") {
+    const body = await readJson<{ id?: unknown; toolCall?: unknown; tools?: unknown }>(request);
+    const record = findRecord(body.id);
+    if (!record) return error("Plugin not found", 404);
+    const next: EnginePluginRecord = { ...record, hookSwitches: { ...record.hookSwitches }, toolSwitches: { ...record.toolSwitches } };
+    if (body.toolCall !== undefined) {
+      if (typeof body.toolCall !== "boolean") return error("toolCall 必须是布尔值", 400);
+      next.hookSwitches.toolCall = body.toolCall;
+    }
+    if (body.tools !== undefined) {
+      if (!body.tools || typeof body.tools !== "object" || Array.isArray(body.tools)) return error("tools 必须是 { 工具名: { enabled?, exempt? } }", 400);
+      for (const [name, patch] of Object.entries(body.tools as Record<string, unknown>)) {
+        const sw = (patch ?? {}) as { enabled?: unknown; exempt?: unknown };
+        const merged = { ...next.toolSwitches[name] };
+        if (typeof sw.enabled === "boolean") merged.enabled = sw.enabled;
+        if (typeof sw.exempt === "boolean") merged.exempt = sw.exempt;
+        next.toolSwitches[name] = merged;
+      }
+    }
+    upsertRecord(next);
+    return json({ plugin: pluginView(next) });
+  }
+  return null;
+}

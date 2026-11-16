@@ -158,6 +158,8 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
         // 安卓对齐批6:allowConversationSystemPrompt 已是安卓正式字段(Assistant.kt),
         // 不再 strip——此前误删导致 PC→APP 后所有助手的会话级系统提示词开关归 false。
         delete fixed.mcpToolOverrides;
+        // 引擎插件绑定(插件记录同样不导出):APP 没有工作区引擎,kotlinx 也不认这个键。
+        delete fixed.enginePluginIds;
       }
       return fixed;
     });
@@ -218,6 +220,8 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     delete copy.shellPath;
     // devPiPluginPaths 是工作区引擎插件的本机路径(开发者字段),APP 无工作区引擎。
     delete copy.devPiPluginPaths;
+    // 引擎插件记录:安装位置是本机的,APP 没有工作区引擎。PC→PC 的 pc-backup 照常带上(包本身不带,目标机重装)。
+    delete copy.enginePlugins;
     // 专题3 S-1(机制,详见 filterSearchServicesForAndroid):PC-only 搜索服务过滤 +
     // 选中下标修正;全被过滤时删键,让安卓走自身默认值(避免空列表越界)。
     if (Array.isArray(copy.searchServices)) {

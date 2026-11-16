@@ -385,6 +385,23 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
     });
     return json({ status: "ok" });
   }
+  // 助手的引擎插件绑定(D16):整表替换,只认插件记录里有的 id。
+  if (path === "settings/assistant/plugins" && request.method === "POST") {
+    const body = await readJson<{ assistantId?: string; pluginIds?: unknown }>(request);
+    if (!state.settings.assistants.some((assistant) => assistant.id === body.assistantId)) return error("Assistant not found", 404);
+    if (!Array.isArray(body.pluginIds)) return error("pluginIds 必须是字符串数组", 400);
+    const known = new Set((state.settings.enginePlugins ?? []).map((record) => record.id));
+    const enginePluginIds = uniqueStrings(getStringArray(body.pluginIds));
+    const unknown = enginePluginIds.find((pluginId) => !known.has(pluginId));
+    if (unknown) return error(`pluginIds contains unknown plugin: ${unknown}`, 400);
+    updateSettings({
+      ...state.settings,
+      assistants: state.settings.assistants.map((assistant) =>
+        assistant.id === body.assistantId ? { ...assistant, enginePluginIds } : assistant,
+      ),
+    });
+    return json({ status: "ok", enginePluginIds });
+  }
   if (path === "settings/assistant/skills" && request.method === "POST") {
     const body = await readJson<{ assistantId: string; enabledSkills: string[] }>(request);
     const assistantExists = state.settings.assistants.some((assistant) => assistant.id === body.assistantId);

@@ -76,10 +76,13 @@ export function resolveAvailableCommands(
     .map(({ name, hasArgument, executionTarget }) => ({ name, hasArgument, executionTarget, source: "app", invocation: name }));
 }
 
-/** 插件短名(限定写法用):插件 id 去掉命名空间前缀(dev:todo → todo)。最终形态随插件记录定(方案 P5.8)。 */
+/** 插件短名(限定写法用):插件 id(`<引擎>:<包名>` / `dev:<名>`)去掉前缀与包的作用域
+ *  (pi:@demo/todo → todo,dev:guard → guard)。两个插件短名相同时,合并处退回完整 id。 */
 export function pluginShortName(pluginId: string): string {
   const colon = pluginId.indexOf(":");
-  return colon >= 0 && colon < pluginId.length - 1 ? pluginId.slice(colon + 1) : pluginId;
+  const name = colon >= 0 && colon < pluginId.length - 1 ? pluginId.slice(colon + 1) : pluginId;
+  const slash = name.lastIndexOf("/");
+  return slash >= 0 && slash < name.length - 1 ? name.slice(slash + 1) : name;
 }
 
 /** 通用指令 + 引擎特色指令 → 下发清单(规则见头注)。removed = 与入口类同名而被拿掉的插件指令(调用方记审计)。

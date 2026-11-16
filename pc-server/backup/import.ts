@@ -91,6 +91,15 @@ export function customJsImportWarning(beforeSignatures: Map<string, string>, set
   return `安全提醒：本次导入包含 ${names.length} 个自定义 JS 搜索脚本（${names.join("、")}）。这类脚本会在本机执行，请确认备份来源可信；如不确定，请到 设置 → 网络 → 搜索引擎 中检查或删除对应服务。`;
 }
 
+/** 助手按 id 合并时同 id 取 APP 条目,而 APP 不认识(导出时也剥离了)桌面端独有的引擎插件绑定:
+ *  按 id 把桌面端的 enginePluginIds 放回去;APP 独有的助手没有绑定(normalizeState 补空)。 */
+export function withPcEnginePluginBindings<T extends { id: string }>(merged: T[], pcAssistants: readonly { id: string; enginePluginIds?: unknown }[]): T[] {
+  const bindings = new Map(pcAssistants.map((assistant) => [assistant.id, assistant.enginePluginIds]));
+  return merged.map((assistant) =>
+    bindings.has(assistant.id) ? { ...assistant, enginePluginIds: bindings.get(assistant.id) } : assistant,
+  );
+}
+
 /** 七层合并·层3修正(Linux 用户实测"导入后设置覆盖不完全"):含 apiKey 的集合
  *  (providers/asrProviders/ttsProviders)同 id 时并非无条件保 PC——PC 的默认供应商与
  *  安卓共享同一批固定 UUID(互导契约刻意对齐),全新安装的 PC 条目全是无 key 出厂默认,
@@ -653,7 +662,10 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
         searchServiceSelected: resolveSearchSelected(),
         asrProviders: mergeKeyedCollectionById(pc.asrProviders ?? [], (Array.isArray(app.asrProviders) ? app.asrProviders : []) as { id: string }[]),
         ttsProviders: mergeKeyedCollectionById(pc.ttsProviders ?? [], (Array.isArray(app.ttsProviders) ? app.ttsProviders : []) as { id: string }[]),
-        assistants: mergeById((Array.isArray(app.assistants) ? app.assistants : []) as any[], pc.assistants ?? []),
+        assistants: withPcEnginePluginBindings(
+          mergeById((Array.isArray(app.assistants) ? app.assistants : []) as any[], pc.assistants ?? []),
+          pc.assistants ?? [],
+        ),
         mcpServers: mergeById((Array.isArray(app.mcpServers) ? app.mcpServers : []) as any[], pc.mcpServers ?? []),
         lorebooks: mergeById((Array.isArray(app.lorebooks) ? app.lorebooks : []) as any[], pc.lorebooks ?? []),
         quickMessages: mergeById((Array.isArray(app.quickMessages) ? app.quickMessages : []) as any[], pc.quickMessages ?? []),
@@ -684,6 +696,8 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
         memorySettings: pc.memorySettings,
         // devPiPluginPaths 是工作区引擎插件的本机路径(开发者字段,APP 导出已剥离),恒保桌面端的值。
         devPiPluginPaths: pc.devPiPluginPaths,
+        // 引擎插件记录同为桌面端独有(APP 导出已剥离),恒保桌面端的值。
+        enginePlugins: pc.enginePlugins,
       } as unknown as State["settings"];
       const adjusted = rewriteAvatarsInSettings(merged, ANDROID_AVATAR_TYPE_TO_PC, "to-pc");
       setState(normalizeState({ ...state, settings: adjusted as State["settings"] }));

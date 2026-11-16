@@ -7,6 +7,7 @@ import type { AssistantMemoryFile, Conversation, GlobalMemoryFile, JsonValue, Pr
 import { getStringArray, id, isRecord, mergeById, uniqueStrings } from "../foundation/utils";
 import { assistantMemoryPath, dataDir, filesDir, globalMemoryPath, pendingMemoryPath, skillsDir, statePath } from "../foundation/paths";
 import { normalizeProxyConfig, normalizePreferredPort } from "../foundation/net";
+import { normalizeEnginePluginRecords } from "../engines/plugins";
 import {
   CONVERSATIONS_SQLITE_MIGRATION,
   MEMORY_FILE_SPLIT_MIGRATION,
@@ -155,8 +156,10 @@ export function normalizeState(input: Partial<State>): State {
       mcpToolOverrides: isRecord(assistant.mcpToolOverrides)
         ? assistant.mcpToolOverrides as Record<string, Record<string, { enable?: boolean; needsApproval?: boolean }>>
         : {},
+      enginePluginIds: uniqueStrings(getStringArray(assistant.enginePluginIds)),
     };
   });
+  normalized.settings.enginePlugins = normalizeEnginePluginRecords(normalized.settings.enginePlugins);
   // memorySettings 规范化 + M1 迁移推断:老用户首次升级(settings 无 memorySettings)时,
   // 若所有助手 enableMemory=false,globalEnabled 默认 false(避免被动注入全局,违背用户意愿);
   // 否则默认 true。用户设过 memorySettings(存在)则保留,仅校验 writeStrategy 合法性。

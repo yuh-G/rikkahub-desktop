@@ -2,6 +2,7 @@ import type { AppConfig } from "./app-config";
 import type { MemoryConfig } from "./memory-config";
 import type { ModelConfig } from "./model-config";
 import type { ModelLayerConfig } from "./model-layer";
+import type { PluginConfig } from "./plugin-config";
 import type { PromptConfig } from "./prompt-config";
 import type { NetworkConfig } from "./proxy-config";
 import type { SearchConfig } from "./search-config";
@@ -20,12 +21,14 @@ export interface Settings
     ToolConfig,
     StorageConfig,
     NetworkConfig,
-    MemoryConfig {}
+    MemoryConfig,
+    PluginConfig {}
 
 export type * from "./app-config";
 export type * from "./memory-config";
 export type * from "./model-config";
 export type * from "./model-layer";
+export type * from "./plugin-config";
 export type * from "./prompt-config";
 export type * from "./proxy-config";
 export type * from "./search-config";

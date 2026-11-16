@@ -188,6 +188,9 @@ export interface Assistant {
   modeInjectionIds: string[];
   lorebookIds: string[];
   enabledSkills: string[];
+  /** PC-only:本助手启用的引擎插件 id(D16,与 mcpServers / enabledSkills 同一模式;插件记录在
+   *  settings.enginePlugins)。导出给 APP 时剥离,APP→桌面端导入按助手 id 还原桌面端的值。 */
+  enginePluginIds: string[];
   enableTimeReminder: boolean;
   allowConversationSystemPrompt: boolean;
   /** 专题9:允许"会话级"绑定提示词注入/世界书(对齐安卓 Assistant.allowConversationPromptInjection)。

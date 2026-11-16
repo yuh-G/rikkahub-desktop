@@ -10,6 +10,7 @@ import { skillsDir } from "../foundation/paths";
 import { state } from "../persistence/json-store";
 import { lexicalWorkspaceCwd } from "../workspace/approval";
 import { getWorkspace } from "../workspace";
+import { isEnginePluginToolExempt } from "../engines/plugins";
 import { isToolAllowedForSession } from "../inference-engine/approval-gate";
 import {
   decidePermission,
@@ -150,17 +151,12 @@ export function pluginToolSessionKey(pluginId: string, toolName: string): string
   return `plugin:${pluginId}:${toolName}`;
 }
 
-/** 插件页逐工具免问的读取点。插件记录(P5.8)落地前没有这项设置,恒为 false。 */
-function isPluginToolExempt(_pluginId: string, _toolName: string): boolean {
-  return false;
-}
-
 /** 一次插件工具调用的审批判定:默认询问;插件页设了免问或本会话已选「总是允许」则免问。 */
 export function pluginToolApprovalState(conversationId: string, pluginId: string, toolName: string): ToolApprovalState {
   return decidePermission(
     { conversationId, toolName, category: "plugin", origin: { kind: "plugin", pluginId } },
     {
-      pluginToolExempt: isPluginToolExempt(pluginId, toolName),
+      pluginToolExempt: isEnginePluginToolExempt(state.settings.enginePlugins, pluginId, toolName),
       allowedForSession: isToolAllowedForSession(conversationId, pluginToolSessionKey(pluginId, toolName)),
     },
   );

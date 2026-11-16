@@ -1,5 +1,5 @@
 // tools/plugin-approval.test.ts — 插件工具审批(P4.3):默认询问;审批卡「此会话内总是允许」只记在本会话、
-// 只对带免问键的审批生效;会话删除即忘。
+// 只对带免问键的审批生效;会话删除即忘。插件页逐工具免问(P5.8)读插件记录。
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,6 +12,10 @@ process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-plugin-approv
 const { pluginToolApprovalState, pluginToolSessionKey } = await import("./approval");
 const { gateToolApproval } = await import("../inference-engine/approval-flow");
 const gate = await import("../inference-engine/approval-gate");
+const { defaultState } = await import("../app-config/defaults");
+const jsonStore = await import("../persistence/json-store");
+
+jsonStore.setState(defaultState());
 
 async function approveOnce(conversationId: string, toolCallId: string, alwaysAllowInSession: boolean, sessionAllowKey?: string) {
   const events: GenerationEvent[] = [];
@@ -53,5 +57,23 @@ describe("插件工具审批", () => {
     expect(pluginToolApprovalState("conv-p4", "demo-plugin", "lookup").type).toBe("auto");
     gate.forgetSessionToolAllowances("conv-p4");
     expect(pluginToolApprovalState("conv-p4", "demo-plugin", "lookup").type).toBe("pending");
+  });
+
+  test("插件页设为免问的工具直接放行;同插件的别的工具、别的插件的同名工具照问", () => {
+    jsonStore.state.settings.enginePlugins = [{
+      id: "demo-plugin",
+      engine: "pi",
+      name: "demo-plugin",
+      source: { kind: "local", spec: join(tmpdir(), "demo-plugin") },
+      version: null,
+      enabled: true,
+      hookSwitches: { toolCall: true },
+      toolSwitches: { lookup: { exempt: true } },
+      installedAt: "",
+    }];
+    expect(pluginToolApprovalState("conv-p5", "demo-plugin", "lookup")).toEqual({ type: "auto" });
+    expect(pluginToolApprovalState("conv-p5", "demo-plugin", "other").type).toBe("pending");
+    expect(pluginToolApprovalState("conv-p5", "other-plugin", "lookup").type).toBe("pending");
+    jsonStore.state.settings.enginePlugins = [];
   });
 });

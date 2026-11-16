@@ -163,9 +163,14 @@ export interface EngineInstructions {
 export interface EnginePlugin {
   id: string;
   path: string;
-  /** 用户手动停用了这个插件的工具调用钩子(行为裁决的兜底开关,方案 §5.5 D7;P5.8 起由插件记录给出)。
+  /** 用户手动停用了这个插件的工具调用钩子(行为裁决的兜底开关,方案 §5.5 D7;由插件记录给出)。
    *  缺省 = 启用。 */
   toolCallHookDisabled?: boolean;
+  /** 用户逐个关掉的插件工具名(插件登记了也不进会话)。缺省 = 全部启用。 */
+  disabledTools?: string[];
+  /** 插件内容的版本标记(应用的安装时刻):变了说明插件被重装或升级,引擎不得复用加载过旧代码的长驻会话。
+   *  缺省 = 不判定(开发者清单)。 */
+  revision?: string;
 }
 
 // ---- 模型授权(§5.8) ----

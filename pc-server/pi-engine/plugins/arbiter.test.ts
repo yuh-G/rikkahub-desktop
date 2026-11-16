@@ -143,6 +143,21 @@ describe("加载期裁决", () => {
     expect(result.runtime.pendingVirtualModelRegistrations).toEqual([]);
     expect(result.runtime.mcpServers.list()).toEqual([]);
   });
+
+  test("用户逐个关掉的插件工具不进会话并记「停用」;其余照常包审批", async () => {
+    const file = writePlugin("two-tools", REGISTRAR);
+    const loaded = await loadExtensions([file], cwd);
+    const { policy } = policyFor([{ id: "pi:two-tools", file }], {
+      approveTool: async () => undefined,
+      toolsDisabled: new Map([["pi:two-tools", new Set(["todo_ok"])]]),
+    });
+    const { result, audit } = arbitratePiExtensions(loaded, policy);
+    expect([...result.extensions[0]!.tools.keys()]).toEqual([]);
+    expect(audit.filter((record) => record.action === "disabled").map((record) => record.subject)).toEqual(["tool:todo_ok"]);
+
+    const kept = arbitratePiExtensions(await loadExtensions([file], cwd), policyFor([{ id: "pi:two-tools", file }], { approveTool: async () => undefined }).policy);
+    expect([...kept.result.extensions[0]!.tools.keys()]).toEqual(["todo_ok"]);
+  });
 });
 
 describe("tool_call 行为裁决:缓存的会话级界面", () => {

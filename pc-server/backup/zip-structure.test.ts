@@ -140,6 +140,7 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
     preferredPort: 8080,
     shellPath: "D:\\SoftWare\\Git\\bin\\bash.exe",
     devPiPluginPaths: ["D:\\plugins\\rpiv-todo"],
+    enginePlugins: [{ id: "pi:rpiv-todo", engine: "pi", name: "rpiv-todo", source: { kind: "npm", spec: "rpiv-todo" } }],
     assistants: [
       {
         id: "a1",
@@ -147,6 +148,7 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
         reasoningLevel: "AUTO",
         presetMessages: [{ role: "USER", content: "hi" }],
         mcpToolOverrides: { x: true },
+        enginePluginIds: ["pi:rpiv-todo"],
         allowConversationSystemPrompt: true,
       },
     ],
@@ -161,6 +163,7 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
     expect(assistant.reasoningLevel).toBe("auto");
     expect(assistant.presetMessages[0].role).toBe("user");
     expect(assistant.mcpToolOverrides).toBeUndefined();
+    expect(assistant.enginePluginIds).toBeUndefined();
     // 安卓对齐批6:allowConversationSystemPrompt 已是安卓正式字段(Assistant.kt),必须存活——
     // 此前误 strip 导致 PC→APP 后所有助手的会话级系统提示词开关归 false。
     expect(assistant.allowConversationSystemPrompt).toBe(true);
@@ -174,6 +177,8 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
     expect(out.shellPath).toBeUndefined();
     // 工作区引擎插件的本机路径同理剥离(APP 无工作区引擎)
     expect(out.devPiPluginPaths).toBeUndefined();
+    // 插件记录与助手的插件绑定同为桌面端独有
+    expect(out.enginePlugins).toBeUndefined();
     // Android Uuid 反序列化拒空串 → 填随机 UUID
     expect(out.chatModelId).toMatch(/^[0-9a-f-]{36}$/);
     // 原对象不被就地修改

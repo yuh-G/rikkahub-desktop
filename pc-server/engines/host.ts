@@ -17,6 +17,7 @@ import { addLog } from "../api/logs";
 import { freshSubscriptionCredential } from "../model-providers/auth/resolve";
 import { reportError } from "../observability/app-errors";
 import type { AppToolCaller, ToolPermissionChecker } from "./app-tools";
+import { recordPluginAudit } from "./plugin-audit";
 import type {
   EngineEntryInput,
   EngineErrorReport,
@@ -91,6 +92,7 @@ export function setEngineTurnRequestHandler(handler: ((req: EngineTurnRequest) =
 
 export function reportEngineError(report: EngineErrorReport): void {
   reportError(report.domain, report.severity, report.message, report.detail, report.code, report.params);
+  recordPluginAudit(report);
 }
 
 export const appEngineHost: EngineHost = {

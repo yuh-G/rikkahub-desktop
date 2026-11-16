@@ -133,6 +133,7 @@ export async function createPiSessionResources(options: {
           entries: pluginEntries.entries,
           appToolNames: new Set(appToolNames),
           toolCallHooksDisabled: new Set(plugins.filter((plugin) => plugin.toolCallHookDisabled).map((plugin) => plugin.id)),
+          toolsDisabled: new Map(plugins.map((plugin) => [plugin.id, new Set(plugin.disabledTools ?? [])])),
           ...(approvePluginTool ? { approveTool: approvePluginTool } : {}),
           // 运行期审计(否决 / 作废 / 运行期登记)逐次上报,错误中心按码 + 参数合并风暴。
           onAudit: (record) => report?.(piPluginAuditReport(record)),

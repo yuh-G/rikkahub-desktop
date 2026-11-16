@@ -194,6 +194,7 @@ export function defaultSettings(): Settings {
     workspaceLastPermissionPreset: null,
     shellPath: "",
     devPiPluginPaths: [],
+    enginePlugins: [],
     keybindings: {
       newConversation: { keys: ["Ctrl", "N"], enabled: true },
       prevConversation: { keys: ["Alt", "Up"], enabled: true },
