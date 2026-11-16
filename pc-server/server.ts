@@ -27,6 +27,7 @@ import { installProcessSafetyNet, reportError } from "./observability/app-errors
 import { bootCleanExit, bootMilestone, bootNote, bootTraceStartup, readPreviousCrashLog } from "./observability/boot-trace";
 import { killTrackedDetachedChildren } from "./workspace/tools/shell";
 import { maybeRunExtractionWorker } from "./files/extraction";
+import { isPiCliRelaunch, PI_CLI_RELAUNCH_MESSAGE } from "./pi-engine/cli-relaunch";
 
 // 全面审查 4-2:进程级异常兜底必须最早安装,罩住后续启动期与运行期的一切
 // 定时器/游离 Promise 顶层抛错(SIGINT/SIGTERM 的优雅停机在文件尾另行注册)。
@@ -36,6 +37,12 @@ installProcessSafetyNet();
 // 时只做单次提取即退出,必须在数据目录锁与端口绑定之前拐走,否则会跟正主抢锁。
 if (await maybeRunExtractionWorker()) {
   process.exit(process.exitCode ?? 0);
+}
+
+// P5.9:插件以 pi 命令行模式再启动本程序(子代理的后台子任务)——同样先于锁与端口,报错即退。
+if (isPiCliRelaunch(Bun.argv, process.env)) {
+  console.error(PI_CLI_RELAUNCH_MESSAGE);
+  process.exit(2);
 }
 
 // R1 取证:启动/崩溃黑匣子。尽早开——worker 分支已拐走,此处是正常实例的真正起点。

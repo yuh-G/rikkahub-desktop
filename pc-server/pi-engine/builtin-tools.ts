@@ -54,7 +54,7 @@ import { markToolGated } from "./tool-gate";
 type PiToolResult = Awaited<ReturnType<ToolDefinition["execute"]>>;
 type ToolArgs = Record<string, JsonValue>;
 
-export type PiBuiltinToolApproval = Pick<PermissionCheck, "toolCallId" | "toolName" | "args"> & {
+export type PiBuiltinToolApproval = Pick<PermissionCheck, "toolCallId" | "toolName" | "args" | "noPrompt"> & {
   category: ToolCategory;
   target: PermissionTarget;
 };
@@ -89,7 +89,15 @@ const TOOL_CATEGORIES: Readonly<Record<string, ToolEntry>> = {
   write: { category: "write", target: pathTarget },
   edit: { category: "write", target: pathTarget },
   bash: { category: "execute", target: (args) => ({ command: String(args.command ?? "") }) },
+  // 应用不挂载,只用于插件另开的会话(child-sessions)。
+  powershell: { category: "execute", target: (args) => ({ command: String(args.command ?? "") }) },
 };
+
+/** pi 内建工具名 → 类别 + 对象;不是内建工具名时 undefined。 */
+export function piBuiltinToolPermission(name: string, args: ToolArgs, cwd: string): { category: ToolCategory; target: PermissionTarget } | undefined {
+  const entry = TOOL_CATEGORIES[name];
+  return entry ? { category: entry.category, target: entry.target(args, cwd) } : undefined;
+}
 
 export function piBuiltinToolNames(shell: string | undefined): string[] {
   return shell ? ["read", "bash", "edit", "write"] : ["read", "edit", "write", "grep", "find", "ls"];

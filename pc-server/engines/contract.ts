@@ -289,6 +289,8 @@ export interface PermissionCheck {
   /** 引擎自带工具必带(没有对象时为空对象)。 */
   target?: PermissionTarget;
   args: Record<string, JsonValue>;
+  /** 这次调用在会话里没有工具卡(插件另开的子会话里的调用):需要用户确认的不弹审批,直接拒绝。 */
+  noPrompt?: boolean;
 }
 
 /** 放行结果。scope 是这次调用的放行范围:default = 写入只许落在工作区边界内(按真实路径校验,软链

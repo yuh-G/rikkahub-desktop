@@ -64,6 +64,7 @@ import type {
 import { createPiAppTools, type PiAppToolCaller } from "./app-tools";
 import { createPiBuiltinTools, excludedPiBuiltinToolNames, type PiBuiltinToolApprover } from "./builtin-tools";
 import { assertPiToolsGated } from "./tool-gate";
+import { runAsPiChildOwner, type PiChildSessionOwner } from "./child-sessions";
 import { bindPiPluginSession, type PiPluginSessionBinding } from "./plugins/session-binding";
 import { runAsPiPlugin, type PiPluginToolApprover } from "./plugins/arbiter";
 import { findPiPluginCommand } from "./plugins/commands";
@@ -416,7 +417,17 @@ async function releasePiSession(ctx: PiSessionInputs, acquired: AcquiredPiSessio
 /** 流式增量之外的每个事件都是对账点。message_end 的落库在事件派发之后,那一条由下一个事件交出。 */
 const isReconcilePoint = (type: string) => type !== "message_update" && type !== "tool_execution_update" && type !== "bash_execution_update";
 
-export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
+/** 插件在这次调用里另开的会话(子代理),工具调用经本轮的工作区审批口判定(child-sessions)。 */
+function childOwnerOf(ctx: PiSessionInputs): PiChildSessionOwner | undefined {
+  const workspace = ctx.workspaceTools;
+  return workspace ? { root: workspace.root, approve: workspace.approve } : undefined;
+}
+
+export function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
+  return runAsPiChildOwner(childOwnerOf(ctx), () => generate(ctx));
+}
+
+async function generate(ctx: PiGenerationContext): Promise<PiGenerationResult> {
   if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
   const sessions = ctx.sessions?.host;
   const triggered = ctx.trigger ? sessions?.takePendingTurn(ctx.conversationId, ctx.trigger.requestId) : undefined;
@@ -522,7 +533,11 @@ export interface PiCommandResult {
 /** 在长驻会话上执行一条插件指令:与生成同一套取会话 / 复用判定 / 接线,但不 prompt——处理函数自己决定做什么。
  *  它要模型再答一轮(sendMessage 带 triggerTurn、sendUserMessage)时经会话宿主变成开轮请求(在应用的轮次之外);
  *  它调 ctx.compact() 时等压缩做完再返回。处理函数抛错以错误拒绝(错误文本带插件 id),会话照常留着复用。 */
-export async function runPiCommand(ctx: PiCommandContext): Promise<PiCommandResult> {
+export function runPiCommand(ctx: PiCommandContext): Promise<PiCommandResult> {
+  return runAsPiChildOwner(childOwnerOf(ctx), () => runCommand(ctx));
+}
+
+async function runCommand(ctx: PiCommandContext): Promise<PiCommandResult> {
   if (ctx.signal?.aborted) throw new DOMException("Command cancelled", "AbortError");
   const acquired = await acquirePiSession(ctx);
   const { live, manager, entryIdsByMessageId, seededEntryIds, entrySync } = acquired;

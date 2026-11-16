@@ -157,7 +157,8 @@ const DEFAULT_GRANT: PermissionGrant = { scope: "default" };
  *  与应用工具同一生命周期。
  *  - 插件工具:类别 plugin,默认询问;插件页免问或本会话已「总是允许」则免问。放行范围恒为 default。
  *  - 引擎自带工具(pi 的 read / bash 等):按引擎给的类别与对象走工作区三档矩阵。用户在卡上批准了这次调用
- *    或档位是完全访问 → unrestricted(写入走宽界、危险命令放行),否则 default。 */
+ *    或档位是完全访问 → unrestricted(写入走宽界、危险命令放行),否则 default。noPrompt(没有工具卡的调用)
+ *    遇到需要确认的直接拒绝,不弹审批。 */
 export function createToolPermissionChecker(ctx: AppToolsContext): ToolPermissionChecker {
   return async (req) => {
     const flow = { conversationId: ctx.conversation.id, toolCallId: req.toolCallId, sink: ctx.sink, signal: ctx.signal, toolName: req.toolName };
@@ -175,6 +176,12 @@ export function createToolPermissionChecker(ctx: AppToolsContext): ToolPermissio
       throw new Error(`Tool '${req.toolName}' is unavailable: this conversation is no longer bound to an existing workspace.`);
     }
     const approval = decideEngineToolPermission(ctx.conversation, req.toolName, req.category, req.target);
+    if (req.noPrompt && approval.type === "pending") {
+      const why = approval.reason ? ` (${approval.reason})` : "";
+      throw new Error(
+        `Tool '${req.toolName}' was NOT executed: it needs the user's approval${why}, and calls made inside a plugin's sub-session cannot ask for it. Do this step in the main conversation instead.`,
+      );
+    }
     const summary = summaryOf(req.args.command ?? req.args.path);
     // 返回 true = 用户对 pending 卡显式批准:区外写入与危险命令的知情同意。
     const userApproved = await gateToolApproval(approval, { ...flow, ...(summary ? { summary } : {}) });
