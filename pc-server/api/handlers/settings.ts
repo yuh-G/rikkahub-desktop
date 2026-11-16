@@ -511,6 +511,10 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
       if (isRecord(server.commonOptions)) {
         server.commonOptions = { ...server.commonOptions, oauth: liveOauth() };
       }
+      // 来源(插件带来的服务器,engines/plugin-mcp)只由服务端维护:取现值,不信页面回传的快照(启停镜像可能已过时)。
+      const liveSource = (state.settings.mcpServers as Array<Record<string, JsonValue>>).find((item) => String(item.id) === serverId)?.source;
+      delete server.source;
+      if (liveSource !== undefined) server.source = liveSource;
       const result = upsertById(state.settings.mcpServers as JsonValue[], server);
       updateSettings({ ...state.settings, mcpServers: result.items });
       return json({ status: "ok", server: result.item });

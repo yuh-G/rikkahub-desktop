@@ -13,7 +13,8 @@ const jsonStore = await import("../persistence/json-store");
 const { handlePluginRoutes } = await import("./handlers/plugins");
 const { handleSettingsRoutes } = await import("./handlers/settings");
 const { enginePluginInstallRoot, enginePluginsFor } = await import("../engines/plugins");
-const { recordPluginAudit } = await import("../engines/plugin-audit");
+const { pluginAudit, recordPluginAudit } = await import("../engines/plugin-audit");
+const { pluginMcpServerId } = await import("../engines/plugin-mcp");
 
 jsonStore.setState(defaultState());
 const lab = mkdtempSync(join(tmpdir(), "rkh-plugins-api-lab-"));
@@ -46,6 +47,10 @@ async function call(path: string, body?: unknown, query = "") {
     : new Request(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const response = path.startsWith("settings/") ? await handleSettingsRoutes(request, url, path) : await handlePluginRoutes(request, url, path);
   return { status: response!.status, body: (await response!.json()) as Record<string, any> };
+}
+
+function pluginAuditCodes(pluginId: string) {
+  return pluginAudit(pluginId).map((entry) => [entry.code, entry.subject, entry.detail]);
 }
 
 const PLUGIN_SOURCE = `export default function (pi) {
@@ -118,6 +123,33 @@ describe("插件管理端点", () => {
     expect((await call("plugins/install", { source: { kind: "npm", spec: "--registry=x" } })).body.errorCode).toBe("plugin_source_invalid");
     expect((await call("plugins/install", { engine: "chat", source: { kind: "npm", spec: "x" } })).body.errorCode).toBe("plugin_engine_unsupported");
   }, 120_000);
+
+  test("插件声明的 MCP 服务登记进应用的 MCP 列表:启停跟随、重装保留用户开关、卸载移除;不支持的写审计", async () => {
+    const source = `export default function (pi) {
+  pi.registerMcpServer("notes", { url: "http://127.0.0.1:9/mcp" });
+  pi.registerMcpServer("local", { command: "node", args: ["server.js"] });
+}
+`;
+    const dir = writePackage("mcp-carrier", { name: "mcp-carrier" }, { "index.js": source });
+    const installed = await call("plugins/install", { source: { kind: "local", spec: dir } });
+    expect(installed.status).toBe(200);
+    const pluginId = installed.body.plugin.id as string;
+    const serverId = pluginMcpServerId(pluginId, "notes");
+    const server = () => (jsonStore.state.settings.mcpServers as Array<Record<string, any>>).find((item) => item.id === serverId);
+    expect(server()).toMatchObject({ url: "http://127.0.0.1:9/mcp", source: { kind: "plugin", pluginId, name: "notes", active: true }, commonOptions: { enable: true, name: "notes" } });
+    expect(jsonStore.state.settings.mcpServers).toHaveLength(1);
+    expect(pluginAuditCodes(pluginId)).toContainEqual(["pi_plugin_mcp_unsupported", "mcp:local", "transport: stdio"]);
+
+    expect((await call("plugins/enabled", { id: pluginId, enabled: false })).status).toBe(200);
+    expect(server()!.source.active).toBe(false);
+    // 用户在 MCP 页关掉它,重装后照旧关着。
+    jsonStore.setState({ ...jsonStore.state, settings: { ...jsonStore.state.settings, mcpServers: [{ ...server()!, commonOptions: { ...server()!.commonOptions, enable: false } }] } });
+    expect((await call("plugins/reinstall", { id: pluginId })).status).toBe(200);
+    expect(server()).toMatchObject({ source: { active: false }, commonOptions: { enable: false } });
+
+    expect((await call("plugins/uninstall", { id: pluginId })).status).toBe(200);
+    expect(jsonStore.state.settings.mcpServers).toEqual([]);
+  });
 
   test("审计按插件归集:同码同对象合并计数,不带插件 id 的报告不收", async () => {
     const report = { domain: "pi-engine" as const, severity: "info" as const, message: "m", code: "pi_plugin_removed", params: { plugin: "pi:a", subject: "tool:read" } };

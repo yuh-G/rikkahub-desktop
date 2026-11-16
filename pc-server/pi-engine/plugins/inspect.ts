@@ -12,12 +12,14 @@ export interface PiPluginInspection {
   tools: Array<{ name: string; description?: string }>;
   /** 入口类同名的指令不列(裁决层恒拿掉)。 */
   commands: Array<{ name: string; description?: string }>;
+  /** 插件加载期经 registerMcpServer 声明的 MCP 服务(应用登记进自己的 MCP 列表,engines/plugin-mcp)。 */
+  mcpServers: Array<{ name: string; config: Record<string, unknown> }>;
   errors: string[];
 }
 
 export async function inspectPiPlugin(plugin: EnginePlugin, cwd: string): Promise<PiPluginInspection> {
   const { entries, errors } = resolvePiPluginEntries([plugin]);
-  const inspection: PiPluginInspection = { tools: [], commands: [], errors: errors.map((item) => item.error) };
+  const inspection: PiPluginInspection = { tools: [], commands: [], mcpServers: [], errors: errors.map((item) => item.error) };
   if (entries.length === 0) return inspection;
   const loaded = await loadExtensions(entries.map((entry) => entry.file), cwd);
   inspection.errors.push(...loaded.errors.map((item) => item.error));
@@ -30,6 +32,9 @@ export async function inspectPiPlugin(plugin: EnginePlugin, cwd: string): Promis
       if (isReservedPiCommand(command.name)) continue;
       inspection.commands.push({ name: command.name, ...(command.description ? { description: command.description } : {}) });
     }
+  }
+  for (const server of loaded.runtime.mcpServers.list()) {
+    inspection.mcpServers.push({ name: server.name, config: server.config as unknown as Record<string, unknown> });
   }
   return inspection;
 }

@@ -1190,6 +1190,7 @@
       "pi_plugin_disabled": "{{subject}} of plugin {{plugin}} is turned off in settings",
       "pi_plugin_discarded": "Plugin {{plugin}} opened a dialog while reviewing tool {{subject}}; that review was discarded",
       "pi_plugin_vetoed": "Plugin {{plugin}} blocked tool {{subject}}: {{detail}}",
+      "pi_plugin_mcp_unsupported": "{{subject}} of plugin {{plugin}} was not added to the MCP list: the desktop app does not support this kind of server ({{detail}})",
       "voice_provider_preserved": "Detected voice services from the mobile app ({{types}}) that this desktop app doesn't support yet. Their configuration is preserved as-is for round-trip and won't be lost"
     }
   },

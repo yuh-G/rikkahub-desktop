@@ -27,6 +27,7 @@ import { adaptWorkspaceToolPartForAndroid } from "./workspace-android-export";
 import androidSchemaV24 from "./android-schema-v24.json";
 import { exportSkills } from "../tools";
 import { normalizeMcpHeaders } from "../tools/mcp-headers";
+import { pluginMcpSource } from "../tools/mcp-source";
 
 export function copyDirRecursive(src: string, dest: string): number {
   let count = 0;
@@ -166,12 +167,21 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
   }
   // MCP 请求头:安卓 McpCommonOptions.headers 是 List<Pair<String,String>>,只认 {first,second}。
   // 旧版设置页落成的 [["k","v"]] 元组会让 APP 的 settings 解码整体失败,导出时一律归一。
+  // 插件带来的服务器不导出(APP 没有对应插件;它们随插件记录走桌面端备份),助手对它们的勾选一并去掉。
   if (stripPcOnly && Array.isArray(copy.mcpServers)) {
-    copy.mcpServers = copy.mcpServers.map((server: any) =>
+    const pluginServerIds = new Set(copy.mcpServers.filter((server: unknown) => pluginMcpSource(server)).map((server: any) => String(server.id)));
+    copy.mcpServers = copy.mcpServers.filter((server: unknown) => !pluginMcpSource(server)).map((server: any) =>
       isRecord(server) && isRecord(server.commonOptions)
         ? { ...server, commonOptions: { ...server.commonOptions, headers: normalizeMcpHeaders(server.commonOptions.headers) } }
         : server,
     );
+    if (pluginServerIds.size > 0 && Array.isArray(copy.assistants)) {
+      copy.assistants = copy.assistants.map((assistant: any) =>
+        isRecord(assistant) && Array.isArray(assistant.mcpServers)
+          ? { ...assistant, mcpServers: assistant.mcpServers.filter((serverId: unknown) => !pluginServerIds.has(String(serverId))) }
+          : assistant,
+      );
+    }
   }
   // modeInjections role: PC uses "USER", Android expects "user"
   if (stripPcOnly && Array.isArray(copy.modeInjections)) {

@@ -7,6 +7,7 @@ import type { AssistantMemoryFile, Conversation, GlobalMemoryFile, JsonValue, Pr
 import { getStringArray, id, isRecord, mergeById, uniqueStrings } from "../foundation/utils";
 import { assistantMemoryPath, dataDir, filesDir, globalMemoryPath, pendingMemoryPath, skillsDir, statePath } from "../foundation/paths";
 import { normalizeProxyConfig, normalizePreferredPort } from "../foundation/net";
+import { reconcilePluginMcpServers } from "../engines/plugin-mcp";
 import { normalizeEnginePluginRecords } from "../engines/plugins";
 import {
   CONVERSATIONS_SQLITE_MIGRATION,
@@ -380,6 +381,8 @@ export function normalizeState(input: Partial<State>): State {
       delete clone.ssePostEndpoint;
       return clone as JsonValue;
     });
+    // 插件带来的 MCP 服务器跟插件记录对齐(记录没了的移除、启停镜像校正),覆盖备份恢复与手改设置文件。
+    normalized.settings.mcpServers = reconcilePluginMcpServers(normalized.settings.mcpServers, normalized.settings.enginePlugins);
   }
   return normalized;
 }

@@ -15,6 +15,7 @@
 import { isRecord } from "../foundation/utils";
 import type { JsonValue } from "../foundation/types";
 import { mcpJsonRpc } from "./mcp";
+import { isMcpServerSelected } from "./mcp-source";
 import { broadcastMcpHealth } from "../api/sse";
 
 // ---------------------------------------------------------------------------
@@ -134,16 +135,15 @@ export type McpHealthEntry =
 /** 推给前端的整体快照：只含"被启用且被至少一个助手选中"的服务器（决策①：闲置服务器不探活、不出现在状态面）。 */
 export type McpHealthSnapshot = Record<string, McpHealthEntry>;
 
-/** 决策①的探活门槛：服务器被启用 且 被至少一个助手选中。闲置服务器永不探活、状态面永不标红。 */
+/** 决策①的探活门槛：服务器被启用 且 被至少一个助手选中（插件带来的服务器按插件绑定算）。闲置服务器永不探活、状态面永不标红。 */
 export function isServerInUse(
   server: Record<string, JsonValue>,
-  assistants: ReadonlyArray<{ mcpServers?: JsonValue }>,
+  assistants: ReadonlyArray<{ mcpServers?: JsonValue; enginePluginIds?: JsonValue }>,
 ): boolean {
   const common = isRecord(server.commonOptions) ? server.commonOptions : {};
   if (common.enable === false) return false;
-  const id = String(server.id ?? "");
-  if (!id) return false;
-  return assistants.some((a) => Array.isArray(a.mcpServers) && (a.mcpServers as JsonValue[]).map(String).includes(id));
+  if (!String(server.id ?? "")) return false;
+  return assistants.some((a) => isMcpServerSelected(a, server));
 }
 
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -160,7 +160,7 @@ interface ServerRuntime {
 /** 由 Supervisor 注入的依赖（bootstrap 显式接线，避免 tools → persistence/api 的反向硬依赖）。 */
 export interface McpHealthDeps {
   getServers: () => Array<Record<string, JsonValue>>;
-  getAssistants: () => ReadonlyArray<{ mcpServers?: JsonValue }>;
+  getAssistants: () => ReadonlyArray<{ mcpServers?: JsonValue; enginePluginIds?: JsonValue }>;
   /** 探活执行体：默认真实 tools/list；测试注入桩。返回 = 健康；抛错 = 故障。 */
   probe: (server: Record<string, JsonValue>) => Promise<unknown>;
 }

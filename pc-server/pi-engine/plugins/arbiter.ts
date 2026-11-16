@@ -290,7 +290,8 @@ export function arbitratePiExtensions(
   runtime.pendingProviderRegistrations = [];
   runtime.pendingNativeProviderRegistrations = [];
   runtime.pendingVirtualModelRegistrations = [];
-  // MCP 声明在这里只进审计;P5.8b 起改登记到应用的 MCP 列表(D13)。
+  // MCP 归应用(D13):加载期的这批声明由应用在安装 / 重装时读出并登记进自己的 MCP 列表(engines/plugin-mcp),
+  // 会话里只拿掉并记审计;会话建好后才登记的不收集。
   for (const server of runtime.mcpServers.list()) {
     recordFor(server.extensionPath, `mcp:${server.name}`);
     runtime.mcpServers.unregister(server.name, server.extensionPath);

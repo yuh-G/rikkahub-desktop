@@ -185,6 +185,21 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
     expect(pcSettings.assistants[0].reasoningLevel).toBe("AUTO");
     expect(pcSettings.chatModelId).toBe("");
   });
+
+  test("插件带来的 MCP 服务器不导出给 APP,助手对它的勾选一并去掉;用户自己的服务器照常导出", () => {
+    const settings = {
+      mcpServers: [
+        { id: "user-mcp", url: "https://u.example/mcp", commonOptions: { enable: true, name: "U", headers: [] } },
+        { id: "plugin-mcp", url: "https://p.example/mcp", source: { kind: "plugin", pluginId: "pi:carrier", name: "p", active: true }, commonOptions: { enable: true, name: "p", headers: [] } },
+      ],
+      assistants: [{ id: "a1", mcpServers: ["user-mcp", "plugin-mcp"] }],
+    };
+    const out = rewriteAvatarsInSettings(settings, PC_AVATAR_TYPE_TO_ANDROID, "to-android");
+    expect(out.mcpServers.map((server: { id: string }) => server.id)).toEqual(["user-mcp"]);
+    expect(out.assistants[0].mcpServers).toEqual(["user-mcp"]);
+    // 桌面端之间的备份(to-pc 方向不剥)原样保留。
+    expect(rewriteAvatarsInSettings(settings, ANDROID_AVATAR_TYPE_TO_PC, "to-pc").mcpServers).toHaveLength(2);
+  });
 });
 
 describe("rewriteAvatarsInSettings（to-pc 导入方向）", () => {

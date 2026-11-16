@@ -1190,6 +1190,7 @@
       "pi_plugin_disabled": "插件 {{plugin}} 的 {{subject}} 已按设置停用",
       "pi_plugin_discarded": "插件 {{plugin}} 在审核工具 {{subject}} 时弹了对话框，这次审核结果已作废",
       "pi_plugin_vetoed": "插件 {{plugin}} 拒绝了工具 {{subject}}：{{detail}}",
+      "pi_plugin_mcp_unsupported": "插件 {{plugin}} 的 {{subject}} 没有登记进 MCP 列表：桌面端不支持这种写法（{{detail}}）",
       "voice_provider_preserved": "检测到来自 APP端的语音服务（{{types}}），桌面端暂不支持，已原样保留配置以便回传，不会丢失"
     }
   },

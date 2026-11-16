@@ -7,6 +7,7 @@ import { isMcpToolEnabledForAssistant } from "./approval";
 import { listSkills } from "./skills";
 import { ASK_USER_TOOL_DESCRIPTION, ASK_USER_TOOL_NAME, askUserQuestionsSchema } from "./ask-user";
 import { inlineMcpToolSchema } from "./schema-inline";
+import { isMcpServerSelected } from "./mcp-source";
 
 export function openAiSearchTools(enableWebSearch: boolean) {
   return enableWebSearch
@@ -192,9 +193,8 @@ Do not mention to the user that you are saving a memory.`,
 }
 
 export function openAiMcpTools(assistant: Assistant, mcpServers: JsonValue[]) {
-  const selected = new Set(getStringArray(assistant.mcpServers));
   return (mcpServers as Array<Record<string, JsonValue>>)
-    .filter((server) => selected.has(String(server.id ?? "")) && isRecord(server.commonOptions) && server.commonOptions.enable !== false)
+    .filter((server) => isMcpServerSelected(assistant, server) && isRecord(server.commonOptions) && server.commonOptions.enable !== false)
     .flatMap((server) => {
       const serverId = String(server.id ?? "");
       const serverName = String((server.commonOptions as Record<string, JsonValue>).name ?? server.id ?? "mcp");

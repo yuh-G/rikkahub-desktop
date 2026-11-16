@@ -4,7 +4,7 @@
 // 得无参数下界);把会话绑定工作区的档位与 MCP 逐工具设置解析成策略。策略按类别惰性解析:非 MCP 工具不读 state,非写入 / 执行不查工作区。
 // 终局比下界只升不降,循环层负责把上调同步回已建的卡(见 tools/permission.ts 头注)。
 
-import { getStringArray, isRecord } from "../foundation/utils";
+import { isRecord } from "../foundation/utils";
 import type { Assistant, Conversation, JsonValue, ToolApprovalState } from "../foundation/types";
 import { skillsDir } from "../foundation/paths";
 import { state } from "../persistence/json-store";
@@ -12,6 +12,7 @@ import { lexicalWorkspaceCwd } from "../workspace/approval";
 import { getWorkspace } from "../workspace";
 import { isEnginePluginToolExempt } from "../engines/plugins";
 import { isToolAllowedForSession } from "../inference-engine/approval-gate";
+import { isMcpServerSelected } from "./mcp-source";
 import {
   decidePermission,
   type PermissionDecision,
@@ -91,9 +92,8 @@ export function isMcpToolApprovalRequiredForAssistant(
 
 /** 该 MCP 工具对当前助手生效的 needsApproval;助手没选中、服务停用或工具已关 → false(本轮不会挂载)。 */
 function mcpApprovalRequired(toolName: string, assistant: Assistant): boolean {
-  const selected = new Set(getStringArray(assistant.mcpServers));
   const servers = (state.settings.mcpServers as Array<Record<string, unknown>>)
-    .filter((server) => selected.has(String(server.id ?? "")) && isRecord(server.commonOptions) && server.commonOptions.enable !== false);
+    .filter((server) => isMcpServerSelected(assistant, server) && isRecord(server.commonOptions) && server.commonOptions.enable !== false);
   for (const server of servers) {
     const common = server.commonOptions as Record<string, unknown>;
     const tools = Array.isArray(common.tools) ? common.tools.filter(isRecord) : [];

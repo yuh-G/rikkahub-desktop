@@ -7,8 +7,8 @@ import { oauthStateOf } from "./mcp-oauth";
 import { readMcpHeaders } from "./mcp-headers";
 import { jsonBody, textBody } from "../model-providers";
 import type { Assistant, JsonValue, RequestLog } from "../foundation/types";
-import { getStringArray } from "../foundation/utils";
 import { isMcpToolEnabledForAssistant } from "./approval";
+import { isMcpServerSelected } from "./mcp-source";
 
 export type McpLogCallback = (log: RequestLog) => void;
 
@@ -380,9 +380,8 @@ export function resolveMcpToolServer(
   toolName: string,
   mcpServers: JsonValue[],
 ): { server: Record<string, JsonValue>; rawToolName: string } | null {
-  const selected = new Set(getStringArray(assistant.mcpServers));
   const servers = (mcpServers as Array<Record<string, JsonValue>>)
-    .filter((server) => selected.has(String(server.id ?? "")) && isRecord(server.commonOptions) && server.commonOptions.enable !== false);
+    .filter((server) => isMcpServerSelected(assistant, server) && isRecord(server.commonOptions) && server.commonOptions.enable !== false);
   for (const server of servers) {
     const common = server.commonOptions as Record<string, JsonValue>;
     const tools = Array.isArray(common.tools) ? common.tools.filter(isRecord) : [];

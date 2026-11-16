@@ -4,20 +4,35 @@
 // 安装:npm / git 来源经 engines/plugin-installer 装进 <数据目录>/engines/<engine>/npm,本地来源原地使用;
 // 装完校验包里有 pi 扩展入口,没有就卸掉并报错。插件 id = `<engine>:<包名>`(本地来源取包名或目录名),
 // 同名的 npm / git 记录即同一个安装位置,再装一次 = 重装 / 升级,沿用原记录的启停、开关与绑定。
+// 插件声明的 MCP 服务(D13,P5.8b):安装 / 重装时加载一次插件读出声明,登记进应用的 MCP 列表(engines/plugin-mcp),
+// 工具清单在后台同步;启停翻服务器的 source.active,卸载移除。插件加载出错时不动已有登记。
 // 目前只有 pi 引擎有插件运行时。
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { updateSettings } from "../../app-config";
+import { reportEngineError } from "../../engines/host";
 import { pluginAudit } from "../../engines/plugin-audit";
 import { installEnginePluginPackage, normalizeGitSpec, uninstallEnginePluginPackage } from "../../engines/plugin-installer";
+import {
+  removePluginMcpServers,
+  setPluginMcpServersActive,
+  syncPluginMcpServers,
+  type PluginMcpDeclaration,
+} from "../../engines/plugin-mcp";
 import { locateEnginePlugin, pluginNameFromPath } from "../../engines/plugins";
 import { CodedError } from "../../foundation/errors";
 import { resolveEffectiveProxy } from "../../foundation/net";
 import { piAgentDir } from "../../foundation/paths";
+import type { JsonValue } from "../../foundation/types";
 import type { EnginePluginRecord, EnginePluginSource } from "../../foundation/types/settings";
+import { reportError } from "../../observability/app-errors";
 import { state } from "../../persistence/json-store";
 import { inspectPiPlugin, piPluginEntryError } from "../../pi-engine/plugins/inspect";
+import { syncMcpServerTools } from "../../tools/mcp";
+import { ensureFreshMcpToken } from "../../tools/mcp-oauth";
+import { pluginMcpSource } from "../../tools/mcp-source";
+import { addLog } from "../logs";
 import { error, json, readJson } from "../request";
 
 const SUPPORTED_ENGINES = new Set(["pi"]);
@@ -35,20 +50,71 @@ function pluginView(record: EnginePluginRecord) {
   return { ...record, path, installed: existsSync(path) };
 }
 
-function saveRecords(next: EnginePluginRecord[], assistantsPatch?: (pluginIds: string[]) => string[]) {
+interface SettingsPatch {
+  assistants?: (pluginIds: string[]) => string[];
+  mcpServers?: (servers: JsonValue[]) => JsonValue[];
+}
+
+function saveRecords(next: EnginePluginRecord[], patch: SettingsPatch = {}) {
   updateSettings({
     ...state.settings,
     enginePlugins: next,
-    ...(assistantsPatch
-      ? { assistants: state.settings.assistants.map((assistant) => ({ ...assistant, enginePluginIds: assistantsPatch(assistant.enginePluginIds ?? []) })) }
+    ...(patch.assistants
+      ? { assistants: state.settings.assistants.map((assistant) => ({ ...assistant, enginePluginIds: patch.assistants!(assistant.enginePluginIds ?? []) })) }
       : {}),
+    ...(patch.mcpServers ? { mcpServers: patch.mcpServers(state.settings.mcpServers as JsonValue[]) } : {}),
   });
 }
 
-function upsertRecord(record: EnginePluginRecord) {
+function upsertRecord(record: EnginePluginRecord, patch: SettingsPatch = {}) {
   const list = records();
   const index = list.findIndex((item) => item.id === record.id);
-  saveRecords(index >= 0 ? list.map((item, i) => (i === index ? record : item)) : [...list, record]);
+  saveRecords(index >= 0 ? list.map((item, i) => (i === index ? record : item)) : [...list, record], patch);
+}
+
+/** 插件加载期声明的 MCP 服务;加载出错时为 null(保留原有登记,不按半截结果删改)。 */
+async function pluginMcpDeclarations(record: EnginePluginRecord): Promise<PluginMcpDeclaration[] | null> {
+  // 加载错误不在这里上报:会话加载这个插件时按插件记一条 pi_plugin_load_failed。
+  const inspection = await inspectPiPlugin({ id: record.id, path: locateEnginePlugin(record) }, piAgentDir).catch(() => null);
+  return inspection && inspection.errors.length === 0 ? inspection.mcpServers : null;
+}
+
+/** 插件服务器的工具清单在后台同步(连不上不拖住安装;结果经设置推送到 MCP 页)。同步期间服务器被改过就丢弃这次结果。 */
+async function refreshPluginMcpTools(pluginId: string): Promise<void> {
+  const current = () => state.settings.mcpServers as Array<Record<string, JsonValue>>;
+  const targets = current().filter((server) => pluginMcpSource(server)?.pluginId === pluginId);
+  const results = await Promise.all(
+    targets.map(async (server) => {
+      const fresh = await ensureFreshMcpToken(server);
+      return { fresh, next: await syncMcpServerTools(fresh, addLog) };
+    }),
+  );
+  const replacements = new Map(results.filter(({ fresh }) => current().includes(fresh)).map(({ fresh, next }) => [fresh as JsonValue, next as JsonValue]));
+  if (replacements.size === 0) return;
+  updateSettings({ ...state.settings, mcpServers: current().map((server) => replacements.get(server) ?? server) });
+}
+
+/** 存下装好的记录,连同它声明的 MCP 服务;声明里应用连不了的写审计。 */
+function saveInstalled(record: EnginePluginRecord, declarations: PluginMcpDeclaration[] | null) {
+  if (!declarations) return upsertRecord(record);
+  let skipped: ReturnType<typeof syncPluginMcpServers>["skipped"] = [];
+  upsertRecord(record, {
+    mcpServers: (servers) => {
+      const synced = syncPluginMcpServers(servers, record.id, record.enabled, declarations);
+      skipped = synced.skipped;
+      return synced.servers;
+    },
+  });
+  for (const item of skipped) {
+    reportEngineError({
+      domain: "pi-engine",
+      severity: "info",
+      message: `插件 MCP 服务未登记:${record.id} ${item.name}(${item.reason})`,
+      code: "pi_plugin_mcp_unsupported",
+      params: { plugin: record.id, subject: `mcp:${item.name}`, detail: item.reason },
+    });
+  }
+  refreshPluginMcpTools(record.id).catch((err: unknown) => reportError("tool", "warn", `插件 MCP 服务的工具同步失败:${record.id}`, err));
 }
 
 function proxyOptions() {
@@ -136,9 +202,10 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
       ? await inspectPiPlugin({ id: record.id, path: view.path }, piAgentDir).catch((err: unknown) => ({
           tools: [],
           commands: [],
+          mcpServers: [],
           errors: [err instanceof Error ? err.message : String(err)],
         }))
-      : { tools: [], commands: [], errors: [] };
+      : { tools: [], commands: [], mcpServers: [], errors: [] };
     return json({ plugin: view, ...inspection, audit: pluginAudit(record.id) });
   }
   if (path === "plugins/audit" && request.method === "GET") {
@@ -151,7 +218,7 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
     if (!SUPPORTED_ENGINES.has(engine)) return error(`引擎 ${engine} 没有插件运行时`, 400, "plugin_engine_unsupported");
     try {
       const record = await install(engine, parseSource(body.source));
-      upsertRecord(record);
+      saveInstalled(record, await pluginMcpDeclarations(record));
       return json({ plugin: pluginView(record) });
     } catch (err) {
       return failure(err);
@@ -164,13 +231,13 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
     if (!record) return error("Plugin not found", 404);
     try {
       const next = await install(record.engine, record.source, record);
-      upsertRecord(next);
+      saveInstalled(next, await pluginMcpDeclarations(next));
       return json({ plugin: pluginView(next) });
     } catch (err) {
       return failure(err);
     }
   }
-  // 卸载:npm / git 来源删掉装的包,本地来源只删记录(不动用户的文件);所有助手的绑定一并解除。
+  // 卸载:npm / git 来源删掉装的包,本地来源只删记录(不动用户的文件);所有助手的绑定与它带来的 MCP 服务器一并移除。
   if (path === "plugins/uninstall" && request.method === "POST") {
     const body = await readJson<{ id?: unknown }>(request);
     const record = findRecord(body.id);
@@ -181,10 +248,10 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
     } catch (err) {
       return failure(err);
     }
-    saveRecords(
-      records().filter((item) => item.id !== record.id),
-      (pluginIds) => pluginIds.filter((pluginId) => pluginId !== record.id),
-    );
+    saveRecords(records().filter((item) => item.id !== record.id), {
+      assistants: (pluginIds) => pluginIds.filter((pluginId) => pluginId !== record.id),
+      mcpServers: (servers) => removePluginMcpServers(servers, record.id),
+    });
     return json({ status: "ok" });
   }
   if (path === "plugins/enabled" && request.method === "POST") {
@@ -192,8 +259,9 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
     const record = findRecord(body.id);
     if (!record) return error("Plugin not found", 404);
     if (typeof body.enabled !== "boolean") return error("enabled 必须是布尔值", 400);
-    upsertRecord({ ...record, enabled: body.enabled });
-    return json({ plugin: pluginView({ ...record, enabled: body.enabled }) });
+    const enabled = body.enabled;
+    upsertRecord({ ...record, enabled }, { mcpServers: (servers) => setPluginMcpServersActive(servers, record.id, enabled) });
+    return json({ plugin: pluginView({ ...record, enabled }) });
   }
   // 钩子开关与逐工具开关(只改给出的项)。
   if (path === "plugins/switches" && request.method === "POST") {
