@@ -63,7 +63,8 @@ const HEAD: Pinned[] = [
 
 /** 补充插件(npm 上 pi-package 关键字下载量靠前的另一批,2026-11-17 装):覆盖头部插件没有的形态——别家的
  *  tool_call 否决、运行期才登记工具、插件另开旁路会话、经对话框走菜单、指令里请求开轮、往主目录写数据。
- *  pi-intercom 没收:它起的后台中转进程(系统 node + tsx)在本程序退出后仍留着。 */
+ *  pi-intercom 没收:它起一个全机共享的中转进程(系统 node + tsx,刻意脱离启动它的进程),最后一个会话断开 5 秒后
+ *  自己退出;但会话在向它登记之前就关掉时它不会退出。冒烟里每轮会话不到一秒就关,正好撞上,留下了进程。 */
 const EXTRA: Pinned[] = [
   { id: "dev:cc-safety-net", name: "cc-safety-net", version: "2.7.14", tools: [], commands: ["cc-safety-net"] },
   { id: "dev:pi-mcp-extension", name: "pi-mcp-extension", version: "1.15.3", tools: ["mcp_status", "mcp_connect"], commands: ["mcp:start"] },
