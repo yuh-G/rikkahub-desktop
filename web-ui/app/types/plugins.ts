@@ -7,6 +7,7 @@ export type {
   EnginePluginListDto,
   EnginePluginMutationDto,
   EnginePluginUpdatesDto,
+  EnginePluginUploadConflictDto,
   EnginePluginViewDto,
   PluginAuditEntryDto,
   PluginEngineDto,

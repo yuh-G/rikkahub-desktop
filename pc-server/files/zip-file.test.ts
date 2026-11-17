@@ -6,7 +6,7 @@ import { describe, expect, test, afterAll } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deflateRawSync } from "node:zlib";
+import { buildZip, type TestZipEntry } from "../test-utils/build-zip";
 import { ZipFileReader, withZipFile } from "./zip-file";
 import { extractDocxText, extractEpubText, extractPptxText } from "./index";
 
@@ -15,49 +15,7 @@ afterAll(() => {
   try { rmSync(tempRoot, { recursive: true, force: true }); } catch { /* Windows 句柄延迟 */ }
 });
 
-type TestEntry = { name: string; data: Buffer | string; method?: 0 | 8; corrupt?: boolean };
-
-function buildZip(entries: TestEntry[]): Buffer {
-  const chunks: Buffer[] = [];
-  const central: Buffer[] = [];
-  let offset = 0;
-  for (const e of entries) {
-    const nameBuf = Buffer.from(e.name, "utf8");
-    const raw = Buffer.isBuffer(e.data) ? e.data : Buffer.from(e.data, "utf8");
-    const method = e.method ?? 8;
-    let packed = method === 8 ? deflateRawSync(raw) : raw;
-    if (e.corrupt) packed = Buffer.from(packed.map((b) => b ^ 0xa5)); // 故意破坏压缩流
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(method, 8);
-    local.writeUInt32LE(packed.length, 18);
-    local.writeUInt32LE(raw.length, 22);
-    local.writeUInt16LE(nameBuf.length, 26);
-    const cen = Buffer.alloc(46);
-    cen.writeUInt32LE(0x02014b50, 0);
-    cen.writeUInt16LE(20, 4);
-    cen.writeUInt16LE(20, 6);
-    cen.writeUInt16LE(method, 10);
-    cen.writeUInt32LE(packed.length, 20);
-    cen.writeUInt32LE(raw.length, 24);
-    cen.writeUInt16LE(nameBuf.length, 28);
-    cen.writeUInt32LE(offset, 42);
-    central.push(Buffer.concat([cen, nameBuf]));
-    chunks.push(local, nameBuf, packed);
-    offset += 30 + nameBuf.length + packed.length;
-  }
-  const cd = Buffer.concat(central);
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(entries.length, 8);
-  eocd.writeUInt16LE(entries.length, 10);
-  eocd.writeUInt32LE(cd.length, 12);
-  eocd.writeUInt32LE(offset, 16);
-  return Buffer.concat([...chunks, cd, eocd]);
-}
-
-function writeZip(name: string, entries: TestEntry[]): string {
+function writeZip(name: string, entries: TestZipEntry[]): string {
   const p = join(tempRoot, name);
   writeFileSync(p, buildZip(entries));
   return p;
@@ -90,6 +48,18 @@ describe("ZipFileReader", () => {
     withZipFile(p, (zip) => {
       expect(zip.readEntry("bad.bin")).toBeNull();
       expect(zip.readEntry("good.txt")!.toString("utf8")).toBe("ok");
+    });
+  });
+
+  test("外部属性:unix 建档的条目带文件类型与权限,其它系统为 0;谎报解压大小的条目按损坏处理", () => {
+    const p = writeZip("attrs.zip", [
+      { name: "link", data: "target", method: 0, unixMode: 0o120777 },
+      { name: "plain.txt", data: "x" },
+      { name: "bomb.txt", data: "y".repeat(100_000), declaredSize: 10 },
+    ]);
+    withZipFile(p, (zip) => {
+      expect(zip.entries().map((e) => e.unixMode)).toEqual([0o120777, 0, 0]);
+      expect(zip.readEntry("bomb.txt")).toBeNull();
     });
   });
 

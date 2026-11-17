@@ -31,6 +31,15 @@ export interface EnginePluginMutationDto {
   plugin: EnginePluginViewDto;
 }
 
+/** POST plugins/upload 的 409:包名(单个脚本是文件名)与已装的一条相同。界面问过后带 replace=1 重发即替换它,
+ *  替换沿用它的 id、启停、开关与各处的选择。 */
+export interface EnginePluginUploadConflictDto {
+  error: string;
+  code: 409;
+  errorCode: "plugin_name_conflict";
+  existing: EnginePluginViewDto;
+}
+
 /** 插件哪部分没生效、为什么(engines/plugin-audit):同一码同一对象只留一条,次数累加。 */
 export interface PluginAuditEntryDto {
   code: string;

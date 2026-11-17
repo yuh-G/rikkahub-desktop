@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 import type { EnginePluginRecord } from "../foundation/types/settings";
-import { enginePluginInstallRoot, enginePluginsFor, isEnginePluginToolExempt, normalizeEnginePluginRecords } from "./plugins";
+import { enginePluginInstallRoot, enginePluginsFor, enginePluginUploadsDir, isEnginePluginToolExempt, isPackageSource, locateEnginePlugin, normalizeEnginePluginRecords } from "./plugins";
 
 function record(overrides: Partial<EnginePluginRecord> = {}): EnginePluginRecord {
   return {
@@ -75,6 +75,14 @@ describe("enginePluginsFor", () => {
     });
     expect(local).toEqual({ id: "pi:local", path: join("D:", "lab", "local"), revision: "2026-11-16T00:00:00.000Z" });
   });
+
+  test("上传来源:压缩包按包名进安装目录,单个脚本在 uploads/scripts 原地加载", () => {
+    const archive = { engine: "pi", name: "@demo/up", source: { kind: "upload" as const, spec: "demo-up-1.0.0-abcd1234.tgz" } };
+    const script = { engine: "pi", name: "hello", source: { kind: "upload" as const, spec: "scripts/hello.ts" } };
+    expect(locateEnginePlugin(archive)).toBe(join(enginePluginInstallRoot("pi"), "node_modules", "@demo", "up"));
+    expect(locateEnginePlugin(script)).toBe(join(enginePluginUploadsDir("pi"), "scripts", "hello.ts"));
+    expect([isPackageSource(archive.source), isPackageSource(script.source), isPackageSource({ kind: "local", spec: "x" })]).toEqual([true, false, false]);
+  });
 });
 
 describe("插件记录", () => {
@@ -85,6 +93,9 @@ describe("插件记录", () => {
       { id: "pi:r", engine: "pi", source: { kind: "npm", spec: "r", registry: "https://npm.example.com" } },
       { id: "pi:a", engine: "pi", source: { kind: "npm", spec: "a" } },
       { id: "pi:b", engine: "pi", source: { kind: "ftp", spec: "b" } },
+      { id: "pi:u1", engine: "pi", source: { kind: "upload", spec: "../npm/package.json" } },
+      { id: "pi:u2", engine: "pi", source: { kind: "upload", spec: "scripts/../../x.ts" } },
+      { id: "pi:u3", engine: "pi", source: { kind: "upload", spec: "scripts/hello.ts" } },
       { engine: "pi", source: { kind: "npm", spec: "c" } },
       "junk",
     ]);
@@ -117,6 +128,17 @@ describe("插件记录", () => {
         engine: "pi",
         name: "pi:r",
         source: { kind: "npm", spec: "r", registry: "https://npm.example.com" },
+        version: null,
+        enabled: true,
+        hookSwitches: { toolCall: true },
+        toolSwitches: {},
+        installedAt: "",
+      },
+      {
+        id: "pi:u3",
+        engine: "pi",
+        name: "pi:u3",
+        source: { kind: "upload", spec: "scripts/hello.ts" },
         version: null,
         enabled: true,
         hookSwitches: { toolCall: true },

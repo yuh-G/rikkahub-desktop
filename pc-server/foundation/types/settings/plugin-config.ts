@@ -1,8 +1,9 @@
 /** 插件来源。spec 是安装器认得的写法:npm = 包规格(含 file: / 压缩包地址),git = git+https:// 等仓库地址,
- *  local = 插件在本机的绝对路径(原地使用,不复制)。registry = npm 来源来自非默认 registry 的市场源时记下的地址,
- *  重装与更新用同一个。 */
+ *  local = 插件在本机的绝对路径(原地使用,不复制),upload = 上传的文件在 <数据目录>/engines/<engine>/uploads/
+ *  下的位置(压缩包 = 存档的文件名,装进安装目录;单个脚本 = scripts/<文件名>,原地加载)。registry = npm 来源来自
+ *  非默认 registry 的市场源时记下的地址,重装与更新用同一个。 */
 export interface EnginePluginSource {
-  kind: "npm" | "git" | "local";
+  kind: "npm" | "git" | "local" | "upload";
   spec: string;
   registry?: string;
 }

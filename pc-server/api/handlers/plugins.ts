@@ -9,15 +9,26 @@
 // 有插件运行时的引擎见 engines/plugin-engines(目前只有 pi)。安装 / 重装时从 package.json 读说明字段存进记录(P6.2.1)。
 // 更新:只对 npm 来源、没钉版本的记录查(engines/plugin-updates),更新 = 以 <包名>@latest 再装一次,记录里的来源写法不变。
 // 市场(engines/plugin-market):内置 + 用户添加的市场源、检索与条目详情;从市场安装就是 plugins/install(npm 来源可带 registry)。
+// 上传(engines/plugin-upload,P6.2.3):校验过的文件存进 uploads/ 再装,来源 upload;同名先回 409 等界面确认,带 replace=1
+// 重发即替换那一条。压缩包的重装用存档再装一次,脚本的重装重新试加载;卸载连上传的文件一起删。
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { basename, extname, isAbsolute, join } from "node:path";
 import { updateSettings } from "../../app-config";
 import { reportEngineError } from "../../engines/host";
 import { pluginAudit } from "../../engines/plugin-audit";
 import { isPluginEngine, PLUGIN_ENGINES } from "../../engines/plugin-engines";
 import { findMarketSource, marketDetail, marketSources, resolveMarketSource, searchMarket, withoutMarketSource } from "../../engines/plugin-market";
 import { readEnginePluginMeta, readEnginePluginReadme } from "../../engines/plugin-package";
+import {
+  prepareUpload,
+  removeUpload,
+  requireUploadedFile,
+  saveUpload,
+  UPLOAD_REQUEST_MAX_BYTES,
+  uploadInstallSpec,
+  type UploadChecks,
+} from "../../engines/plugin-upload";
 import { checkPluginUpdates, forgetPluginUpdate, updatablePackageName } from "../../engines/plugin-updates";
 import { installEnginePluginPackage, normalizeGitSpec, uninstallEnginePluginPackage } from "../../engines/plugin-installer";
 import {
@@ -26,7 +37,7 @@ import {
   syncPluginMcpServers,
   type PluginMcpDeclaration,
 } from "../../engines/plugin-mcp";
-import { locateEnginePlugin, pluginNameFromPath } from "../../engines/plugins";
+import { isPackageSource, isUploadedScript, locateEnginePlugin, pluginNameFromPath } from "../../engines/plugins";
 import { CodedError } from "../../foundation/errors";
 import { resolveEffectiveProxy } from "../../foundation/net";
 import { piAgentDir } from "../../foundation/paths";
@@ -37,6 +48,7 @@ import type {
   EnginePluginListDto,
   EnginePluginMutationDto,
   EnginePluginUpdatesDto,
+  EnginePluginUploadConflictDto,
   EnginePluginViewDto,
   PluginMarketDetailDto,
   PluginMarketPageDto,
@@ -185,28 +197,30 @@ function freeId(base: string): string {
   return pluginId;
 }
 
-/** 装好(或定位好)来源,返回新的记录;existing = 重装的那条;installSpec = 这次交给包管理器的写法(更新时是
- *  <包名>@latest),缺省即来源的写法。 */
+/** 装好(或定位好)来源,返回新的记录;existing = 重装 / 替换的那条;installSpec = 这次交给包管理器的写法(更新时是
+ *  <包名>@latest),缺省即来源的写法(上传的压缩包是存档相对安装根的路径)。 */
 async function install(
   engine: string,
   source: EnginePluginSource,
   existing?: EnginePluginRecord,
-  installSpec = source.spec,
+  installSpec?: string,
 ): Promise<EnginePluginRecord> {
   const installedAt = new Date().toISOString();
-  if (source.kind === "local") {
-    const info = localPackageInfo(source.spec);
+  if (source.kind === "local" || isUploadedScript(source)) {
+    const path = source.kind === "local" ? source.spec : requireUploadedFile(engine, source.spec);
+    const info = source.kind === "local" ? localPackageInfo(path) : { name: basename(path, extname(path)), version: null };
     const pluginId = existing?.id ?? freeId(`${engine}:${info.name}`);
-    const entryError = piPluginEntryError({ id: pluginId, path: source.spec });
+    const entryError = piPluginEntryError({ id: pluginId, path });
     if (entryError) throw new CodedError(entryError, "plugin_entry_missing");
     return withMeta({ ...(existing ?? defaults(pluginId, engine)), name: existing?.name ?? info.name, source, version: info.version, installedAt });
   }
-  const { name, version } = await installEnginePluginPackage(engine, installSpec, {
+  const spec = installSpec ?? (source.kind === "upload" ? uploadInstallSpec(engine, source.spec) : source.spec);
+  const { name, version } = await installEnginePluginPackage(engine, spec, {
     ...proxyOptions(),
     ...(existing ? { knownName: existing.name } : {}),
     ...(source.registry ? { registry: source.registry } : {}),
   });
-  const same = existing ?? records().find((record) => record.engine === engine && record.source.kind !== "local" && record.name === name);
+  const same = existing ?? records().find((record) => record.engine === engine && isPackageSource(record.source) && record.name === name);
   const pluginId = same?.id ?? freeId(`${engine}:${name}`);
   const entryError = piPluginEntryError({ id: pluginId, path: locateEnginePlugin({ engine, name, source }) });
   if (entryError) {
@@ -231,6 +245,61 @@ function defaults(pluginId: string, engine: string): EnginePluginRecord {
 function failure(err: unknown): Response {
   if (err instanceof CodedError) return error(err.message, 400, err.errorCode);
   throw err;
+}
+
+/** 上传的预检用 pi 的规则(目前只有 pi 有插件运行时):zip 解出的包根找入口,单个脚本试加载一次。 */
+const PI_UPLOAD_CHECKS: UploadChecks = {
+  packageEntryError: (dir) => piPluginEntryError({ id: "upload", path: dir }),
+  scriptLoadError: async (path) => {
+    const inspection = await inspectPiPlugin({ id: "upload", path }, piAgentDir).catch((err: unknown) => ({ errors: [err instanceof Error ? err.message : String(err)] }));
+    return inspection.errors[0] ?? null;
+  },
+};
+
+/** 上传的文件只在没有别的记录引用时删(同一份内容可能被替换前后的两条记录先后引用)。 */
+function removeUploadIfUnused(record: EnginePluginRecord, remaining: readonly EnginePluginRecord[]) {
+  if (record.source.kind !== "upload") return;
+  const spec = record.source.spec;
+  if (remaining.some((item) => item.engine === record.engine && item.source.kind === "upload" && item.source.spec === spec)) return;
+  removeUpload(record.engine, spec);
+}
+
+async function handleUpload(request: Request): Promise<Response> {
+  if (Number(request.headers.get("content-length") ?? 0) > UPLOAD_REQUEST_MAX_BYTES) return error("压缩包不能超过 50 MB", 413, "plugin_upload_invalid");
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return error("请求不是合法的 multipart 表单", 400, "plugin_upload_invalid"); // 坏请求体:按上传无效回给界面
+  }
+  const file = form.get("file");
+  const engineField = form.get("engine");
+  const engine = typeof engineField === "string" && engineField ? engineField : "pi";
+  if (!isPluginEngine(engine)) return error(`引擎 ${engine} 没有插件运行时`, 400, "plugin_engine_unsupported");
+  if (!(file instanceof File)) return error("没有收到文件", 400, "plugin_upload_invalid");
+  try {
+    const prepared = await prepareUpload(file.name, new Uint8Array(await file.arrayBuffer()), PI_UPLOAD_CHECKS);
+    const existing = prepared.kind === "package"
+      ? records().find((record) => record.engine === engine && isPackageSource(record.source) && record.name === prepared.name)
+      : records().find((record) => record.engine === engine && isUploadedScript(record.source) && record.source.spec === `scripts/${prepared.fileName}`);
+    if (existing && form.get("replace") !== "1") {
+      const message = `已安装同名插件 ${existing.name}`;
+      return json({ error: message, code: 409, errorCode: "plugin_name_conflict", existing: pluginView(existing) } satisfies EnginePluginUploadConflictDto, { status: 409 });
+    }
+    const spec = saveUpload(engine, prepared);
+    let record: EnginePluginRecord;
+    try {
+      record = await install(engine, { kind: "upload", spec }, existing);
+    } catch (err) {
+      if (existing?.source.kind !== "upload" || existing.source.spec !== spec) removeUpload(engine, spec);
+      throw err;
+    }
+    saveInstalled(record, await pluginMcpDeclarations(record));
+    if (existing) removeUploadIfUnused(existing, records());
+    return json({ plugin: pluginView(record) } satisfies EnginePluginMutationDto);
+  } catch (err) {
+    return failure(err);
+  }
 }
 
 export async function handlePluginRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
@@ -269,6 +338,7 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
       return failure(err);
     }
   }
+  if (path === "plugins/upload" && request.method === "POST") return handleUpload(request);
   // 按记录里的来源再装一次(升级、换机恢复后补装、本地插件改过代码)。
   if (path === "plugins/reinstall" && request.method === "POST") {
     const body = await readJson<{ id?: unknown }>(request);
@@ -276,6 +346,10 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
     if (!record) return error("Plugin not found", 404);
     try {
       const next = await install(record.engine, record.source, record);
+      if (isUploadedScript(next.source)) {
+        const loadError = await PI_UPLOAD_CHECKS.scriptLoadError!(locateEnginePlugin(next));
+        if (loadError) throw new CodedError(`这个文件不是可用的插件:${loadError}`, "plugin_upload_invalid");
+      }
       saveInstalled(next, await pluginMcpDeclarations(next));
       return json({ plugin: pluginView(next) } satisfies EnginePluginMutationDto);
     } catch (err) {
@@ -346,21 +420,24 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
       return failure(err);
     }
   }
-  // 卸载:npm / git 来源删掉装的包,本地来源只删记录(不动用户的文件);所有助手的绑定与它带来的 MCP 服务器一并移除。
+  // 卸载:装进安装目录的来源删掉装的包,上传的文件一并删,本地来源只删记录(不动用户的文件);所有助手的绑定与它带来的
+  // MCP 服务器一并移除。
   if (path === "plugins/uninstall" && request.method === "POST") {
     const body = await readJson<{ id?: unknown }>(request);
     const record = findRecord(body.id);
     if (!record) return error("Plugin not found", 404);
-    const sharesPackage = records().some((item) => item.id !== record.id && item.engine === record.engine && item.source.kind !== "local" && item.name === record.name);
+    const remaining = records().filter((item) => item.id !== record.id);
+    const sharesPackage = remaining.some((item) => item.engine === record.engine && isPackageSource(item.source) && item.name === record.name);
     try {
-      if (record.source.kind !== "local" && !sharesPackage) await uninstallEnginePluginPackage(record.engine, record.name, proxyOptions());
+      if (isPackageSource(record.source) && !sharesPackage) await uninstallEnginePluginPackage(record.engine, record.name, proxyOptions());
     } catch (err) {
       return failure(err);
     }
-    saveRecords(records().filter((item) => item.id !== record.id), {
+    saveRecords(remaining, {
       assistants: (pluginIds) => pluginIds.filter((pluginId) => pluginId !== record.id),
       mcpServers: (servers) => removePluginMcpServers(servers, record.id),
     });
+    removeUploadIfUnused(record, remaining);
     return json({ status: "ok" });
   }
   if (path === "plugins/enabled" && request.method === "POST") {

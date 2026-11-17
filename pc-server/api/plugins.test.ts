@@ -1,10 +1,12 @@
 // api/plugins.test.ts — 插件管理端点(P5.8):安装(本地 / npm 压缩包,离线)→ 启停 / 开关 / 绑定 → 重装沿用设置
 // → 卸载删包并解除所有助手的绑定;不是 pi 插件的包装上后立即卸掉。安装走真实子进程(本程序以 bun 身份运行包管理器)。
 // npm 来源用 `bun pm pack` 打的压缩包:Windows 上 bun 1.4.2 装 file:<目录> 会在拷贝阶段报 EPERM(目录插件走本地来源)。
+// 上传(P6.2.3):三种格式各装通一次、同名 409 与 replace=1、存档丢失、搬动数据目录后安装根仍能再装别的包。
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { buildZip } from "../test-utils/build-zip";
 
 process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-plugins-api-test-"));
 
@@ -12,7 +14,7 @@ const { defaultState } = await import("../app-config/defaults");
 const jsonStore = await import("../persistence/json-store");
 const { handlePluginRoutes } = await import("./handlers/plugins");
 const { handleSettingsRoutes } = await import("./handlers/settings");
-const { enginePluginInstallRoot, enginePluginsFor } = await import("../engines/plugins");
+const { enginePluginInstallRoot, enginePluginsFor, enginePluginUploadsDir } = await import("../engines/plugins");
 const { pluginAudit, recordPluginAudit } = await import("../engines/plugin-audit");
 const { pluginMcpServerId } = await import("../engines/plugin-mcp");
 
@@ -47,6 +49,20 @@ async function call(path: string, body?: unknown, query = "") {
     : new Request(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const response = path.startsWith("settings/") ? await handleSettingsRoutes(request, url, path) : await handlePluginRoutes(request, url, path);
   return { status: response!.status, body: (await response!.json()) as Record<string, any> };
+}
+
+async function upload(fileName: string, bytes: Uint8Array, fields: Record<string, string> = {}) {
+  const form = new FormData();
+  form.set("file", new File([new Uint8Array(bytes)], fileName));
+  for (const [key, value] of Object.entries(fields)) form.set(key, value);
+  const url = new URL("http://127.0.0.1/api/plugins/upload");
+  const response = await handlePluginRoutes(new Request(url, { method: "POST", body: form }), url, "plugins/upload");
+  return { status: response!.status, body: (await response!.json()) as Record<string, any> };
+}
+
+async function tgzOf(files: Record<string, string>): Promise<Uint8Array> {
+  const encoded = Object.fromEntries(Object.entries(files).map(([name, text]) => [`package/${name}`, new TextEncoder().encode(text)]));
+  return new Bun.Archive(encoded, { compress: "gzip" }).bytes();
 }
 
 function pluginAuditCodes(pluginId: string) {
@@ -200,4 +216,84 @@ describe("插件管理端点", () => {
     expect(installed.body.plugin).toMatchObject({ loadFailed: true, auditCount: 2 });
     expect((await call("plugins/uninstall", { id: "pi:a" })).status).toBe(200);
   });
+
+  test("上传:tgz / zip / 单个脚本各装通一次;同名 409 与 replace=1;存档丢失;卸载连文件一起删", async () => {
+    const uploads = enginePluginUploadsDir("pi");
+    const uploaded = () => jsonStore.state.settings.enginePlugins.filter((record) => record.source.kind === "upload");
+    const pkg = (version: string) => JSON.stringify({ name: "@demo/up", version, pi: { extensions: ["./main.js"] } });
+    const first = await upload("up.tgz", await tgzOf({ "package.json": pkg("1.0.0"), "main.js": PLUGIN_SOURCE }));
+    expect(first.body.error ?? "").toBe("");
+    const plugin = first.body.plugin;
+    expect(plugin).toMatchObject({ id: "pi:@demo/up", name: "@demo/up", version: "1.0.0", installed: true, source: { kind: "upload" } });
+    expect(plugin.source.spec).toMatch(/^demo-up-1\.0\.0-[0-9a-f]{8}\.tgz$/);
+    expect(plugin.path).toBe(join(enginePluginInstallRoot("pi"), "node_modules", "@demo", "up"));
+    // 安装根的清单与锁文件里只有相对路径。
+    const root = enginePluginInstallRoot("pi");
+    expect(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).dependencies["@demo/up"]).toContain(`../uploads/${plugin.source.spec}`);
+    // 数据目录按 foundation/paths 首次加载时的环境定(整套测试同一进程跑时不一定是本文件设的那个)。
+    const enginesDir = dirname(dirname(root));
+    const dataDir = dirname(enginesDir);
+    for (const file of ["package.json", "bun.lock"]) {
+      const text = readFileSync(join(root, file), "utf8");
+      expect(text.includes(dataDir) || text.includes(dataDir.replaceAll("\\", "/")) || text.includes(dataDir.replaceAll("\\", "\\\\"))).toBe(false);
+    }
+
+    // 搬动数据目录后,在新位置再装别的包仍成功(清单里的上传依赖跟着走)。
+    const moved = join(lab, "moved-engines");
+    renameSync(enginesDir, moved);
+    try {
+      const other = packTarball(writePackage("after-move", { name: "after-move", version: "0.1.0" }, { "index.js": PLUGIN_SOURCE }));
+      const movedRoot = join(moved, "pi", "npm");
+      const added = Bun.spawnSync([process.execPath, "add", other, "--omit=peer"], { cwd: movedRoot, stdout: "pipe", stderr: "pipe" });
+      if (added.exitCode !== 0) throw new Error(added.stderr.toString());
+      expect(Bun.spawnSync([process.execPath, "remove", "after-move"], { cwd: movedRoot }).exitCode).toBe(0);
+    } finally {
+      renameSync(moved, enginesDir);
+    }
+
+    const conflict = await upload("up-1.1.tgz", await tgzOf({ "package.json": pkg("1.1.0"), "main.js": PLUGIN_SOURCE }));
+    expect(conflict.status).toBe(409);
+    expect(conflict.body).toMatchObject({ errorCode: "plugin_name_conflict", existing: { id: plugin.id } });
+    expect((await call("plugins/enabled", { id: plugin.id, enabled: false })).status).toBe(200);
+    const replaced = await upload("up-1.1.tgz", await tgzOf({ "package.json": pkg("1.1.0"), "main.js": PLUGIN_SOURCE }), { replace: "1" });
+    expect(replaced.body.plugin).toMatchObject({ id: plugin.id, version: "1.1.0", enabled: false });
+    expect(existsSync(join(uploads, plugin.source.spec))).toBe(false);
+    expect(existsSync(join(uploads, replaced.body.plugin.source.spec))).toBe(true);
+    expect((await call("plugins/reinstall", { id: plugin.id })).status).toBe(200);
+    expect(uploaded()).toHaveLength(1);
+
+    // zip:GitHub 下载的形态(唯一的顶层目录),重打成 tgz 存档后照常装。
+    const zipped = await upload("zipped-main.zip", new Uint8Array(buildZip([
+      { name: "zipped-main/package.json", data: JSON.stringify({ name: "zipped", version: "0.2.0" }) },
+      { name: "zipped-main/index.js", data: PLUGIN_SOURCE },
+    ])));
+    expect(zipped.body.plugin).toMatchObject({ id: "pi:zipped", version: "0.2.0", installed: true, source: { kind: "upload" } });
+    expect(zipped.body.plugin.source.spec).toEndWith(".tgz");
+
+    // 单个脚本:存在 uploads/scripts 原地加载;加载不了的不落地;同名同样 409。
+    const broken = await upload("broken.js", new TextEncoder().encode("export default function (pi) { pi.registerTool("));
+    expect(broken.body.errorCode).toBe("plugin_upload_invalid");
+    expect(existsSync(join(uploads, "scripts", "broken.js"))).toBe(false);
+    const script = await upload("hello.ts", new TextEncoder().encode(PLUGIN_SOURCE));
+    expect(script.body.plugin).toMatchObject({ id: "pi:hello", name: "hello", source: { kind: "upload", spec: "scripts/hello.ts" } });
+    expect(script.body.plugin.path).toBe(join(uploads, "scripts", "hello.ts"));
+    const detail = await call("plugins/detail", undefined, "?id=pi:hello");
+    expect(detail.body.tools.map((tool: { name: string }) => tool.name)).toEqual(["peek"]);
+    expect((await upload("hello.ts", new TextEncoder().encode(PLUGIN_SOURCE))).status).toBe(409);
+    expect((await call("plugins/reinstall", { id: "pi:hello" })).status).toBe(200);
+
+    // 存档不在(换机恢复后的样子):重装报 plugin_upload_missing。
+    const zipArchive = join(uploads, zipped.body.plugin.source.spec);
+    renameSync(zipArchive, `${zipArchive}.bak`);
+    expect((await call("plugins/reinstall", { id: "pi:zipped" })).body.errorCode).toBe("plugin_upload_missing");
+    renameSync(`${zipArchive}.bak`, zipArchive);
+
+    for (const id of [plugin.id, "pi:zipped", "pi:hello"]) expect((await call("plugins/uninstall", { id })).status).toBe(200);
+    expect(uploaded()).toEqual([]);
+    expect(readdirSync(uploads).filter((name) => name !== "scripts")).toEqual([]);
+    expect(readdirSync(join(uploads, "scripts"))).toEqual([]);
+    expect(existsSync(plugin.path)).toBe(false);
+    expect((await upload("x.exe", new Uint8Array([1]))).body.errorCode).toBe("plugin_upload_invalid");
+    expect((await upload("x.tgz", new Uint8Array([1]), { engine: "chat" })).body.errorCode).toBe("plugin_engine_unsupported");
+  }, 180_000);
 });

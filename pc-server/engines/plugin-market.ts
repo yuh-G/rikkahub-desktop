@@ -17,6 +17,7 @@ import { CodedError } from "../foundation/errors";
 import { normalizeGitSpec, npmSpecName } from "./plugin-installer";
 import { isPluginEngine } from "./plugin-engines";
 import { repositoryUrl } from "./plugin-package";
+import { isPackageSource } from "./plugins";
 import { DEFAULT_NPM_REGISTRY, hasNewerVersion, updatablePackageName } from "./plugin-updates";
 
 export const MARKET_PAGE_SIZE = 24;
@@ -287,7 +288,7 @@ async function withCache<T>(key: string, refresh: boolean, load: () => Promise<T
 // ---- 已安装标注 ----
 
 function withInstalled(item: PluginMarketItemDto, engine: string, records: readonly EnginePluginRecord[]): PluginMarketItemDto {
-  const installed = records.find((rec) => rec.engine === engine && rec.source.kind !== "local" && rec.name === item.name);
+  const installed = records.find((rec) => rec.engine === engine && isPackageSource(rec.source) && rec.name === item.name);
   if (!installed) return item;
   const hasUpdate = updatablePackageName(installed) !== null && hasNewerVersion(item.version ?? null, installed.version);
   return { ...item, installed: { pluginId: installed.id, version: installed.version, hasUpdate } };
