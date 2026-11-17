@@ -134,13 +134,20 @@ export async function installFromMarket(
   if (!confirmed) return null;
   const result = await busyWhile(marketBusyKey(source.id, item.name), () => pluginsApi.install(item.source, source.engine));
   if (!result) return null;
-  const plugin = result.plugin;
+  afterInstalled(result.plugin, { viewAction: true });
+  return result.plugin;
+}
+
+/** 装好之后(市场、两个安装弹窗、上传共用):写进本地快照、首页那一行闪一下、补取两份补充数据、toast 写明去哪里开启。
+ *  viewAction = toast 带「查看」(调用方自己不跳详情时)。 */
+export function afterInstalled(plugin: EnginePluginViewDto, options: { viewAction?: boolean } = {}): void {
   applyPluginView(plugin);
   setPluginFlash(plugin.id);
   void refreshPluginList();
   void refreshPluginUpdates();
   toast.success(i18n.t("settings:plugins.installed_toast", { name: plugin.name }), {
-    action: { label: i18n.t("settings:plugins.view"), onClick: () => pushPluginView({ kind: "detail", pluginId: plugin.id }) },
+    ...(options.viewAction
+      ? { action: { label: i18n.t("settings:plugins.view"), onClick: () => pushPluginView({ kind: "detail", pluginId: plugin.id }) } }
+      : {}),
   });
-  return plugin;
 }

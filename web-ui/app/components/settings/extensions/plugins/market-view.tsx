@@ -32,6 +32,7 @@ import {
 import type { Settings } from "~/types";
 import type { PluginMarketSourceDto } from "~/types/plugins";
 
+import { InstallDialog } from "./install-dialog";
 import { MarketSourcesDialog } from "./market-sources-dialog";
 import { MarketCard } from "./market-card";
 import { marketInstalledRecord } from "./model";
@@ -219,6 +220,7 @@ function MarketResults({
   const updates = usePluginsViewStore((state) => state.updates);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [installOpen, setInstallOpen] = React.useState(false);
   const busyRef = React.useRef(false);
   const sentinelRef = React.useRef<HTMLDivElement>(null);
 
@@ -281,7 +283,13 @@ function MarketResults({
       {result.staleError ? <Notice tone="warning">{t("settings:plugins.market_stale", { error: result.staleError })}</Notice> : null}
       {result.items.length === 0 ? (
         <SettingsEmpty size="md">
-          {query ? t("settings:plugins.market_empty", { query }) : t("settings:plugins.market_empty_all")}
+          <span>{query ? t("settings:plugins.market_empty", { query }) : t("settings:plugins.market_empty_all")}</span>
+          {query ? (
+            <Button type="button" variant="tertiary" size="compact" className="mt-1" onClick={() => setInstallOpen(true)}>
+              {t("settings:plugins.market_empty_hint")}
+            </Button>
+          ) : null}
+          <InstallDialog kind={installOpen ? "package" : null} initialSpec={query} onOpenChange={setInstallOpen} />
         </SettingsEmpty>
       ) : visible.length === 0 ? (
         <SettingsEmpty size="md">{t("settings:plugins.market_filtered_empty")}</SettingsEmpty>

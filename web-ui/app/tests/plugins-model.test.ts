@@ -18,6 +18,7 @@ import {
   type PluginRowModel,
 } from "~/components/settings/extensions/plugins/model";
 import { formatMonthlyDownloads } from "~/components/settings/extensions/plugins/market-card";
+import { uploadFileProblem } from "~/components/settings/extensions/plugins/upload-view";
 import { DEFAULT_PLUGIN_FILTERS, type PluginHomeFilters } from "~/stores/plugins-view-store";
 import type { EnginePluginRecord, EnginePluginViewDto } from "~/types/plugins";
 
@@ -200,4 +201,15 @@ test("月下载量用紧凑写法", () => {
   expect(formatMonthlyDownloads(995000, "zh-CN")).toBe("99.5万");
   expect(formatMonthlyDownloads(995000, "en-US")).toBe("995K");
   expect(formatMonthlyDownloads(812, "en-US")).toBe("812");
+});
+
+test("上传的前端初查:扩展名(不分大小写)、空文件、两种上限", () => {
+  const mb = 1024 * 1024;
+  expect(uploadFileProblem({ name: "a.TGZ", size: 10 })).toBeNull();
+  expect(uploadFileProblem({ name: "a.tar.gz", size: 50 * mb })).toBeNull();
+  expect(uploadFileProblem({ name: "a.gz", size: 10 })).toBe("upload_bad_type");
+  expect(uploadFileProblem({ name: "a.exe", size: 10 })).toBe("upload_bad_type");
+  expect(uploadFileProblem({ name: "a.zip", size: 0 })).toBe("upload_empty");
+  expect(uploadFileProblem({ name: "a.zip", size: 50 * mb + 1 })).toBe("upload_too_large_archive");
+  expect(uploadFileProblem({ name: "a.mjs", size: mb + 1 })).toBe("upload_too_large_script");
 });

@@ -6,12 +6,10 @@ import { useTranslation } from "react-i18next";
 
 import type { SectionProps } from "~/components/settings/extensions/common";
 import { SETTINGS_PAGE_PANEL_ID } from "~/components/settings/settings-panel";
-import { SettingsDetailHeader, SettingsStack } from "~/components/settings/shared";
 import { refreshPluginList, refreshPluginUpdates } from "~/lib/plugins-api";
 import { cn } from "~/lib/utils";
 import { getSettingsParam } from "~/stores/settings-dialog-store";
 import {
-  backPluginView,
   parsePluginDetailTab,
   pluginViewKey,
   rememberPluginScroll,
@@ -28,7 +26,7 @@ import { PluginDetailView } from "./detail-view";
 import { PluginsHomeView } from "./home-view";
 import { PluginMarketDetailView } from "./market-detail-view";
 import { PluginMarketView } from "./market-view";
-import { BackLink } from "./parts";
+import { PluginUploadView } from "./upload-view";
 
 export function PluginsSection({ settings }: SectionProps) {
   const stack = usePluginsViewStore((state) => state.stack);
@@ -71,7 +69,6 @@ export interface PluginViewProps {
 }
 
 function PluginViewOutlet({ view, settings, backLabel }: PluginViewProps & { view: PluginView }) {
-  const title = usePluginViewTitle(view, settings);
   if (view.kind === "home") return <PluginsHomeView settings={settings} />;
   if (view.kind === "detail") {
     return <PluginDetailView settings={settings} pluginId={view.pluginId} initialTab={view.tab} backLabel={backLabel ?? ""} />;
@@ -80,13 +77,7 @@ function PluginViewOutlet({ view, settings, backLabel }: PluginViewProps & { vie
   if (view.kind === "market-detail") {
     return <PluginMarketDetailView settings={settings} sourceId={view.sourceId} name={view.name} backLabel={backLabel ?? ""} />;
   }
-  // 上传在 P6.2.7 落地;这里先给出标题与返回。
-  return (
-    <SettingsStack>
-      {backLabel ? <BackLink label={backLabel} onClick={backPluginView} /> : null}
-      <SettingsDetailHeader title={title} />
-    </SettingsStack>
-  );
+  return <PluginUploadView backLabel={backLabel ?? ""} />;
 }
 
 /** 视图的标题(也是下一层「返回」按钮上的字)。 */

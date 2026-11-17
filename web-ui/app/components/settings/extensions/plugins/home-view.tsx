@@ -1,7 +1,7 @@
 // 插件页首页(方案 P6.2「视图一」):已安装的插件按引擎分组;右上是搜索 / 筛选 / 排序、去市场、添加。标题行吸顶,
 // 滚离顶部后显出下缘细线。行整行可点进详情,快速启停与更新、重装、卸载走行尾「⋯」(行上不放开关,与 MCP 页一致)。
 import * as React from "react";
-import { ArrowUpDown, ChevronDown, Plus, Puzzle, SlidersHorizontal, Store, Upload } from "lucide-react";
+import { ArrowUpDown, ChevronDown, FolderCode, Package, Plus, Puzzle, SlidersHorizontal, Store, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { SettingsEmpty, SettingsGroup, SettingsListRow, SettingsStack, type SettingsRowAction } from "~/components/settings/shared";
@@ -30,6 +30,7 @@ import {
 import type { Settings } from "~/types";
 
 import { reinstallPlugin, setPluginEnabled, uninstallPlugin, updatePlugin } from "./actions";
+import { InstallDialog, type InstallDialogKind } from "./install-dialog";
 import {
   groupPlugins,
   isPluginFilterActive,
@@ -114,6 +115,8 @@ function HomeHeader() {
 
 function HomeToolbar() {
   const { t } = useTranslation();
+  const [dialog, setDialog] = React.useState<InstallDialogKind | null>(null);
+  const installing = usePluginsViewStore((state) => Boolean(state.busy.upload));
   const filters = usePluginsViewStore((state) => state.filters);
   const list = usePluginsViewStore((state) => state.list);
   const engines = list?.engines ?? [];
@@ -177,18 +180,28 @@ function HomeToolbar() {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button type="button" size="sm">
-            <Plus />
+            {installing ? <Spinner /> : <Plus />}
             {t("settings:plugins.add")}
             <ChevronDown className="-mr-0.5 opacity-80" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuContent align="end" className="w-56">
           <DropdownMenuItem onSelect={() => pushPluginView({ kind: "upload" })}>
             <Upload />
             {t("settings:plugins.add_upload")}
           </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setDialog("package")}>
+            <Package />
+            {t("settings:plugins.add_package")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setDialog("local")}>
+            <FolderCode />
+            <span className="min-w-0 flex-1">{t("settings:plugins.add_local")}</span>
+            <span className="text-xs text-[var(--ds-text-tertiary)]">{t("settings:plugins.add_local_hint")}</span>
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <InstallDialog kind={dialog} onOpenChange={(open) => !open && setDialog(null)} />
     </div>
   );
 }
