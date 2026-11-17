@@ -78,9 +78,10 @@ describe("enginePluginsFor", () => {
 });
 
 describe("插件记录", () => {
-  test("规范化:丢坏行与重复 id,补齐开关缺省值", () => {
+  test("规范化:丢坏行与重复 id,补齐开关缺省值;说明字段按上限规整,空的整项去掉", () => {
     const records = normalizeEnginePluginRecords([
-      { id: "pi:a", engine: "pi", source: { kind: "npm", spec: "a" }, toolSwitches: { x: { exempt: true, junk: 1 }, y: null } },
+      { id: "pi:a", engine: "pi", source: { kind: "npm", spec: "a" }, toolSwitches: { x: { exempt: true, junk: 1 }, y: null }, meta: { license: "MIT", author: 3 } },
+      { id: "pi:m", engine: "pi", source: { kind: "npm", spec: "m" }, meta: { author: "" } },
       { id: "pi:a", engine: "pi", source: { kind: "npm", spec: "a" } },
       { id: "pi:b", engine: "pi", source: { kind: "ftp", spec: "b" } },
       { engine: "pi", source: { kind: "npm", spec: "c" } },
@@ -96,6 +97,18 @@ describe("插件记录", () => {
         enabled: true,
         hookSwitches: { toolCall: true },
         toolSwitches: { x: { exempt: true } },
+        installedAt: "",
+        meta: { license: "MIT" },
+      },
+      {
+        id: "pi:m",
+        engine: "pi",
+        name: "pi:m",
+        source: { kind: "npm", spec: "m" },
+        version: null,
+        enabled: true,
+        hookSwitches: { toolCall: true },
+        toolSwitches: {},
         installedAt: "",
       },
     ]);

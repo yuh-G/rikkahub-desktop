@@ -14,6 +14,7 @@ import type { Assistant } from "../foundation/types";
 import type { EnginePluginRecord, Settings } from "../foundation/types/settings";
 import { getStringArray, uniqueStrings } from "../foundation/utils";
 import type { EngineKind, EnginePlugin } from "./contract";
+import { normalizePluginMeta } from "./plugin-package";
 
 export function enginePluginInstallRoot(engine: string): string {
   return join(dataDir, "engines", engine, "npm");
@@ -80,6 +81,7 @@ export function normalizeEnginePluginRecords(value: unknown): EnginePluginRecord
     if (typeof raw.id !== "string" || !raw.id || seen.has(raw.id) || typeof raw.engine !== "string" || !raw.engine) continue;
     if (!source || !["npm", "git", "local"].includes(source.kind) || typeof source.spec !== "string" || !source.spec) continue;
     seen.add(raw.id);
+    const meta = normalizePluginMeta(raw.meta);
     const toolSwitches: EnginePluginRecord["toolSwitches"] = {};
     for (const [name, sw] of Object.entries(raw.toolSwitches ?? {})) {
       if (!sw || typeof sw !== "object") continue;
@@ -98,6 +100,7 @@ export function normalizeEnginePluginRecords(value: unknown): EnginePluginRecord
       hookSwitches: { toolCall: raw.hookSwitches?.toolCall !== false },
       toolSwitches,
       installedAt: typeof raw.installedAt === "string" ? raw.installedAt : "",
+      ...(meta ? { meta } : {}),
     });
   }
   return records;

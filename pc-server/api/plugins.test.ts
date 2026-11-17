@@ -63,17 +63,39 @@ const PLUGIN_SOURCE = `export default function (pi) {
 
 describe("插件管理端点", () => {
   test("npm 来源装进引擎的安装目录;开关与绑定进会话装配;重装沿用;卸载删包并解绑", async () => {
-    const tarball = packTarball(writePackage("demo-pkg", { name: "@demo/peek", version: "1.2.0", pi: { extensions: ["./main.js"] } }, { "main.js": PLUGIN_SOURCE }));
+    const tarball = packTarball(
+      writePackage(
+        "demo-pkg",
+        { name: "@demo/peek", version: "1.2.0", description: "看一眼的工具", author: "Ada", license: "MIT", pi: { extensions: ["./main.js"] } },
+        { "main.js": PLUGIN_SOURCE, "README.md": "# Peek\n用法" },
+      ),
+    );
     const installed = await call("plugins/install", { source: { kind: "npm", spec: tarball } });
     expect(installed.body.error ?? "").toBe("");
     expect(installed.status).toBe(200);
     const plugin = installed.body.plugin;
-    expect(plugin).toMatchObject({ id: "pi:@demo/peek", engine: "pi", name: "@demo/peek", version: "1.2.0", enabled: true, installed: true });
+    expect(plugin).toMatchObject({
+      id: "pi:@demo/peek",
+      engine: "pi",
+      name: "@demo/peek",
+      version: "1.2.0",
+      enabled: true,
+      installed: true,
+      loadFailed: false,
+      auditCount: 0,
+      meta: { description: "看一眼的工具", author: "Ada", license: "MIT" },
+    });
     expect(plugin.path).toBe(join(enginePluginInstallRoot("pi"), "node_modules", "@demo", "peek"));
 
     const detail = await call("plugins/detail", undefined, `?id=${encodeURIComponent(plugin.id)}`);
     expect(detail.body.tools.map((tool: { name: string }) => tool.name)).toEqual(["peek"]);
     expect(detail.body.commands.map((command: { name: string }) => command.name)).toEqual(["todos"]);
+    expect(detail.body.readme).toBe("# Peek\n用法");
+    const list = await call("plugins");
+    expect(list.body.engines).toEqual([{ id: "pi", label: "Pi" }]);
+    // 压缩包来源不检查更新,也不能「更新」。
+    expect((await call("plugins/updates")).body.updates).toEqual({});
+    expect((await call("plugins/update", { id: plugin.id })).body.errorCode).toBe("plugin_update_unsupported");
 
     const assistantId = jsonStore.state.settings.assistants[0]!.id;
     expect((await call("settings/assistant/plugins", { assistantId, pluginIds: ["pi:nope"] })).status).toBe(400);
@@ -162,5 +184,11 @@ describe("插件管理端点", () => {
       ["pi_plugin_load_failed", "load", 1, "boom"],
       ["pi_plugin_removed", "tool:read", 2, undefined],
     ]);
+    // 列表的运行记录摘要:有加载失败、共两条。
+    const local = writePackage("audit-a", { name: "a" }, { "index.js": PLUGIN_SOURCE });
+    const installed = await call("plugins/install", { source: { kind: "local", spec: local } });
+    expect(installed.body.plugin.id).toBe("pi:a");
+    expect(installed.body.plugin).toMatchObject({ loadFailed: true, auditCount: 2 });
+    expect((await call("plugins/uninstall", { id: "pi:a" })).status).toBe(200);
   });
 });

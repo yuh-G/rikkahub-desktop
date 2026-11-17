@@ -4,12 +4,26 @@
 
 import type { EnginePluginRecord } from "./settings";
 
-/** 插件列表的一行:记录 + 包的位置 + 包在不在(换机恢复后记录在、包不在,按「未安装」显示)。 */
-export type EnginePluginViewDto = EnginePluginRecord & { path: string; installed: boolean };
+/** 有插件运行时的引擎(engines/plugin-engines.ts 的表;插件页按它的顺序分组,前端不写死)。 */
+export interface PluginEngineDto {
+  id: string;
+  label: string;
+}
+
+/** 插件列表的一行:记录 + 包的位置 + 包在不在(换机恢复后记录在、包不在,按「未安装」显示)+ 运行记录的摘要
+ *  (loadFailed = 最近一次加载失败过;auditCount = 运行记录的条数)。 */
+export type EnginePluginViewDto = EnginePluginRecord & { path: string; installed: boolean; loadFailed: boolean; auditCount: number };
 
 /** GET plugins */
 export interface EnginePluginListDto {
+  engines: PluginEngineDto[];
   plugins: EnginePluginViewDto[];
+}
+
+/** GET plugins/updates:只含能检查更新的记录(npm 来源且没钉版本)。latest = null 表示没查到。 */
+export interface EnginePluginUpdatesDto {
+  updates: Record<string, { latest: string | null; hasUpdate: boolean }>;
+  checkedAt: string;
 }
 
 /** 安装 / 重装 / 启停 / 开关的返回:改完的那一行。 */
@@ -41,6 +55,8 @@ export interface EnginePluginInspectionDto {
 export interface EnginePluginDetailDto extends EnginePluginInspectionDto {
   plugin: EnginePluginViewDto;
   audit: PluginAuditEntryDto[];
+  /** 包根的 README(截到 200 KB);没有包或没有说明时为 null。 */
+  readme: string | null;
 }
 
 /** GET plugins/audit */

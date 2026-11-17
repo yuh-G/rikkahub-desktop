@@ -6,13 +6,17 @@
 // 同名的 npm / git 记录即同一个安装位置,再装一次 = 重装 / 升级,沿用原记录的启停、开关与绑定。
 // 插件声明的 MCP 服务(D13,P5.8b):安装 / 重装时加载一次插件读出声明,登记进应用的 MCP 列表(engines/plugin-mcp),
 // 工具清单在后台同步;启停翻服务器的 source.active,卸载移除。插件加载出错时不动已有登记。
-// 目前只有 pi 引擎有插件运行时。
+// 有插件运行时的引擎见 engines/plugin-engines(目前只有 pi)。安装 / 重装时从 package.json 读说明字段存进记录(P6.2.1)。
+// 更新:只对 npm 来源、没钉版本的记录查(engines/plugin-updates),更新 = 以 <包名>@latest 再装一次,记录里的来源写法不变。
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { updateSettings } from "../../app-config";
 import { reportEngineError } from "../../engines/host";
 import { pluginAudit } from "../../engines/plugin-audit";
+import { isPluginEngine, PLUGIN_ENGINES } from "../../engines/plugin-engines";
+import { readEnginePluginMeta, readEnginePluginReadme } from "../../engines/plugin-package";
+import { checkPluginUpdates, forgetPluginUpdate, updatablePackageName } from "../../engines/plugin-updates";
 import { installEnginePluginPackage, normalizeGitSpec, uninstallEnginePluginPackage } from "../../engines/plugin-installer";
 import {
   removePluginMcpServers,
@@ -30,6 +34,7 @@ import type {
   EnginePluginDetailDto,
   EnginePluginListDto,
   EnginePluginMutationDto,
+  EnginePluginUpdatesDto,
   EnginePluginViewDto,
 } from "../../foundation/types/plugins";
 import type { EnginePluginRecord, EnginePluginSource } from "../../foundation/types/settings";
@@ -42,8 +47,6 @@ import { pluginMcpSource } from "../../tools/mcp-source";
 import { addLog } from "../logs";
 import { error, json, readJson } from "../request";
 
-const SUPPORTED_ENGINES = new Set(["pi"]);
-
 function records(): EnginePluginRecord[] {
   return state.settings.enginePlugins ?? [];
 }
@@ -54,7 +57,14 @@ function findRecord(pluginId: unknown): EnginePluginRecord | undefined {
 
 function pluginView(record: EnginePluginRecord): EnginePluginViewDto {
   const path = locateEnginePlugin(record);
-  return { ...record, path, installed: existsSync(path) };
+  const audit = pluginAudit(record.id);
+  return {
+    ...record,
+    path,
+    installed: existsSync(path),
+    loadFailed: audit.some((entry) => entry.code === "pi_plugin_load_failed"),
+    auditCount: audit.length,
+  };
 }
 
 interface SettingsPatch {
@@ -165,17 +175,23 @@ function freeId(base: string): string {
   return pluginId;
 }
 
-/** 装好(或定位好)来源,返回新的记录;existing = 重装的那条。 */
-async function install(engine: string, source: EnginePluginSource, existing?: EnginePluginRecord): Promise<EnginePluginRecord> {
+/** 装好(或定位好)来源,返回新的记录;existing = 重装的那条;installSpec = 这次交给包管理器的写法(更新时是
+ *  <包名>@latest),缺省即来源的写法。 */
+async function install(
+  engine: string,
+  source: EnginePluginSource,
+  existing?: EnginePluginRecord,
+  installSpec = source.spec,
+): Promise<EnginePluginRecord> {
   const installedAt = new Date().toISOString();
   if (source.kind === "local") {
     const info = localPackageInfo(source.spec);
     const pluginId = existing?.id ?? freeId(`${engine}:${info.name}`);
     const entryError = piPluginEntryError({ id: pluginId, path: source.spec });
     if (entryError) throw new CodedError(entryError, "plugin_entry_missing");
-    return { ...(existing ?? defaults(pluginId, engine)), name: existing?.name ?? info.name, source, version: info.version, installedAt };
+    return withMeta({ ...(existing ?? defaults(pluginId, engine)), name: existing?.name ?? info.name, source, version: info.version, installedAt });
   }
-  const { name, version } = await installEnginePluginPackage(engine, source.spec, { ...proxyOptions(), ...(existing ? { knownName: existing.name } : {}) });
+  const { name, version } = await installEnginePluginPackage(engine, installSpec, { ...proxyOptions(), ...(existing ? { knownName: existing.name } : {}) });
   const same = existing ?? records().find((record) => record.engine === engine && record.source.kind !== "local" && record.name === name);
   const pluginId = same?.id ?? freeId(`${engine}:${name}`);
   const entryError = piPluginEntryError({ id: pluginId, path: locateEnginePlugin({ engine, name, source }) });
@@ -184,7 +200,14 @@ async function install(engine: string, source: EnginePluginSource, existing?: En
     if (!same) await uninstallEnginePluginPackage(engine, name, proxyOptions());
     throw new CodedError(`${name} 不是可用的插件:${entryError}`, "plugin_entry_missing");
   }
-  return { ...(same ?? defaults(pluginId, engine)), name, source, version, installedAt };
+  return withMeta({ ...(same ?? defaults(pluginId, engine)), name, source, version, installedAt });
+}
+
+/** 按装好的包重读说明字段(包里没有的项随之消失)。 */
+function withMeta(record: EnginePluginRecord): EnginePluginRecord {
+  const { meta: _old, ...rest } = record;
+  const meta = readEnginePluginMeta(locateEnginePlugin(record));
+  return meta ? { ...rest, meta } : rest;
 }
 
 function defaults(pluginId: string, engine: string): EnginePluginRecord {
@@ -198,7 +221,7 @@ function failure(err: unknown): Response {
 
 export async function handlePluginRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
   if (path === "plugins" && request.method === "GET") {
-    return json({ plugins: records().map(pluginView) } satisfies EnginePluginListDto);
+    return json({ engines: [...PLUGIN_ENGINES], plugins: records().map(pluginView) } satisfies EnginePluginListDto);
   }
   // 插件登记的工具与指令(加载一次插件代码)+ 审计。
   if (path === "plugins/detail" && request.method === "GET") {
@@ -213,7 +236,8 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
           errors: [err instanceof Error ? err.message : String(err)],
         }))
       : { tools: [], commands: [], mcpServers: [], errors: [] };
-    return json({ plugin: view, ...inspection, audit: pluginAudit(record.id) } satisfies EnginePluginDetailDto);
+    const readme = view.installed ? readEnginePluginReadme(view.path) : null;
+    return json({ plugin: view, ...inspection, audit: pluginAudit(record.id), readme } satisfies EnginePluginDetailDto);
   }
   if (path === "plugins/audit" && request.method === "GET") {
     const pluginId = url.searchParams.get("id") ?? "";
@@ -222,7 +246,7 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
   if (path === "plugins/install" && request.method === "POST") {
     const body = await readJson<{ engine?: unknown; source?: unknown }>(request);
     const engine = typeof body.engine === "string" && body.engine ? body.engine : "pi";
-    if (!SUPPORTED_ENGINES.has(engine)) return error(`引擎 ${engine} 没有插件运行时`, 400, "plugin_engine_unsupported");
+    if (!isPluginEngine(engine)) return error(`引擎 ${engine} 没有插件运行时`, 400, "plugin_engine_unsupported");
     try {
       const record = await install(engine, parseSource(body.source));
       saveInstalled(record, await pluginMcpDeclarations(record));
@@ -239,6 +263,26 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
     try {
       const next = await install(record.engine, record.source, record);
       saveInstalled(next, await pluginMcpDeclarations(next));
+      return json({ plugin: pluginView(next) } satisfies EnginePluginMutationDto);
+    } catch (err) {
+      return failure(err);
+    }
+  }
+  if (path === "plugins/updates" && request.method === "GET") {
+    const updates = await checkPluginUpdates(records(), { refresh: url.searchParams.get("refresh") === "1" });
+    return json(updates satisfies EnginePluginUpdatesDto);
+  }
+  // 装到 registry 上的最新版(来源写法不变,之后的重装仍按原写法)。
+  if (path === "plugins/update" && request.method === "POST") {
+    const body = await readJson<{ id?: unknown }>(request);
+    const record = findRecord(body.id);
+    if (!record) return error("Plugin not found", 404);
+    const name = updatablePackageName(record);
+    if (!name) return error("这个插件的来源不检查更新,可以重新安装", 400, "plugin_update_unsupported");
+    try {
+      const next = await install(record.engine, record.source, record, `${name}@latest`);
+      saveInstalled(next, await pluginMcpDeclarations(next));
+      forgetPluginUpdate(name);
       return json({ plugin: pluginView(next) } satisfies EnginePluginMutationDto);
     } catch (err) {
       return failure(err);

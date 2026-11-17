@@ -5,6 +5,16 @@ export interface EnginePluginSource {
   spec: string;
 }
 
+/** 插件包 package.json 里给人看的几项(P6.2.1):安装 / 重装时读一次存进记录,首页的行与详情直接用。说明截到 500 字,
+ *  其余截到 200;读不到的项不出现。单个文件的本地插件没有包,整项缺省。 */
+export interface EnginePluginMeta {
+  description?: string;
+  author?: string;
+  homepage?: string;
+  repository?: string;
+  license?: string;
+}
+
 /** 插件记录(方案 §5.9,P5.8)。PC-only:导出给 APP 时剥离,APP→桌面端导入保桌面端的值;安装目录
  *  (<数据目录>/engines/<engine>/npm)不进任何备份,换机恢复后记录在、包不在,按「未安装」显示,重装即可。 */
 export interface EnginePluginRecord {
@@ -22,6 +32,7 @@ export interface EnginePluginRecord {
   /** 逐工具设置(按插件登记的工具名):enabled=false 不进会话;exempt=true 免审批。缺省 = 启用、询问。 */
   toolSwitches: Record<string, { enabled?: boolean; exempt?: boolean }>;
   installedAt: string;
+  meta?: EnginePluginMeta;
 }
 
 export interface PluginConfig {

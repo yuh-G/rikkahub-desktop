@@ -6,8 +6,10 @@ export type {
   EnginePluginInspectionDto,
   EnginePluginListDto,
   EnginePluginMutationDto,
+  EnginePluginUpdatesDto,
   EnginePluginViewDto,
   PluginAuditEntryDto,
+  PluginEngineDto,
 } from "@server/foundation/types/plugins";
-export type { EnginePluginRecord, EnginePluginSource } from "@server/foundation/types/settings";
+export type { EnginePluginMeta, EnginePluginRecord, EnginePluginSource } from "@server/foundation/types/settings";
 export type { CommandSource } from "@server/foundation/types/commands";
