@@ -3,11 +3,13 @@
 // 用法:`if (!(await confirmDialog({ title: "确定删除吗?" }))) return;`
 // UI 由 root.tsx 挂载的 <GlobalConfirmDialog/> 渲染,同一时刻只存在一个请求,
 // 新请求到来时旧请求按"取消"落定(与原生 confirm 的模态语义一致,实际不会并发)。
+import type { ReactNode } from "react";
 import { create } from "zustand";
 
 export interface ConfirmOptions {
   title: string;
-  description?: string;
+  /** 放在 DialogDescription(<p>)里:要分段时用 block 的 span。 */
+  description?: ReactNode;
   /** 确认按钮文案;缺省用 common:confirm_dialog.confirm */
   confirmLabel?: string;
   /** 取消按钮文案;缺省用 common:confirm_dialog.cancel。两个选项都是正当选择时(而非"做/不做")用它说清取消的含义 */

@@ -6,14 +6,22 @@
 import { create } from "zustand";
 
 import { openSettingsDialog } from "~/stores/settings-dialog-store";
-import type { EnginePluginDetailDto, EnginePluginListDto, EnginePluginUpdatesDto } from "~/types/plugins";
+import type {
+  EnginePluginDetailDto,
+  EnginePluginListDto,
+  EnginePluginUpdatesDto,
+  PluginMarketDetailDto,
+  PluginMarketItemDto,
+  PluginMarketPageDto,
+  PluginMarketSourceDto,
+} from "~/types/plugins";
 
 export type PluginDetailTab = "overview" | "tools" | "audit";
 
 export type PluginView =
   | { kind: "home" }
   | { kind: "detail"; pluginId: string; tab?: PluginDetailTab }
-  | { kind: "market"; sourceId?: string }
+  | { kind: "market" }
   | { kind: "market-detail"; sourceId: string; name: string }
   | { kind: "upload" };
 
@@ -30,6 +38,25 @@ export interface PluginHomeFilters {
 
 export const DEFAULT_PLUGIN_FILTERS: PluginHomeFilters = { query: "", show: "all", engine: "all", sort: "added" };
 
+export type MarketShowFilter = "all" | "not_installed" | "installed";
+
+/** 市场的页签(市场源)、搜索词、展示筛选。sourceId = null 时落在第一个市场源。 */
+export interface PluginMarketState {
+  sourceId: string | null;
+  query: string;
+  show: MarketShowFilter;
+}
+
+/** 一个市场源 + 搜索词已经取到的条目(逐页追加);fetchedAt 用来判断要不要重取(与后端缓存同为 10 分钟)。 */
+export interface MarketResult {
+  items: PluginMarketItemDto[];
+  total: number;
+  nextPage: number;
+  hasMore: boolean;
+  staleError?: string;
+  fetchedAt: number;
+}
+
 interface PluginsViewState {
   stack: PluginView[];
   /** 最近一次导航的方向,决定新视图从哪边滑入;null = 刚进来(只淡入)。 */
@@ -45,6 +72,14 @@ interface PluginsViewState {
   updates: EnginePluginUpdatesDto["updates"];
   /** 键 = 插件 id + installedAt:重装后自然失效。 */
   detailCache: Record<string, EnginePluginDetailDto>;
+  market: PluginMarketState;
+  marketSources: PluginMarketSourceDto[] | null;
+  /** 键 = marketResultKey(源, 搜索词)。留在内存:从市场条目返回时列表与滚动位置都还在。 */
+  marketResults: Record<string, MarketResult>;
+  /** 键 = marketResultKey(源, 包名)。 */
+  marketDetails: Record<string, PluginMarketDetailDto>;
+  /** 刚装好的插件:回到首页时它那一行底色闪一下。 */
+  flashPluginId: string | null;
 }
 
 const HOME: PluginView = { kind: "home" };
@@ -59,6 +94,11 @@ export const usePluginsViewStore = create<PluginsViewState>(() => ({
   list: null,
   updates: {},
   detailCache: {},
+  market: { sourceId: null, query: "", show: "all" },
+  marketSources: null,
+  marketResults: {},
+  marketDetails: {},
+  flashPluginId: null,
 }));
 
 /** 视图的身份:同一身份换参数(如市场切页签)不算换视图,不重放进入动画。 */
@@ -165,4 +205,43 @@ export function cachePluginDetail(detail: EnginePluginDetailDto): void {
 
 export function cachedPluginDetail(pluginId: string, installedAt: string): EnginePluginDetailDto | undefined {
   return usePluginsViewStore.getState().detailCache[pluginDetailCacheKey(pluginId, installedAt)];
+}
+
+export function setPluginMarketState(patch: Partial<PluginMarketState>): void {
+  usePluginsViewStore.setState((state) => ({ market: { ...state.market, ...patch } }));
+}
+
+export function setMarketSources(sources: PluginMarketSourceDto[]): void {
+  usePluginsViewStore.setState({ marketSources: sources });
+}
+
+export function marketResultKey(sourceId: string, text: string): string {
+  return `${sourceId}
+${text}`;
+}
+
+/** 第 0 页替换已有的结果,之后的页追加(按包名去重:两页之间 registry 的排序可能挪动)。 */
+export function storeMarketPage(key: string, page: PluginMarketPageDto): void {
+  usePluginsViewStore.setState((state) => {
+    const previous = page.page === 0 ? [] : (state.marketResults[key]?.items ?? []);
+    const seen = new Set(previous.map((item) => item.name));
+    const items = [...previous, ...page.items.filter((item) => !seen.has(item.name))];
+    const result: MarketResult = {
+      items,
+      total: page.total,
+      nextPage: page.page + 1,
+      hasMore: page.hasMore,
+      ...(page.staleError ? { staleError: page.staleError } : {}),
+      fetchedAt: Date.now(),
+    };
+    return { marketResults: { ...state.marketResults, [key]: result } };
+  });
+}
+
+export function cacheMarketDetail(key: string, detail: PluginMarketDetailDto): void {
+  usePluginsViewStore.setState((state) => ({ marketDetails: { ...state.marketDetails, [key]: detail } }));
+}
+
+export function setPluginFlash(pluginId: string | null): void {
+  usePluginsViewStore.setState({ flashPluginId: pluginId });
 }

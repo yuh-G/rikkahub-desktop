@@ -1,7 +1,7 @@
 // 插件管理接口(pc-server/api/handlers/plugins.ts)的调用;返回形状见 types/plugins.ts。安装 / 重装 / 更新 / 上传可能要
 // 几分钟(后端上限 5 分钟),这几个关掉客户端的 30 秒超时。
 import api, { ApiError, appendWebAuthQuery, notifyWebAuthRequired } from "~/services/api";
-import { setPluginList, setPluginUpdates } from "~/stores/plugins-view-store";
+import { setMarketSources, setPluginList, setPluginUpdates } from "~/stores/plugins-view-store";
 import type {
   EnginePluginAuditDto,
   EnginePluginDetailDto,
@@ -86,4 +86,9 @@ export async function refreshPluginUpdates(refresh = false): Promise<EnginePlugi
   const result = await pluginsApi.updates(refresh).catch(() => null);
   if (result) setPluginUpdates(result.updates);
   return result?.updates ?? null;
+}
+
+/** 市场源表(内置 + 用户添加)。失败时抛出,由市场视图显示重试。 */
+export async function refreshMarketSources(): Promise<void> {
+  setMarketSources((await pluginsApi.marketSources()).sources);
 }

@@ -8,12 +8,12 @@ import { extractErrorMessage } from "~/lib/error";
 import { pluginsApi, refreshPluginList, refreshPluginUpdates } from "~/lib/plugins-api";
 import { patchSettingsLocal, upsertById } from "~/lib/settings-patch";
 import { confirmDialog } from "~/stores/confirm-store";
-import { setPluginBusy } from "~/stores/plugins-view-store";
-import type { EnginePluginRecord, EnginePluginViewDto } from "~/types/plugins";
+import { marketBusyKey, pushPluginView, setPluginBusy, setPluginFlash } from "~/stores/plugins-view-store";
+import type { EnginePluginRecord, EnginePluginViewDto, PluginMarketItemDto, PluginMarketSourceDto } from "~/types/plugins";
 
-import { recordOfView } from "./model";
+import { pluginSourceLabel, recordOfView } from "./model";
 
-function applyPluginView(plugin: EnginePluginViewDto): void {
+export function applyPluginView(plugin: EnginePluginViewDto): void {
   patchSettingsLocal((settings) => ({ enginePlugins: upsertById(settings.enginePlugins ?? [], recordOfView(plugin)) }));
 }
 
@@ -108,4 +108,39 @@ export async function checkPluginUpdate(record: EnginePluginRecord): Promise<voi
   }
   if (entry.hasUpdate) toast.info(i18n.t("settings:plugins.update_found", { name: record.name, version: entry.latest }));
   else toast.success(i18n.t("settings:plugins.up_to_date", { name: record.name }));
+}
+
+/** 从市场安装:每次都先确认(版本 · 作者 · 来源 + 信任提示)。装好返回新的一行;取消或失败返回 null。 */
+export async function installFromMarket(
+  item: PluginMarketItemDto,
+  source: PluginMarketSourceDto,
+): Promise<EnginePluginViewDto | null> {
+  const origin = pluginSourceLabel(item.source);
+  const facts = [
+    item.version,
+    item.author,
+    `${i18n.t(`settings:plugins.source.${origin.kind}`)} · ${origin.detail}`,
+  ].filter(Boolean);
+  const confirmed = await confirmDialog({
+    title: i18n.t("settings:plugins.install_confirm_title", { name: item.name }),
+    description: (
+      <>
+        <span className="block text-[var(--ds-text-primary)]">{facts.join(" · ")}</span>
+        <span className="mt-2 block text-xs">{i18n.t("settings:plugins.trust_notice")}</span>
+      </>
+    ),
+    confirmLabel: i18n.t("settings:plugins.install"),
+  });
+  if (!confirmed) return null;
+  const result = await busyWhile(marketBusyKey(source.id, item.name), () => pluginsApi.install(item.source, source.engine));
+  if (!result) return null;
+  const plugin = result.plugin;
+  applyPluginView(plugin);
+  setPluginFlash(plugin.id);
+  void refreshPluginList();
+  void refreshPluginUpdates();
+  toast.success(i18n.t("settings:plugins.installed_toast", { name: plugin.name }), {
+    action: { label: i18n.t("settings:plugins.view"), onClick: () => pushPluginView({ kind: "detail", pluginId: plugin.id }) },
+  });
+  return plugin;
 }

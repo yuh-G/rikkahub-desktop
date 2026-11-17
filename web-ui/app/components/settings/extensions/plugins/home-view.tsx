@@ -22,6 +22,7 @@ import {
   DEFAULT_PLUGIN_FILTERS,
   pushPluginView,
   setPluginFilters,
+  setPluginFlash,
   usePluginsViewStore,
   type PluginShowFilter,
   type PluginSort,
@@ -114,7 +115,8 @@ function HomeHeader() {
 function HomeToolbar() {
   const { t } = useTranslation();
   const filters = usePluginsViewStore((state) => state.filters);
-  const engines = usePluginsViewStore((state) => state.list?.engines ?? []);
+  const list = usePluginsViewStore((state) => state.list);
+  const engines = list?.engines ?? [];
   const onQuery = React.useCallback((query: string) => setPluginFilters({ query }), []);
   return (
     <div className="flex shrink-0 items-center gap-1">
@@ -195,6 +197,7 @@ function PluginRow({ row, index }: { row: PluginRowModel; index: number }) {
   const { t } = useTranslation();
   const { record, update } = row;
   const busy = usePluginsViewStore((state) => Boolean(state.busy[record.id]));
+  const flash = usePluginsViewStore((state) => state.flashPluginId === record.id);
   const source = pluginSourceLabel(record.source);
   const subtitle = pluginSubtitle(record) ?? `${t(`settings:plugins.source.${source.kind}`)} · ${source.detail}`;
   const actions: SettingsRowAction[] = [
@@ -215,24 +218,32 @@ function PluginRow({ row, index }: { row: PluginRowModel; index: number }) {
     },
   ];
   return (
-    <SettingsListRow
-      id={record.id}
-      index={index}
-      onSelect={() => pushPluginView({ kind: "detail", pluginId: record.id })}
-      // 重装 / 更新进行中不给菜单(后端同一引擎的安装是串行的),行尾转圈。
-      actions={busy ? undefined : actions}
-      badge={busy ? <Spinner className="size-3.5 text-[var(--ds-text-tertiary)]" /> : <RelativeTime at={record.installedAt} />}
+    // 刚装好的那一行闪一下(现有的 settings-flash 关键帧),动画放完即清掉标记。
+    <div
+      data-settings-flash={flash ? "" : undefined}
+      onAnimationEnd={(event) => {
+        if (flash && event.target === event.currentTarget) setPluginFlash(null);
+      }}
     >
-      <div className="flex min-w-0 items-center gap-3 text-left">
-        <PluginIconTile />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-sm font-medium text-[var(--ds-text-primary)]">{record.name}</span>
-            <PluginStatusBadges statuses={pluginStatuses(row)} />
+      <SettingsListRow
+        id={record.id}
+        index={index}
+        onSelect={() => pushPluginView({ kind: "detail", pluginId: record.id })}
+        // 重装 / 更新进行中不给菜单(后端同一引擎的安装是串行的),行尾转圈。
+        actions={busy ? undefined : actions}
+        badge={busy ? <Spinner className="size-3.5 text-[var(--ds-text-tertiary)]" /> : <RelativeTime at={record.installedAt} />}
+      >
+        <div className="flex min-w-0 items-center gap-3 text-left">
+          <PluginIconTile />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate text-sm font-medium text-[var(--ds-text-primary)]">{record.name}</span>
+              <PluginStatusBadges statuses={pluginStatuses(row)} />
+            </div>
+            <div className="mt-0.5 truncate text-xs text-[var(--ds-text-secondary)]">{subtitle}</div>
           </div>
-          <div className="mt-0.5 truncate text-xs text-[var(--ds-text-secondary)]">{subtitle}</div>
         </div>
-      </div>
-    </SettingsListRow>
+      </SettingsListRow>
+    </div>
   );
 }

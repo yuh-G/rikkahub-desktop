@@ -6,6 +6,7 @@ import {
   groupPlugins,
   isPluginFilterActive,
   joinPluginRows,
+  marketInstalledRecord,
   parseAuditSubject,
   pluginIssueCount,
   pluginSourceLabel,
@@ -16,6 +17,7 @@ import {
   stripRelativeImages,
   type PluginRowModel,
 } from "~/components/settings/extensions/plugins/model";
+import { formatMonthlyDownloads } from "~/components/settings/extensions/plugins/market-card";
 import { DEFAULT_PLUGIN_FILTERS, type PluginHomeFilters } from "~/stores/plugins-view-store";
 import type { EnginePluginRecord, EnginePluginViewDto } from "~/types/plugins";
 
@@ -178,4 +180,24 @@ describe("详情用的取值", () => {
     const view = { ...RECORDS[0]!, path: "/x", installed: true, loadFailed: false, auditCount: 3 };
     expect(recordOfView(view)).toEqual(RECORDS[0]!);
   });
+});
+
+test("市场条目对已装记录:同引擎、同包名、装进安装目录的来源;本地文件夹与上传的单个脚本不算", () => {
+  const records = [
+    record({ id: "pi:a", name: "a", source: { kind: "local", spec: "D:/a" } }),
+    record({ id: "pi:b", name: "b", source: { kind: "upload", spec: "b-1.0.0-abcdef12.tgz" } }),
+    record({ id: "pi:c", name: "c", source: { kind: "upload", spec: "scripts/c.ts" } }),
+    record({ id: "dsh:d", name: "d", engine: "dsh" }),
+  ];
+  expect(marketInstalledRecord(records, "pi", "a")).toBeUndefined();
+  expect(marketInstalledRecord(records, "pi", "b")?.id).toBe("pi:b");
+  expect(marketInstalledRecord(records, "pi", "c")).toBeUndefined();
+  expect(marketInstalledRecord(records, "pi", "d")).toBeUndefined();
+  expect(marketInstalledRecord(records, "dsh", "d")?.id).toBe("dsh:d");
+});
+
+test("月下载量用紧凑写法", () => {
+  expect(formatMonthlyDownloads(995000, "zh-CN")).toBe("99.5万");
+  expect(formatMonthlyDownloads(995000, "en-US")).toBe("995K");
+  expect(formatMonthlyDownloads(812, "en-US")).toBe("812");
 });

@@ -114,6 +114,21 @@ export function pluginSubtitle(record: EnginePluginRecord): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+/** 市场条目对应的已装记录:同引擎、同包名、装进安装目录的来源(npm / git / 上传的压缩包;与后端
+ *  engines/plugins.ts 的 isPackageSource 同一条规则,本地文件夹与上传的单个脚本不占包名)。 */
+export function marketInstalledRecord(
+  records: readonly EnginePluginRecord[],
+  engine: string,
+  name: string,
+): EnginePluginRecord | undefined {
+  return records.find(
+    ({ engine: recordEngine, name: recordName, source }) =>
+      recordEngine === engine &&
+      recordName === name &&
+      (source.kind === "npm" || source.kind === "git" || (source.kind === "upload" && !source.spec.startsWith("scripts/"))),
+  );
+}
+
 /** 接口返回的一行去掉补充字段,还原成设置里的记录(乐观写入用)。 */
 export function recordOfView(view: EnginePluginViewDto): EnginePluginRecord {
   const { path: _path, installed: _installed, loadFailed: _loadFailed, auditCount: _auditCount, ...record } = view;

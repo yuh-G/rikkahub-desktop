@@ -6,6 +6,7 @@ import {
   backPluginView,
   cachePluginDetail,
   cachedPluginDetail,
+  marketResultKey,
   openPluginDetail,
   parsePluginDetailTab,
   pluginDetailSearch,
@@ -17,6 +18,7 @@ import {
   setPluginBusy,
   setPluginFilters,
   showPluginDetail,
+  storeMarketPage,
   topPluginView,
   usePluginsViewStore,
 } from "~/stores/plugins-view-store";
@@ -61,7 +63,9 @@ describe("视图栈", () => {
   });
 
   test("视图键:同一视图换参数不算换视图", () => {
-    expect(pluginViewKey({ kind: "market", sourceId: "a" })).toBe(pluginViewKey({ kind: "market", sourceId: "b" }));
+    expect(pluginViewKey({ kind: "market-detail", sourceId: "a", name: "x" })).not.toBe(
+      pluginViewKey({ kind: "market-detail", sourceId: "b", name: "x" }),
+    );
     expect(pluginViewKey({ kind: "detail", pluginId: "pi:a", tab: "tools" })).toBe(pluginViewKey({ kind: "detail", pluginId: "pi:a" }));
     expect(pluginViewKey({ kind: "detail", pluginId: "pi:a" })).not.toBe(pluginViewKey({ kind: "detail", pluginId: "pi:b" }));
   });
@@ -126,4 +130,32 @@ test("详情缓存按插件 id + installedAt:重装后不再命中", () => {
   cachePluginDetail(detail);
   expect(cachedPluginDetail("pi:a", "2026-11-01T00:00:00.000Z")).toBe(detail);
   expect(cachedPluginDetail("pi:a", "2026-11-02T00:00:00.000Z")).toBeUndefined();
+});
+
+describe("市场结果", () => {
+  const item = (name: string) => ({ name, links: {}, source: { kind: "npm" as const, spec: name } });
+  const page = (index: number, names: string[], hasMore = true) => ({
+    items: names.map(item),
+    total: 50,
+    page: index,
+    pageSize: 24,
+    hasMore,
+    fromCache: false,
+    generatedAt: "",
+  });
+
+  test("第 0 页替换,之后的页按包名去重追加;下一页号与 hasMore 跟着最后一页", () => {
+    const key = marketResultKey("pi-official", "web");
+    usePluginsViewStore.setState({ marketResults: {} });
+    storeMarketPage(key, page(0, ["a", "b"]));
+    storeMarketPage(key, page(1, ["b", "c"], false));
+    expect(state().marketResults[key]).toMatchObject({ nextPage: 2, hasMore: false, total: 50 });
+    expect(state().marketResults[key]!.items.map((entry) => entry.name)).toEqual(["a", "b", "c"]);
+    storeMarketPage(key, page(0, ["z"]));
+    expect(state().marketResults[key]!.items.map((entry) => entry.name)).toEqual(["z"]);
+  });
+
+  test("源与搜索词组成的键互不串", () => {
+    expect(marketResultKey("a", "bc")).not.toBe(marketResultKey("ab", "c"));
+  });
 });

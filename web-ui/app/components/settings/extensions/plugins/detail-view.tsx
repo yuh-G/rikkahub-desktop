@@ -1,6 +1,6 @@
 // 插件详情(方案 P6.2「视图二」,已安装模式):标题栏用设置里的记录立即画出;登记的工具 / 指令 / MCP 服务、运行记录与
 // README 来自 GET plugins/detail(会加载一次插件代码),回来前页签内容显示骨架,结果按「插件 id + installedAt」缓存。
-// 市场条目模式在 P6.2.6 接上。
+// 还没装的市场条目用同一套版式,另在 market-detail-view.tsx(数据来源与动作都不同,合在一起文件过长)。
 import * as React from "react";
 import { CircleArrowUp, MoreHorizontal, RotateCw } from "lucide-react";
 import { useTranslation } from "react-i18next";

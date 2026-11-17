@@ -26,6 +26,8 @@ import type { Settings } from "~/types";
 
 import { PluginDetailView } from "./detail-view";
 import { PluginsHomeView } from "./home-view";
+import { PluginMarketDetailView } from "./market-detail-view";
+import { PluginMarketView } from "./market-view";
 import { BackLink } from "./parts";
 
 export function PluginsSection({ settings }: SectionProps) {
@@ -74,7 +76,11 @@ function PluginViewOutlet({ view, settings, backLabel }: PluginViewProps & { vie
   if (view.kind === "detail") {
     return <PluginDetailView settings={settings} pluginId={view.pluginId} initialTab={view.tab} backLabel={backLabel ?? ""} />;
   }
-  // 市场、市场条目、上传在 P6.2.6–P6.2.7 落地;这里先给出标题与返回,栈与动画可以先走通。
+  if (view.kind === "market") return <PluginMarketView settings={settings} backLabel={backLabel ?? ""} />;
+  if (view.kind === "market-detail") {
+    return <PluginMarketDetailView settings={settings} sourceId={view.sourceId} name={view.name} backLabel={backLabel ?? ""} />;
+  }
+  // 上传在 P6.2.7 落地;这里先给出标题与返回。
   return (
     <SettingsStack>
       {backLabel ? <BackLink label={backLabel} onClick={backPluginView} /> : null}

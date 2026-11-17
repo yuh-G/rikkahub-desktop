@@ -31,6 +31,9 @@ const NOT_SEARCHABLE: Record<string, string> = {
   "settings:plugins.tools_title": "插件详情「工具与指令」页签的分组标题(同上)",
   "settings:plugins.commands_title": "插件详情「工具与指令」页签的分组标题(同上)",
   "settings:plugins.mcp_title": "插件详情「工具与指令」页签的分组标题(同上)",
+  "settings:plugins.source_url": "「市场源」弹窗里的输入项:弹窗字段,不是设置项",
+  "settings:plugins.source_name": "「市场源」弹窗里的输入项(同上)",
+  "settings:plugins.source_engine": "「市场源」弹窗里的输入项(同上)",
 };
 
 function sourceFiles(dir: string): string[] {
