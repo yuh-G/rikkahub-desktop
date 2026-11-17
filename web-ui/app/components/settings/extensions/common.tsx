@@ -48,6 +48,29 @@ export async function pullSettings(onSettings: (settings: Settings) => void) {
   return next;
 }
 
+/** 工具行内的紧凑开关:标签与开关同排,标签可点击(MCP 页、助手弹窗的逐工具设置共用)。 */
+export function ToolSwitch({
+  label,
+  checked,
+  disabled,
+  onCheckedChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  const id = React.useId();
+  return (
+    <div className="flex shrink-0 items-center gap-1.5">
+      <label htmlFor={id} className="text-xs text-[var(--ds-text-secondary)]">
+        {label}
+      </label>
+      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+    </div>
+  );
+}
+
 /** 卡片展开/收起指示。 */
 export function ExpandChevron({ expanded }: { expanded: boolean }) {
   return (

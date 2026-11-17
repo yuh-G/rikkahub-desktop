@@ -46,6 +46,7 @@
       "nickname": "用户名,名字,称呼",
       "shell": "bash,git,终端,命令行",
       "tray": "托盘,后台,关闭窗口",
+      "assistant_extensions": "MCP,技能,提示词注入,快捷消息,默认拓展,绑定",
       "system_prompt": "人设,角色设定,prompt",
       "max_tokens": "输出长度,max_tokens,回复长度",
       "context_size": "历史消息,记忆条数,上下文长度",
@@ -441,6 +442,12 @@
       "use_avatar": "聊天中使用助手头像",
       "allow_conv_prompt": "独立对话系统提示词",
       "allow_conv_injection": "独立对话提示词注入"
+    },
+    "extensions": {
+      "title": "拓展管理",
+      "row_desc": "该助手下新建的会话默认开启哪些拓展；会话里可在输入框左下角的「MCP 与拓展」另行调整。",
+      "manage": "管理",
+      "dialog_desc": "这里选的是默认值，只影响之后新建的会话，已有会话保持各自的选择。"
     },
     "local_tools_title": "本地工具",
     "local_tools_desc": "本地工具列表。启用后，仅在当前模型支持工具调用时才会注入给模型。",
@@ -1291,5 +1298,18 @@
     "preview_en_text": "The quick brown fox jumps 0123456789",
     "preview_cjk_text": "山映斜阳天接水，芳草无情，更在斜阳外。",
     "preview_mixed_text": "Hello 你好，这是 RikkaHub 2026 年的测试 Test 测试。"
+  },
+  "extension_select": {
+    "empty": {
+      "mcp": "还没有可用的 MCP 服务器",
+      "skills": "还没有可用的技能",
+      "injection": "还没有可用的提示词注入",
+      "quick": "还没有可用的快捷消息模板"
+    },
+    "enabled_only": "这里只列出已启用的条目",
+    "go_add": "去拓展页添加",
+    "mcp_tools": "已启用 {{enabled}}/{{total}} 个工具",
+    "mcp_no_tools": "暂无可用工具",
+    "follows_plugin": "随插件"
   }
 }

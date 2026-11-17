@@ -121,6 +121,7 @@ const ROW_ENTRIES: readonly SettingsSearchEntry[] = [
   row("assistants", "assistants.switches_title"),
   row("assistants", "assistants.opt.use_avatar"),
   row("assistants", "assistants.opt.stream_output"),
+  row("assistants", "assistants.extensions.title", { keywords: "assistant_extensions" }),
   row("assistants", "assistants.opt.time_reminder", ADV),
   row("assistants", "assistants.opt.allow_conv_prompt", ADV),
   row("assistants", "assistants.opt.allow_conv_injection", ADV),

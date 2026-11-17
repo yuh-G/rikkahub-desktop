@@ -9,7 +9,6 @@ import { Input } from "~/components/ui/input";
 import { Notice } from "~/components/ui/notice";
 import { StatusBadge } from "~/components/ui/status-badge";
 import { SegmentedControl } from "~/components/ui/segmented-tabs";
-import { Switch } from "~/components/ui/switch";
 import Markdown from "~/components/markdown/markdown";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
@@ -43,6 +42,7 @@ import {
   ExpandChevron,
   LabeledSwitch,
   pullSettings,
+  ToolSwitch,
   type SectionProps,
 } from "~/components/settings/extensions/common";
 
@@ -59,29 +59,6 @@ const MCP_TRANSPORTS = [
 function headersOf(commonOptions: unknown): SettingsKeyValue[] {
   const common = commonOptions && typeof commonOptions === "object" ? (commonOptions as Record<string, unknown>) : {};
   return readMcpHeaders(common.headers).map((header) => ({ key: header.name, value: header.value }));
-}
-
-/** 工具行内的紧凑开关:标签与开关同排,标签可点击。 */
-function ToolSwitch({
-  label,
-  checked,
-  disabled,
-  onCheckedChange,
-}: {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  const id = React.useId();
-  return (
-    <div className="flex shrink-0 items-center gap-1.5">
-      <label htmlFor={id} className="text-xs text-[var(--ds-text-secondary)]">
-        {label}
-      </label>
-      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
-    </div>
-  );
 }
 
 function mcpName(server: Record<string, unknown>, fallback: string) {

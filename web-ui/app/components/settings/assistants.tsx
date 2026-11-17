@@ -2,9 +2,10 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { CopyPlus, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CopyPlus, Blocks, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AvatarCropper } from "~/components/avatar-cropper";
+import { AssistantExtensionsDialog } from "~/components/settings/assistant-extensions-dialog";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
@@ -429,6 +430,7 @@ function AssistantEditor({
   const { t } = useTranslation();
   const switchesId = React.useId();
   const advancedId = React.useId();
+  const [extensionsOpen, setExtensionsOpen] = React.useState(false);
 
   const messageTemplateValue =
     typeof draft.messageTemplate === "string" ? draft.messageTemplate : DEFAULT_MESSAGE_TEMPLATE;
@@ -660,11 +662,28 @@ function AssistantEditor({
         >
           <SettingsRows>
             {BASIC_SWITCHES.map(switchRow)}
+            <SettingsRow
+              label={t("settings:assistants.extensions.title")}
+              description={t("settings:assistants.extensions.row_desc")}
+              control={
+                <Button type="button" size="compact" variant="tertiary" onClick={() => setExtensionsOpen(true)}>
+                  <Blocks />
+                  {t("settings:assistants.extensions.manage")}
+                </Button>
+              }
+            />
             <SettingsAdvancedRegion id={switchesId} open={advancedOpen} className="divide-y divide-[var(--ds-divider)]">
               {ADVANCED_SWITCHES.map(switchRow)}
             </SettingsAdvancedRegion>
           </SettingsRows>
         </SettingsGroup>
+        <AssistantExtensionsDialog
+          open={extensionsOpen}
+          onOpenChange={setExtensionsOpen}
+          assistant={draft}
+          settings={settings}
+          onChange={patchDraft}
+        />
 
         <SettingsAdvancedRegion id={advancedId} open={advancedOpen} className="space-y-6">
           <SettingsGroup

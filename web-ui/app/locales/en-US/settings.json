@@ -46,6 +46,7 @@
       "nickname": "username,name",
       "shell": "bash,git,terminal,command line",
       "tray": "system tray,background,close window",
+      "assistant_extensions": "MCP,skills,prompt injection,quick messages,default extensions,bind",
       "system_prompt": "persona,character,prompt",
       "max_tokens": "output length,max_tokens,response length",
       "context_size": "history,message count,context length",
@@ -441,6 +442,12 @@
       "use_avatar": "Use assistant avatar in chat",
       "allow_conv_prompt": "Per-conversation system prompt",
       "allow_conv_injection": "Per-conversation prompt injections"
+    },
+    "extensions": {
+      "title": "Manage extensions",
+      "row_desc": "Extensions turned on by default for new chats with this assistant. Adjust them per chat in \"MCP & Extensions\" at the bottom left of the input box.",
+      "manage": "Manage",
+      "dialog_desc": "These are defaults. They apply to chats created from now on; existing chats keep their own choices."
     },
     "local_tools_title": "Local tools",
     "local_tools_desc": "Local tool list. When enabled, they're injected only if the current model supports tool calls.",
@@ -1291,5 +1298,18 @@
     "preview_en_text": "The quick brown fox jumps 0123456789",
     "preview_cjk_text": "山映斜阳天接水，芳草无情，更在斜阳外。",
     "preview_mixed_text": "Hello 你好, RikkaHub 2026 mixed-script Test 测试."
+  },
+  "extension_select": {
+    "empty": {
+      "mcp": "No MCP servers available yet",
+      "skills": "No skills available yet",
+      "injection": "No prompt injections available yet",
+      "quick": "No quick message templates available yet"
+    },
+    "enabled_only": "Only enabled items are listed here",
+    "go_add": "Add in Extensions",
+    "mcp_tools": "{{enabled}}/{{total}} tools enabled",
+    "mcp_no_tools": "No tools available",
+    "follows_plugin": "Follows plugin"
   }
 }
