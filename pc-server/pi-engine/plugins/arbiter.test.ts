@@ -25,9 +25,11 @@ import {
   guardPiPluginDialogs,
   PI_RELEASED_COMMANDS,
   PI_RESERVED_COMMANDS,
+  takePiPluginVeto,
   type PiPluginAuditRecord,
   type PiPluginPolicy,
 } from "./arbiter";
+import type { GenerationEvent } from "../../inference-engine/events";
 
 const servers: FakeOpenAiSseServer[] = [];
 afterAll(async () => {
@@ -243,6 +245,7 @@ async function runWithPlugins(
   const report = (r: EngineErrorReport) => void reports.push(r);
   const resources = await createPiSessionResources({ cwd, root: cwd, instructions, plugins, appToolNames: ["write_note"], report });
   const calls: Array<Record<string, unknown>> = [];
+  const events: GenerationEvent[] = [];
   const result = await runPiGeneration({
     grant: modelGrantFor(provider({ id: crypto.randomUUID(), name: "Arbiter", baseUrl: server.baseUrl, apiKey: "sk-test" }), model("fake-model", "Fake"), null, conversationId)!,
     conversationId,
@@ -256,10 +259,10 @@ async function runWithPlugins(
       return { content: [{ type: "text", text: `noted:${String(call.args.text)}` }] };
     },
     report,
-    sink: () => undefined,
+    sink: (event) => void events.push(event),
   });
   const audits = reports.filter((r) => r.code?.startsWith("pi_plugin_") && r.severity === "info");
-  return { server, result, calls, audits, reports };
+  return { server, result, calls, audits, reports, events };
 }
 
 const auditLine = (r: EngineErrorReport) => `${r.code} ${r.params?.plugin} ${r.params?.subject}${r.params?.detail ? ` ${r.params.detail}` : ""}`;
@@ -272,7 +275,7 @@ describe("tool_call 行为裁决(真实会话)", () => {
       { id: "dev:veto", path: writePlugin("veto-hook", VETO_HOOK) },
     ];
     pluginLog().length = 0;
-    const { server, result, calls, audits } = await runWithPlugins(
+    const { server, result, calls, audits, events } = await runWithPlugins(
       plugins,
       [
         { toolCalls: [{ id: "tc-hello", name: "write_note", arguments: JSON.stringify({ text: "hello" }) }] },
@@ -291,6 +294,13 @@ describe("tool_call 行为裁决(真实会话)", () => {
     ]);
     expect(calls).toEqual([{ text: "hello" }]);
     expect(JSON.stringify(server.requests[2]!.messages)).toContain('Blocked by plugin \\"dev:veto\\": no forbidden notes');
+    // 工具卡署名(D14):否决的那次调用结束时带上否决方与理由;没被否决的不带。
+    const results = events.filter((event) => event.kind === "tool_result");
+    expect(results.map((event) => [event.toolCallId, event.metadata ?? null])).toEqual([
+      ["tc-hello", null],
+      ["tc-forbidden", { attribution: { blockedBy: { pluginId: "dev:veto", reason: "no forbidden notes" } } }],
+    ]);
+    expect(takePiPluginVeto("tc-forbidden")).toBeUndefined();
     expect(audits.map(auditLine)).toEqual([
       "pi_plugin_discarded dev:dialog write_note",
       "pi_plugin_discarded dev:dialog write_note",

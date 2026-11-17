@@ -16,6 +16,7 @@
 //   tool_execution_end             → tool_result(成功 → content 映射;失败 → {error} 载荷,
 //     与聊天引擎 toolExecutionErrorPayload 的历史契约形状一致)
 //   插件工具(P5.4,不在本轮应用工具名里)→ 通用工具卡:建卡同上,结果只按 content 映射(details 归插件)
+//   署名(P6.1)→ 卡片 metadata.attribution:建卡带登记它的插件 id;插件钩子否决的调用在结束时补否决方与理由
 //   result.details.workspace       → 首个 text 条目的 metadata.workspace(pi 内建工作区工具在
 //     builtin-tools 打包的 diff/exitCode/bytes 等结构化细节,与应用工具时期落库的形状相同——
 //     前端渲染器与安卓导出适配层吃同一形状)
@@ -40,7 +41,7 @@ import type {
   Usage as PiUsage,
 } from "../../pi/packages/ai/src/types.ts";
 import type { GenerationEvent } from "../inference-engine/events";
-import type { JsonValue, ToolOutputEntry } from "../foundation/types";
+import type { JsonValue, ToolCardAttribution, ToolOutputEntry } from "../foundation/types";
 import type { EngineErrorReport } from "../engines/contract";
 
 /** pi Usage → 我们的 TokenUsage(conversations/helpers ensureUsage 同形)。
@@ -158,9 +159,15 @@ interface ToolCardState {
 /** 有状态映射桥:一次生成一个实例。状态只服务于关联(卡去重/参数累计/输出通道仲裁),
  *  不持有任何外部资源。report 是诊断出口(生产 = host.report)。
  *  appToolNames:本轮应用工具名。给了它,其余工具(插件工具)走通用工具卡——结果只按 content 映射,
- *  details 是插件自己的数据(待办插件靠它重放状态),不按我们 customTools 的两种标记解读。 */
+ *  details 是插件自己的数据(待办插件靠它重放状态),不按我们 customTools 的两种标记解读。
+ *  toolPlugin / takeVeto:工具卡署名的两个查询口(登记这个工具名的插件、这次调用有没有被插件否决)。 */
 export function createPiEventBridge(
-  options: { report?: (report: EngineErrorReport) => void; appToolNames?: ReadonlySet<string> } = {},
+  options: {
+    report?: (report: EngineErrorReport) => void;
+    appToolNames?: ReadonlySet<string>;
+    toolPlugin?: (toolName: string) => string | undefined;
+    takeVeto?: (toolCallId: string) => { pluginId: string; reason: string } | undefined;
+  } = {},
 ) {
   const resultOf = (toolName: string, result: PiToolResultView | undefined): ToolOutputEntry[] =>
     options.appToolNames && !options.appToolNames.has(toolName)
@@ -183,10 +190,18 @@ export function createPiEventBridge(
     return entry;
   }
 
+  function attribution(toolName: string, blockedBy?: { pluginId: string; reason: string }): Record<string, JsonValue> | undefined {
+    const pluginId = options.appToolNames?.has(toolName) ? undefined : options.toolPlugin?.(toolName);
+    if (!pluginId && !blockedBy) return undefined;
+    const value: ToolCardAttribution = { ...(pluginId ? { pluginId } : {}), ...(blockedBy ? { blockedBy } : {}) };
+    return { attribution: value };
+  }
+
   function createCardEvents(toolCallId: string, toolName: string, input: string): GenerationEvent[] {
     const entry = card(toolCallId);
     if (entry.created && !input) return [];
     entry.created = true;
+    const metadata = attribution(toolName);
     return [{
       kind: "tool_call_created",
       toolCallId,
@@ -195,6 +210,7 @@ export function createPiEventBridge(
       // P2 语义:工具在 pi 会话进程内执行,无审批环节 → auto。P3 审批内化到
       // customTools.execute 后,pending/approved 生命周期由工具自身经 sink 驱动。
       approvalState: { type: "auto" },
+      ...(metadata ? { metadata } : {}),
     }];
   }
 
@@ -232,12 +248,14 @@ export function createPiEventBridge(
         const input = JSON.stringify(ev.toolCall.arguments ?? {});
         const entry = card(ev.toolCall.id);
         entry.created = true;
+        const metadata = attribution(ev.toolCall.name);
         return [{
           kind: "tool_call_created",
           toolCallId: ev.toolCall.id,
           toolName: ev.toolCall.name,
           input,
           approvalState: { type: "auto" },
+          ...(metadata ? { metadata } : {}),
         }];
       }
       // start/end 帧不产生 part 操作:文本/思维链 part 由应用器随首个增量惰性创建,
@@ -294,7 +312,9 @@ export function createPiEventBridge(
           // 历史契约:失败工具的 output 是 {error} 裸载荷(前端与消息回放层按此解析;
           // 与聊天引擎 toolExecutionErrorPayload 一致,失败不附 metadata)。
           const text = result?.content?.length ? contentText(result.content) : "Tool execution failed";
-          return [{ kind: "tool_result", toolCallId: event.toolCallId, output: [{ error: text }] }];
+          const veto = options.takeVeto?.(event.toolCallId);
+          const metadata = veto ? attribution(event.toolName, veto) : undefined;
+          return [{ kind: "tool_result", toolCallId: event.toolCallId, output: [{ error: text }], ...(metadata ? { metadata } : {}) }];
         }
         return [{ kind: "tool_result", toolCallId: event.toolCallId, output: resultOf(event.toolName, result) }];
       }

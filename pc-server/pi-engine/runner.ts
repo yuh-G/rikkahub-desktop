@@ -66,8 +66,9 @@ import { createPiBuiltinTools, excludedPiBuiltinToolNames, type PiBuiltinToolApp
 import { assertPiToolsGated } from "./tool-gate";
 import { runAsPiChildOwner, type PiChildSessionOwner } from "./child-sessions";
 import { bindPiPluginSession, type PiPluginSessionBinding } from "./plugins/session-binding";
-import { runAsPiPlugin, type PiPluginToolApprover } from "./plugins/arbiter";
+import { runAsPiPlugin, takePiPluginVeto, type PiPluginToolApprover } from "./plugins/arbiter";
 import { findPiPluginCommand } from "./plugins/commands";
+import { pluginIdForTool } from "./plugins/entries";
 import type { PiPluginInteraction } from "./plugins/ui-bridge";
 import {
   EMPTY_SYNTHETIC_PLAN,
@@ -437,7 +438,12 @@ async function generate(ctx: PiGenerationContext): Promise<PiGenerationResult> {
   const { live, manager, seeded, entryIdsByMessageId, seededEntryIds, entrySync } = acquired;
   const { session } = live;
 
-  const bridge = createPiEventBridge({ report: ctx.report, appToolNames: live.markedToolNames });
+  const bridge = createPiEventBridge({
+    report: ctx.report,
+    appToolNames: live.markedToolNames,
+    toolPlugin: (name) => pluginIdForTool(session.resourceLoader.getExtensions().extensions, live.pluginEntries, name),
+    takeVeto: takePiPluginVeto,
+  });
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
     if (isReconcilePoint(event.type)) void entrySync?.flush();

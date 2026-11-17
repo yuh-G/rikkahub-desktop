@@ -5,17 +5,12 @@
 
 import { loadExtensions } from "../../../pi/packages/coding-agent/src/core/extensions/loader.ts";
 import type { EnginePlugin } from "../../engines/contract";
+import type { EnginePluginInspectionDto } from "../../foundation/types/plugins";
 import { isReservedPiCommand } from "./arbiter";
 import { resolvePiPluginEntries } from "./entries";
 
-export interface PiPluginInspection {
-  tools: Array<{ name: string; description?: string }>;
-  /** 入口类同名的指令不列(裁决层恒拿掉)。 */
-  commands: Array<{ name: string; description?: string }>;
-  /** 插件加载期经 registerMcpServer 声明的 MCP 服务(应用登记进自己的 MCP 列表,engines/plugin-mcp)。 */
-  mcpServers: Array<{ name: string; config: Record<string, unknown> }>;
-  errors: string[];
-}
+/** 形状即插件详情接口的那一部分(foundation/types/plugins)。 */
+export type PiPluginInspection = EnginePluginInspectionDto;
 
 export async function inspectPiPlugin(plugin: EnginePlugin, cwd: string): Promise<PiPluginInspection> {
   const { entries, errors } = resolvePiPluginEntries([plugin]);

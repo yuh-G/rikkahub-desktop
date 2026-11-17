@@ -143,7 +143,11 @@ describe("插件工具 × 应用审批", () => {
     ]);
     expect(executed()).toEqual([2]);
     expect(approvals(events)).toEqual(["pending", "approved"]);
-    expect(events.find((event) => event.kind === "tool_call_created")).toMatchObject({ toolName: "counter_add" });
+    // 工具卡署名「来自插件 X」:建卡即带登记它的插件 id。
+    expect(events.find((event) => event.kind === "tool_call_created")).toMatchObject({
+      toolName: "counter_add",
+      metadata: { attribution: { pluginId: "dev:counter" } },
+    });
     // 插件的 details 恰好带 workspace 键也不被当成工作区工具细节。
     expect((events.filter((event) => event.kind === "tool_result").at(-1) as { output: unknown }).output).toEqual([{ type: "text", text: "added 2" }]);
 

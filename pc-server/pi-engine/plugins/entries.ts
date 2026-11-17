@@ -12,6 +12,7 @@ import { existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { readPiManifest } from "../../../pi/packages/coding-agent/src/core/pi-manifest.ts";
 import { getResourcePathKey } from "../../../pi/packages/coding-agent/src/core/source-info.ts";
+import type { Extension } from "../../../pi/packages/coding-agent/src/core/extensions/types.ts";
 import type { EnginePlugin } from "../../engines/contract";
 
 export interface PiPluginEntry {
@@ -70,4 +71,15 @@ export function resolvePiPluginEntries(plugins: EnginePlugin[]): { entries: PiPl
 export function pluginIdForExtensionPath(entries: readonly PiPluginEntry[], extensionPath: string): string | undefined {
   const key = getResourcePathKey(extensionPath);
   return entries.find((entry) => getResourcePathKey(entry.file) === key)?.pluginId;
+}
+
+/** 登记了这个工具名的插件(工具卡署名「来自插件 X」)。应用工具与引擎自带的工具不在插件的扩展里;与它们重名的
+ *  插件工具已被裁决层拿掉,不会认错。 */
+export function pluginIdForTool(extensions: readonly Extension[], entries: readonly PiPluginEntry[], toolName: string): string | undefined {
+  for (const extension of extensions) {
+    if (!extension.tools.has(toolName)) continue;
+    const pluginId = pluginIdForExtensionPath(entries, extension.path);
+    if (pluginId) return pluginId;
+  }
+  return undefined;
 }

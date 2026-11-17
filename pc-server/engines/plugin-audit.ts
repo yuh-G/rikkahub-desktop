@@ -5,16 +5,10 @@
 // 一条(次数累加、详情取最近一次)。只在内存。引擎对加载期的同一条只报一次(进程内去重),所以卸载、重装都不清空,
 // 否则重装后加载期的审计就再也看不到了;卸载后的残留没有记录对应,不会显示。
 
+import type { PluginAuditEntryDto } from "../foundation/types/plugins";
 import type { EngineErrorReport } from "./contract";
 
-export interface PluginAuditEntry {
-  code: string;
-  /** tool:<名>、command:<名>、event:<名>…;加载失败为 load。 */
-  subject: string;
-  detail?: string;
-  count: number;
-  lastAt: string;
-}
+export type PluginAuditEntry = PluginAuditEntryDto;
 
 const MAX_ENTRIES_PER_PLUGIN = 200;
 

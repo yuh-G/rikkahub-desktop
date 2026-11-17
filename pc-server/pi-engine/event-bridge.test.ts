@@ -150,6 +150,37 @@ describe("pi 事件桥:纯映射", () => {
     ).toEqual([{ kind: "tool_result", toolCallId: "call-3", output: [{ error: "boom" }] }]);
   });
 
+  test("工具卡署名:插件工具建卡带插件 id;被插件否决的调用在结束时补否决方与理由;应用工具不署名", () => {
+    const vetoes = new Map([["call-v", { pluginId: "dev:guard", reason: "no secrets" }]]);
+    const bridge = createPiEventBridge({
+      appToolNames: new Set(["write_note"]),
+      toolPlugin: (name) => (name === "counter_add" || name === "write_note" ? "dev:counter" : undefined),
+      takeVeto: (id) => vetoes.get(id),
+    });
+    expect(bridge.handle({ type: "tool_execution_start", toolCallId: "call-p", toolName: "counter_add", args: {} })).toEqual([
+      { kind: "tool_call_created", toolCallId: "call-p", toolName: "counter_add", input: "{}", approvalState: { type: "auto" }, metadata: { attribution: { pluginId: "dev:counter" } } },
+    ]);
+    expect(bridge.handle({ type: "tool_execution_start", toolCallId: "call-v", toolName: "write_note", args: {} })).toEqual([
+      { kind: "tool_call_created", toolCallId: "call-v", toolName: "write_note", input: "{}", approvalState: { type: "auto" } },
+    ]);
+    expect(
+      bridge.handle({
+        type: "tool_execution_end",
+        toolCallId: "call-v",
+        toolName: "write_note",
+        result: { content: [{ type: "text", text: 'Blocked by plugin "dev:guard": no secrets' }], details: undefined },
+        isError: true,
+      }),
+    ).toEqual([
+      {
+        kind: "tool_result",
+        toolCallId: "call-v",
+        output: [{ error: 'Blocked by plugin "dev:guard": no secrets' }],
+        metadata: { attribution: { blockedBy: { pluginId: "dev:guard", reason: "no secrets" } } },
+      },
+    ]);
+  });
+
   test("details.app.output 优先于 content:通用工具结构化输出(含图)忠实还原+来源标记", () => {
     const bridge = createPiEventBridge();
     bridge.handle({ type: "tool_execution_start", toolCallId: "call-app", toolName: "search_web", args: {} });

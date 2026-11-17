@@ -77,6 +77,13 @@ export type ToolPendingOutput = {
 /** ToolPart.output 的合法成员：标准 part + 两种历史契约载荷。 */
 export type ToolOutputEntry = MessagePart | ToolErrorOutput | ToolPendingOutput;
 
+/** 工具卡的署名(挂 metadata.attribution,P6.1):插件登记的工具记插件 id(「来自插件 X」);插件的工具调用钩子
+ *  否决了这次调用时记否决方与理由(D14「被插件 X 拒绝」)。应用工具、MCP、引擎自带的工具不带。 */
+export type ToolCardAttribution = {
+  pluginId?: string;
+  blockedBy?: { pluginId: string; reason: string };
+};
+
 export type ToolPart = BaseMessagePart & {
   type: "tool";
   toolCallId: string;

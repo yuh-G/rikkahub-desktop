@@ -25,6 +25,13 @@ import { CodedError } from "../../foundation/errors";
 import { resolveEffectiveProxy } from "../../foundation/net";
 import { piAgentDir } from "../../foundation/paths";
 import type { JsonValue } from "../../foundation/types";
+import type {
+  EnginePluginAuditDto,
+  EnginePluginDetailDto,
+  EnginePluginListDto,
+  EnginePluginMutationDto,
+  EnginePluginViewDto,
+} from "../../foundation/types/plugins";
 import type { EnginePluginRecord, EnginePluginSource } from "../../foundation/types/settings";
 import { reportError } from "../../observability/app-errors";
 import { state } from "../../persistence/json-store";
@@ -45,7 +52,7 @@ function findRecord(pluginId: unknown): EnginePluginRecord | undefined {
   return typeof pluginId === "string" ? records().find((record) => record.id === pluginId) : undefined;
 }
 
-function pluginView(record: EnginePluginRecord) {
+function pluginView(record: EnginePluginRecord): EnginePluginViewDto {
   const path = locateEnginePlugin(record);
   return { ...record, path, installed: existsSync(path) };
 }
@@ -191,7 +198,7 @@ function failure(err: unknown): Response {
 
 export async function handlePluginRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
   if (path === "plugins" && request.method === "GET") {
-    return json({ plugins: records().map(pluginView) });
+    return json({ plugins: records().map(pluginView) } satisfies EnginePluginListDto);
   }
   // 插件登记的工具与指令(加载一次插件代码)+ 审计。
   if (path === "plugins/detail" && request.method === "GET") {
@@ -206,11 +213,11 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
           errors: [err instanceof Error ? err.message : String(err)],
         }))
       : { tools: [], commands: [], mcpServers: [], errors: [] };
-    return json({ plugin: view, ...inspection, audit: pluginAudit(record.id) });
+    return json({ plugin: view, ...inspection, audit: pluginAudit(record.id) } satisfies EnginePluginDetailDto);
   }
   if (path === "plugins/audit" && request.method === "GET") {
     const pluginId = url.searchParams.get("id") ?? "";
-    return json({ audit: pluginAudit(pluginId) });
+    return json({ audit: pluginAudit(pluginId) } satisfies EnginePluginAuditDto);
   }
   if (path === "plugins/install" && request.method === "POST") {
     const body = await readJson<{ engine?: unknown; source?: unknown }>(request);
@@ -219,7 +226,7 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
     try {
       const record = await install(engine, parseSource(body.source));
       saveInstalled(record, await pluginMcpDeclarations(record));
-      return json({ plugin: pluginView(record) });
+      return json({ plugin: pluginView(record) } satisfies EnginePluginMutationDto);
     } catch (err) {
       return failure(err);
     }
@@ -232,7 +239,7 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
     try {
       const next = await install(record.engine, record.source, record);
       saveInstalled(next, await pluginMcpDeclarations(next));
-      return json({ plugin: pluginView(next) });
+      return json({ plugin: pluginView(next) } satisfies EnginePluginMutationDto);
     } catch (err) {
       return failure(err);
     }
@@ -261,7 +268,7 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
     if (typeof body.enabled !== "boolean") return error("enabled 必须是布尔值", 400);
     const enabled = body.enabled;
     upsertRecord({ ...record, enabled }, { mcpServers: (servers) => setPluginMcpServersActive(servers, record.id, enabled) });
-    return json({ plugin: pluginView({ ...record, enabled }) });
+    return json({ plugin: pluginView({ ...record, enabled }) } satisfies EnginePluginMutationDto);
   }
   // 钩子开关与逐工具开关(只改给出的项)。
   if (path === "plugins/switches" && request.method === "POST") {
@@ -284,7 +291,7 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
       }
     }
     upsertRecord(next);
-    return json({ plugin: pluginView(next) });
+    return json({ plugin: pluginView(next) } satisfies EnginePluginMutationDto);
   }
   return null;
 }

@@ -157,6 +157,17 @@ function replaceContents(target: Record<string, unknown>, source: Record<string,
   Object.assign(target, source);
 }
 
+/** 生效的否决,按工具调用 id 等事件桥在这次调用结束时取走(工具卡署名「被插件 X 拒绝」,D14)。插件另开的子会话
+ *  没有事件桥来取,所以有上限,超出丢最早的。 */
+const vetoes = new Map<string, { pluginId: string; reason: string }>();
+const MAX_PENDING_VETOES = 100;
+
+export function takePiPluginVeto(toolCallId: string): { pluginId: string; reason: string } | undefined {
+  const veto = vetoes.get(toolCallId);
+  vetoes.delete(toolCallId);
+  return veto;
+}
+
 function arbitrateToolCallHook(pluginId: string, hook: HandlerFn, onAudit: PiPluginPolicy["onAudit"]): HandlerFn {
   return async (...args: unknown[]) => {
     const [event, ctx] = args as [ToolCallEvent, ExtensionContext];
@@ -182,6 +193,8 @@ function arbitrateToolCallHook(pluginId: string, hook: HandlerFn, onAudit: PiPlu
     if (!result?.block) return verdict;
     const reason = result.reason?.trim() || "Tool execution was blocked";
     onAudit({ pluginId, action: "vetoed", subject: event.toolName, detail: reason });
+    vetoes.set(event.toolCallId, { pluginId, reason });
+    if (vetoes.size > MAX_PENDING_VETOES) vetoes.delete(vetoes.keys().next().value!);
     return { ...result, reason: `Blocked by plugin "${pluginId}": ${reason}` };
   };
 }

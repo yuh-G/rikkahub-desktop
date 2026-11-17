@@ -67,6 +67,17 @@ describe("generation-apply:每工具计时戳(issue #59)", () => {
     expect(part.output).toEqual([{ type: "text", text: "partial" }]);
   });
 
+  test("结果带的 metadata(插件否决署名)合并进卡片,不丢建卡时的", () => {
+    const target = makeTarget();
+    const apply = createGenerationEventApplier(target);
+    apply({ kind: "tool_call_created", toolCallId: "c4", toolName: "read", input: "{}", approvalState: { type: "auto" }, metadata: { attribution: { pluginId: "dev:p" } } });
+    apply({ kind: "tool_result", toolCallId: "c4", output: [{ error: "blocked" }], metadata: { attribution: { pluginId: "dev:p", blockedBy: { pluginId: "dev:g", reason: "r" } } } });
+    const meta = toolPartOf(target.message).metadata as Record<string, unknown>;
+    expect(meta.attribution).toEqual({ pluginId: "dev:p", blockedBy: { pluginId: "dev:g", reason: "r" } });
+    expect(typeof meta.toolStartedAt).toBe("string");
+    expect(typeof meta.toolFinishedAt).toBe("string");
+  });
+
   test("pending 哨兵(ask_user)不落 toolFinishedAt,秒数继续走表", () => {
     const target = makeTarget();
     const apply = createGenerationEventApplier(target);

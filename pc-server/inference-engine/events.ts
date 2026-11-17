@@ -35,7 +35,7 @@ export type GenerationEvent =
   // final 区分终局与 partial:partial(bash 流式中间帧/tool_execution_update 快照)只
   // 刷新 output;终局(缺省视为终局,兼容旧发射点)才落 metadata.toolFinishedAt——
   // issue #59 的每工具计时终点。pending 哨兵(ask_user 暂停)不是终局,标记 partial。
-  | { kind: "tool_result"; toolCallId: string; output: ToolOutputEntry[]; final?: boolean }
+  | { kind: "tool_result"; toolCallId: string; output: ToolOutputEntry[]; final?: boolean; metadata?: Record<string, JsonValue> }
   | { kind: "usage"; usage: Message["usage"] }
   // 引擎会话状态(P5):压缩中/自动重试中等瞬态提示。不落库不产 part,
   // 协调器直通 SSE 给前端状态条;busy=false 即清除。detail 是给状态条的展示参数。

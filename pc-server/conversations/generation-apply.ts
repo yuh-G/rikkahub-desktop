@@ -114,8 +114,12 @@ export function createGenerationEventApplier(target: GenerationApplyTarget): Gen
         touchStream(streamHooks as StreamHooksWithSink);
         break;
       case "tool_result":
-        currentMessage.parts = currentMessage.parts.map((part) => {
-          if (!isRecord(part) || part.type !== "tool" || part.toolCallId !== event.toolCallId) return part;
+        currentMessage.parts = currentMessage.parts.map((original) => {
+          if (!isRecord(original) || original.type !== "tool" || original.toolCallId !== event.toolCallId) return original;
+          // 结果附带的卡片信息(如插件否决的署名)与建卡时一样只合并不删。
+          const part = event.metadata
+            ? { ...original, metadata: { ...(isRecord(original.metadata) ? original.metadata : {}), ...event.metadata } }
+            : original;
           // issue #59:终局结果(final 缺省视为终局)落每工具计时终点;partial 中间帧
           // 只刷新 output 不动戳,流式输出期间秒数继续走表。只补不覆盖——已定格的
           // 终点不因后续同 id 帧回退(审批恢复重发终局时保首次定格)。
