@@ -30,8 +30,9 @@
       "providers": "API,endpoint,OpenAI,Claude,Gemini,DeepSeek,Ollama,model service",
       "web_search": "internet,online search,Tavily,Exa,Bing,SearXNG",
       "proxy": "VPN,Clash,network proxy,firewall",
-      "mcp": "tool,plugin,server",
+      "mcp": "tool,server",
       "skills": "skill,capability",
+      "plugins": "plugin,extension,addon,marketplace",
       "injection": "prompt,context injection",
       "quick": "canned reply,snippet,template",
       "appearance": "theme,font,color",
@@ -85,6 +86,7 @@
     "extensions": {
       "mcp": "MCP",
       "skills": "Skills",
+      "plugins": "Plugins",
       "injection": "Prompt injection",
       "quick": "Quick message templates"
     },
@@ -1302,6 +1304,7 @@
     "empty": {
       "mcp": "No MCP servers available yet",
       "skills": "No skills available yet",
+      "plugins": "No plugins available yet",
       "injection": "No prompt injections available yet",
       "quick": "No quick message templates available yet"
     },
@@ -1309,6 +1312,44 @@
     "go_add": "Add in Extensions",
     "mcp_tools": "{{enabled}}/{{total}} tools enabled",
     "mcp_no_tools": "No tools available",
-    "follows_plugin": "Follows plugin"
+    "follows_plugin": "Follows plugin",
+    "plugins_workspace_only": "Plugins only take effect in workspace conversations"
+  },
+  "plugins": {
+    "title": "Plugins",
+    "description": "Add tools, commands and behaviors to workspace conversations.",
+    "search": "Search",
+    "search_placeholder": "Search installed plugins",
+    "clear_search": "Clear search",
+    "filter": "Filter",
+    "filter_show": "Show",
+    "show_all": "All plugins",
+    "show_enabled": "Enabled",
+    "show_disabled": "Disabled",
+    "filter_engine": "Engine",
+    "engine_all": "All",
+    "sort": "Sort",
+    "sort_added": "Recently added",
+    "sort_name": "Name",
+    "market": "Marketplace",
+    "add": "Add",
+    "add_upload": "Upload a local file",
+    "empty": "No plugins installed yet",
+    "go_market": "Browse the marketplace",
+    "no_match": "No plugins match",
+    "clear_filters": "Clear filters",
+    "upload_title": "Upload a local plugin",
+    "status": {
+      "update": "Update available",
+      "disabled": "Disabled",
+      "missing": "Not installed",
+      "load_failed": "Failed to load"
+    },
+    "source": {
+      "npm": "npm",
+      "git": "Git",
+      "local": "Local folder",
+      "upload": "Uploaded file"
+    }
   }
 }

@@ -1,0 +1,181 @@
+// 插件页各视图共用的小部件(方案 P6.2 的「通用规则」):图标块、返回、工具栏的图标按钮与原地展开的搜索、
+// 状态徽标、时间。只用现有组件与刻度。
+import * as React from "react";
+import { ArrowLeft, Puzzle, Search } from "lucide-react";
+import { useTranslation } from "react-i18next";
+
+import { Button } from "~/components/ui/button";
+import { SearchInput } from "~/components/ui/search-input";
+import { StatusBadge } from "~/components/ui/status-badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "~/components/ui/tooltip";
+import { formatAbsoluteTime, formatRelativeTime } from "~/lib/relative-time";
+import { cn } from "~/lib/utils";
+
+import type { PluginStatus } from "./model";
+
+const TILE_SIZES = {
+  row: "size-9 [&>svg]:size-4",
+  card: "size-10 [&>svg]:size-5",
+  header: "size-12 [&>svg]:size-6",
+} as const;
+
+/** 插件没有自带图标,统一用这个方块。 */
+export function PluginIconTile({ size = "row" }: { size?: keyof typeof TILE_SIZES }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-[var(--ds-radius-sm)] border border-[var(--ds-divider)] bg-[var(--ds-surface-100)] text-[var(--ds-text-tertiary)]",
+        TILE_SIZES[size],
+      )}
+    >
+      <Puzzle />
+    </span>
+  );
+}
+
+/** 左上的「← 上一视图的标题」,图标与内容左缘对齐。 */
+export function BackLink({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="-ml-2.5 text-[var(--ds-text-secondary)] hover:text-[var(--ds-text-primary)]"
+      onClick={onClick}
+    >
+      <ArrowLeft className="size-4" />
+      {label}
+    </Button>
+  );
+}
+
+/** 工具栏的图标按钮:带提示;active = 设了非默认值(底色 + 右上小圆点)。 */
+export function ToolbarIconButton({
+  label,
+  active = false,
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof Button> & { label: string; active?: boolean }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={label}
+          className={cn(
+            "relative text-[var(--ds-text-secondary)] hover:text-[var(--ds-text-primary)]",
+            active && "bg-[var(--ds-on-surface)] text-[var(--ds-text-primary)]",
+            className,
+          )}
+          {...props}
+        >
+          {children}
+          {active ? (
+            <span aria-hidden className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-[var(--ds-brand-primary)]" />
+          ) : null}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * 原地展开的搜索:图标按钮变成搜索框,宽度向左长(右边的控件不动)。Esc 清空并收回;失焦时内容为空才收回。
+ * Esc 在窗口的捕获阶段先拦下:设置模态在 document 上监听 Esc,不拦的话会连设置一起关掉。
+ */
+export function ToolbarSearch({
+  value,
+  onValueChange,
+  label,
+  placeholder,
+  clearLabel,
+}: {
+  value: string;
+  onValueChange: (value: string) => void;
+  label: string;
+  placeholder: string;
+  clearLabel: string;
+}) {
+  const [open, setOpen] = React.useState(value !== "");
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const expanded = open || value !== "";
+
+  React.useEffect(() => {
+    if (!expanded) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.target !== inputRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onValueChange("");
+      setOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, [expanded, onValueChange]);
+
+  return (
+    <div
+      className={cn(
+        "flex h-8 justify-end overflow-hidden transition-[width] duration-(--ds-duration-base) ease-(--ds-ease-soft) motion-reduce:transition-none",
+        expanded ? "w-60 max-w-[50vw]" : "w-8",
+      )}
+    >
+      {expanded ? (
+        <SearchInput
+          ref={inputRef}
+          autoFocus={open}
+          value={value}
+          onValueChange={onValueChange}
+          onBlur={() => {
+            if (!value) setOpen(false);
+          }}
+          placeholder={placeholder}
+          aria-label={label}
+          clearLabel={clearLabel}
+          className="w-full min-w-0 animate-in fade-in-0 duration-(--ds-duration-base) motion-reduce:animate-none"
+        />
+      ) : (
+        <ToolbarIconButton label={label} onClick={() => setOpen(true)}>
+          <Search />
+        </ToolbarIconButton>
+      )}
+    </div>
+  );
+}
+
+const STATUS_TONES: Record<PluginStatus, "danger" | "neutral" | "brand"> = {
+  missing: "danger",
+  load_failed: "danger",
+  disabled: "neutral",
+  update: "brand",
+};
+
+/** 状态徽标,最多显示 max 个(按严重程度,见 pluginStatuses)。 */
+export function PluginStatusBadges({ statuses, max = 2 }: { statuses: readonly PluginStatus[]; max?: number }) {
+  const { t } = useTranslation();
+  return (
+    <>
+      {statuses.slice(0, max).map((status) => (
+        <StatusBadge key={status} tone={STATUS_TONES[status]}>
+          {t(`settings:plugins.status.${status}`)}
+        </StatusBadge>
+      ))}
+    </>
+  );
+}
+
+/** 相对时间,悬停看绝对时间;时间缺省或解析不了时不显示。 */
+export function RelativeTime({ at, className }: { at: string | undefined; className?: string }) {
+  const { t } = useTranslation();
+  if (!at || Number.isNaN(Date.parse(at))) return null;
+  return (
+    <time dateTime={at} title={formatAbsoluteTime(at)} className={cn("shrink-0 text-xs text-[var(--ds-text-tertiary)]", className)}>
+      {formatRelativeTime(at, t)}
+    </time>
+  );
+}

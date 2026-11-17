@@ -1,14 +1,16 @@
 // 输入框左下角「MCP 与拓展」(D19,方案 §5.12):这里的开关只写当前会话(新会话发出前写草稿,见
 // useExtensionSelection)。页签来自拓展类别表,列表组件与助手的「拓展管理」弹窗共用;徽标 = 各类已选且
-// 此刻可用的条目数之和。
+// 此刻可用的条目数之和。插件只对工作区会话生效,所在列是聊天时「插件」页签只给一句说明、不计数。
 
 import * as React from "react";
 import { ExternalLink, PackageIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { usePaneContainer } from "~/components/workspace/pane-container-context";
 import { usePickerPopover } from "~/hooks/use-picker-popover";
 import { extractErrorMessage } from "~/lib/error";
 import { cn } from "~/lib/utils";
+import { CHAT_CONTAINER } from "~/stores/container-tabs-store";
 import type { Settings } from "~/types";
 import { Button } from "~/components/ui/button";
 import {
@@ -60,17 +62,18 @@ function ExtensionPickerButtonImpl({
   }, [open]);
   const skills = useSkillSummaries(Boolean(settings), openCount);
   const [tab, setTab] = React.useState<ExtensionCategoryId | null>(null);
+  const chatConversation = usePaneContainer() === CHAT_CONTAINER;
 
   if (!settings) return null;
   const available = Object.fromEntries(
-    EXTENSION_CATEGORIES.map((item) => [item.id, AVAILABLE_COUNTS[item.id]({ settings, skills })]),
+    EXTENSION_CATEGORIES.map((item) => [item.id, AVAILABLE_COUNTS[item.id]({ settings, skills, chatConversation })]),
   ) as Record<ExtensionCategoryId, number>;
   // 一类都没有可选的条目时不出现(入口在拓展页);否则打开时停在用户上次看的页签,初次落在第一个有内容的。
   const firstAvailable = EXTENSION_CATEGORIES.find((item) => available[item.id] > 0)?.id;
   if (!firstAvailable) return null;
   const activeTab = tab ?? firstAvailable;
   const selectedCount = EXTENSION_CATEGORIES.reduce(
-    (sum, item) => sum + SELECTION_COUNTS[item.id]({ settings, skills, selection }),
+    (sum, item) => sum + SELECTION_COUNTS[item.id]({ settings, skills, selection, chatConversation }),
     0,
   );
   const List = SELECTION_LISTS[activeTab];
@@ -109,7 +112,7 @@ function ExtensionPickerButtonImpl({
 
         <div role="tablist" className="flex overflow-x-auto border-b px-3">
           {EXTENSION_CATEGORIES.map((item) => {
-            const count = SELECTION_COUNTS[item.id]({ settings, skills, selection });
+            const count = SELECTION_COUNTS[item.id]({ settings, skills, selection, chatConversation });
             const active = activeTab === item.id;
             return (
               <button
@@ -144,6 +147,7 @@ function ExtensionPickerButtonImpl({
                 selection={selection}
                 onChange={handleChange}
                 disabled={!canUse}
+                chatConversation={chatConversation}
                 onNavigate={() => popoverProps.onOpenChange(false)}
               />
             </div>

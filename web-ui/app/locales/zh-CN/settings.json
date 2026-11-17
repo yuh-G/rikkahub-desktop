@@ -30,8 +30,9 @@
       "providers": "API,渠道,接口,OpenAI,Claude,Gemini,DeepSeek,Ollama,模型服务",
       "web_search": "联网,网络搜索,Tavily,Exa,Bing,SearXNG",
       "proxy": "VPN,翻墙,Clash,科学上网,网络代理",
-      "mcp": "工具,插件,服务器,tool,plugin",
+      "mcp": "工具,服务器,tool",
       "skills": "skill,技能包,能力",
+      "plugins": "插件,plugin,扩展,extension,市场",
       "injection": "提示词,prompt,上下文注入",
       "quick": "常用语,快捷回复,模板",
       "appearance": "主题,字体,配色,theme",
@@ -85,6 +86,7 @@
     "extensions": {
       "mcp": "MCP",
       "skills": "技能",
+      "plugins": "插件",
       "injection": "提示词注入",
       "quick": "快捷消息模板"
     },
@@ -1302,6 +1304,7 @@
     "empty": {
       "mcp": "还没有可用的 MCP 服务器",
       "skills": "还没有可用的技能",
+      "plugins": "还没有可用的插件",
       "injection": "还没有可用的提示词注入",
       "quick": "还没有可用的快捷消息模板"
     },
@@ -1309,6 +1312,44 @@
     "go_add": "去拓展页添加",
     "mcp_tools": "已启用 {{enabled}}/{{total}} 个工具",
     "mcp_no_tools": "暂无可用工具",
-    "follows_plugin": "随插件"
+    "follows_plugin": "随插件",
+    "plugins_workspace_only": "插件只在工作区会话里生效"
+  },
+  "plugins": {
+    "title": "插件",
+    "description": "为工作区会话增加工具、指令与行为。",
+    "search": "搜索",
+    "search_placeholder": "搜索已安装的插件",
+    "clear_search": "清除搜索",
+    "filter": "筛选",
+    "filter_show": "展示",
+    "show_all": "全部插件",
+    "show_enabled": "已启用",
+    "show_disabled": "未启用",
+    "filter_engine": "引擎",
+    "engine_all": "全部",
+    "sort": "排序",
+    "sort_added": "最近添加",
+    "sort_name": "名称",
+    "market": "插件市场",
+    "add": "添加",
+    "add_upload": "上传本地文件",
+    "empty": "还没有安装插件",
+    "go_market": "去插件市场",
+    "no_match": "没有符合条件的插件",
+    "clear_filters": "清除筛选",
+    "upload_title": "上传本地插件",
+    "status": {
+      "update": "有更新",
+      "disabled": "已停用",
+      "missing": "未安装",
+      "load_failed": "加载出错"
+    },
+    "source": {
+      "npm": "npm",
+      "git": "Git",
+      "local": "本地文件夹",
+      "upload": "上传的文件"
+    }
   }
 }

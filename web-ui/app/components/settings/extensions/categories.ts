@@ -5,6 +5,7 @@
 export const EXTENSION_CATEGORIES = [
   { id: "mcp", labelKey: "settings:subnav.extensions.mcp" },
   { id: "skills", labelKey: "settings:subnav.extensions.skills" },
+  { id: "plugins", labelKey: "settings:subnav.extensions.plugins" },
   { id: "injection", labelKey: "settings:subnav.extensions.injection" },
   { id: "quick", labelKey: "settings:subnav.extensions.quick" },
 ] as const;

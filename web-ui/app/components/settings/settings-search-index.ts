@@ -68,6 +68,7 @@ const PAGE_KEYWORDS: Partial<Record<SettingsPageKey, string>> = {
   "network/proxy": "proxy",
   "extensions/mcp": "mcp",
   "extensions/skills": "skills",
+  "extensions/plugins": "plugins",
   "extensions/injection": "injection",
   "extensions/quick": "quick",
   "personalization/appearance": "appearance",

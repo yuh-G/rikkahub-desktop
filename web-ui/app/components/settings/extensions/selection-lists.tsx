@@ -3,6 +3,7 @@
 // 助手的「拓展管理」弹窗(写助手的默认)与输入框的「MCP 与拓展」选择器(写会话)共用:入参是一份选择与
 // 变更回调,列表不知道结果写到哪里。每类只列全局可用的条目:有全局「启用」的(MCP、提示词注入)只列
 // 已启用的;插件带来的 MCP 服务器跟随插件(「随插件」,开关只读)。按类别表的 id 做 Record,漏一类编译不过。
+// 插件只对工作区会话生效:聊天会话的选择器里「插件」页签只有一句说明,助手弹窗在列表下注明。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -37,9 +38,11 @@ export interface SelectionListProps {
   disabled?: boolean;
   /** 空状态里点了「去拓展页添加」(调用方借此关掉自己的弹窗 / 弹层)。 */
   onNavigate?: () => void;
+  /** 选择写给哪种会话:true = 聊天会话,false = 工作区会话,缺省 = 不限(助手的默认)。 */
+  chatConversation?: boolean;
 }
 
-type CountInput = Pick<SelectionListProps, "settings" | "skills" | "selection">;
+type CountInput = Pick<SelectionListProps, "settings" | "skills" | "selection" | "chatConversation">;
 
 /** 技能目录(技能没有全局「启用」,装了就可选)。拉取失败按空列表处理:空状态里有去技能页的入口。
  *  refreshKey 变了重拉(选择器每次打开时刷新,拿到刚在技能页新建的)。 */
@@ -71,6 +74,10 @@ function visibleTools(server: McpServerConfig): McpToolOption[] {
 
 function enabledOnly<T extends { id: string; enabled?: boolean }>(items: readonly T[] | undefined): T[] {
   return (items ?? []).filter((item) => typeof item?.id === "string" && item.enabled !== false);
+}
+
+function enabledPlugins(settings: Settings) {
+  return enabledOnly(settings.enginePlugins);
 }
 
 function sendableQuickMessages(settings: Settings) {
@@ -289,6 +296,38 @@ function SkillSelectionList({ skills, selection, onChange, disabled, onNavigate 
     </SelectionGroup>
   );
 }
+function PluginSelectionList({ settings, selection, onChange, disabled, onNavigate, chatConversation }: SelectionListProps) {
+  const { t } = useTranslation();
+  if (chatConversation) {
+    return <SettingsEmpty size="md">{t("settings:extension_select.plugins_workspace_only")}</SettingsEmpty>;
+  }
+  const plugins = enabledPlugins(settings);
+  if (plugins.length === 0) {
+    return <SelectionEmpty category="plugins" hint={t("settings:extension_select.enabled_only")} onNavigate={onNavigate} />;
+  }
+  return (
+    <div className="space-y-2">
+      <SelectionGroup>
+        {plugins.map((plugin) => (
+          <SelectionRow
+            key={plugin.id}
+            title={plugin.name}
+            description={plugin.meta?.description}
+            checked={selection.enginePluginIds.includes(plugin.id)}
+            disabled={disabled}
+            onCheckedChange={(checked) =>
+              onChange({ enginePluginIds: toggled(selection.enginePluginIds, plugin.id, checked) })
+            }
+          />
+        ))}
+      </SelectionGroup>
+      {chatConversation === undefined ? (
+        <p className="px-1 text-xs text-[var(--ds-text-tertiary)]">{t("settings:extension_select.plugins_workspace_only")}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function InjectionSelectionList({ settings, selection, onChange, disabled, onNavigate }: SelectionListProps) {
   const { t } = useTranslation();
   const modes = enabledOnly(settings.modeInjections);
@@ -356,6 +395,7 @@ function QuickMessageSelectionList({ settings, selection, onChange, disabled, on
 export const SELECTION_LISTS: Record<ExtensionCategoryId, React.ComponentType<SelectionListProps>> = {
   mcp: McpSelectionList,
   skills: SkillSelectionList,
+  plugins: PluginSelectionList,
   injection: InjectionSelectionList,
   quick: QuickMessageSelectionList,
 };
@@ -364,6 +404,7 @@ export const SELECTION_LISTS: Record<ExtensionCategoryId, React.ComponentType<Se
 export const AVAILABLE_COUNTS: Record<ExtensionCategoryId, (input: Omit<CountInput, "selection">) => number> = {
   mcp: ({ settings }) => availableMcpServers(settings).length,
   skills: ({ skills }) => skills.length,
+  plugins: ({ settings, chatConversation }) => (chatConversation ? 0 : enabledPlugins(settings).length),
   injection: ({ settings }) => enabledOnly(settings.modeInjections).length + enabledOnly(settings.lorebooks).length,
   quick: ({ settings }) => sendableQuickMessages(settings).length,
 };
@@ -373,6 +414,8 @@ export const SELECTION_COUNTS: Record<ExtensionCategoryId, (input: CountInput) =
   mcp: ({ settings, selection }) =>
     availableMcpServers(settings).filter((server) => isMcpServerSelected(selection, server)).length,
   skills: ({ skills, selection }) => countIn(selection.enabledSkills, skills.map((skill) => ({ id: skill.name }))),
+  plugins: ({ settings, selection, chatConversation }) =>
+    chatConversation ? 0 : countIn(selection.enginePluginIds, enabledPlugins(settings)),
   injection: ({ settings, selection }) =>
     countIn(selection.modeInjectionIds, enabledOnly(settings.modeInjections)) +
     countIn(selection.lorebookIds, enabledOnly(settings.lorebooks)),
