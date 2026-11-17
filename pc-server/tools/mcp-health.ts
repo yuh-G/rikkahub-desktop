@@ -15,7 +15,7 @@
 import { isRecord } from "../foundation/utils";
 import type { JsonValue } from "../foundation/types";
 import { mcpJsonRpc } from "./mcp";
-import { isMcpServerSelected } from "./mcp-source";
+import { pluginMcpSource } from "./mcp-source";
 import { broadcastMcpHealth } from "../api/sse";
 
 // ---------------------------------------------------------------------------
@@ -132,18 +132,16 @@ export type McpHealthEntry =
   | { status: "reconnecting"; attempt: number; maxAttempts: number }
   | { status: "failed"; kind: McpFailureKind; retryable: boolean; message: string; consecutiveFailures: number; checkedAt: number };
 
-/** 推给前端的整体快照：只含"被启用且被至少一个助手选中"的服务器（决策①：闲置服务器不探活、不出现在状态面）。 */
+/** 推给前端的整体快照：只含全局启用的服务器（决策①：停用的服务器不探活、不出现在状态面）。 */
 export type McpHealthSnapshot = Record<string, McpHealthEntry>;
 
-/** 决策①的探活门槛：服务器被启用 且 被至少一个助手选中（插件带来的服务器按插件绑定算）。闲置服务器永不探活、状态面永不标红。 */
-export function isServerInUse(
-  server: Record<string, JsonValue>,
-  assistants: ReadonlyArray<{ mcpServers?: JsonValue; enginePluginIds?: JsonValue }>,
-): boolean {
+/** 决策①的探活门槛：服务器全局启用即探活（插件带来的还要插件启用）。拓展与助手无关（D19）——会话随时可能
+ *  在左下角临时打开任何一台已启用的服务器，所以不再看有没有助手默认选中它。停用的永不探活、状态面永不标红。 */
+export function isServerInUse(server: Record<string, JsonValue>): boolean {
   const common = isRecord(server.commonOptions) ? server.commonOptions : {};
   if (common.enable === false) return false;
   if (!String(server.id ?? "")) return false;
-  return assistants.some((a) => isMcpServerSelected(a, server));
+  return pluginMcpSource(server)?.active ?? true;
 }
 
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -160,7 +158,6 @@ interface ServerRuntime {
 /** 由 Supervisor 注入的依赖（bootstrap 显式接线，避免 tools → persistence/api 的反向硬依赖）。 */
 export interface McpHealthDeps {
   getServers: () => Array<Record<string, JsonValue>>;
-  getAssistants: () => ReadonlyArray<{ mcpServers?: JsonValue; enginePluginIds?: JsonValue }>;
   /** 探活执行体：默认真实 tools/list；测试注入桩。返回 = 健康；抛错 = 故障。 */
   probe: (server: Record<string, JsonValue>) => Promise<unknown>;
 }
@@ -188,7 +185,7 @@ export class McpHealthSupervisor {
 
   /** 决策①：某服务器当前是否应被探活。 */
   private inUse(server: Record<string, JsonValue>): boolean {
-    return isServerInUse(server, this.deps.getAssistants());
+    return isServerInUse(server);
   }
 
   /** 配置变化时 reconcile：新上线服务器立即探一次，下线/失用服务器清态。 */
@@ -197,7 +194,7 @@ export class McpHealthSupervisor {
     const servers = this.deps.getServers();
     const inUseIds = new Set(servers.filter((s) => this.inUse(s)).map((s) => String(s.id ?? "")));
 
-    // 清掉不再 in-use 的（禁用/取消选中/删除）——状态面跟着消失，不留孤儿。
+    // 清掉不再 in-use 的（禁用/删除/所属插件停用）——状态面跟着消失，不留孤儿。
     for (const [id, rt] of this.runtimes) {
       if (!inUseIds.has(id)) {
         if (rt.reconnectTimer) clearTimeout(rt.reconnectTimer);

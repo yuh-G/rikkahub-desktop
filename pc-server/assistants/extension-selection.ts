@@ -77,6 +77,62 @@ export function selectionOf(assistant: unknown): ExtensionSelection {
   };
 }
 
+/** 会话上存的那一份。模式注入 / 世界书住会话自己的两列(与 APP 共用),不在这里。
+ *  缺的键 = 还没固定,跟随助手的默认;整份为 null = 这个会话还没固定过任何选择。 */
+export type ConversationExtensionSelection = Partial<Omit<ExtensionSelection, "modeInjectionIds" | "lorebookIds">>;
+
+export interface ConversationSelectionSource {
+  extensionSelection?: ConversationExtensionSelection | null;
+  modeInjectionIds?: string[];
+  lorebookIds?: string[];
+}
+
+const CONVERSATION_KEYS = ["mcpServers", "mcpToolOverrides", "enabledSkills", "enginePluginIds", "quickMessageIds"] as const;
+
+export function readConversationSelection(value: unknown): ConversationExtensionSelection | null {
+  if (!isRecord(value)) return null;
+  const { modeInjectionIds: _mode, lorebookIds: _lorebook, ...rest } = readSelectionPatch(value);
+  return rest;
+}
+
+export function isSelectionComplete(stored: ConversationExtensionSelection | null | undefined): boolean {
+  return Boolean(stored) && CONVERSATION_KEYS.every((key) => stored![key] !== undefined);
+}
+
+/** 会话此刻实际用的选择。没固定过的会话:模式注入 / 世界书沿用会话两列里已有的非空值(老版本允许
+ *  会话单独绑定注入,这类会话保留自己的),其余取助手当前的默认。固定过的:会话两列原样生效(含空)。 */
+export function effectiveSelection(conversation: ConversationSelectionSource | null | undefined, assistant: unknown): ExtensionSelection {
+  const defaults = selectionOf(assistant);
+  if (!conversation) return defaults;
+  const stored = readConversationSelection(conversation.extensionSelection);
+  // [LEGACY-READ: allow-conversation-prompt-injection] 老版本助手开了「独立对话提示词注入」时,会话两列建会话即
+  // 播种、之后只认会话的(含清空)。开关已从界面拿掉,这里只为还没固定过选择的老会话保留原语义。
+  const columnsOwned = Boolean(stored) || (isRecord(assistant) && assistant.allowConversationPromptInjection === true);
+  const own = (ids: string[] | undefined, fallback: string[]) => (columnsOwned ? ids ?? [] : ids?.length ? ids : fallback);
+  return {
+    ...defaults,
+    ...stored,
+    modeInjectionIds: own(conversation.modeInjectionIds, defaults.modeInjectionIds),
+    lorebookIds: own(conversation.lorebookIds, defaults.lorebookIds),
+  };
+}
+
+/** 把一份完整选择拆成会话上的三处存法。 */
+export function splitSelection(selection: ExtensionSelection): Required<ConversationSelectionSource> {
+  const { modeInjectionIds, lorebookIds, ...rest } = selection;
+  return { extensionSelection: rest, modeInjectionIds, lorebookIds };
+}
+
+/** 新会话的初值:助手的默认,叠上建会话请求带来的草稿(新会话还没发出第一条消息时在左下角改过的)。 */
+export function initialSelection(assistant: unknown, draft: unknown): ExtensionSelection {
+  return { ...selectionOf(assistant), ...readSelectionPatch(draft) };
+}
+
+/** 左下角改了几项:叠在会话此刻的实际选择上,整组写回(第一次改动即把整组固定进会话)。 */
+export function patchedSelection(conversation: ConversationSelectionSource, assistant: unknown, patch: unknown): ExtensionSelection {
+  return { ...effectiveSelection(conversation, assistant), ...readSelectionPatch(patch) };
+}
+
 function findServer(servers: readonly unknown[], serverId: string): Record<string, unknown> | null {
   return (servers.find((server) => isRecord(server) && String(server.id ?? "") === serverId) as Record<string, unknown> | undefined) ?? null;
 }

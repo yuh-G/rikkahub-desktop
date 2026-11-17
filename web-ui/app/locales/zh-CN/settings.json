@@ -440,8 +440,7 @@
       "stream_output": "流式输出",
       "time_reminder": "时间提醒",
       "use_avatar": "聊天中使用助手头像",
-      "allow_conv_prompt": "独立对话系统提示词",
-      "allow_conv_injection": "独立对话提示词注入"
+      "allow_conv_prompt": "独立对话系统提示词"
     },
     "extensions": {
       "title": "拓展管理",

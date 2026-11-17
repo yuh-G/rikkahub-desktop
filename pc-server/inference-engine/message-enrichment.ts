@@ -21,7 +21,7 @@
 // (聊天引擎:internalMessages[0];pi:appendSystemPrompt 条目),保证聊天位序列稳定。
 
 import type { Assistant, Conversation, JsonValue, Message, MessagePart, Model } from "../foundation/types";
-import { applyPlaceholders, cloneJson, getStringArray, message, textFromParts } from "../foundation/utils";
+import { applyPlaceholders, cloneJson, message, textFromParts } from "../foundation/utils";
 import { state } from "../persistence/json-store";
 import {
   activePromptInjections as activePromptInjectionsCore,
@@ -105,24 +105,10 @@ export function applyTimeReminders(
 
 // ---- lorebook / 模式注入 ----
 
-export interface ConversationInjectionOverride {
-  modeInjectionIds: string[];
-  lorebookIds: string[];
-}
-
-/** 生效注入集合(专题9:助手允许会话级绑定时,生效 id 集完全来自会话)。 */
-export function activePromptInjections(
-  conversation: Conversation,
-  assistant: Assistant,
-  messages: Message[],
-): Array<Record<string, JsonValue>> {
-  const override = assistant.allowConversationPromptInjection === true
-    ? {
-        modeInjectionIds: getStringArray(conversation.modeInjectionIds),
-        lorebookIds: getStringArray(conversation.lorebookIds),
-      }
-    : undefined;
-  return activePromptInjectionsCore(assistant, messages, state.settings.lorebooks, state.settings.modeInjections, override);
+/** 生效注入集合。assistant 是会话视角下的助手(conversationAssistant),它的模式注入 / 世界书 id
+ *  已经是这个会话实际选的那一份(D19)。 */
+export function activePromptInjections(assistant: Assistant, messages: Message[]): Array<Record<string, JsonValue>> {
+  return activePromptInjectionsCore(assistant, messages, state.settings.lorebooks, state.settings.modeInjections);
 }
 
 /** 注入按位置分两路:系统位(before/after_system_prompt)返回文本,由调用方并入
@@ -261,7 +247,7 @@ export interface EnrichResult {
  *  会被双重包装。纯函数:不改 conversation/assistant,合成消息 id 经 syntheticIds
  *  显式返回。 */
 export function enrichMessages(baseMessages: Message[], options: EnrichOptions): EnrichResult {
-  const { conversation, assistant, model } = options;
+  const { assistant, model } = options;
   const template = assistant.messageTemplate?.trim() || "{{ message }}";
 
   // 1. 窗口化:滞回截断与压缩切点锚取 max(锚不在序列中视为无锚)。与聊天引擎
@@ -290,7 +276,7 @@ export function enrichMessages(baseMessages: Message[], options: EnrichOptions):
   );
 
   // 4. lorebook/模式注入:系统位文本抽出,聊天位消息插队(合成 id 并入返回集)。
-  const injections = activePromptInjections(conversation, assistant, withReminders);
+  const injections = activePromptInjections(assistant, withReminders);
   const { system, chat } = splitInjectionsByPlacement(injections);
   const withRemindersIds = new Set(withReminders.map((msg) => msg.id));
   const injected = applyPromptInjectionsToMessages(withReminders, chat);

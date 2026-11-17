@@ -1,7 +1,19 @@
-// assistants/extension-selection.test.ts — 拓展选择的读取与 MCP 两条联动规则(助手弹窗、会话选择器、服务端接口共用)。
+// assistants/extension-selection.test.ts — 拓展选择的读取、会话层选择的取数规则与 MCP 两条联动规则
+// (助手弹窗、会话选择器、服务端接口共用)。
 import { describe, expect, test } from "bun:test";
 
-import { readSelectionPatch, selectionOf, withMcpServerSelected, withMcpToolOverride } from "./extension-selection";
+import {
+  effectiveSelection,
+  initialSelection,
+  isSelectionComplete,
+  patchedSelection,
+  readConversationSelection,
+  readSelectionPatch,
+  selectionOf,
+  splitSelection,
+  withMcpServerSelected,
+  withMcpToolOverride,
+} from "./extension-selection";
 
 const servers = [
   {
@@ -100,5 +112,62 @@ describe("withMcpToolOverride", () => {
     expect(withMcpToolOverride({ mcpServers: ["empty"], mcpToolOverrides: {} }, "empty", "x", { enable: false }, servers).mcpServers).toEqual([
       "empty",
     ]);
+  });
+});
+
+describe("会话层选择", () => {
+  const assistant = {
+    mcpServers: ["s1"],
+    enabledSkills: ["k1"],
+    modeInjectionIds: ["m1"],
+    lorebookIds: ["l1"],
+    quickMessageIds: ["q1"],
+  };
+
+  test("没固定过的会话跟随助手当前的默认", () => {
+    expect(effectiveSelection({}, assistant)).toEqual(selectionOf(assistant));
+    expect(effectiveSelection(null, assistant)).toEqual(selectionOf(assistant));
+  });
+
+  test("没固定过、但会话两列里有老版本单独绑定的注入:保留会话自己的", () => {
+    const next = effectiveSelection({ modeInjectionIds: ["m9"], lorebookIds: [] }, assistant);
+    expect(next.modeInjectionIds).toEqual(["m9"]);
+    expect(next.lorebookIds).toEqual(["l1"]);
+  });
+
+  test("老版本开了「独立对话提示词注入」的助手:没固定过的会话两列原样生效(含清空)", () => {
+    const legacy = { ...assistant, allowConversationPromptInjection: true };
+    expect(effectiveSelection({ modeInjectionIds: [], lorebookIds: ["l2"] }, legacy)).toMatchObject({ modeInjectionIds: [], lorebookIds: ["l2"] });
+  });
+
+  test("固定过的会话:存下的键与两列原样生效(含空),缺的键仍跟随助手", () => {
+    const next = effectiveSelection(
+      { extensionSelection: { mcpServers: [], enabledSkills: ["k2"] }, modeInjectionIds: [], lorebookIds: [] },
+      assistant,
+    );
+    expect(next).toMatchObject({ mcpServers: [], enabledSkills: ["k2"], modeInjectionIds: [], lorebookIds: [], quickMessageIds: ["q1"] });
+  });
+
+  test("新会话的初值 = 助手的默认叠上草稿里改过的几项", () => {
+    const next = initialSelection(assistant, { enabledSkills: [], quickMessageIds: ["q2"], bogus: 1 });
+    expect(next).toMatchObject({ mcpServers: ["s1"], enabledSkills: [], quickMessageIds: ["q2"], modeInjectionIds: ["m1"] });
+    expect(initialSelection(assistant, undefined)).toEqual(selectionOf(assistant));
+  });
+
+  test("左下角改一项:整组固定进会话,之后改助手的默认不再影响它", () => {
+    const conversation = splitSelection(patchedSelection({}, assistant, { mcpServers: [] }));
+    expect(isSelectionComplete(conversation.extensionSelection)).toBe(true);
+    expect(conversation).toEqual({
+      extensionSelection: { mcpServers: [], mcpToolOverrides: {}, enabledSkills: ["k1"], enginePluginIds: [], quickMessageIds: ["q1"] },
+      modeInjectionIds: ["m1"],
+      lorebookIds: ["l1"],
+    });
+    expect(effectiveSelection(conversation, { ...assistant, enabledSkills: ["changed"] }).enabledSkills).toEqual(["k1"]);
+  });
+
+  test("读会话列只认会话持有的键(模式注入 / 世界书住两列)", () => {
+    expect(readConversationSelection({ modeInjectionIds: ["m"], enabledSkills: ["k"] })).toEqual({ enabledSkills: ["k"] });
+    expect(readConversationSelection("x")).toBeNull();
+    expect(isSelectionComplete({ enabledSkills: [] })).toBe(false);
   });
 });

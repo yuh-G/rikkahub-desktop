@@ -5,7 +5,7 @@ import { startMicCapture } from "~/lib/voice/mic-capture";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
-import { useCurrentAssistant } from "~/hooks/use-current-assistant";
+import { useExtensionSelection } from "~/hooks/use-extension-selection";
 import { ModelList } from "~/components/input/model-list";
 import { SearchPickerButton } from "~/components/input/search-picker";
 import { MemoryBadge } from "~/components/memory/memory-badge";
@@ -64,6 +64,8 @@ export interface ChatInputProps {
    *  → 后端兜底全局默认聊天模型)。与 getOptimizeContext 同属"点击时才消费"的会话
    *  上下文,传静态值即可,不参与渲染。 */
   conversationId?: string | null;
+  /** 输入区草稿键:还没落库的新会话在左下角改的拓展选择暂存在这个键下(D19)。 */
+  draftKey?: string | null;
   /** 消息发送队列预览(生成中补发的排队项)。队空/无会话时父级传 null,不渲染贴片。
    *  刻意作为 children 式插槽由父级构造:队列面板渲染在输入卡上沿外侧的贴片层里
    *  (见下方渲染处注释),但它的数据源与 API 调用属于会话层,不该穿透进纯输入组件。 */
@@ -265,6 +267,7 @@ function ChatInputInner({
   onSlashCommand,
   getOptimizeContext,
   conversationId,
+  draftKey,
   queueSlot,
   className,
 }: ChatInputProps) {
@@ -272,15 +275,16 @@ function ChatInputInner({
   const sendOnEnter = useSettingsStore(
     (state) => state.settings?.displaySetting.sendOnEnter ?? true,
   );
-  const { currentAssistant, settings } = useCurrentAssistant();
+  const extensions = useExtensionSelection(conversationId, draftKey);
+  const settings = extensions.settings;
+  const quickMessageIds = extensions.selection.quickMessageIds;
 
   const quickMessages = React.useMemo(() => {
-    const ids = currentAssistant?.quickMessageIds;
     const allQuickMessages = settings?.quickMessages ?? [];
-    if (!Array.isArray(ids) || ids.length === 0 || allQuickMessages.length === 0) {
+    if (quickMessageIds.length === 0 || allQuickMessages.length === 0) {
       return [] as QuickMessageOption[];
     }
-    const idSet = new Set(ids);
+    const idSet = new Set(quickMessageIds);
     return allQuickMessages
       .filter((qm) => idSet.has(qm.id))
       .map((qm) => ({
@@ -288,7 +292,7 @@ function ChatInputInner({
         content: qm.content.trim(),
       }))
       .filter((item): item is QuickMessageOption => item.content.length > 0);
-  }, [currentAssistant?.quickMessageIds, settings?.quickMessages, t]);
+  }, [quickMessageIds, settings?.quickMessages, t]);
 
   const imageInputRef = React.useRef<HTMLInputElement | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -1036,7 +1040,13 @@ function ChatInputInner({
                 </Button>
               ) : null}
               <SearchPickerButton disabled={!canSwitchModel} />
-              <ExtensionPickerButton disabled={!canSwitchModel} />
+              <ExtensionPickerButton
+                settings={settings}
+                selection={extensions.selection}
+                onChange={extensions.change}
+                ready={extensions.ready}
+                disabled={!canSwitchModel}
+              />
               <WorkspaceFilesButton />
               <WorkspacePermissionPicker />
             </div>

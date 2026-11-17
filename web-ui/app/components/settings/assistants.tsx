@@ -70,7 +70,6 @@ const BASIC_SWITCHES = [
 const ADVANCED_SWITCHES = [
   ["enableTimeReminder", "settings:assistants.opt.time_reminder"],
   ["allowConversationSystemPrompt", "settings:assistants.opt.allow_conv_prompt"],
-  ["allowConversationPromptInjection", "settings:assistants.opt.allow_conv_injection"],
   ["enableRecentChatsReference", "settings:assistants.opt.recent_chats"],
 ] as const;
 

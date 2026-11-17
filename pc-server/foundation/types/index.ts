@@ -3,6 +3,7 @@
 
 import type { Settings } from "./settings";
 import type { MessagePart } from "./parts";
+import type { ConversationExtensionSelection } from "../../assistants/extension-selection";
 
 export * from "./parts";
 export * from "./dto";
@@ -193,8 +194,8 @@ export interface Assistant {
   enginePluginIds: string[];
   enableTimeReminder: boolean;
   allowConversationSystemPrompt: boolean;
-  /** 专题9:允许"会话级"绑定提示词注入/世界书(对齐安卓 Assistant.allowConversationPromptInjection)。
-   *  开启后生效的注入 id 集来自 Conversation.modeInjectionIds/lorebookIds,完全取代助手级集合。 */
+  /** 与 APP 共用的助手字段,界面已不再提供开关(会话层选择成为常态,D19)。桌面端只在读还没固定过选择的
+   *  老会话时认它(见 extension-selection.ts 的 LEGACY-READ);导出给 APP 时原样保留存量值。 */
   allowConversationPromptInjection: boolean;
 }
 
@@ -320,8 +321,8 @@ export interface Conversation {
   isPinned: boolean;
   createAt: number;
   updateAt: number;
-  /** 专题9:会话级绑定的注入/世界书 id(仅当助手开启 allowConversationPromptInjection 时生效,
-   *  对齐安卓 Conversation.modeInjectionIds/lorebookIds)。缺省 = 空集。 */
+  /** 会话层选择里的模式注入 / 世界书 id(与 APP 共用的两列;其余几类在 extensionSelection 里)。
+   *  取数规则见 extension-selection.ts 的 effectiveSelection。 */
   modeInjectionIds?: string[];
   lorebookIds?: string[];
   /** 工作区归属(agent 模式)。null/缺省 = 对话模式。创建时绑定,不随会话迁移。
@@ -336,6 +337,9 @@ export interface Conversation {
    *  (编码器自校验,编辑/fork 后失效记录自动跳过)。仅存 PC 自有库;跨端导出
    *  白名单不含此列。 */
   engineCompactions?: JsonValue[] | null;
+  /** 会话层的拓展选择(D19,P6a.4;模式注入 / 世界书在上面两列)。null / 缺省 = 还没固定过,
+   *  取数时跟随助手当前的默认;缺的键同理。规则在 assistants/extension-selection。仅存桌面端自有库。 */
+  extensionSelection?: ConversationExtensionSelection | null;
 }
 
 // ----- 工作区(agent 模式)领域模型 -----
@@ -601,6 +605,7 @@ export interface PcConversationRow {
   workspace_id?: string | null;
   workspace_cwd?: string | null;
   engine_compactions?: string | null;
+  extension_selection?: string | null;
 }
 export interface PcMessageNodeRow {
   id: string;

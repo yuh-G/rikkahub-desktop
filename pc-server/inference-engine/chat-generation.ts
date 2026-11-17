@@ -46,7 +46,7 @@ import {
 } from "./providers";
 import { buildInteractionsRequestBody, streamInteractionsChatWithTools } from "./interactions";
 import { conversationFunctionTools } from "../tools/bound";
-import { findAssistant } from "../conversations/helpers";
+import { conversationAssistant } from "../conversations/helpers";
 
 /** 生成入口一次性解析的配置快照（P1-4）。流式生成横跨多个 await 点，用户中途改配置
  *  （换模型/改工具集/删助手）时，updateSettings 会整体替换 state.settings——持有入口
@@ -63,7 +63,7 @@ export async function callProvider(
   hooks?: StreamHooksWithSink,
   snapshot?: GenerationSnapshot,
 ) {
-  const assistant = snapshot?.assistant ?? findAssistant(conversation.assistantId);
+  const assistant = snapshot?.assistant ?? conversationAssistant(conversation);
   const picked = snapshot
     ? { provider: snapshot.provider, model: snapshot.model }
     : findModel(assistant.chatModelId ?? state.settings.chatModelId);
@@ -232,7 +232,7 @@ export async function callProviderStreaming(
   target: GenerationTarget,
   ctx: { signal?: AbortSignal; sink: GenerationEventSink; executeTool: ToolExecutor; snapshot?: GenerationSnapshot; onSteerBoundary?: () => string[] },
 ): Promise<string> {
-  const assistant = ctx.snapshot?.assistant ?? findAssistant(conversation.assistantId);
+  const assistant = ctx.snapshot?.assistant ?? conversationAssistant(conversation);
   const picked = ctx.snapshot
     ? { provider: ctx.snapshot.provider, model: ctx.snapshot.model }
     : findModel(assistant.chatModelId ?? state.settings.chatModelId);

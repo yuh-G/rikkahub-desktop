@@ -440,8 +440,7 @@
       "stream_output": "Stream output",
       "time_reminder": "Time reminders",
       "use_avatar": "Use assistant avatar in chat",
-      "allow_conv_prompt": "Per-conversation system prompt",
-      "allow_conv_injection": "Per-conversation prompt injections"
+      "allow_conv_prompt": "Per-conversation system prompt"
     },
     "extensions": {
       "title": "Manage extensions",

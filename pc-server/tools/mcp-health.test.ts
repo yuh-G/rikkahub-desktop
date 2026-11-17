@@ -113,25 +113,25 @@ describe("mcpToolFailureError — 结构化诊断文本", () => {
 describe("isServerInUse — 决策①的探活门槛", () => {
   const server = (id: string, enable = true) =>
     ({ id, commonOptions: { name: id, enable } }) as never;
-  const assistantWith = (ids: string[]) => ({ mcpServers: ids });
 
-  test("启用 + 被某助手选中 → 探活", () => {
-    expect(isServerInUse(server("s1"), [assistantWith(["s1"])])).toBe(true);
+  test("全局启用即探活,不看有没有助手默认选中它(D19)", () => {
+    expect(isServerInUse(server("s1"))).toBe(true);
   });
 
-  test("禁用 → 不探活(即使被选中)", () => {
-    expect(isServerInUse(server("s1", false), [assistantWith(["s1"])])).toBe(false);
+  test("禁用 → 不探活", () => {
+    expect(isServerInUse(server("s1", false))).toBe(false);
   });
 
-  test("启用但无任何助手选中 → 不探活(闲置永不标红)", () => {
-    expect(isServerInUse(server("s1"), [assistantWith(["other"])])).toBe(false);
-    expect(isServerInUse(server("s1"), [])).toBe(false);
+  test("插件带来的服务器:插件停用 → 不探活", () => {
+    const fromPlugin = (active: boolean) =>
+      ({ id: "p1", commonOptions: { name: "p1", enable: true }, source: { kind: "plugin", pluginId: "pi:x", name: "x", active } }) as never;
+    expect(isServerInUse(fromPlugin(true))).toBe(true);
+    expect(isServerInUse(fromPlugin(false))).toBe(false);
   });
 });
 
 describe("McpHealthSupervisor — 状态机与主动重连", () => {
   const mkServer = (id: string) => ({ id, commonOptions: { name: id, enable: true } }) as never;
-  const assistants = [{ mcpServers: ["s1"] }];
   /** 可控 probe 桩:按队列返回成功或抛错。 */
   const probeQueue = (outcomes: Array<"ok" | Error>) => {
     let i = 0;
@@ -146,7 +146,6 @@ describe("McpHealthSupervisor — 状态机与主动重连", () => {
   test("探活成功 → ready,失败计数清零", async () => {
     const sup = new McpHealthSupervisor({
       getServers: () => [mkServer("s1")],
-      getAssistants: () => assistants,
       probe: probeQueue(["ok"]),
     });
     sup.reconcile();
@@ -158,7 +157,6 @@ describe("McpHealthSupervisor — 状态机与主动重连", () => {
   test("授权过期(不可自救)→ 立即 failed,不进入重连退避", async () => {
     const sup = new McpHealthSupervisor({
       getServers: () => [mkServer("s1")],
-      getAssistants: () => assistants,
       probe: probeQueue([new Error("HTTP 401 invalid_token")]),
     });
     sup.reconcile();
@@ -176,7 +174,6 @@ describe("McpHealthSupervisor — 状态机与主动重连", () => {
   test("网络瞬态失败 → reconnecting(退避中),retryable=true", async () => {
     const sup = new McpHealthSupervisor({
       getServers: () => [mkServer("s1")],
-      getAssistants: () => assistants,
       probe: probeQueue([new Error("connect ETIMEDOUT")]),
     });
     sup.reconcile();
@@ -186,10 +183,9 @@ describe("McpHealthSupervisor — 状态机与主动重连", () => {
     sup.dispose();
   });
 
-  test("闲置服务器(未选中)reconcile 后不进入状态面", async () => {
+  test("停用的服务器 reconcile 后不进入状态面", async () => {
     const sup = new McpHealthSupervisor({
-      getServers: () => [mkServer("s1")],
-      getAssistants: () => [{ mcpServers: ["other"] }],
+      getServers: () => [{ id: "s1", commonOptions: { name: "s1", enable: false } } as never],
       probe: probeQueue(["ok"]),
     });
     sup.reconcile();
@@ -202,7 +198,6 @@ describe("McpHealthSupervisor — 状态机与主动重连", () => {
     const probe = probeQueue([new Error("HTTP 401 invalid_token"), "ok"]);
     const sup = new McpHealthSupervisor({
       getServers: () => [mkServer("s1")],
-      getAssistants: () => assistants,
       probe,
     });
     sup.reconcile();

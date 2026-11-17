@@ -111,8 +111,7 @@ describe("可见性跟随插件绑定", () => {
       return record.id === id ? { ...record, commonOptions: { ...record.commonOptions, enable: false } } : server;
     }) as JsonValue[];
     expect(openAiMcpTools(bound, disabled)).toEqual([]);
-    expect(isServerInUse(byId(withTools(true), id), [bound])).toBe(true);
-    expect(isServerInUse(byId(withTools(true), id), [ticked])).toBe(false);
+    expect(isServerInUse(byId(withTools(true), id))).toBe(true);
     // 用户自己加的服务器照旧看勾选。
     expect(isMcpServerSelected({ mcpServers: ["user-1"] }, userServer)).toBe(true);
     expect(isMcpServerSelected({ enginePluginIds: [PLUGIN] }, userServer)).toBe(false);

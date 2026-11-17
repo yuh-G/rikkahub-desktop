@@ -65,7 +65,8 @@ import {
   appendTextPart,
   canResumeToolExecution,
   ensureUsage,
-  findAssistant,
+  conversationAssistant,
+  pinConversationSelection,
   finishMessage,
   hasPendingToolApproval,
   hasResumableToolParts,
@@ -802,7 +803,7 @@ export async function compactEngineConversation(
   customInstructions: string,
   signal?: AbortSignal,
 ): Promise<{ engine: EngineKind; summary: string; tokensBefore: number; estimatedTokensAfter: number | null } | null> {
-  const assistant = findAssistant(conversation.assistantId);
+  const assistant = conversationAssistant(conversation);
   const route = resolveEngine(conversation);
   if (!route.driver.capabilities.nativeCompaction) return null;
   const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
@@ -850,7 +851,7 @@ export async function listEngineCommands(conversation: Conversation): Promise<{ 
   try {
     const commands = await driver.listCommands({
       conversationId: conversation.id,
-      plugins: enginePluginsFor(driver.kind, state.settings, findAssistant(conversation.assistantId)),
+      plugins: enginePluginsFor(driver.kind, state.settings, conversationAssistant(conversation)),
       workspace: engineWorkspaceFor(route),
     });
     return { engine: driver.kind, commands };
@@ -884,7 +885,7 @@ export async function runEngineCommand(conversation: Conversation, commandId: st
   }, signal);
   let completed = false;
   try {
-    const assistant = findAssistant(conversation.assistantId);
+    const assistant = conversationAssistant(conversation);
     const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
     const deps: PortableCallDeps = { assistant, providerItem: picked.provider, selectedModel: picked.model };
     const sink: GenerationEventSink = (event) => {
@@ -952,7 +953,8 @@ export async function generateAnswer(
   // completeConversationGeneration 有多处幂等调用,release 不能放那里)。
   // generating 条件本身也挡 sweep,refs 是纵深防御(abort 后 generating 先被清的窗口)。
   checkoutConversation(conversation.id);
-  const assistant = findAssistant(conversation.assistantId);
+  pinConversationSelection(conversation);
+  const assistant = conversationAssistant(conversation);
   const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
   // 路由在入口一次判定并贯穿本次生成(与 P1-4 配置快照同理):工作区可用即由工作区引擎接管,
   // 否则聊天引擎兜底(engines/index resolveEngine)。续跑/暂停语义读驱动的能力声明。

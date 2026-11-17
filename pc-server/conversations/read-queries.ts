@@ -9,7 +9,7 @@
 // - 返回的对象是一次性快照，**不得修改**——它们不在 working set 里，改了既不持久化也不广播。
 import type { Database } from "bun:sqlite";
 import type { Conversation } from "../foundation/types";
-import { safeParseJsonArray } from "./index";
+import { parseExtensionSelection, safeParseJsonArray } from "./index";
 
 /** 会话元数据（messages 恒为空数组）。形状与 Conversation 一致以复用 toListDto 等既有转换。 */
 export type ConversationMeta = Conversation;
@@ -28,6 +28,7 @@ interface MetaRow {
   workspace_id: string | null;
   workspace_cwd: string | null;
   engine_compactions: string | null;
+  extension_selection: string | null;
 }
 
 function parseIdArray(raw: string | undefined): string[] {
@@ -60,10 +61,11 @@ function rowToMeta(row: MetaRow): ConversationMeta {
     workspaceId: row.workspace_id ?? null,
     workspaceCwd: row.workspace_cwd ?? null,
     engineCompactions: safeParseJsonArray(row.engine_compactions),
+    extensionSelection: parseExtensionSelection(row.extension_selection),
   };
 }
 
-const META_COLUMNS = "id, assistant_id, title, system_prompt, suggestions, is_pinned, create_at, update_at, mode_injection_ids, lorebook_ids, workspace_id, workspace_cwd, engine_compactions";
+const META_COLUMNS = "id, assistant_id, title, system_prompt, suggestions, is_pinned, create_at, update_at, mode_injection_ids, lorebook_ids, workspace_id, workspace_cwd, engine_compactions, extension_selection";
 
 /**
  * 某助手的全部会话元数据，ORDER BY create_at DESC, id DESC——

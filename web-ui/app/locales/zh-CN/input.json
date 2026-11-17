@@ -6,32 +6,6 @@
       "argument_hint": "[额外指示]"
     }
   },
-  "mcp": {
-    "title": "MCP",
-    "description": "选择当前助手可用的 MCP 服务器",
-    "update_failed": "更新 MCP 设置失败",
-    "unnamed_server": "未命名 MCP 服务器",
-    "tools_enabled": "已启用 {{enabled}}/{{total}} 个工具",
-    "empty": "暂无可用 MCP 服务器"
-  },
-  "injection": {
-    "title": "扩展",
-    "description": "为当前助手启用快捷消息模板、模式注入和世界书",
-    "update_failed": "更新扩展设置失败",
-    "tab_quickmessages": "快捷消息模板",
-    "tab_mode": "模式注入",
-    "tab_lorebook": "世界书",
-    "unnamed_mode": "未命名模式注入",
-    "unnamed_lorebook": "未命名世界书",
-    "unnamed_quickmessage": "未命名快捷消息模板",
-    "disabled": "已禁用",
-    "empty_mode": "暂无模式注入",
-    "empty_lorebook": "暂无世界书",
-    "empty_quickmessages": "暂无快捷消息模板",
-    "tab_skills": "技能",
-    "empty_skills": "暂无技能",
-    "manage": "管理"
-  },
   "reasoning": {
     "title": "推理",
     "description": "配置当前助手的推理强度和预算",
@@ -192,7 +166,8 @@
   },
   "integrations": {
     "title": "MCP 与拓展",
-    "description": "为当前助手选择 MCP 工具与拓展能力",
-    "tab_mcp": "MCP"
+    "description": "这里的开关只作用于当前会话；新会话默认开哪些，在助手的「拓展管理」里设。",
+    "update_failed": "更新会话的拓展选择失败",
+    "manage": "去设置"
   }
 }

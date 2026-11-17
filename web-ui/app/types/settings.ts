@@ -136,8 +136,7 @@ export interface AssistantProfile {
   /** 本助手启用的引擎插件 id(插件记录在 Settings.enginePlugins;PC-only,导出给 APP 时剥离)。 */
   enginePluginIds?: string[];
   allowConversationSystemPrompt?: boolean;
-  // 专题9:独立对话提示词注入(对齐安卓 Assistant.allowConversationPromptInjection)。
-  // 开启后 modeInjectionIds/lorebookIds 的生效来源改为会话上的同名字段。
+  // 与 APP 共用的助手字段,界面不再提供开关(会话层选择成为常态,D19);只为备份往返保留。
   allowConversationPromptInjection?: boolean;
   name: string;
   systemPrompt?: string;

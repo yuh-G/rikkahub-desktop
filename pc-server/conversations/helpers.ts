@@ -2,14 +2,15 @@
 // 纪律：纯搬迁自 server.ts（阶段 5.3f），行为不变；原私有函数为跨模块使用统一补 export。
 
 import type { Assistant, Conversation, JsonValue, Message, MessageNode, MessagePart } from "../foundation/types";
-import { estimateTokens, getStringArray, id, isRecord, message, reasoningFromParts, textFromParts } from "../foundation/utils";
+import { estimateTokens, id, isRecord, message, reasoningFromParts, textFromParts } from "../foundation/utils";
 import { state } from "../persistence/json-store";
 import { broadcastList, dropConversationSse } from "../api/sse";
-import { deletePcConversations, flushConvDirtyNow, getConversation, persistConversation, selectedConversationMessages } from "./index";
+import { deletePcConversations, flushConvDirtyNow, getConversation, markConversationRowDirty, persistConversation, selectedConversationMessages } from "./index";
 import { registerConversation, removeConversations } from "./working-set";
 import { abortGeneration, generating } from "./generation-state";
 import { clearMessageQueue } from "./message-queue";
 import { findAssistant as findAssistantCore } from "../assistants";
+import { effectiveSelection, initialSelection, isSelectionComplete, splitSelection } from "../assistants/extension-selection";
 import { fillContextLimit } from "../inference-engine/providers";
 import { finishToolParts } from "../inference-engine/parts";
 import { forgetSessionToolAllowances } from "../inference-engine/approval-gate";
@@ -58,20 +59,25 @@ export function findAssistant(idValue = state.settings.assistantId) {
   return findAssistantCore(state.settings.assistants, idValue);
 }
 
-/** A1(专题9复查):开启"会话级注入绑定"的助手,新会话从助手级播种生效集。
- *  PC 会话在首条消息才创建(不提前建,防死会话),home 页的勾选只能落在助手级;
- *  而 override 语义是"会话集(含空集)完全取代助手级"(对齐安卓 collectInjections),
- *  不播种则新会话诞生即空集,用户在新聊天页的勾选静默失效。安卓无此窗口
- *  (ChatPage 始终持有会话对象,勾选从第一刻就写会话级)。 */
-export function seedConversationInjectionBinding(conversation: Conversation, assistant: Assistant): void {
-  if (assistant.allowConversationPromptInjection !== true) return;
-  conversation.modeInjectionIds = getStringArray(assistant.modeInjectionIds);
-  conversation.lorebookIds = getStringArray(assistant.lorebookIds);
+/** 会话视角下的助手:拓展选择换成这个会话此刻实际用的那一份(D19;规则在 assistants/extension-selection)。
+ *  生成、压缩、指令面都从这里取,不直接读助手上的默认。 */
+export function conversationAssistant(conversation: Conversation): Assistant {
+  const assistant = findAssistant(conversation.assistantId);
+  return { ...assistant, ...effectiveSelection(conversation, assistant) };
+}
+
+/** 还没把选择固定下来的老会话(或从 APP 导入、只带了一部分的),第一次生成时按助手当时的默认补齐并固定,
+ *  之后改助手的默认不再影响它。 */
+export function pinConversationSelection(conversation: Conversation): void {
+  if (isSelectionComplete(conversation.extensionSelection)) return;
+  Object.assign(conversation, splitSelection(effectiveSelection(conversation, findAssistant(conversation.assistantId))));
+  markConversationRowDirty(conversation.id);
 }
 
 /** init 仅在会话创建时刻生效(已存在的会话原样返回)——PC 会话首条消息才建档,
- *  工作区归属等创建期属性只能随首个建档请求进来,事后不可改绑。 */
-export function ensureConversation(idValue: string, init?: { workspaceId?: string | null }) {
+ *  工作区归属等创建期属性只能随首个建档请求进来,事后不可改绑。extensionSelection 是新会话草稿里
+ *  在左下角改过的那几项(会话还没落库时暂存在前端),叠在助手的默认上作这个会话的初值。 */
+export function ensureConversation(idValue: string, init?: { workspaceId?: string | null; extensionSelection?: unknown }) {
   let conversation = getConversation(idValue);
   if (!conversation) {
     const now = Date.now();
@@ -89,8 +95,8 @@ export function ensureConversation(idValue: string, init?: { workspaceId?: strin
       workspaceId: init?.workspaceId ?? null,
       workspaceCwd: null,
       engineCompactions: null,
+      ...splitSelection(initialSelection(assistant, init?.extensionSelection)),
     };
-    seedConversationInjectionBinding(conversation, assistant);
     registerConversation(conversation); // 新建:内存即权威,防 checkout 从活库读空树反向覆盖
     // 1.2.6:新建会话 persist 进活库(建会话行),否则后续流式 upsert 该会话的节点时
     // FK 失败(pc_message_node.conversation_id 引用 pc_conversation.id),且流式中崩溃

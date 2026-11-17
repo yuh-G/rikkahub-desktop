@@ -41,8 +41,9 @@ export interface SelectionListProps {
 
 type CountInput = Pick<SelectionListProps, "settings" | "skills" | "selection">;
 
-/** 技能目录(技能没有全局「启用」,装了就可选)。拉取失败按空列表处理:空状态里有去技能页的入口。 */
-export function useSkillSummaries(enabled: boolean): SkillSummary[] {
+/** 技能目录(技能没有全局「启用」,装了就可选)。拉取失败按空列表处理:空状态里有去技能页的入口。
+ *  refreshKey 变了重拉(选择器每次打开时刷新,拿到刚在技能页新建的)。 */
+export function useSkillSummaries(enabled: boolean, refreshKey?: unknown): SkillSummary[] {
   const [skills, setSkills] = React.useState<SkillSummary[]>([]);
   React.useEffect(() => {
     if (!enabled) return;
@@ -54,7 +55,7 @@ export function useSkillSummaries(enabled: boolean): SkillSummary[] {
     return () => {
       alive = false;
     };
-  }, [enabled]);
+  }, [enabled, refreshKey]);
   return skills;
 }
 
@@ -357,6 +358,14 @@ export const SELECTION_LISTS: Record<ExtensionCategoryId, React.ComponentType<Se
   skills: SkillSelectionList,
   injection: InjectionSelectionList,
   quick: QuickMessageSelectionList,
+};
+
+/** 各类此刻可选的条目数(选择器据此决定初始页签、全空时不出现)。 */
+export const AVAILABLE_COUNTS: Record<ExtensionCategoryId, (input: Omit<CountInput, "selection">) => number> = {
+  mcp: ({ settings }) => availableMcpServers(settings).length,
+  skills: ({ skills }) => skills.length,
+  injection: ({ settings }) => enabledOnly(settings.modeInjections).length + enabledOnly(settings.lorebooks).length,
+  quick: ({ settings }) => sendableQuickMessages(settings).length,
 };
 
 /** 各类已选、且此刻可用的条目数(页签角标、选择器按钮的徽标)。 */

@@ -14,6 +14,7 @@ import { clearAllFts, deleteConversationFts, ensureMessageFtsTable, ftsRowCount,
 import { reportError } from "../observability/app-errors";
 import { copyEngineEntries, copyEngineTablesInto, ensureEngineEntryTables, pruneOrphanEngineEntries, refillEngineTables, snapshotLiveEngineTables } from "./engine-entries";
 import { collectPcFileRefs } from "../backup/file-refs";
+import { readConversationSelection, type ConversationExtensionSelection } from "../assistants/extension-selection";
 
 export const DEFAULT_ASSISTANT_ID = "0950e2dc-9bd5-4801-afa3-aa887aa36b4e";
 
@@ -73,7 +74,8 @@ export function ensureConversationTables(db: InstanceType<typeof Database>): voi
       lorebook_ids       TEXT NOT NULL DEFAULT '[]',
       workspace_id       TEXT,
       workspace_cwd      TEXT,
-      engine_compactions TEXT
+      engine_compactions TEXT,
+      extension_selection TEXT
     );
     CREATE TABLE IF NOT EXISTS pc_message_node (
       id              TEXT PRIMARY KEY NOT NULL,
@@ -133,6 +135,29 @@ function ensureConversationWorkspaceColumns(db: InstanceType<typeof Database>): 
  *  可空列旧数据天然兼容(NULL = 无压缩记录)。P2 的 pi_session_file 列不再读写,
  *  老库中留作死列(SQLite 删列代价不值当)。仅存 PC 自有库,跨端导出白名单不含此列。
  *  export 仅为回归测试(老库升级路径需在真实 ALTER 上验证)。 */
+/** 会话层的拓展选择列(D19,P6a.4):`Conversation.extensionSelection` 的 JSON。可空列,NULL = 这个会话
+ *  还没固定过选择,取数时跟随助手的默认。幂等。仅存桌面端自有库,给 APP 的导出不含此列。 */
+function ensureConversationExtensionSelectionColumn(db: InstanceType<typeof Database>): void {
+  try {
+    const cols = db.prepare("PRAGMA table_info(pc_conversation)").all() as { name: string }[];
+    if (!cols.some((c) => c.name === "extension_selection")) {
+      db.exec("ALTER TABLE pc_conversation ADD COLUMN extension_selection TEXT");
+    }
+  } catch (err) {
+    console.warn("[conv-db] 会话拓展选择列迁移失败(会话暂时跟随助手的默认拓展,下次启动重试)", err);
+  }
+}
+
+/** extension_selection 列解析:空 / 损坏 / 形状不对回 null(= 跟随助手的默认)。 */
+export function parseExtensionSelection(text: string | null | undefined): ConversationExtensionSelection | null {
+  if (!text) return null;
+  try {
+    return readConversationSelection(JSON.parse(text));
+  } catch {
+    return null; // 损坏的列按「没固定过」处理,下次在左下角改动时整组重写
+  }
+}
+
 export function ensureConversationEngineCompactionsColumn(db: InstanceType<typeof Database>): void {
   try {
     const cols = db.prepare("PRAGMA table_info(pc_conversation)").all() as { name: string }[];
@@ -177,6 +202,7 @@ function openConversationsDbUnsafe(): InstanceType<typeof Database> {
     ensureConversationInjectionColumns(db);
     ensureConversationWorkspaceColumns(db);
     ensureConversationEngineCompactionsColumn(db);
+    ensureConversationExtensionSelectionColumn(db);
     ensureMessageFtsTable(db);
     // FTS 自愈重建：老库首次升级（表刚建、空）或索引意外丢失时，从节点表全量重建。
     // 幂等：行数>0 时零成本跳过。
@@ -221,6 +247,7 @@ export function loadConversationMetasFromDb(db: InstanceType<typeof Database>): 
     workspaceId: row.workspace_id ?? null,
     workspaceCwd: row.workspace_cwd ?? null,
     engineCompactions: safeParseJsonArray(row.engine_compactions),
+    extensionSelection: parseExtensionSelection(row.extension_selection),
   }));
 }
 
@@ -361,11 +388,11 @@ function safeParseStringArray(raw: string): string[] {
 // 该会话全部节点行被级联清空。流式期间每 200ms flush 都 upsert 会话行,等于整个流式期间
 // 磁盘上只剩正在补写的脏节点;流式中途进程死亡 = 会话历史永久丢失。
 const UPSERT_CONVERSATION_SQL =
-  "INSERT INTO pc_conversation (id, assistant_id, title, system_prompt, suggestions, is_pinned, create_at, update_at, mode_injection_ids, lorebook_ids, workspace_id, workspace_cwd, engine_compactions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+  "INSERT INTO pc_conversation (id, assistant_id, title, system_prompt, suggestions, is_pinned, create_at, update_at, mode_injection_ids, lorebook_ids, workspace_id, workspace_cwd, engine_compactions, extension_selection) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
   "ON CONFLICT(id) DO UPDATE SET assistant_id = excluded.assistant_id, title = excluded.title, system_prompt = excluded.system_prompt, " +
   "suggestions = excluded.suggestions, is_pinned = excluded.is_pinned, create_at = excluded.create_at, update_at = excluded.update_at, " +
   "mode_injection_ids = excluded.mode_injection_ids, lorebook_ids = excluded.lorebook_ids, workspace_id = excluded.workspace_id, workspace_cwd = excluded.workspace_cwd, " +
-  "engine_compactions = excluded.engine_compactions";
+  "engine_compactions = excluded.engine_compactions, extension_selection = excluded.extension_selection";
 
 const UPSERT_NODE_SQL =
   "INSERT INTO pc_message_node (id, conversation_id, node_index, messages, select_index) VALUES (?, ?, ?, ?, ?) " +
@@ -387,6 +414,7 @@ export function upsertConversationRowInto(db: InstanceType<typeof Database>, con
     conv.workspaceId ?? null,
     conv.workspaceCwd ?? null,
     conv.engineCompactions?.length ? JSON.stringify(conv.engineCompactions) : null,
+    conv.extensionSelection ? JSON.stringify(conv.extensionSelection) : null,
   );
 }
 
@@ -599,6 +627,7 @@ export function migrateConversationsIntoDb(db: InstanceType<typeof Database>, co
         conv.workspaceId ?? null,
         conv.workspaceCwd ?? null,
         conv.engineCompactions?.length ? JSON.stringify(conv.engineCompactions) : null,
+        conv.extensionSelection ? JSON.stringify(conv.extensionSelection) : null,
       );
       deleteNodes.run(conv.id);
       deleteConversationFts(db, [conv.id]);
@@ -667,7 +696,8 @@ export function exportPcConversationsDump(targetPath: string): number {
         lorebook_ids       TEXT NOT NULL DEFAULT '[]',
         workspace_id       TEXT,
         workspace_cwd      TEXT,
-        engine_compactions TEXT
+        engine_compactions TEXT,
+        extension_selection TEXT
       );
       CREATE TABLE pcdump.pc_message_node (
         id              TEXT PRIMARY KEY NOT NULL,
@@ -688,7 +718,7 @@ export function exportPcConversationsDump(targetPath: string): number {
         last_access_at    INTEGER NOT NULL
       );
       INSERT INTO pcdump.pc_dump_meta (key, value) VALUES ('format', '3'), ('exportedAt', strftime('%Y-%m-%dT%H:%M:%fZ','now'));
-      INSERT INTO pcdump.pc_conversation SELECT id, assistant_id, title, system_prompt, suggestions, is_pinned, create_at, update_at, mode_injection_ids, lorebook_ids, workspace_id, workspace_cwd, engine_compactions FROM main.pc_conversation;
+      INSERT INTO pcdump.pc_conversation SELECT id, assistant_id, title, system_prompt, suggestions, is_pinned, create_at, update_at, mode_injection_ids, lorebook_ids, workspace_id, workspace_cwd, engine_compactions, extension_selection FROM main.pc_conversation;
       INSERT INTO pcdump.pc_message_node SELECT id, conversation_id, node_index, messages, select_index FROM main.pc_message_node;
     `);
     // 工作区表在活库懒建(workspace/index.ts 的 db()):用户从未建过工作区时 main 侧该表

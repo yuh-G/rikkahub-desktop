@@ -26,6 +26,7 @@ import { defaultSettings } from "../app-config/defaults";
 import { FILE_DEDUP_MIGRATION, normalizeState, PROVIDER_REORDER_MIGRATION, PROVIDER_REORDER_MIGRATION_V2 } from "../persistence/state-load";
 import { generating } from "../conversations/generation-state";
 import { listAllConversationMetas } from "../conversations/read-queries";
+import { readSelectionPatch } from "../assistants/extension-selection";
 
 // ── B2:结构化导入报告 ────────────────────────────────────────────────────────
 // 导入过程的「跳过/降级」此前只进 console,用户在 UI 只看到「成功/没反应」。现把三类
@@ -865,6 +866,21 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
 /** 备份 2.0:读 PC 原生会话 dump 进暂存(state.conversations),替换语义。
  *  dump 两表结构与活库一致,loadAllConversationsFromDb 直读;FTS 由 finalize 的
  *  resetConversationsDbTo 统一重建。返回会话数(0 = 备份时确实无会话,仍是替换基底)。 */
+/** APP 会话表的 config 列(ConversationConfig 的 JSON,APP 库 32 起有):会话开始后固定在会话上的 MCP 与技能。
+ *  有它 = 这个会话在 APP 那边已经固定过选择,读成会话层选择的这两项(其余项第一次生成时按助手默认补齐);
+ *  空串 / 缺列 / 损坏 = 没固定过,跟随助手的默认。 */
+function appConversationSelection(raw: unknown): Conversation["extensionSelection"] {
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const config: unknown = JSON.parse(raw);
+    if (!config || typeof config !== "object") return null;
+    const { mcpServers, enabledSkills } = readSelectionPatch(config);
+    return { mcpServers: mcpServers ?? [], enabledSkills: enabledSkills ?? [] };
+  } catch {
+    return null; // 损坏的 config 按「没固定过」处理,与 APP 读不出时回退助手的行为一致
+  }
+}
+
 function importPcConversationsDump(dumpPath: string): number {
   const db = new Database(dumpPath, { readonly: true });
   try {
@@ -1022,6 +1038,7 @@ function importAndroidConversations(extractDir: string, dbPath: string, androidF
         updateAt: Number(row.update_at ?? Date.now()),
         modeInjectionIds: parseIdArray(row.mode_injection_ids),
         lorebookIds: parseIdArray(row.lorebook_ids),
+        extensionSelection: appConversationSelection(row.config),
       };
 
       const existingIdx = stagingIndexById.get(conv.id) ?? liveIndexById.get(conv.id);

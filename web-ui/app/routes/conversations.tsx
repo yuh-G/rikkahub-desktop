@@ -496,11 +496,15 @@ function useDraftInputController({
     // 双层标签(M2-1):新会话归属发起它的那一列的容器——工作区容器时把 workspaceId
     // 一并送给 ensureConversation,服务端据此挂载工作区工具与提示词段。并排后必须用
     // 列的容器而不是全局激活容器,否则在非聚焦列发第一句会挂到邻列的工作区上。
-    await api.post<{ status: string }>(
-      `conversations/${conversationId}/messages`,
-      container !== CHAT_CONTAINER ? { parts, workspaceId: container } : { parts },
-    );
+    // 左下角在发出前改过的拓展选择一并带上,作这个会话的初值(D19)。
+    const extensionSelection = useChatInputStore.getState().extensionDrafts[draftKey];
+    await api.post<{ status: string }>(`conversations/${conversationId}/messages`, {
+      parts,
+      ...(container !== CHAT_CONTAINER ? { workspaceId: container } : {}),
+      ...(extensionSelection ? { extensionSelection } : {}),
+    });
     clearDraft(draftKey);
+    useChatInputStore.getState().clearExtensionDraft(draftKey);
     useContainerTabsStore.getState().openConversation(container, conversationId);
 
     setActiveId(conversationId);
@@ -654,6 +658,7 @@ const ChatInputArea = React.memo(function ChatInputArea({
       onSlashCommand={onSlashCommand}
       getOptimizeContext={getOptimizeContext}
       conversationId={conversationId}
+      draftKey={draftKey}
       queueSlot={queueSlot}
     />
   );

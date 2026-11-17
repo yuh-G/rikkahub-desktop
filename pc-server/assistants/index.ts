@@ -243,22 +243,15 @@ function contextForMatchingMessages(messages: Message[], scanDepth: number) {
     .join("\n");
 }
 
-/** 专题9:会话级注入绑定(对齐安卓 collectInjections 的 effective ids)。助手开启
- *  allowConversationPromptInjection 时,生效 id 集来自会话(完全取代助手级,包括空集)。 */
-export interface ConversationInjectionOverride {
-  modeInjectionIds: string[];
-  lorebookIds: string[];
-}
-
-export function activeModeInjections(assistant: Assistant, modeInjections: JsonValue[], override?: ConversationInjectionOverride) {
-  const selected = new Set(override ? override.modeInjectionIds : getStringArray(assistant.modeInjectionIds));
+export function activeModeInjections(assistant: Assistant, modeInjections: JsonValue[]) {
+  const selected = new Set(getStringArray(assistant.modeInjectionIds));
   return (modeInjections as Array<Record<string, JsonValue>>)
     .filter((item) => item.enabled !== false && selected.has(String(item.id ?? "")))
     .sort((left, right) => Number(right.priority ?? 0) - Number(left.priority ?? 0));
 }
 
-export function activeLorebookInjections(assistant: Assistant, messages: Message[], lorebooks: JsonValue[], override?: ConversationInjectionOverride) {
-  const selected = new Set(override ? override.lorebookIds : getStringArray(assistant.lorebookIds));
+export function activeLorebookInjections(assistant: Assistant, messages: Message[], lorebooks: JsonValue[]) {
+  const selected = new Set(getStringArray(assistant.lorebookIds));
   return (lorebooks as Array<Record<string, JsonValue>>)
     .filter((book) => book.enabled !== false && selected.has(String(book.id ?? "")))
     .flatMap((book) => (Array.isArray(book.entries) ? book.entries : []))
@@ -272,9 +265,8 @@ export function activePromptInjections(
   messages: Message[],
   lorebooks: JsonValue[],
   modeInjections: JsonValue[],
-  override?: ConversationInjectionOverride,
 ) {
-  return [...activeModeInjections(assistant, modeInjections, override), ...activeLorebookInjections(assistant, messages, lorebooks, override)]
+  return [...activeModeInjections(assistant, modeInjections), ...activeLorebookInjections(assistant, messages, lorebooks)]
     .filter((item) => item.enabled !== false)
     .sort((left, right) => Number(right.priority ?? 0) - Number(left.priority ?? 0));
 }

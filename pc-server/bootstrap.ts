@@ -60,10 +60,9 @@ export async function bootstrap(): Promise<void> {
   initSseWiring();
 
   // 4b) MCP 健康 Supervisor(7.2):引擎无关的后台探活/主动重连层。注入 SSE 快照出口 +
-  //     配置/助手读取器,启动即对当前在用服务器探活一轮。探活本身异步,不阻塞启动。
+  //     配置读取器,启动即对当前在用服务器探活一轮。探活本身异步,不阻塞启动。
   const mcpSupervisor = startMcpHealthSupervisor({
     getServers: () => (state.settings.mcpServers as Array<Record<string, import("./foundation/types").JsonValue>>),
-    getAssistants: () => state.settings.assistants,
   });
   initMcpHealthBroadcast(() => mcpSupervisor.snapshot());
 

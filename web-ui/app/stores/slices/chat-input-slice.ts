@@ -17,6 +17,18 @@ export const createChatInputSlice: StateCreator<AppStoreState, [], [], ChatInput
   get,
 ) => ({
   drafts: {},
+  extensionDrafts: {},
+  patchExtensionDraft: (draftKey, patch) =>
+    set((state) => ({
+      extensionDrafts: { ...state.extensionDrafts, [draftKey]: { ...state.extensionDrafts[draftKey], ...patch } },
+    })),
+  clearExtensionDraft: (draftKey) =>
+    set((state) => {
+      if (!(draftKey in state.extensionDrafts)) return state;
+      const next = { ...state.extensionDrafts };
+      delete next[draftKey];
+      return { extensionDrafts: next };
+    }),
   uploading: false,
   setUploading: (uploading) => set({ uploading }),
   uploadProgress: null,

@@ -19,6 +19,7 @@ import { checkoutConversation, registerConversation, releaseConversation } from 
 import { searchMessageFts } from "../../conversations/fts";
 import { listConversationMetas, pagedConversationMetas } from "../../conversations/read-queries";
 import { applyInputRegexTransformParts } from "../../assistants/index";
+import { patchedSelection, splitSelection } from "../../assistants/extension-selection";
 import { findModel } from "../../model-providers/index";
 import { error, json, readJson } from "../request";
 import { conversationNegotiationToken } from "../snapshot-negotiation";
@@ -167,18 +168,21 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       deleteConversationsById(new Set([conversationId]));
       return new Response(null, { status: 204 });
     }
-    // messages POST 的 body 在 ensureConversation 之前读:工作区绑定是创建期属性,
-    // 必须随建档请求生效(会话首条消息才建档,事后无绑定时机)。body 只读这一次,
-    // 下方 messages 分支复用。绑定前校验工作区存在,防悬空引用。
-    let messagesBody: { parts?: JsonValue[]; workspaceId?: string } | null = null;
+    // messages POST 的 body 在 ensureConversation 之前读:工作区绑定与新会话草稿里的拓展选择是创建期
+    // 属性,必须随建档请求生效(会话首条消息才建档)。body 只读这一次,下方 messages 分支复用。
+    // 绑定前校验工作区存在,防悬空引用。
+    let messagesBody: { parts?: JsonValue[]; workspaceId?: string; extensionSelection?: unknown } | null = null;
     if (sub === "messages" && request.method === "POST") {
-      messagesBody = await readJson<{ parts?: JsonValue[]; workspaceId?: string }>(request);
+      messagesBody = await readJson<{ parts?: JsonValue[]; workspaceId?: string; extensionSelection?: unknown }>(request);
       if (messagesBody.workspaceId && !getWorkspace(String(messagesBody.workspaceId))) {
         return error("Workspace not found", 404);
       }
     }
     const conversation = (sub === "messages" || sub === "system-prompt") && request.method === "POST"
-      ? ensureConversation(conversationId, messagesBody?.workspaceId ? { workspaceId: String(messagesBody.workspaceId) } : undefined)
+      ? ensureConversation(conversationId, {
+          workspaceId: messagesBody?.workspaceId ? String(messagesBody.workspaceId) : null,
+          extensionSelection: messagesBody?.extensionSelection,
+        })
       : getConversation(conversationId);
     if (!conversation) return error("Conversation not found", 404);
     // DB-first:整个子路由块持有引用——translate/OCR 等长 await 期间实例不得被 sweep
@@ -306,16 +310,12 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       broadcastConversation(conversation);
       return json({ status: "updated" });
     }
-    if (sub === "injections" && request.method === "POST") {
-      // 专题9:会话级注入/世界书绑定(仅当助手开启 allowConversationPromptInjection 时
-      // 前端才会调用;后端不强校验开关——存下无害,生成侧只在开关开时消费)。
-      const body = await readJson<{ modeInjectionIds?: unknown; lorebookIds?: unknown }>(request);
-      const toIds = (value: unknown) => (Array.isArray(value) ? value.map((v) => String(v)) : undefined);
-      const modeIds = toIds(body.modeInjectionIds);
-      const lorebookIds = toIds(body.lorebookIds);
-      if (modeIds) conversation.modeInjectionIds = modeIds;
-      if (lorebookIds) conversation.lorebookIds = lorebookIds;
-      conversation.updateAt = Date.now();
+    if (sub === "extension-selection" && request.method === "POST") {
+      // 左下角「MCP 与拓展」只写这个会话(D19):body 是改了的那几项(形状同助手字段),叠在会话此刻的
+      // 实际选择上整组写回。id 不校验存在性——取数时与「全局可用」取交集,失效的 id 自然不生效。
+      // 不改 updateAt:换个拓展不算会话有新内容,列表顺序不动。
+      const body = await readJson<unknown>(request);
+      Object.assign(conversation, splitSelection(patchedSelection(conversation, findAssistant(conversation.assistantId), body)));
       persistConversation(conversation);
       broadcastConversation(conversation);
       return json({ status: "updated" });
