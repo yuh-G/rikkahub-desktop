@@ -1,8 +1,10 @@
 /** 插件来源。spec 是安装器认得的写法:npm = 包规格(含 file: / 压缩包地址),git = git+https:// 等仓库地址,
- *  local = 插件在本机的绝对路径(原地使用,不复制)。 */
+ *  local = 插件在本机的绝对路径(原地使用,不复制)。registry = npm 来源来自非默认 registry 的市场源时记下的地址,
+ *  重装与更新用同一个。 */
 export interface EnginePluginSource {
   kind: "npm" | "git" | "local";
   spec: string;
+  registry?: string;
 }
 
 /** 插件包 package.json 里给人看的几项(P6.2.1):安装 / 重装时读一次存进记录,首页的行与详情直接用。说明截到 500 字,
@@ -35,6 +37,19 @@ export interface EnginePluginRecord {
   meta?: EnginePluginMeta;
 }
 
+/** 用户添加的插件市场源(P6.2.2,方案 §5.13);内置的是代码里的常量表(engines/plugin-market)。桌面端独有:
+ *  导出给 APP 时剥离,APP→桌面端导入保桌面端的值。npm-registry = 按引擎的包关键词检索的 registry;catalog = 一份
+ *  插件清单 JSON。 */
+export interface PluginMarketSourceRecord {
+  id: string;
+  engine: string;
+  kind: "npm-registry" | "catalog";
+  name: string;
+  url: string;
+  addedAt: string;
+}
+
 export interface PluginConfig {
   enginePlugins: EnginePluginRecord[];
+  pluginMarketSources: PluginMarketSourceRecord[];
 }

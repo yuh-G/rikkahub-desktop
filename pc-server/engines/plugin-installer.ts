@@ -109,11 +109,12 @@ async function runBun(args: string[], root: string, options: PluginInstallOption
   throw new CodedError(`包管理器退出码 ${code}:${output}`, "plugin_install_failed");
 }
 
-/** 装一个 npm / git 来源的包,返回装上的包名与版本。knownName = 重装已有记录时的包名(依赖表没有变化时据此认领)。 */
+/** 装一个 npm / git 来源的包,返回装上的包名与版本。knownName = 重装已有记录时的包名(依赖表没有变化时据此认领);
+ *  registry = 从非默认 registry 的市场源装时的地址(只影响这次安装,不写进安装根的配置)。 */
 export function installEnginePluginPackage(
   engine: string,
   spec: string,
-  options: PluginInstallOptions & { knownName?: string } = {},
+  options: PluginInstallOptions & { knownName?: string; registry?: string } = {},
 ): Promise<{ name: string; version: string | null }> {
   return serialized(engine, async () => {
     const root = enginePluginInstallRoot(engine);
@@ -121,7 +122,7 @@ export function installEnginePluginPackage(
     const before = dependenciesOf(root);
     const snapshot = snapshotManifests(root);
     try {
-      await runBun(["add", spec, "--omit=peer"], root, options);
+      await runBun(["add", spec, "--omit=peer", ...(options.registry ? [`--registry=${options.registry}`] : [])], root, options);
     } catch (err) {
       restoreManifests(snapshot);
       throw err;

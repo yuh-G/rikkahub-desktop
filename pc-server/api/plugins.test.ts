@@ -143,6 +143,7 @@ describe("插件管理端点", () => {
 
     expect((await call("plugins/install", { source: { kind: "local", spec: "relative/path" } })).body.errorCode).toBe("plugin_source_invalid");
     expect((await call("plugins/install", { source: { kind: "npm", spec: "--registry=x" } })).body.errorCode).toBe("plugin_source_invalid");
+    expect((await call("plugins/install", { source: { kind: "npm", spec: "x", registry: "ftp://r" } })).body.errorCode).toBe("plugin_source_invalid");
     expect((await call("plugins/install", { engine: "chat", source: { kind: "npm", spec: "x" } })).body.errorCode).toBe("plugin_engine_unsupported");
   }, 120_000);
 
@@ -171,6 +172,14 @@ describe("插件管理端点", () => {
 
     expect((await call("plugins/uninstall", { id: pluginId })).status).toBe(200);
     expect(jsonStore.state.settings.mcpServers).toEqual([]);
+  });
+
+  test("市场源:内置的在前且不可移除;未知市场源报错", async () => {
+    const sources = (await call("plugins/market/sources")).body.sources as Array<Record<string, unknown>>;
+    expect(sources.map((source) => [source.id, source.builtin])).toEqual([["pi-official", true]]);
+    expect((await call("plugins/market/sources/remove", { id: "pi-official" })).body.errorCode).toBe("plugin_market_source_invalid");
+    expect((await call("plugins/market", undefined, "?source=nope")).body.errorCode).toBe("plugin_market_source_invalid");
+    expect((await call("plugins/market/sources", { url: "" })).body.errorCode).toBe("plugin_market_source_invalid");
   });
 
   test("审计按插件归集:同码同对象合并计数,不带插件 id 的报告不收", async () => {

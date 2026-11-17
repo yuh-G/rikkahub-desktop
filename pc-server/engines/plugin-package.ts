@@ -23,7 +23,7 @@ function field(value: unknown, key: string): unknown {
 }
 
 /** 仓库地址规整成能在浏览器打开的形态:git+https://…/x.git → https://…/x,github:o/r 与 o/r → GitHub 地址。 */
-function repositoryUrl(value: unknown): string | undefined {
+export function repositoryUrl(value: unknown): string | undefined {
   const raw = clip(field(value, "url"), FIELD_MAX);
   if (!raw) return undefined;
   const shorthand = /^(?:github:)?([\w.-]+\/[\w.-]+)$/.exec(raw);

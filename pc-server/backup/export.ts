@@ -232,6 +232,8 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     delete copy.devPiPluginPaths;
     // 引擎插件记录:安装位置是本机的,APP 没有工作区引擎。PC→PC 的 pc-backup 照常带上(包本身不带,目标机重装)。
     delete copy.enginePlugins;
+    // 用户添加的插件市场源同为桌面端独有(APP 没有插件市场)。
+    delete copy.pluginMarketSources;
     // 专题3 S-1(机制,详见 filterSearchServicesForAndroid):PC-only 搜索服务过滤 +
     // 选中下标修正;全被过滤时删键,让安卓走自身默认值(避免空列表越界)。
     if (Array.isArray(copy.searchServices)) {

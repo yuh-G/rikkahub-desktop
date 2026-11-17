@@ -94,7 +94,7 @@ export function normalizeEnginePluginRecords(value: unknown): EnginePluginRecord
       id: raw.id,
       engine: raw.engine,
       name: typeof raw.name === "string" && raw.name ? raw.name : raw.id,
-      source: { kind: source.kind, spec: source.spec },
+      source: { kind: source.kind, spec: source.spec, ...(typeof source.registry === "string" && /^https?:\/\//i.test(source.registry) ? { registry: source.registry } : {}) },
       version: typeof raw.version === "string" ? raw.version : null,
       enabled: raw.enabled !== false,
       hookSwitches: { toolCall: raw.hookSwitches?.toolCall !== false },

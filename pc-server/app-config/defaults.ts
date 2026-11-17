@@ -195,6 +195,7 @@ export function defaultSettings(): Settings {
     shellPath: "",
     devPiPluginPaths: [],
     enginePlugins: [],
+    pluginMarketSources: [],
     keybindings: {
       newConversation: { keys: ["Ctrl", "N"], enabled: true },
       prevConversation: { keys: ["Alt", "Up"], enabled: true },

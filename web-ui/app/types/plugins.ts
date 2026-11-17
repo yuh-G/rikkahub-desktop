@@ -10,6 +10,16 @@ export type {
   EnginePluginViewDto,
   PluginAuditEntryDto,
   PluginEngineDto,
+  PluginMarketDetailDto,
+  PluginMarketItemDto,
+  PluginMarketPageDto,
+  PluginMarketSourceDto,
+  PluginMarketSourcesDto,
 } from "@server/foundation/types/plugins";
-export type { EnginePluginMeta, EnginePluginRecord, EnginePluginSource } from "@server/foundation/types/settings";
+export type {
+  EnginePluginMeta,
+  EnginePluginRecord,
+  EnginePluginSource,
+  PluginMarketSourceRecord,
+} from "@server/foundation/types/settings";
 export type { CommandSource } from "@server/foundation/types/commands";

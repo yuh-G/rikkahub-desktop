@@ -8,6 +8,7 @@ import { getStringArray, id, isRecord, mergeById, uniqueStrings } from "../found
 import { assistantMemoryPath, dataDir, filesDir, globalMemoryPath, pendingMemoryPath, skillsDir, statePath } from "../foundation/paths";
 import { normalizeProxyConfig, normalizePreferredPort } from "../foundation/net";
 import { reconcilePluginMcpServers } from "../engines/plugin-mcp";
+import { normalizePluginMarketSources } from "../engines/plugin-market";
 import { normalizeEnginePluginRecords } from "../engines/plugins";
 import {
   CONVERSATIONS_SQLITE_MIGRATION,
@@ -161,6 +162,7 @@ export function normalizeState(input: Partial<State>): State {
     };
   });
   normalized.settings.enginePlugins = normalizeEnginePluginRecords(normalized.settings.enginePlugins);
+  normalized.settings.pluginMarketSources = normalizePluginMarketSources(normalized.settings.pluginMarketSources);
   // memorySettings 规范化 + M1 迁移推断:老用户首次升级(settings 无 memorySettings)时,
   // 若所有助手 enableMemory=false,globalEnabled 默认 false(避免被动注入全局,违背用户意愿);
   // 否则默认 true。用户设过 memorySettings(存在)则保留,仅校验 writeStrategy 合法性。

@@ -2,7 +2,7 @@
 //
 // 叶子模块:只放前端可见的 DTO 形状,web-ui 经 @server 别名 type-only 引用(纪律同 commands.ts)。
 
-import type { EnginePluginRecord } from "./settings";
+import type { EnginePluginRecord, EnginePluginSource, PluginMarketSourceRecord } from "./settings";
 
 /** 有插件运行时的引擎(engines/plugin-engines.ts 的表;插件页按它的顺序分组,前端不写死)。 */
 export interface PluginEngineDto {
@@ -62,4 +62,45 @@ export interface EnginePluginDetailDto extends EnginePluginInspectionDto {
 /** GET plugins/audit */
 export interface EnginePluginAuditDto {
   audit: PluginAuditEntryDto[];
+}
+
+/** 市场源(内置 + 用户添加)。 */
+export type PluginMarketSourceDto = Omit<PluginMarketSourceRecord, "addedAt"> & { builtin: boolean; addedAt?: string };
+
+/** GET plugins/market/sources */
+export interface PluginMarketSourcesDto {
+  sources: PluginMarketSourceDto[];
+}
+
+/** 市场里的一个包。source = 从市场安装时交给 POST plugins/install 的来源;installed = 按引擎 + 包名对上的已装记录。 */
+export interface PluginMarketItemDto {
+  name: string;
+  version?: string;
+  description?: string;
+  author?: string;
+  monthlyDownloads?: number;
+  updatedAt?: string;
+  links: { npm?: string; homepage?: string; repository?: string };
+  source: EnginePluginSource;
+  installed?: { pluginId: string; version: string | null; hasUpdate: boolean };
+}
+
+/** GET plugins/market?source=&q=&page=[&refresh=1](page 从 0 起)。staleError = 市场源这次没连上,给的是过期的缓存。 */
+export interface PluginMarketPageDto {
+  items: PluginMarketItemDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  fromCache: boolean;
+  generatedAt: string;
+  staleError?: string;
+}
+
+/** GET plugins/market/detail?source=&name=。resources = 包声明的资源类型(没声明时缺省,界面写「安装时校验」)。 */
+export interface PluginMarketDetailDto {
+  item: PluginMarketItemDto;
+  readme?: string;
+  license?: string;
+  resources?: { extensions: boolean; skills: boolean; prompts: boolean; themes: boolean };
 }

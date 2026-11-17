@@ -73,7 +73,7 @@ export async function checkPluginUpdates(
   const worker = async () => {
     while (next < targets.length) {
       const { record, name } = targets[next++]!;
-      const latest = await latestOf(name, DEFAULT_NPM_REGISTRY, options.refresh === true, fetcher);
+      const latest = await latestOf(name, record.source.registry ?? DEFAULT_NPM_REGISTRY, options.refresh === true, fetcher);
       updates[record.id] = { latest, hasUpdate: hasNewerVersion(latest, record.version) };
     }
   };

@@ -141,6 +141,7 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
     shellPath: "D:\\SoftWare\\Git\\bin\\bash.exe",
     devPiPluginPaths: ["D:\\plugins\\rpiv-todo"],
     enginePlugins: [{ id: "pi:rpiv-todo", engine: "pi", name: "rpiv-todo", source: { kind: "npm", spec: "rpiv-todo" } }],
+    pluginMarketSources: [{ id: "market-1", engine: "pi", kind: "catalog", name: "团队", url: "https://example.com/p.json", addedAt: "" }],
     assistants: [
       {
         id: "a1",
@@ -179,6 +180,7 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
     expect(out.devPiPluginPaths).toBeUndefined();
     // 插件记录与助手的插件绑定同为桌面端独有
     expect(out.enginePlugins).toBeUndefined();
+    expect(out.pluginMarketSources).toBeUndefined();
     // Android Uuid 反序列化拒空串 → 填随机 UUID
     expect(out.chatModelId).toMatch(/^[0-9a-f-]{36}$/);
     // 原对象不被就地修改

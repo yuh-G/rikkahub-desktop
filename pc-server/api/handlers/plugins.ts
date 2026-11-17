@@ -8,6 +8,7 @@
 // 工具清单在后台同步;启停翻服务器的 source.active,卸载移除。插件加载出错时不动已有登记。
 // 有插件运行时的引擎见 engines/plugin-engines(目前只有 pi)。安装 / 重装时从 package.json 读说明字段存进记录(P6.2.1)。
 // 更新:只对 npm 来源、没钉版本的记录查(engines/plugin-updates),更新 = 以 <包名>@latest 再装一次,记录里的来源写法不变。
+// 市场(engines/plugin-market):内置 + 用户添加的市场源、检索与条目详情;从市场安装就是 plugins/install(npm 来源可带 registry)。
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -15,6 +16,7 @@ import { updateSettings } from "../../app-config";
 import { reportEngineError } from "../../engines/host";
 import { pluginAudit } from "../../engines/plugin-audit";
 import { isPluginEngine, PLUGIN_ENGINES } from "../../engines/plugin-engines";
+import { findMarketSource, marketDetail, marketSources, resolveMarketSource, searchMarket, withoutMarketSource } from "../../engines/plugin-market";
 import { readEnginePluginMeta, readEnginePluginReadme } from "../../engines/plugin-package";
 import { checkPluginUpdates, forgetPluginUpdate, updatablePackageName } from "../../engines/plugin-updates";
 import { installEnginePluginPackage, normalizeGitSpec, uninstallEnginePluginPackage } from "../../engines/plugin-installer";
@@ -36,6 +38,10 @@ import type {
   EnginePluginMutationDto,
   EnginePluginUpdatesDto,
   EnginePluginViewDto,
+  PluginMarketDetailDto,
+  PluginMarketPageDto,
+  PluginMarketSourceDto,
+  PluginMarketSourcesDto,
 } from "../../foundation/types/plugins";
 import type { EnginePluginRecord, EnginePluginSource } from "../../foundation/types/settings";
 import { reportError } from "../../observability/app-errors";
@@ -145,7 +151,11 @@ function parseSource(value: unknown): EnginePluginSource {
   if (!spec || /[\r\n]/.test(spec)) throw new CodedError("来源不能为空", "plugin_source_invalid");
   // 以 - 开头会被包管理器当成选项。
   if (spec.startsWith("-")) throw new CodedError(`来源写法不对:${spec}`, "plugin_source_invalid");
-  if (raw.kind === "npm") return { kind: "npm", spec };
+  if (raw.kind === "npm") {
+    const registry = typeof raw.registry === "string" ? raw.registry.trim().replace(/\/+$/, "") : "";
+    if (registry && !/^https?:\/\/\S+$/i.test(registry)) throw new CodedError(`registry 地址不对:${registry}`, "plugin_source_invalid");
+    return registry ? { kind: "npm", spec, registry } : { kind: "npm", spec };
+  }
   if (raw.kind === "git") return { kind: "git", spec: normalizeGitSpec(spec) };
   if (raw.kind === "local") {
     if (!isAbsolute(spec)) throw new CodedError(`本地插件必须是绝对路径:${spec}`, "plugin_source_invalid");
@@ -191,7 +201,11 @@ async function install(
     if (entryError) throw new CodedError(entryError, "plugin_entry_missing");
     return withMeta({ ...(existing ?? defaults(pluginId, engine)), name: existing?.name ?? info.name, source, version: info.version, installedAt });
   }
-  const { name, version } = await installEnginePluginPackage(engine, installSpec, { ...proxyOptions(), ...(existing ? { knownName: existing.name } : {}) });
+  const { name, version } = await installEnginePluginPackage(engine, installSpec, {
+    ...proxyOptions(),
+    ...(existing ? { knownName: existing.name } : {}),
+    ...(source.registry ? { registry: source.registry } : {}),
+  });
   const same = existing ?? records().find((record) => record.engine === engine && record.source.kind !== "local" && record.name === name);
   const pluginId = same?.id ?? freeId(`${engine}:${name}`);
   const entryError = piPluginEntryError({ id: pluginId, path: locateEnginePlugin({ engine, name, source }) });
@@ -282,8 +296,52 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
     try {
       const next = await install(record.engine, record.source, record, `${name}@latest`);
       saveInstalled(next, await pluginMcpDeclarations(next));
-      forgetPluginUpdate(name);
+      forgetPluginUpdate(name, record.source.registry);
       return json({ plugin: pluginView(next) } satisfies EnginePluginMutationDto);
+    } catch (err) {
+      return failure(err);
+    }
+  }
+  // ---- 市场(P6.2.2):从市场安装复用 plugins/install ----
+  if (path === "plugins/market/sources" && request.method === "GET") {
+    return json({ sources: marketSources(state.settings.pluginMarketSources) } satisfies PluginMarketSourcesDto);
+  }
+  if (path === "plugins/market/sources" && request.method === "POST") {
+    const body = await readJson<{ url?: unknown; name?: unknown; engine?: unknown }>(request);
+    try {
+      const record = await resolveMarketSource(body, state.settings.pluginMarketSources ?? []);
+      updateSettings({ ...state.settings, pluginMarketSources: [...(state.settings.pluginMarketSources ?? []), record] });
+      return json({ source: { ...record, builtin: false } satisfies PluginMarketSourceDto });
+    } catch (err) {
+      return failure(err);
+    }
+  }
+  if (path === "plugins/market/sources/remove" && request.method === "POST") {
+    const body = await readJson<{ id?: unknown }>(request);
+    try {
+      updateSettings({ ...state.settings, pluginMarketSources: withoutMarketSource(state.settings.pluginMarketSources ?? [], body.id) });
+      return json({ status: "ok" });
+    } catch (err) {
+      return failure(err);
+    }
+  }
+  if (path === "plugins/market" && request.method === "GET") {
+    try {
+      const source = findMarketSource(state.settings.pluginMarketSources, url.searchParams.get("source"));
+      const page = Number.parseInt(url.searchParams.get("page") ?? "0", 10);
+      const result = await searchMarket(source, url.searchParams.get("q") ?? "", Number.isFinite(page) ? page : 0, records(), {
+        refresh: url.searchParams.get("refresh") === "1",
+      });
+      return json(result satisfies PluginMarketPageDto);
+    } catch (err) {
+      return failure(err);
+    }
+  }
+  if (path === "plugins/market/detail" && request.method === "GET") {
+    try {
+      const source = findMarketSource(state.settings.pluginMarketSources, url.searchParams.get("source"));
+      const detail = await marketDetail(source, url.searchParams.get("name") ?? "", records(), { refresh: url.searchParams.get("refresh") === "1" });
+      return json(detail satisfies PluginMarketDetailDto);
     } catch (err) {
       return failure(err);
     }

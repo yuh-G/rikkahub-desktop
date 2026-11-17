@@ -699,6 +699,7 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
         devPiPluginPaths: pc.devPiPluginPaths,
         // 引擎插件记录同为桌面端独有(APP 导出已剥离),恒保桌面端的值。
         enginePlugins: pc.enginePlugins,
+        pluginMarketSources: pc.pluginMarketSources,
       } as unknown as State["settings"];
       const adjusted = rewriteAvatarsInSettings(merged, ANDROID_AVATAR_TYPE_TO_PC, "to-pc");
       setState(normalizeState({ ...state, settings: adjusted as State["settings"] }));
