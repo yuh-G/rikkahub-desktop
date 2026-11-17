@@ -1,13 +1,19 @@
-// plugins-model.test.ts — 插件页首页的分组、筛选、排序与徽标判定(多引擎用假引擎表),来源与副信息的取值。
+// plugins-model.test.ts — 插件页首页的分组、筛选、排序与徽标判定(多引擎用假引擎表),来源与副信息的取值,
+// 详情用到的审计对象解析、问题计数、README 图片过滤与 MCP 服务对位。
 import { describe, expect, test } from "bun:test";
 
 import {
   groupPlugins,
   isPluginFilterActive,
   joinPluginRows,
+  parseAuditSubject,
+  pluginIssueCount,
   pluginSourceLabel,
   pluginStatuses,
   pluginSubtitle,
+  recordOfView,
+  registeredPluginMcpServer,
+  stripRelativeImages,
   type PluginRowModel,
 } from "~/components/settings/extensions/plugins/model";
 import { DEFAULT_PLUGIN_FILTERS, type PluginHomeFilters } from "~/stores/plugins-view-store";
@@ -133,5 +139,43 @@ describe("来源与副信息", () => {
     expect(pluginSubtitle(record({ id: "a", name: "a", meta: { description: "只有简介" } }))).toBe("只有简介");
     expect(pluginSubtitle(record({ id: "a", name: "a", meta: { author: " " } }))).toBeNull();
     expect(pluginSubtitle(RECORDS[1]!)).toBeNull();
+  });
+});
+
+describe("详情用的取值", () => {
+  test("审计对象:<类>:<名>;否决与作废只有工具名;加载失败没有对象", () => {
+    expect(parseAuditSubject({ code: "pi_plugin_removed", subject: "tool:read" })).toEqual({ kind: "tool", name: "read" });
+    expect(parseAuditSubject({ code: "pi_plugin_unsupported", subject: "model:openai/gpt" })).toEqual({ kind: "model", name: "openai/gpt" });
+    expect(parseAuditSubject({ code: "pi_plugin_vetoed", subject: "bash" })).toEqual({ kind: "tool", name: "bash" });
+    expect(parseAuditSubject({ code: "pi_plugin_load_failed", subject: "load" })).toEqual({ kind: "other", name: "" });
+    expect(parseAuditSubject({ code: "pi_plugin_removed", subject: "set-model" })).toEqual({ kind: "other", name: "set-model" });
+  });
+
+  test("「有 N 项没有生效」不算按开关停用、没弹窗的否决与加载失败", () => {
+    const entry = (code: string) => ({ code, subject: "tool:x", count: 1, lastAt: "" });
+    expect(
+      pluginIssueCount(["pi_plugin_removed", "pi_plugin_disabled", "pi_plugin_vetoed", "pi_plugin_load_failed", "pi_plugin_discarded"].map(entry)),
+    ).toBe(2);
+  });
+
+  test("README 只留 https 绝对地址的图片", () => {
+    const md = "a ![logo](./logo.png) b ![ok](https://x.dev/a.png) c ![http](http://x.dev/b.png) <img src=\"docs/c.png\"> <img src='https://x.dev/d.png'>";
+    expect(stripRelativeImages(md)).toBe("a  b ![ok](https://x.dev/a.png) c   <img src='https://x.dev/d.png'>");
+  });
+
+  test("插件声明的 MCP 服务按插件 id + 服务名对上应用 MCP 列表里的那一台", () => {
+    const servers = [
+      { id: "s1", source: { kind: "plugin", pluginId: "pi:a", name: "web", active: true } },
+      { id: "s2", source: { kind: "plugin", pluginId: "pi:b", name: "web", active: true } },
+      { id: "s3" },
+    ];
+    expect(registeredPluginMcpServer(servers, "pi:b", "web")?.id).toBe("s2");
+    expect(registeredPluginMcpServer(servers, "pi:a", "db")).toBeUndefined();
+    expect(registeredPluginMcpServer(undefined, "pi:a", "web")).toBeUndefined();
+  });
+
+  test("接口返回的一行还原成记录:补充字段去掉", () => {
+    const view = { ...RECORDS[0]!, path: "/x", installed: true, loadFailed: false, auditCount: 3 };
+    expect(recordOfView(view)).toEqual(RECORDS[0]!);
   });
 });

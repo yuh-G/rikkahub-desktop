@@ -3,6 +3,7 @@
 import api, { ApiError, appendWebAuthQuery, notifyWebAuthRequired } from "~/services/api";
 import { setPluginList, setPluginUpdates } from "~/stores/plugins-view-store";
 import type {
+  EnginePluginAuditDto,
   EnginePluginDetailDto,
   EnginePluginListDto,
   EnginePluginMutationDto,
@@ -25,6 +26,7 @@ export type PluginUploadResult =
 export const pluginsApi = {
   list: () => api.get<EnginePluginListDto>("plugins"),
   detail: (id: string) => api.get<EnginePluginDetailDto>("plugins/detail", { searchParams: { id } }),
+  audit: (id: string) => api.get<EnginePluginAuditDto>("plugins/audit", { searchParams: { id } }),
   updates: (refresh = false) =>
     api.get<EnginePluginUpdatesDto>("plugins/updates", { searchParams: refresh ? { refresh: "1" } : {} }),
   install: (source: EnginePluginSource, engine = "pi") =>
@@ -78,8 +80,10 @@ export async function refreshPluginList(): Promise<void> {
   if (list) setPluginList(list);
 }
 
-export async function refreshPluginUpdates(refresh = false): Promise<void> {
+/** 返回取到的更新表;取不到为 null。 */
+export async function refreshPluginUpdates(refresh = false): Promise<EnginePluginUpdatesDto["updates"] | null> {
   // 同上;后端查不到 registry 时本来就按「没查到」返回。
   const result = await pluginsApi.updates(refresh).catch(() => null);
   if (result) setPluginUpdates(result.updates);
+  return result?.updates ?? null;
 }

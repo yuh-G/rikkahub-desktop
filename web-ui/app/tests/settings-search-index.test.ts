@@ -27,6 +27,10 @@ const NOT_SEARCHABLE: Record<string, string> = {
   "settings:mcp.lorebook.desc": "世界书本身的描述:用户内容字段,不是设置项",
   "settings:mcp.entries_count": "世界书条目列表的计数标题,带动态数字",
   "settings:mcp.quick.content": "快捷消息的正文:用户内容字段",
+  "settings:plugins.hook_tool_call": "插件详情里的开关:在页内视图栈的深层,搜索定位不到",
+  "settings:plugins.tools_title": "插件详情「工具与指令」页签的分组标题(同上)",
+  "settings:plugins.commands_title": "插件详情「工具与指令」页签的分组标题(同上)",
+  "settings:plugins.mcp_title": "插件详情「工具与指令」页签的分组标题(同上)",
 };
 
 function sourceFiles(dir: string): string[] {

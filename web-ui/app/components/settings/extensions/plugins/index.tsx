@@ -24,6 +24,8 @@ import {
 } from "~/stores/plugins-view-store";
 import type { Settings } from "~/types";
 
+import { PluginDetailView } from "./detail-view";
+import { PluginsHomeView } from "./home-view";
 import { BackLink } from "./parts";
 
 export function PluginsSection({ settings }: SectionProps) {
@@ -34,7 +36,8 @@ export function PluginsSection({ settings }: SectionProps) {
   const viewKey = pluginViewKey(view);
   const backLabel = usePluginViewTitle(stack.length > 1 ? stack[stack.length - 2] : null, settings);
 
-  React.useEffect(() => {
+  // 布局副作用:深链在首帧之前换好栈,不先闪一帧首页。
+  React.useLayoutEffect(() => {
     const pluginId = getSettingsParam("plugin");
     if (pluginId) showPluginDetail(pluginId, parsePluginDetailTab(getSettingsParam("tab")));
     return resetPluginsView;
@@ -67,15 +70,15 @@ export interface PluginViewProps {
 
 function PluginViewOutlet({ view, settings, backLabel }: PluginViewProps & { view: PluginView }) {
   const title = usePluginViewTitle(view, settings);
-  const { t } = useTranslation();
-  // 各视图在 P6.2.5–P6.2.7 落地;这里先给出标题与返回,栈与动画可以先走通。
+  if (view.kind === "home") return <PluginsHomeView settings={settings} />;
+  if (view.kind === "detail") {
+    return <PluginDetailView settings={settings} pluginId={view.pluginId} initialTab={view.tab} backLabel={backLabel ?? ""} />;
+  }
+  // 市场、市场条目、上传在 P6.2.6–P6.2.7 落地;这里先给出标题与返回,栈与动画可以先走通。
   return (
     <SettingsStack>
       {backLabel ? <BackLink label={backLabel} onClick={backPluginView} /> : null}
-      <SettingsDetailHeader
-        title={title}
-        description={view.kind === "home" ? t("settings:plugins.description") : undefined}
-      />
+      <SettingsDetailHeader title={title} />
     </SettingsStack>
   );
 }

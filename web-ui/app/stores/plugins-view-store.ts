@@ -154,15 +154,15 @@ export function setPluginUpdates(updates: EnginePluginUpdatesDto["updates"]): vo
   usePluginsViewStore.setState({ updates });
 }
 
-function detailCacheKey(pluginId: string, installedAt: string): string {
+export function pluginDetailCacheKey(pluginId: string, installedAt: string): string {
   return `${pluginId}@${installedAt}`;
 }
 
 export function cachePluginDetail(detail: EnginePluginDetailDto): void {
-  const key = detailCacheKey(detail.plugin.id, detail.plugin.installedAt);
+  const key = pluginDetailCacheKey(detail.plugin.id, detail.plugin.installedAt);
   usePluginsViewStore.setState((state) => ({ detailCache: { ...state.detailCache, [key]: detail } }));
 }
 
 export function cachedPluginDetail(pluginId: string, installedAt: string): EnginePluginDetailDto | undefined {
-  return usePluginsViewStore.getState().detailCache[detailCacheKey(pluginId, installedAt)];
+  return usePluginsViewStore.getState().detailCache[pluginDetailCacheKey(pluginId, installedAt)];
 }

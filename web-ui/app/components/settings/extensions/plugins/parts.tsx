@@ -1,13 +1,19 @@
 // 插件页各视图共用的小部件(方案 P6.2 的「通用规则」):图标块、返回、工具栏的图标按钮与原地展开的搜索、
-// 状态徽标、时间。只用现有组件与刻度。
+// 状态徽标、时间、说明块与信息卡的行。只用现有组件与刻度。
 import * as React from "react";
 import { ArrowLeft, Puzzle, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
+import Markdown from "~/components/markdown/markdown";
 import { Button } from "~/components/ui/button";
 import { SearchInput } from "~/components/ui/search-input";
+import { Skeleton } from "~/components/ui/skeleton";
 import { StatusBadge } from "~/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "~/components/ui/tooltip";
+import i18n from "~/i18n";
+import { copyTextToClipboard } from "~/lib/clipboard";
+import { extractErrorMessage } from "~/lib/error";
 import { formatAbsoluteTime, formatRelativeTime } from "~/lib/relative-time";
 import { cn } from "~/lib/utils";
 
@@ -102,6 +108,8 @@ export function ToolbarSearch({
   clearLabel: string;
 }) {
   const [open, setOpen] = React.useState(value !== "");
+  // 只有点了按钮才聚焦;带着搜索词回到首页时只展开、不抢焦点。
+  const openedByClick = React.useRef(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const expanded = open || value !== "";
 
@@ -128,7 +136,7 @@ export function ToolbarSearch({
       {expanded ? (
         <SearchInput
           ref={inputRef}
-          autoFocus={open}
+          autoFocus={openedByClick.current}
           value={value}
           onValueChange={onValueChange}
           onBlur={() => {
@@ -140,7 +148,13 @@ export function ToolbarSearch({
           className="w-full min-w-0 animate-in fade-in-0 duration-(--ds-duration-base) motion-reduce:animate-none"
         />
       ) : (
-        <ToolbarIconButton label={label} onClick={() => setOpen(true)}>
+        <ToolbarIconButton
+          label={label}
+          onClick={() => {
+            openedByClick.current = true;
+            setOpen(true);
+          }}
+        >
           <Search />
         </ToolbarIconButton>
       )}
@@ -178,4 +192,71 @@ export function RelativeTime({ at, className }: { at: string | undefined; classN
       {formatRelativeTime(at, t)}
     </time>
   );
+}
+
+/** 包里的 README:默认收起到 320px、底部渐隐 +「展开全文」;内容不够高时原样显示。 */
+export function ReadmeBlock({ content }: { content: string }) {
+  const { t } = useTranslation();
+  const ref = React.useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = React.useState(false);
+  const [expanded, setExpanded] = React.useState(false);
+  // 收起态(限高)下量:内容比限高还高才算溢出;展开后不再量,按钮保持「收起」。
+  React.useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node || expanded) return;
+    const measure = () => setOverflows(node.scrollHeight > node.clientHeight + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [content, expanded]);
+  return (
+    <div>
+      <div
+        ref={ref}
+        className={cn(
+          "overflow-hidden text-sm text-[var(--ds-text-primary)]",
+          !expanded && "max-h-80",
+          !expanded && overflows && "[mask-image:linear-gradient(to_bottom,black_70%,transparent)]",
+        )}
+      >
+        <Markdown content={content} className="message-markdown" />
+      </div>
+      {overflows ? (
+        <Button type="button" variant="ghost" size="compact" className="mt-1 -ml-2.5" onClick={() => setExpanded(!expanded)}>
+          {t(expanded ? "settings:plugins.collapse_readme" : "settings:plugins.expand_readme")}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/** 信息卡的一行:左标签、右内容。放在 <dl> 里。 */
+export function InfoRow({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-3 py-1.5 text-xs">
+      <dt className="w-14 shrink-0 text-[var(--ds-text-tertiary)]">{label}</dt>
+      <dd className="min-w-0 flex-1 break-words text-[var(--ds-text-primary)]">{children}</dd>
+    </div>
+  );
+}
+
+/** 页签内容回来前的三行骨架。 */
+export function PanelSkeleton() {
+  return (
+    <div className="space-y-2.5 py-1" aria-hidden>
+      <Skeleton className="h-4 w-3/4" />
+      <Skeleton className="h-4 w-1/2" />
+      <Skeleton className="h-4 w-2/3" />
+    </div>
+  );
+}
+
+export async function copyText(text: string): Promise<void> {
+  try {
+    await copyTextToClipboard(text);
+    toast.success(i18n.t("settings:plugins.copied"));
+  } catch (error) {
+    toast.error(extractErrorMessage(error, i18n.t("settings:plugins.action_failed")));
+  }
 }

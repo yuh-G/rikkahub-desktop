@@ -1,7 +1,14 @@
 // 插件页的纯函数(方案 P6.2):首页的分组、筛选、排序,状态徽标的判定,来源与副信息的取值。不碰界面与网络,
 // 引擎表从入参来(前端不写死引擎 id 与名字)。
-import type { EnginePluginRecord, EnginePluginSource, EnginePluginViewDto, PluginEngineDto } from "~/types/plugins";
+import type {
+  EnginePluginRecord,
+  EnginePluginSource,
+  EnginePluginViewDto,
+  PluginAuditEntryDto,
+  PluginEngineDto,
+} from "~/types/plugins";
 import type { PluginHomeFilters } from "~/stores/plugins-view-store";
+import { pluginMcpSource } from "@server/tools/mcp-source";
 
 /** 首页一行用到的全部数据:记录来自设置(SSE 推送,进页即有),view 与 update 是两个接口晚到的补充。 */
 export interface PluginRowModel {
@@ -105,4 +112,49 @@ export function pluginSourceLabel(source: EnginePluginSource): { kind: EnginePlu
 export function pluginSubtitle(record: EnginePluginRecord): string | null {
   const parts = [record.meta?.author, record.meta?.description].filter((part): part is string => Boolean(part?.trim()));
   return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/** 接口返回的一行去掉补充字段,还原成设置里的记录(乐观写入用)。 */
+export function recordOfView(view: EnginePluginViewDto): EnginePluginRecord {
+  const { path: _path, installed: _installed, loadFailed: _loadFailed, auditCount: _auditCount, ...record } = view;
+  return record;
+}
+
+/** 运行记录里算作「没有生效」的码(按开关停用、没弹窗的否决是正常行为,不算)。加载失败另有提示条。 */
+const ISSUE_CODES = new Set([
+  "pi_plugin_removed",
+  "pi_plugin_unsupported",
+  "pi_plugin_discarded",
+  "pi_plugin_runtime_error",
+  "pi_plugin_mcp_unsupported",
+  "pi_plugin_dialog_failed",
+]);
+
+export function pluginIssueCount(audit: readonly PluginAuditEntryDto[]): number {
+  return audit.filter((entry) => ISSUE_CODES.has(entry.code)).length;
+}
+
+export type AuditSubjectKind = "tool" | "command" | "event" | "mcp" | "provider" | "model" | "other";
+
+/** 审计对象的写法是 `<类>:<名>`;否决与作废只有工具名,加载失败是 load(没有对象)。 */
+export function parseAuditSubject(entry: Pick<PluginAuditEntryDto, "code" | "subject">): { kind: AuditSubjectKind; name: string } {
+  if (entry.subject === "load") return { kind: "other", name: "" };
+  if (entry.code === "pi_plugin_vetoed" || entry.code === "pi_plugin_discarded") return { kind: "tool", name: entry.subject };
+  const match = /^(tool|command|event|mcp|provider|model):(.*)$/.exec(entry.subject);
+  return match ? { kind: match[1] as AuditSubjectKind, name: match[2]! } : { kind: "other", name: entry.subject };
+}
+
+/** README 里的图片只留 https:// 绝对地址的(相对路径在应用里解析不到,渲染出来是裂图)。 */
+export function stripRelativeImages(markdown: string): string {
+  return markdown
+    .replace(/!\[[^\]]*\]\((?!\s*<?https:\/\/)[^)]*\)/g, "")
+    .replace(/<img\b(?![^>]*\bsrc\s*=\s*["']?https:\/\/)[^>]*>/gi, "");
+}
+
+/** 插件声明的 MCP 服务在应用的 MCP 列表里对应的那一台(没登记上为 undefined)。 */
+export function registeredPluginMcpServer<T>(servers: readonly T[] | undefined, pluginId: string, name: string): T | undefined {
+  return (servers ?? []).find((server) => {
+    const source = pluginMcpSource(server);
+    return source?.pluginId === pluginId && source.name === name;
+  });
 }

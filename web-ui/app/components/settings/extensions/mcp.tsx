@@ -18,6 +18,7 @@ import { copyItemName } from "~/lib/copy-name";
 import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
+import { getSettingsParam } from "~/stores/settings-dialog-store";
 import { useMcpHealthStore } from "~/stores";
 import type { McpHealthEntryDto, Settings } from "~/types";
 import { readMcpHeaders, toMcpHeaderPairs } from "@server/tools/mcp-headers";
@@ -100,7 +101,11 @@ function McpServerEditor({
   const { t } = useTranslation();
   const mcpHealth = useMcpHealthStore((s) => s.health);
   const servers = (settings.mcpServers ?? []) as Array<Record<string, unknown>>;
-  const [selectedId, setSelectedId] = React.useState(textValue(servers[0]?.id));
+  // 深链 serverId(插件详情的「在 MCP 页查看」)选中那一台;不在列表里就照常选第一台。
+  const [selectedId, setSelectedId] = React.useState(() => {
+    const wanted = getSettingsParam("serverId");
+    return wanted && servers.some((item) => String(item.id) === wanted) ? wanted : textValue(servers[0]?.id);
+  });
   const selected =
     servers.find((item) => String(item.id) === selectedId) ?? servers[0] ?? createMcpServer();
   const [draft, setDraft] = React.useState<Record<string, unknown>>(clone(selected));
