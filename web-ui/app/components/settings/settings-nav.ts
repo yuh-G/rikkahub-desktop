@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
+import { EXTENSION_CATEGORIES } from "./extensions/categories";
+
 export interface SettingsSubItem {
   /** 二级 id:英文短横线小写。进 URL 参数(?sub=)/ 未来搜索索引,不宜再改。 */
   readonly id: string;
@@ -69,12 +71,8 @@ export const SETTINGS_NAV = [
     id: "extensions",
     labelKey: "settings:nav.extensions",
     icon: Blocks,
-    children: [
-      { id: "mcp", labelKey: "settings:subnav.extensions.mcp" },
-      { id: "skills", labelKey: "settings:subnav.extensions.skills" },
-      { id: "injection", labelKey: "settings:subnav.extensions.injection" },
-      { id: "quick", labelKey: "settings:subnav.extensions.quick" },
-    ],
+    // 拓展的二级清单与顺序住在拓展类别表(助手弹窗、输入框选择器的页签同源)。
+    children: EXTENSION_CATEGORIES,
   },
   {
     id: "personalization",
