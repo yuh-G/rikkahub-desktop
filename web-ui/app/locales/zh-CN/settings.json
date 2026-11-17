@@ -730,7 +730,6 @@
     }
   },
   "mcp": {
-    "no_assistants": "暂无可配置的助手。请先在「助手」页创建一个助手，再回到这里进行配置。",
     "connection_title": "连接",
     "tab": {
       "mode": "模式注入",
@@ -794,7 +793,7 @@
       "copied": "已创建「{{name}}」",
       "copy_failed": "复制 MCP 服务器失败",
       "empty": "还没有 MCP 服务器",
-      "detail_desc": "启用后会自动连接并同步 tools/list；在首页 MCP 选择器里决定当前助手是否使用它。",
+      "detail_desc": "启用后会自动连接并同步 tools/list；在对话框左下角的「MCP 与拓展」里为会话开启，或在助手的「拓展管理」里设为默认。",
       "url": "服务器地址",
       "url_desc": "MCP 服务器的 Streamable HTTP / SSE 入口地址。",
       "headers": "自定义请求头",
@@ -832,7 +831,6 @@
       "create_failed": "新增世界书失败",
       "empty": "还没有世界书",
       "name_ph": "世界书名称",
-      "enable": "启用整个世界书",
       "desc": "描述",
       "desc_ph": "（可选）说明这个世界书的用途",
       "delete": "删除世界书",
@@ -856,7 +854,6 @@
     "inject_delete_confirm": "删除模式注入「{{name}}」？",
     "template_vars": "模板变量",
     "mode_page_desc": "按设定位置插入固定提示词，用于切换写作风格、角色设定等。",
-    "global_enable_desc": "关闭后对所有助手都不生效，「对此助手启用」也会失效。",
     "skill_imported": "技能已导入：{{name}}",
     "skill_copied": "已创建技能「{{name}}」",
     "skill_copy_failed": "复制技能失败",
@@ -882,9 +879,6 @@
     "skill_desc_default": "描述何时应使用这个技能",
     "skill_body_default": "写入技能指令。",
     "add_new": "新增",
-    "binding_assistant": "作用于助手",
-    "binding_assistant_desc": "下方「对此助手启用」决定所选助手是否使用该项。",
-    "enable_for_assistant": "对此助手启用",
     "transport": "传输方式",
     "unnamed_tool": "未命名工具",
     "param_required": "（必填）"

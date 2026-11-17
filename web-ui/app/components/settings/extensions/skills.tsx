@@ -22,7 +22,6 @@ import { copySkillDirName } from "~/lib/copy-name";
 import { cn } from "~/lib/utils";
 import api, { appendWebAuthQuery } from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
-import type { AssistantProfile, Settings } from "~/types";
 import {
   copyRowAction,
   deleteRowAction,
@@ -35,15 +34,7 @@ import {
   SettingsStack,
   textValue,
 } from "~/components/settings/shared";
-import {
-  BindingAssistantSelect,
-  BindingSwitch,
-  EditorShell,
-  NoAssistantsState,
-  pullSettings,
-  type SectionProps,
-  useBindingAssistant,
-} from "~/components/settings/extensions/common";
+import { EditorShell, pullSettings, type SectionProps } from "~/components/settings/extensions/common";
 
 interface SkillFileInfo {
   path: string;
@@ -64,27 +55,7 @@ interface SkillProfile {
 }
 
 /** 拓展 › 技能。 */
-export function SkillsSection({ settings, onSettings }: SectionProps) {
-  const assistant = useBindingAssistant(settings);
-  if (!assistant) return <NoAssistantsState />;
-  return (
-    <SkillsEditor
-      assistant={assistant}
-      onSettings={onSettings}
-      bindingSelect={<BindingAssistantSelect settings={settings} assistant={assistant} stretch className="mb-1" />}
-    />
-  );
-}
-
-function SkillsEditor({
-  assistant,
-  onSettings,
-  bindingSelect,
-}: {
-  assistant: AssistantProfile;
-  onSettings: (settings: Settings) => void;
-  bindingSelect: React.ReactNode;
-}) {
+export function SkillsSection({ onSettings }: SectionProps) {
   const { t } = useTranslation();
   const [skills, setSkills] = React.useState<SkillProfile[]>([]);
   const [selected, setSelected] = React.useState("");
@@ -245,21 +216,6 @@ function SkillsEditor({
     setFiles([]);
     autosave.markDirty();
   };
-  const enabledSkills = (assistant.enabledSkills as string[] | undefined) ?? [];
-  const toggle = async (skillName: string, checked: boolean) => {
-    const ids = new Set(enabledSkills);
-    if (checked) ids.add(skillName);
-    else ids.delete(skillName);
-    try {
-      await api.post("settings/assistant/skills", {
-        assistantId: assistant.id,
-        enabledSkills: [...ids],
-      });
-      await pullSettings(onSettings);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("settings:mcp.save_failed"));
-    }
-  };
 
   return (
     <EditorShell
@@ -268,7 +224,6 @@ function SkillsEditor({
       emptyLabel={t("settings:mcp.empty_skill")}
       onSelect={setSelected}
       titleOf={(item) => textValue(item.name)}
-      listHeader={bindingSelect}
       rowMenuOf={(item) => {
         const name = textValue(item.name);
         if (!name) return undefined;
@@ -279,15 +234,10 @@ function SkillsEditor({
       }}
       renderItem={(item) => {
         const name = textValue(item.name);
-        const enabled = enabledSkills.includes(name);
         const issues = (item.issues as SkillProfile["issues"]) ?? [];
         const hasError = item.available === false || issues.some((issue) => issue.level === "error");
         return (
           <div className="flex min-w-0 items-center gap-2 text-left">
-            <span
-              // 未对当前助手启用是正常状态,用中性灰;真正的问题由右侧 TriangleAlert 标出。
-              className={`size-2 shrink-0 rounded-full ${enabled ? "bg-success" : "bg-muted-foreground/40"}`}
-            />
             <span className="block min-w-0 truncate font-medium">{name}</span>
             {issues.length > 0 ? (
               <TriangleAlert
@@ -322,14 +272,6 @@ function SkillsEditor({
             <SettingsDetailHeader
               title={selected}
               description={selectedSkill?.description || t("settings:mcp.skill_page_desc")}
-              action={
-                // 新建技能落盘前服务端还不认识它(启用会被 400 拒绝),保存成功出现在列表后才可绑定。
-                <BindingSwitch
-                  checked={enabledSkills.includes(selected)}
-                  disabled={!selectedSkill}
-                  onCheckedChange={(checked) => void toggle(selected, checked)}
-                />
-              }
             />
 
             {selectedSkill?.issues?.length ? (

@@ -213,7 +213,6 @@ const ROW_ENTRIES: readonly SettingsSearchEntry[] = [
   row("extensions/injection", "mcp.inject_depth", { tab: MODE_TAB }),
   row("extensions/injection", "mcp.inject_content", { tab: MODE_TAB }),
   row("extensions/injection", "mcp.priority", { advanced: true, tab: MODE_TAB }),
-  row("extensions/injection", "mcp.lorebook.enable", { advanced: true, tab: LOREBOOK_TAB }),
 
   // 个性化
   row("personalization/appearance", "general.font_title"),

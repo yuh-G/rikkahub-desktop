@@ -27,7 +27,6 @@ const NOT_SEARCHABLE: Record<string, string> = {
   "settings:mcp.lorebook.desc": "世界书本身的描述:用户内容字段,不是设置项",
   "settings:mcp.entries_count": "世界书条目列表的计数标题,带动态数字",
   "settings:mcp.quick.content": "快捷消息的正文:用户内容字段",
-  "settings:mcp.enabled": "模式注入高级区的「启用」:通用词,搜索无意义;详情头同名开关已可见",
 };
 
 function sourceFiles(dir: string): string[] {

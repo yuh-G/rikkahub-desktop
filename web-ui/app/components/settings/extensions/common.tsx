@@ -1,15 +1,13 @@
-// components/settings/extensions/common.tsx — 拓展四页共用件:列表/详情外壳、「作用于助手」
-// 绑定(选择器 + 开关)、settings 拉取小工具。
+// components/settings/extensions/common.tsx — 拓展各页共用件:列表/详情外壳、标题栏开关、
+// settings 拉取小工具。拓展页不出现助手(D19):助手在自己的页面里选默认拓展。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
 import { cn } from "~/lib/utils";
 import api from "~/services/api";
-import { setBindingAssistant, useExtensionBindingStore } from "~/stores/extension-binding-store";
-import type { AssistantProfile, Settings } from "~/types";
+import type { Settings } from "~/types";
 import {
   type SettingsAddMenuItem,
   type SettingsRowAction,
@@ -21,95 +19,7 @@ import {
 
 export type SectionProps = { settings: Settings; onSettings: (settings: Settings) => void };
 
-/**
- * 技能 / 提示词注入 / 快捷消息模板 三页的「作用于助手」:三页共享同一选择(模块级 store),
- * 未手动选过时跟随当前对话助手,直接推导不回写(无闪烁)。
- * issue #49(1.5.0):异常数据(Docker 卷手改 state、导入损坏备份、跨版本错配)可能让助手
- * 列表为空,渲染期裸解引用会把整页放大成错误边界白屏——空则返回 null,由调用方渲染空态。
- */
-export function useBindingAssistant(settings: Settings): AssistantProfile | null {
-  const stored = useExtensionBindingStore((state) => state.assistantId);
-  const assistants = Array.isArray(settings.assistants) ? settings.assistants : [];
-  return (
-    assistants.find((item) => item.id === stored) ??
-    assistants.find((item) => item.id === settings.assistantId) ??
-    assistants[0] ??
-    null
-  );
-}
-
-/** 「作用于助手」选择器:一颗紧凑的 ghost 胶囊下拉(「作用于助手:<名> ▾」),品牌色字示意可点但不抢眼。
- *  整行工具栏(注入页)与左栏列表头(技能/快捷消息页,stretch 撑满栏宽)共用。 */
-export function BindingAssistantSelect({
-  settings,
-  assistant,
-  stretch = false,
-  className,
-}: {
-  settings: Settings;
-  assistant: AssistantProfile;
-  stretch?: boolean;
-  className?: string;
-}) {
-  const { t } = useTranslation();
-  return (
-    <Select value={assistant.id} onValueChange={setBindingAssistant}>
-      <SelectTrigger
-        size="sm"
-        aria-label={t("settings:mcp.binding_assistant")}
-        title={t("settings:mcp.binding_assistant_desc")}
-        className={cn(
-          "max-w-full gap-1 rounded-[var(--ds-radius-pill)] bg-transparent px-2.5 text-xs font-medium text-[var(--ds-brand-primary)] shadow-none transition-colors duration-(--ds-duration-fast) ease-(--ds-ease-swift) hover:bg-[var(--ds-on-surface)] hover:shadow-none focus-visible:shadow-[var(--ds-input-shadow-focus)] [&_svg:not([class*='text-'])]:text-[var(--ds-brand-primary)]",
-          stretch && "w-full justify-between",
-          className,
-        )}
-      >
-        <span className="flex min-w-0 items-center gap-1">
-          <span className="shrink-0 text-[var(--ds-text-secondary)]">{t("settings:mcp.binding_assistant")}</span>
-          <span className="min-w-0 truncate">
-            <SelectValue />
-          </span>
-        </span>
-      </SelectTrigger>
-      <SelectContent>
-        {settings.assistants.map((item) => (
-          <SelectItem key={item.id} value={item.id}>
-            {item.name || t("settings:assistants.default_name")}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
-/** 提示词注入页的整行工具栏:分段切换器(模式注入/世界书)与「作用于助手」同排。 */
-export function BindingAssistantToolbar({
-  settings,
-  assistant,
-  leading,
-}: {
-  settings: Settings;
-  assistant: AssistantProfile;
-  leading?: React.ReactNode;
-}) {
-  return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
-      <div className="min-w-0">{leading}</div>
-      <BindingAssistantSelect settings={settings} assistant={assistant} />
-    </div>
-  );
-}
-
-export function NoAssistantsState() {
-  const { t } = useTranslation();
-  return (
-    <SettingsEmpty size="md">
-      {t("settings:mcp.no_assistants")}
-    </SettingsEmpty>
-  );
-}
-
-/** 详情页头右侧的带标签开关(条目「启用」、「对此助手启用」):标签可点击切换。 */
+/** 详情页头右侧的带标签开关(条目的全局「启用」):标签可点击切换。 */
 export function LabeledSwitch({
   label,
   checked,
@@ -129,27 +39,6 @@ export function LabeledSwitch({
       </label>
       <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
     </div>
-  );
-}
-
-/** 「对此助手启用」:绑定到当前「作用于助手」,与条目自身的「启用」区分开。 */
-export function BindingSwitch({
-  checked,
-  onCheckedChange,
-  disabled,
-}: {
-  checked: boolean;
-  onCheckedChange: (checked: boolean) => void;
-  disabled?: boolean;
-}) {
-  const { t } = useTranslation();
-  return (
-    <LabeledSwitch
-      label={t("settings:mcp.enable_for_assistant")}
-      checked={checked}
-      disabled={disabled}
-      onCheckedChange={onCheckedChange}
-    />
   );
 }
 
@@ -182,7 +71,6 @@ export function EditorShell({
   renderItem,
   onCreate,
   createMenu,
-  listHeader,
   rowMenuOf,
   children,
 }: {
@@ -197,8 +85,6 @@ export function EditorShell({
   onCreate?: () => void | Promise<void>;
   /** 新增有多个来源/类型时:点开为下拉菜单。 */
   createMenu?: readonly SettingsAddMenuItem[];
-  /** 左栏列表头部(「新增」钮与列表之间):技能/快捷消息页的「作用于助手」选择器。 */
-  listHeader?: React.ReactNode;
   /** 提供则每行带右键/悬停「⋯」操作菜单;按该行条目返回动作列表(删除自带确认与落库)。 */
   rowMenuOf?: (item: Record<string, unknown>) => readonly SettingsRowAction[] | undefined;
   children: React.ReactNode;
@@ -215,7 +101,6 @@ export function EditorShell({
         ) : (
           <SettingsListAddButton label={t("settings:mcp.add_new")} onClick={() => void onCreate?.()} />
         )}
-        {listHeader}
         <div className="space-y-1">
           {items.length === 0 ? (
             <SettingsEmpty size="md">

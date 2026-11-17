@@ -730,7 +730,6 @@
     }
   },
   "mcp": {
-    "no_assistants": "No assistants to configure yet. Create one on the Assistants page first, then come back here.",
     "connection_title": "Connection",
     "tab": {
       "mode": "Mode injection",
@@ -794,7 +793,7 @@
       "copied": "Created \"{{name}}\"",
       "copy_failed": "Failed to duplicate MCP server",
       "empty": "No MCP servers yet",
-      "detail_desc": "When enabled, it connects and syncs tools/list automatically; the home-page MCP picker decides whether the current assistant uses it.",
+      "detail_desc": "When enabled, it connects and syncs tools/list automatically. Turn it on for a chat in \"MCP & Extensions\" at the bottom left of the input box, or make it a default in an assistant's \"Manage extensions\".",
       "url": "Server URL",
       "url_desc": "The Streamable HTTP / SSE endpoint of the MCP server.",
       "headers": "Custom headers",
@@ -832,7 +831,6 @@
       "create_failed": "Failed to create lorebook",
       "empty": "No lorebooks yet",
       "name_ph": "Lorebook name",
-      "enable": "Enable entire lorebook",
       "desc": "Description",
       "desc_ph": "(optional) describe what this lorebook is for",
       "delete": "Delete lorebook",
@@ -856,7 +854,6 @@
     "inject_delete_confirm": "Delete the mode injection \"{{name}}\"?",
     "template_vars": "Template variables",
     "mode_page_desc": "Inserts a fixed prompt at the chosen position — for writing styles, personas and the like.",
-    "global_enable_desc": "When off, it applies to no assistant, regardless of \"Enable for this assistant\".",
     "skill_imported": "Skill imported: {{name}}",
     "skill_copied": "Created skill \"{{name}}\"",
     "skill_copy_failed": "Failed to duplicate skill",
@@ -882,9 +879,6 @@
     "skill_desc_default": "Describe when this skill should be used",
     "skill_body_default": "Write skill instructions.",
     "add_new": "Add",
-    "binding_assistant": "Applies to assistant",
-    "binding_assistant_desc": "\"Enable for this assistant\" below controls whether the selected assistant uses each item.",
-    "enable_for_assistant": "Enable for this assistant",
     "transport": "Transport",
     "unnamed_tool": "Unnamed tool",
     "param_required": "(required)"

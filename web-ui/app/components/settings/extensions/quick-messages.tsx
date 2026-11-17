@@ -10,7 +10,7 @@ import { copyItemName } from "~/lib/copy-name";
 import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
-import type { AssistantProfile, Settings } from "~/types";
+import type { Settings } from "~/types";
 import {
   clone,
   copyRowAction,
@@ -23,41 +23,10 @@ import {
   SettingsStack,
   textValue,
 } from "~/components/settings/shared";
-import {
-  BindingAssistantSelect,
-  BindingSwitch,
-  EditorShell,
-  NoAssistantsState,
-  pullSettings,
-  type SectionProps,
-  useBindingAssistant,
-} from "~/components/settings/extensions/common";
+import { EditorShell, pullSettings, type SectionProps } from "~/components/settings/extensions/common";
 
 /** 拓展 › 快捷消息模板。 */
 export function QuickMessagesSection({ settings, onSettings }: SectionProps) {
-  const assistant = useBindingAssistant(settings);
-  if (!assistant) return <NoAssistantsState />;
-  return (
-    <QuickMessageEditor
-      settings={settings}
-      assistant={assistant}
-      onSettings={onSettings}
-      bindingSelect={<BindingAssistantSelect settings={settings} assistant={assistant} stretch className="mb-1" />}
-    />
-  );
-}
-
-function QuickMessageEditor({
-  settings,
-  assistant,
-  onSettings,
-  bindingSelect,
-}: {
-  settings: Settings;
-  assistant: AssistantProfile;
-  onSettings: (settings: Settings) => void;
-  bindingSelect: React.ReactNode;
-}) {
   const { t } = useTranslation();
   const items = (settings.quickMessages ?? []) as unknown as Array<Record<string, unknown>>;
   const [selectedId, setSelectedId] = React.useState(textValue(items[0]?.id));
@@ -124,16 +93,6 @@ function QuickMessageEditor({
       else setDraft({ id: createId(), title: "", content: "" });
     }
   };
-  const bind = async (checked: boolean) => {
-    const ids = new Set(assistant.quickMessageIds ?? []);
-    if (checked) ids.add(String(draft.id));
-    else ids.delete(String(draft.id));
-    await api.post("settings/assistant/injections", {
-      assistantId: assistant.id,
-      quickMessageIds: [...ids],
-    });
-    await pullSettings(onSettings);
-  };
   return (
     <EditorShell
       items={items}
@@ -141,7 +100,6 @@ function QuickMessageEditor({
       emptyLabel={t("settings:mcp.quick.empty")}
       onSelect={setSelectedId}
       titleOf={(item) => textValue(item.title) || t("settings:mcp.tab.quick")}
-      listHeader={bindingSelect}
       rowMenuOf={(item) => {
         const id = String(item.id ?? "");
         if (!id) return undefined;
@@ -184,12 +142,6 @@ function QuickMessageEditor({
             titleLabel={t("settings:mcp.quick.title")}
             onTitleCommit={(title) => patchDraft({ title })}
             description={t("settings:mcp.quick.page_desc")}
-            action={
-              <BindingSwitch
-                checked={(assistant.quickMessageIds ?? []).includes(String(draft.id))}
-                onCheckedChange={(checked) => void bind(checked)}
-              />
-            }
           />
           <SettingsGroup fields>
             <SettingsField label={t("settings:mcp.quick.content")} hint={t("settings:mcp.quick.content_hint")}>
