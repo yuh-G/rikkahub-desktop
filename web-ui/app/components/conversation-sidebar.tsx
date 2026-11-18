@@ -250,6 +250,7 @@ const ConversationListRow = React.memo(
     // 窄选择器订阅本行会话的瞬态状态,压缩/重试/审批帧跳变才重渲染本行。
     const engineStatus = useConversationEngineStatus(conversation.id);
     const awaitingApproval = engineStatus?.phase === "awaiting_approval";
+    const waitingLabel = engineStatus?.dialog ? "conversation_sidebar.awaiting_answer" : "conversation_sidebar.awaiting_approval";
 
     const moveTargets = React.useMemo(
       () => assistants.filter((assistant) => assistant.id !== conversation.assistantId),
@@ -336,8 +337,8 @@ const ConversationListRow = React.memo(
                     "inline-block size-2 rounded-full",
                     awaitingApproval ? "animate-pulse bg-warning" : "bg-success",
                   )}
-                  aria-label={t(awaitingApproval ? "conversation_sidebar.awaiting_approval" : "conversation_sidebar.generating")}
-                  title={t(awaitingApproval ? "conversation_sidebar.awaiting_approval" : "conversation_sidebar.generating")}
+                  aria-label={t(awaitingApproval ? waitingLabel : "conversation_sidebar.generating")}
+                  title={t(awaitingApproval ? waitingLabel : "conversation_sidebar.generating")}
                 />
               )}
             </span>

@@ -49,4 +49,4 @@ export const compressing = new Map<string, number>();
  *  通知也无从恢复。由 approval-flow.gateToolApproval 在进入/离开等待时维护;
  *  生成终局(finally busy:false)兜底清除。一个会话同时只挂一张审批卡(sequential),
  *  故单值而非集合。 */
-export const awaitingApproval = new Map<string, { startedAt: number; toolName?: string; summary?: string }>();
+export const awaitingApproval = new Map<string, { startedAt: number; toolName?: string; summary?: string; dialog?: { source: string } }>();

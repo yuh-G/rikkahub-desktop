@@ -73,16 +73,18 @@ export function createEngineInteraction(conversationId: string, sink: Generation
   };
   const entryKey = (source: string, key: string) => JSON.stringify([source, key]);
 
-  function setAwaiting(summary: string | null): void {
+  function setAwaiting(next: { source: string; request: EngineDialogRequest } | null): void {
     if (!sink) return;
-    if (summary === null) {
+    if (next === null) {
       awaitingApproval.delete(conversationId);
       sink({ kind: "engine_status", status: { busy: false } });
       return;
     }
     const startedAt = Date.now();
-    awaitingApproval.set(conversationId, { startedAt, ...(summary ? { summary } : {}) });
-    sink({ kind: "engine_status", status: { busy: true, phase: "awaiting_approval", startedAt, ...(summary ? { summary } : {}) } });
+    const summary = summaryOf(next.request);
+    const waiting = { startedAt, ...(summary ? { summary } : {}), dialog: { source: next.source } };
+    awaitingApproval.set(conversationId, waiting);
+    sink({ kind: "engine_status", status: { busy: true, phase: "awaiting_approval", ...waiting } });
   }
 
   return {
@@ -91,7 +93,7 @@ export function createEngineInteraction(conversationId: string, sink: Generation
         if (closed || signal?.aborted) return { cancelled: true };
         ui.dialogs.set(call.requestId, { source: call.source, request: call.request, startedAt: Date.now() });
         publish();
-        setAwaiting(summaryOf(call.request));
+        setAwaiting(call);
         try {
           return answerOf(await waitForToolApproval(conversationId, call.requestId, signal));
         } catch {
@@ -100,7 +102,7 @@ export function createEngineInteraction(conversationId: string, sink: Generation
         } finally {
           if (ui.dialogs.delete(call.requestId)) publish();
           const next = [...ui.dialogs.values()].at(-1);
-          if (!closed) setAwaiting(next ? summaryOf(next.request) : null);
+          if (!closed) setAwaiting(next ?? null);
         }
       },
       dismiss(call) {

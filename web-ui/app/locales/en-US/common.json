@@ -9,6 +9,7 @@
     "unnamed_conversation": "Untitled conversation",
     "generating": "Generating",
     "awaiting_approval": "Awaiting approval",
+    "awaiting_answer": "Awaiting your answer",
     "conversation_actions": "Conversation actions",
     "action_failed_retry": "Action failed. Please try again later.",
     "pin": "Pin",

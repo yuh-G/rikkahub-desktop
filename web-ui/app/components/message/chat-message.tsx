@@ -47,6 +47,7 @@ interface ChatMessageProps {
     approved: boolean,
     reason: string,
     answer?: string,
+    alwaysAllowInSession?: boolean,
   ) => void | Promise<void>;
   onShare?: (messageId: string) => void;
   selecting?: boolean;

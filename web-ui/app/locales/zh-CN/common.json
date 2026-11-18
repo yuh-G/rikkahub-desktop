@@ -9,6 +9,7 @@
     "unnamed_conversation": "未命名会话",
     "generating": "生成中",
     "awaiting_approval": "等待审批",
+    "awaiting_answer": "等待回答",
     "conversation_actions": "会话操作",
     "action_failed_retry": "操作失败，请稍后重试",
     "pin": "置顶",

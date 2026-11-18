@@ -306,7 +306,8 @@ export interface PermissionGrant {
 export type EngineDialogRequest =
   | { kind: "select"; title: string; options: string[] }
   | { kind: "confirm"; title: string; message: string }
-  | { kind: "input"; title: string; placeholder?: string };
+  | { kind: "input"; title: string; placeholder?: string }
+  | { kind: "editor"; title: string; prefill?: string };
 
 export interface EngineDialogCall extends TurnRef {
   /** 引擎生成,本会话内唯一。 */
@@ -316,7 +317,7 @@ export interface EngineDialogCall extends TurnRef {
   request: EngineDialogRequest;
 }
 
-/** select / input 的答案是字符串,confirm 是布尔。 */
+/** select / input / editor 的答案是字符串,confirm 是布尔。 */
 export type EngineDialogAnswer = { cancelled: true } | { cancelled: false; value: string | boolean };
 
 /** 引擎侧先放弃了对话框(插件给的超时到了、插件自己取消),应用收起它。 */

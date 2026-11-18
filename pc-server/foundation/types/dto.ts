@@ -356,13 +356,16 @@ export type EngineStatusEventDto =
       toolCallId?: string;
       toolName?: string;
       summary?: string;
+      /** awaiting_approval:等的是插件的对话框(不是工具审批);source 是发问的插件 id,认领不到为空串。 */
+      dialog?: { source: string };
     };
 
 /** 插件对话框的内容(与 engines/contract 的 EngineDialogRequest 同构,conversations/engine-interaction 赋值校验)。 */
 export type EngineUiDialogRequestDto =
   | { kind: "select"; title: string; options: string[] }
   | { kind: "confirm"; title: string; message: string }
-  | { kind: "input"; title: string; placeholder?: string };
+  | { kind: "input"; title: string; placeholder?: string }
+  | { kind: "editor"; title: string; prefill?: string };
 
 /** 会话详情 SSE:插件界面状态(事件名 engine-ui,P5.5)。每次变化发整份,空数组 / null = 没有。
  *  瞬态:不落库、不进快照与备份,SSE 连接时补发当前状态。source 是插件 id(认领不到为空串)。 */
@@ -382,5 +385,5 @@ export type EngineUiNotifyEventDto = {
   level: "info" | "warning" | "error";
 };
 
-/** POST /api/conversations/:id/ui-response:回答插件对话框。select / input 的 value 是字符串,confirm 是布尔。 */
+/** POST /api/conversations/:id/ui-response:回答插件对话框。select / input / editor 的 value 是字符串,confirm 是布尔。 */
 export type EngineUiResponseDto = { requestId: string; cancelled: true } | { requestId: string; cancelled?: false; value: string | boolean };

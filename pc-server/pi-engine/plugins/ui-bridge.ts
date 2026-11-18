@@ -1,10 +1,10 @@
 // pi-engine/plugins/ui-bridge.ts — 插件的界面上下文(ctx.ui)→ 契约 host.interaction(方案 §5.5 处置表、§5.11,P5.5)
 //
 // 绑进会话后 ctx.hasUI 为真、ctx.mode 为 "rpc"(权限插件据此走「询问用户」而不是全部拒绝)。
-// - select / confirm / input:经 host.interaction.dialog 请求-应答;插件给的超时 / 取消信号在这里处理,
+// - select / confirm / input / editor:经 host.interaction.dialog 请求-应答;插件给的超时 / 取消信号在这里处理,
 //   先到先答「取消」并经 dismiss 让应用收起。取消的回答与 pi 无界面时一致(confirm = false,其余 undefined)。
 // - notify / setStatus / setWidget(字符串数组)/ setWorkingMessage:经 host.interaction.show 单向通知,纯文本。
-// - 其余(editor、custom、组件工厂形态的 setWidget、页眉页脚、编辑器、主题切换…)落空。
+// - 其余(custom、组件工厂形态的 setWidget、页眉页脚、输入框文本、主题切换…)落空。
 // 方法一律是不依赖 this 的闭包:pi 的 setUIContext 会把对象展开成新对象再用。
 // tool_call 处理期间的对话框由裁决层吞掉(guardPiPluginDialogs),绑定前必须先经过它。
 
@@ -122,7 +122,10 @@ export function createPiPluginUi(
       show({ kind: "widget", key, lines: Array.isArray(content) ? content.map((line) => stripAnsi(String(line))) : null });
     },
     setWorkingMessage: (message) => show({ kind: "working", text: typeof message === "string" ? stripAnsi(message) : null }),
-    editor: async () => undefined,
+    editor: (title, prefill) =>
+      dialog({ kind: "editor", title, ...(prefill ? { prefill } : {}) }, undefined, undefined, (value) =>
+        typeof value === "string" ? value : undefined,
+      ),
     custom: async () => undefined as never,
     onTerminalInput: () => noop,
     setWorkingVisible: noop,

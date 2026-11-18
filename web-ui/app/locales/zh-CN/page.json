@@ -93,16 +93,20 @@
       "elapsed_seconds": "已等待 {{seconds}}秒",
       "elapsed_minutes": "已等待 {{minutes}}分{{seconds}}秒",
       "notification_title": "AI 正在等待你的审批",
-      "notification_body": "「{{summary}}」等待你审批"
+      "notification_body": "「{{summary}}」等待你审批",
+      "plugin_status": "插件 {{plugin}} 在等你回答",
+      "plugin_status_unknown": "插件在等你回答",
+      "plugin_notification_body": "「{{summary}}」等你回答"
     },
     "plugin_dialog": {
-      "from": "来自插件 {{plugin}}",
-      "from_unknown": "来自插件",
       "cancel": "取消",
       "yes": "是",
       "no": "否",
       "submit": "提交",
-      "send_failed": "回答没有送达，请重试"
+      "send_failed": "回答没有送达，请重试",
+      "save": "保存",
+      "save_hint": "{{shortcut}} 保存 · Esc 取消",
+      "queued": "还有 {{count}} 个"
     },
     "translate": {
       "dialog_title": "选择翻译语言",

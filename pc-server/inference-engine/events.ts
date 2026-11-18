@@ -69,6 +69,8 @@ export type EngineStatus =
       toolName?: string;
       /** awaiting_approval:审批对象一句话摘要(截断后的命令/路径)。 */
       summary?: string;
+      /** awaiting_approval:等的是插件的对话框(source = 发问的插件 id),通知与状态条据此换说法。 */
+      dialog?: { source: string };
     };
 
 /** 事件接收器。Provider 流式函数在解析到增量时调用它。 */

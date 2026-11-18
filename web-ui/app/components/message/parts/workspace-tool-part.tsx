@@ -35,9 +35,10 @@ import {
   workspaceToolKind,
   type WorkspaceActionModel,
 } from "~/lib/workspace-tool-model";
-import type { ToolPart as UIToolPart } from "~/types";
+import type { ToolCardAttribution, ToolPart as UIToolPart } from "~/types";
 
 import { ControlledChainOfThoughtStep } from "../chain-of-thought";
+import { PluginVetoNotice, readToolAttribution } from "./plugin-attribution";
 
 // 工作区工具渲染器(M2-3,方案 §4.3;2026-09-05 抽屉合并修订)。可见性分层:
 // - read(只读侦察)留在思维链折叠组(tool-part.tsx 只借本模块的标题/图标);
@@ -108,6 +109,8 @@ export function workspaceToolExportLabel(tool: UIToolPart, t: TFunction): string
 interface WorkspaceActionView {
   t: TFunction;
   model: WorkspaceActionModel;
+  /** 插件的工具调用钩子否决了这次调用(D14):正文写「被插件 X 拒绝」,不显示引擎的原始报错。 */
+  veto: ToolCardAttribution["blockedBy"] | null;
   running: boolean;
   elapsedSeconds: number | null;
   expanded: boolean;
@@ -134,6 +137,7 @@ function useWorkspaceActionView(
   const [drawerOpen, setDrawerOpen] = React.useState(false);
 
   const model = React.useMemo(() => buildWorkspaceActionModel(tool), [tool]);
+  const veto = React.useMemo(() => readToolAttribution(tool)?.blockedBy ?? null, [tool]);
   const running = Boolean(loading) && !model.finished;
   // 域3-1:运行耗时。起点=工具卡自己的建卡戳(终局戳=结果落地,issue #59:不再随
   // 整条消息的流式墙钟涨),无戳的历史数据回退消息级 createdAt→finishedAt 旧口径。
@@ -143,7 +147,8 @@ function useWorkspaceActionView(
   // 纵向空间;历史消息挂载时 running=false 直接收起。用户点过 chevron 后(userExpanded
   // 非 null)以用户选择为准,不再自动干预。
   const [userExpanded, setUserExpanded] = React.useState<boolean | null>(null);
-  const expanded = userExpanded ?? running;
+  // 被插件否决的那一行很短,默认展开,不点开就能看到是谁拒的。
+  const expanded = userExpanded ?? (running || veto !== null);
 
   const path = str(model.args, "path") ?? "";
   const command = str(model.args, "command") ?? "";
@@ -178,6 +183,7 @@ function useWorkspaceActionView(
   return {
     t,
     model,
+    veto,
     running,
     elapsedSeconds,
     expanded,
@@ -197,7 +203,8 @@ function useWorkspaceActionView(
 
 /** 展开区正文(卡/步骤共用):denied/error 分支仅失败卡可达(失败即抽出,不进链)。 */
 function WorkspaceActionBody({ view }: { view: WorkspaceActionView }) {
-  const { t, model, running, diff, path } = view;
+  const { t, model, running, diff, path, veto } = view;
+  if (veto) return <PluginVetoNotice veto={veto} className="px-3 py-2" />;
   if (model.denied) {
     return (
       <div className="px-3 py-2 text-xs text-destructive">

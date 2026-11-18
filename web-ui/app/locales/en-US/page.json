@@ -93,16 +93,20 @@
       "elapsed_seconds": "Waiting {{seconds}}s",
       "elapsed_minutes": "Waiting {{minutes}}m {{seconds}}s",
       "notification_title": "AI is waiting for your approval",
-      "notification_body": "\"{{summary}}\" awaits your approval"
+      "notification_body": "\"{{summary}}\" awaits your approval",
+      "plugin_status": "Plugin {{plugin}} is waiting for your answer",
+      "plugin_status_unknown": "A plugin is waiting for your answer",
+      "plugin_notification_body": "\"{{summary}}\" needs your answer"
     },
     "plugin_dialog": {
-      "from": "From plugin {{plugin}}",
-      "from_unknown": "From a plugin",
       "cancel": "Cancel",
       "yes": "Yes",
       "no": "No",
       "submit": "Submit",
-      "send_failed": "The answer wasn't delivered. Please try again."
+      "send_failed": "The answer wasn't delivered. Please try again.",
+      "save": "Save",
+      "save_hint": "{{shortcut}} to save · Esc to cancel",
+      "queued": "{{count}} more"
     },
     "translate": {
       "dialog_title": "Select translation language",

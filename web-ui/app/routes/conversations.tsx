@@ -745,6 +745,7 @@ const ConversationTimeline = React.memo(
       approved: boolean,
       reason: string,
       answer?: string,
+      alwaysAllowInSession?: boolean,
     ) => Promise<void>;
   }) => {
     const { t } = useTranslation("page");
@@ -1551,13 +1552,14 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
   }, [container, paneIndex]);
 
   const handleToolApproval = React.useCallback(
-    async (toolCallId: string, approved: boolean, reason: string, answer?: string) => {
+    async (toolCallId: string, approved: boolean, reason: string, answer?: string, alwaysAllowInSession?: boolean) => {
       if (!activeId) return;
       await api.post<{ status: string }>(`conversations/${activeId}/tool-approval`, {
         toolCallId,
         approved,
         reason,
         ...(answer != null ? { answer } : {}),
+        ...(alwaysAllowInSession ? { alwaysAllowInSession: true } : {}),
       });
     },
     [activeId],

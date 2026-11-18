@@ -82,8 +82,9 @@ export default function (pi) {
       const pick = await ctx.ui.select("pick one", ["a", "b"]);
       const sure = await ctx.ui.confirm("sure?", "really");
       const typed = await ctx.ui.input("type", "placeholder", { timeout: seen.inputTimeout });
+      const edited = await ctx.ui.editor("edit", "draft");
       ctx.ui.setStatus("perm", undefined);
-      return { content: [{ type: "text", text: JSON.stringify({ pick, sure, typed: typed ?? null }) }] };
+      return { content: [{ type: "text", text: JSON.stringify({ pick, sure, typed: typed ?? null, edited: edited ?? null }) }] };
     },
   });
   pi.registerTool({
@@ -174,6 +175,7 @@ describe("插件界面桥(引擎侧)", () => {
       select: { cancelled: false, value: "b" },
       confirm: { cancelled: false, value: true },
       input: { cancelled: false, value: "typed text" },
+      editor: { cancelled: false, value: "line 1\nline 2" },
     };
     const server = await upstream(toolTurns("tc-ask-1", "ask", "问完了"));
     const { driver, dialogs, notices, events } = harness(async (call) => answers[call.request.kind]!);
@@ -187,9 +189,10 @@ describe("插件界面桥(引擎侧)", () => {
       { ...turn, source: "dev:asker", request: { kind: "select", title: "pick one", options: ["a", "b"] } },
       { ...turn, source: "dev:asker", request: { kind: "confirm", title: "sure?", message: "really" } },
       { ...turn, source: "dev:asker", request: { kind: "input", title: "type", placeholder: "placeholder" } },
+      { ...turn, source: "dev:asker", request: { kind: "editor", title: "edit", prefill: "draft" } },
     ]);
-    expect(new Set(dialogs.map((call) => call.requestId)).size).toBe(3);
-    expect(toolOutput(events)).toEqual({ pick: "b", sure: true, typed: "typed text" });
+    expect(new Set(dialogs.map((call) => call.requestId)).size).toBe(4);
+    expect(toolOutput(events)).toEqual({ pick: "b", sure: true, typed: "typed text", edited: "line 1\nline 2" });
     expect(notices).toEqual([
       { ...turn, source: "dev:asker", notice: { kind: "notify", message: "hello", level: "warning" } },
       { ...turn, source: "dev:asker", notice: { kind: "status", key: "perm", text: "mode: ask" } },
@@ -209,7 +212,7 @@ describe("插件界面桥(引擎侧)", () => {
     const turn = { conversationId: "conv-ui-2", turnId: "turn-ui-2" };
     expect((await driver.startTurn({ ...turn, input: inputFor(server, turn.conversationId) })).text).toBe("都取消了");
     // select 取消 = undefined(JSON 里不出现),confirm 取消 = false。
-    expect(toolOutput(events)).toEqual({ sure: false, typed: null });
+    expect(toolOutput(events)).toEqual({ sure: false, typed: null, edited: null });
     const inputCall = dialogs.find((call) => call.request.kind === "input")!;
     expect(dismissed).toEqual([{ ...turn, requestId: inputCall.requestId }]);
   }, 30_000);
@@ -254,7 +257,7 @@ describe("插件界面(应用侧)", () => {
     try {
       const pending = appEngineHost.interaction.dialog(dialogCall("rq-1", { kind: "confirm", title: "继续吗", message: "?" }));
       expect(pendingEngineDialogKind(conversationId, "rq-1")).toBe("confirm");
-      expect(statusEvents.at(-1)).toMatchObject({ busy: true, phase: "awaiting_approval", summary: "继续吗" });
+      expect(statusEvents.at(-1)).toMatchObject({ busy: true, phase: "awaiting_approval", summary: "继续吗", dialog: { source: "dev:asker" } });
       appEngineHost.interaction.show({ ...turn, source: "dev:asker", notice: { kind: "status", key: "k", text: "状态" } });
       expect(engineUiSnapshot(conversationId)).toMatchObject({
         dialogs: [{ requestId: "rq-1", source: "dev:asker", request: { kind: "confirm" } }],
@@ -270,6 +273,11 @@ describe("插件界面(应用侧)", () => {
       const typed = appEngineHost.interaction.dialog(dialogCall("rq-2", { kind: "input", title: "输入" }));
       expect(await respond({ requestId: "rq-2", cancelled: true })).toBe(202);
       expect(await typed).toEqual({ cancelled: true });
+
+      const edited = appEngineHost.interaction.dialog(dialogCall("rq-2b", { kind: "editor", title: "改一下", prefill: "原文" }));
+      expect(await respond({ requestId: "rq-2b", value: false })).toBe(400);
+      expect(await respond({ requestId: "rq-2b", value: "多行\n文本" })).toBe(202);
+      expect(await edited).toEqual({ cancelled: false, value: "多行\n文本" });
     } finally {
       unbind();
       session.close();

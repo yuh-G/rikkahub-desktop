@@ -182,5 +182,16 @@
     "find_title": "Find files: {{pattern}}",
     "ls": "List directory",
     "ls_title": "List directory: {{path}}"
+  },
+  "plugin": {
+    "from": "From plugin {{plugin}}",
+    "from_unknown": "From a plugin",
+    "open": "Open plugin details",
+    "blocked": "Blocked by plugin {{plugin}}: {{reason}}",
+    "blocked_no_reason": "Blocked by plugin {{plugin}}",
+    "settings": "Plugin settings",
+    "settings_hint": "Open this plugin's settings, where you can stop it from intercepting tool calls",
+    "always_allow": "Always allow in this conversation",
+    "always_allow_hint": "Approve now and stop asking for this tool in this conversation. Asking resumes after the app restarts."
   }
 }

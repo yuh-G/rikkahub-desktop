@@ -182,5 +182,16 @@
     "find_title": "查找文件：{{pattern}}",
     "ls": "列出目录",
     "ls_title": "列出目录：{{path}}"
+  },
+  "plugin": {
+    "from": "来自插件 {{plugin}}",
+    "from_unknown": "来自插件",
+    "open": "打开插件详情",
+    "blocked": "被插件 {{plugin}} 拒绝：{{reason}}",
+    "blocked_no_reason": "被插件 {{plugin}} 拒绝",
+    "settings": "插件设置",
+    "settings_hint": "打开这个插件的设置，可以关掉它拦截工具调用",
+    "always_allow": "此会话内总是允许",
+    "always_allow_hint": "同意这一次，本会话里这个工具不再询问；重启应用后恢复询问"
   }
 }

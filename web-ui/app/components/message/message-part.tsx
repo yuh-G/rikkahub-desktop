@@ -61,6 +61,7 @@ interface MessagePartsProps {
     approved: boolean,
     reason: string,
     answer?: string,
+    alwaysAllowInSession?: boolean,
   ) => void | Promise<void>;
   onClickCitation?: (id: string) => void;
   citationOrdinalMap?: Map<string, number>;

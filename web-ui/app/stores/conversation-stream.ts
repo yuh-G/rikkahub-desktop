@@ -17,6 +17,7 @@ import * as React from "react";
 
 import { toast } from "sonner";
 
+import { pluginDisplayName } from "~/components/settings/extensions/plugins/model";
 import i18n from "~/i18n";
 import api, { ApiError, sse } from "~/services/api";
 import { useAppStore } from "~/stores/app-store";
@@ -294,7 +295,7 @@ function openStream(id: string, record: StreamRecord, options?: { negotiate?: bo
           return;
         }
 
-        // 插件界面(P5.5):整份状态覆盖;通知只提示一次。
+        // 插件界面(P5.5):整份状态覆盖;通知只提示一次,副标题是插件的显示名。
         if (event === "engine-ui") {
           setConversationEngineUi(id, data as unknown as EngineUiStateEventDto);
           return;
@@ -302,7 +303,8 @@ function openStream(id: string, record: StreamRecord, options?: { negotiate?: bo
         if (event === "engine-notify") {
           const notice = data as unknown as EngineUiNotifyEventDto;
           const show = notice.level === "error" ? toast.error : notice.level === "warning" ? toast.warning : toast.info;
-          show(notice.message, notice.source ? { description: notice.source } : undefined);
+          const plugin = notice.source ? pluginDisplayName(useAppStore.getState().settings?.enginePlugins, notice.source) : "";
+          show(notice.message, { description: plugin ? i18n.t("message:plugin.from", { plugin }) : i18n.t("message:plugin.from_unknown") });
           return;
         }
 

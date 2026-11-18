@@ -142,6 +142,7 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         startedAt: pendingApproval.startedAt,
         ...(pendingApproval.toolName ? { toolName: pendingApproval.toolName } : {}),
         ...(pendingApproval.summary ? { summary: pendingApproval.summary } : {}),
+        ...(pendingApproval.dialog ? { dialog: pendingApproval.dialog } : {}),
       } satisfies EngineStatusEventDto]);
     }
     // 插件界面(P5.5):开着的对话框、状态条目、挂件同样跨切页 / 重连恢复。

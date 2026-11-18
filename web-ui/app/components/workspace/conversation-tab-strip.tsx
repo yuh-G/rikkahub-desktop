@@ -43,16 +43,15 @@ const EMPTY_TABS: string[] = [];
     只订阅本标签会话的瞬态状态,其它会话的 engine-status 帧不触发本组件重渲染。 */
 function TabApprovalDot({ conversationId }: { conversationId: string }) {
   const { t } = useTranslation();
-  const awaiting = useConversationStore(
-    (state) => state.engineStatus[conversationId]?.phase === "awaiting_approval",
-  );
-  if (!awaiting) return null;
+  // 选择器只回字面量(等审批 / 等回答插件的对话框 / 不在等),别的状态帧不触发重渲染。
+  const waiting = useConversationStore((state) => {
+    const status = state.engineStatus[conversationId];
+    return status?.phase !== "awaiting_approval" ? null : status.dialog ? "answer" : "approval";
+  });
+  if (!waiting) return null;
+  const label = t(waiting === "answer" ? "conversation_sidebar.awaiting_answer" : "conversation_sidebar.awaiting_approval");
   return (
-    <span
-      className="inline-block size-2 shrink-0 animate-pulse rounded-full bg-warning"
-      aria-label={t("conversation_sidebar.awaiting_approval")}
-      title={t("conversation_sidebar.awaiting_approval")}
-    />
+    <span className="inline-block size-2 shrink-0 animate-pulse rounded-full bg-warning" aria-label={label} title={label} />
   );
 }
 
