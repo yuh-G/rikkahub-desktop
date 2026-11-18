@@ -271,7 +271,7 @@ function WorkspaceActionDrawer({ view, toolName }: { view: WorkspaceActionView; 
               <CopyButton
                 text={model.text}
                 label={t("tool_part.copy")}
-                copiedLabel={t("tool_part.copied")}
+                copiedLabel={t("workspace_tool.copied")}
                 className="absolute right-1.5 top-1.5 bg-background/80 opacity-0 shadow-sm backdrop-blur transition-opacity group-hover/drawer-pre:opacity-100"
               />
             </div>
@@ -292,7 +292,7 @@ function WorkspaceActionDrawer({ view, toolName }: { view: WorkspaceActionView; 
               <CopyButton
                 text={patch}
                 label={t("tool_part.copy")}
-                copiedLabel={t("tool_part.copied")}
+                copiedLabel={t("workspace_tool.copied")}
                 className="absolute right-1.5 top-1.5 bg-background/80 opacity-0 shadow-sm backdrop-blur transition-opacity group-hover/drawer-pre:opacity-100"
               />
             </div>

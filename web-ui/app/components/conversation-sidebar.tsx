@@ -270,7 +270,7 @@ const ConversationListRow = React.memo(
         setPendingAction(actionId);
         const loadingToastId =
           actionId === "regenerate-title"
-            ? toast.loading(t("conversation_sidebar.regenerate_title_loading", "正在生成标题..."))
+            ? toast.loading(t("conversation_sidebar.regenerate_title_loading"))
             : undefined;
         try {
           await action();
@@ -841,13 +841,13 @@ export const ConversationSidebar = React.memo(
       setProfileSaving(true);
       try {
         await saveProfile(profileName, profileAvatar);
-        toast.success(t("conversation_sidebar.profile_saved", "Profile saved"));
+        toast.success(t("conversation_sidebar.profile_saved"));
         setProfileOpen(false);
       } catch (profileError) {
         toast.error(
           profileError instanceof Error
             ? profileError.message
-            : t("conversation_sidebar.profile_save_failed", "Failed to save profile"),
+            : t("conversation_sidebar.profile_save_failed"),
         );
       } finally {
         setProfileSaving(false);
@@ -900,13 +900,8 @@ export const ConversationSidebar = React.memo(
             </DialogTrigger>
             <DialogContent className="max-w-md">
               <DialogHeader>
-                <DialogTitle>{t("conversation_sidebar.edit_profile", "Edit profile")}</DialogTitle>
-                <DialogDescription>
-                  {t(
-                    "conversation_sidebar.edit_profile_description",
-                    "This is saved by the local PC backend and used in every chat.",
-                  )}
-                </DialogDescription>
+                <DialogTitle>{t("conversation_sidebar.edit_profile")}</DialogTitle>
+                <DialogDescription>{t("conversation_sidebar.edit_profile_description")}</DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
@@ -925,22 +920,22 @@ export const ConversationSidebar = React.memo(
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium" htmlFor="profile-name">
-                    {t("conversation_sidebar.profile_name", "Name")}
+                    {t("conversation_sidebar.profile_name")}
                   </label>
                   <Input
                     id="profile-name"
                     value={profileName}
                     onChange={(event) => setProfileName(event.target.value)}
-                    placeholder={t("conversation_sidebar.profile_name_placeholder", "Your name")}
+                    placeholder={t("conversation_sidebar.profile_name_placeholder")}
                   />
                 </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setProfileOpen(false)}>
-                  {t("common:cancel", "Cancel")}
+                  {t("conversation_sidebar.cancel")}
                 </Button>
                 <Button onClick={() => void handleProfileSave()} disabled={profileSaving}>
-                  {profileSaving ? t("common:saving", "Saving") : t("common:save", "Save")}
+                  {profileSaving ? t("conversation_sidebar.saving") : t("conversation_sidebar.save")}
                 </Button>
               </DialogFooter>
             </DialogContent>
