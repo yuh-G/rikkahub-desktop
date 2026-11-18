@@ -191,7 +191,7 @@
     "save_failed": "Failed to save permission preset"
   },
   "integrations": {
-    "title": "MCP & Extensions",
+    "title": "Extensions",
     "description": "These switches apply to this conversation only. Defaults for new conversations are set in the assistant's \"Manage extensions\".",
     "update_failed": "Failed to update this conversation's extensions",
     "manage": "Settings"

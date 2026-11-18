@@ -312,7 +312,7 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       return json({ status: "updated" });
     }
     if (sub === "extension-selection" && request.method === "POST") {
-      // 左下角「MCP 与拓展」只写这个会话(D19):body 是改了的那几项(形状同助手字段),叠在会话此刻的
+      // 左下角「拓展」只写这个会话(D19):body 是改了的那几项(形状同助手字段),叠在会话此刻的
       // 实际选择上整组写回。id 不校验存在性——取数时与「全局可用」取交集,失效的 id 自然不生效。
       // 不改 updateAt:换个拓展不算会话有新内容,列表顺序不动。
       const body = await readJson<unknown>(request);

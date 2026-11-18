@@ -54,7 +54,7 @@ export interface ChatInputProps {
   slashCommands?: SlashCommandDto[];
   /** 斜杠指令拦截执行(完整指令提交时调用;输入框随即清空,不发消息)。执行中的
    *  状态与结果反馈由执行器自理(压缩中提示/toast),不占用发送按钮。composer = 本输入框交给执行器的能力
-   *  (打开右下角模型菜单、左下角「MCP 与拓展」等)。 */
+   *  (打开右下角模型菜单、左下角「拓展」等)。 */
   /** 域5-1(3F):返回 Promise<boolean>;true/undefined=已受理(输入框维持清空),
    *  false/抛错=未受理(输入框回填原始指令文本)。 */
   onSlashCommand?: (

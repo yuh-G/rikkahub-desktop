@@ -13,7 +13,7 @@ export interface SettingsSlice {
 
 export interface ChatInputSlice {
   drafts: Record<string, Draft>;
-  /** 还没落库的新会话在左下角「MCP 与拓展」里改过的几项(D19),键同 drafts;随第一条消息带给建会话的
+  /** 还没落库的新会话在左下角「拓展」里改过的几项(D19),键同 drafts;随第一条消息带给建会话的
    *  请求,没改过的类别按助手的默认。与文字草稿分开存:编辑回填会整份替换文字草稿。 */
   extensionDrafts: Record<string, Partial<ExtensionSelection>>;
   patchExtensionDraft: (draftKey: string, patch: Partial<ExtensionSelection>) => void;

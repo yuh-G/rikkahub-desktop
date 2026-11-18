@@ -191,7 +191,7 @@
     "save_failed": "保存权限档位失败"
   },
   "integrations": {
-    "title": "MCP 与拓展",
+    "title": "拓展",
     "description": "这里的开关只作用于当前会话；新会话默认开哪些，在助手的「拓展管理」里设。",
     "update_failed": "更新会话的拓展选择失败",
     "manage": "去设置"

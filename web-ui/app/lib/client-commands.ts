@@ -6,7 +6,7 @@
 
 import type { ClientCommandName } from "@server/commands/client-commands";
 
-/** 输入框里能被指令打开的选择器:右下角的模型菜单(thinking = 顺带展开思考强度子菜单),左下角「MCP 与拓展」的两个页签。 */
+/** 输入框里能被指令打开的选择器:右下角的模型菜单(thinking = 顺带展开思考强度子菜单),左下角「拓展」的两个页签。 */
 export type ComposerPicker = "model" | "thinking" | "mcp" | "skills";
 
 /** 打开选择器的请求:seq 每次递增,选择器见到新的 seq 才动(重挂载时不会被旧请求再打开一次)。 */
