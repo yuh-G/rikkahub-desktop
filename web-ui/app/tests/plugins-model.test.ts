@@ -8,6 +8,7 @@ import {
   joinPluginRows,
   marketInstalledRecord,
   parseAuditSubject,
+  pluginDisplayName,
   pluginIssueCount,
   pluginSourceLabel,
   pluginStatuses,
@@ -175,6 +176,13 @@ describe("详情用的取值", () => {
     expect(registeredPluginMcpServer(servers, "pi:b", "web")?.id).toBe("s2");
     expect(registeredPluginMcpServer(servers, "pi:a", "db")).toBeUndefined();
     expect(registeredPluginMcpServer(undefined, "pi:a", "web")).toBeUndefined();
+  });
+
+  test("插件的显示名:有记录用记录名,记录已卸载退回 id 去掉引擎前缀", () => {
+    const records = [record({ id: "pi:a#2", name: "pi-todo" })];
+    expect(pluginDisplayName(records, "pi:a#2")).toBe("pi-todo");
+    expect(pluginDisplayName(records, "pi:@scope/gone")).toBe("@scope/gone");
+    expect(pluginDisplayName(undefined, "plain")).toBe("plain");
   });
 
   test("接口返回的一行还原成记录:补充字段去掉", () => {

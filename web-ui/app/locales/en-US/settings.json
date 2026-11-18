@@ -889,7 +889,10 @@
     "add_new": "Add",
     "transport": "Transport",
     "unnamed_tool": "Unnamed tool",
-    "param_required": "(required)"
+    "param_required": "(required)",
+    "from_plugin": "From plugin {{name}}",
+    "from_plugin_disabled": "From plugin {{name}} · plugin disabled",
+    "from_plugin_open": "Open plugin details"
   },
   "speech": {
     "tts_delete_confirm": "Delete the TTS provider \"{{name}}\"?",

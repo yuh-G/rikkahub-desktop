@@ -2,12 +2,12 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { ArrowUpRight, Loader2, Puzzle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Notice } from "~/components/ui/notice";
-import { StatusBadge } from "~/components/ui/status-badge";
+import { StatusBadge, statusBadgeVariants } from "~/components/ui/status-badge";
 import { SegmentedControl } from "~/components/ui/segmented-tabs";
 import Markdown from "~/components/markdown/markdown";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
@@ -18,10 +18,12 @@ import { copyItemName } from "~/lib/copy-name";
 import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
+import { openPluginDetail } from "~/stores/plugins-view-store";
 import { getSettingsParam } from "~/stores/settings-dialog-store";
 import { useMcpHealthStore } from "~/stores";
 import type { McpHealthEntryDto, Settings } from "~/types";
 import { readMcpHeaders, toMcpHeaderPairs } from "@server/tools/mcp-headers";
+import { pluginMcpSource, type PluginMcpSource } from "@server/tools/mcp-source";
 import {
   clone,
   copyRowAction,
@@ -46,6 +48,7 @@ import {
   ToolSwitch,
   type SectionProps,
 } from "~/components/settings/extensions/common";
+import { pluginDisplayName } from "~/components/settings/extensions/plugins/model";
 
 /** 拓展 › MCP。MCP 服务器是全局配置(哪个助手用它在输入框 MCP 选择器里决定),无需选助手。 */
 export function McpSection({ settings, onSettings }: SectionProps) {
@@ -78,7 +81,7 @@ function mcpStatusKey(server: Record<string, unknown>, health?: McpHealthEntryDt
     server.commonOptions && typeof server.commonOptions === "object"
       ? (server.commonOptions as Record<string, unknown>)
       : {};
-  if (common.enable === false) return { ok: false, key: "off" };
+  if (common.enable === false || pluginMcpSource(server)?.active === false) return { ok: false, key: "off" };
   if (health) {
     switch (health.status) {
       case "ready": return { ok: true, key: "connected" };
@@ -241,6 +244,7 @@ function McpServerEditor({
       ? (liveServerCommon.oauth as Record<string, unknown>)
       : null;
   const oauthAuthorized = Boolean(liveOauth && textValue(liveOauth.accessToken));
+  const pluginSource = pluginMcpSource(liveServer ?? draft);
   const [oauthBusy, setOauthBusy] = React.useState(false);
   // 决策①③:当前服务器的实时健康项(状态灯/重连按钮的数据源)。
   const liveHealth = useMcpHealthStore((s) => s.health[String(draft.id ?? "")]);
@@ -361,6 +365,7 @@ function McpServerEditor({
       }}
       renderItem={(item) => {
         const status = mcpStatusKey(item, mcpHealth[String(item.id ?? "")]);
+        const source = pluginMcpSource(item);
         return (
           <div className="flex min-w-0 items-center gap-2 text-left">
             <span
@@ -377,6 +382,12 @@ function McpServerEditor({
               title={t(`settings:mcp.status_${status.key}`)}
             />
             <span className="truncate">{mcpName(item, t("settings:mcp.server.default_name"))}</span>
+            {source ? (
+              <Puzzle
+                className="size-3 shrink-0 text-[var(--ds-text-tertiary)]"
+                aria-label={t("settings:mcp.from_plugin", { name: pluginDisplayName(settings.enginePlugins, source.pluginId) })}
+              />
+            ) : null}
           </div>
         );
       }}
@@ -407,6 +418,11 @@ function McpServerEditor({
             title={textValue(common.name)}
             titlePlaceholder={t("settings:mcp.server.default_name")}
             titleLabel={t("settings:mcp.name")}
+            titleAddon={
+              pluginSource ? (
+                <PluginSourceBadge source={pluginSource} name={pluginDisplayName(settings.enginePlugins, pluginSource.pluginId)} />
+              ) : undefined
+            }
             onTitleCommit={(name) => patchDraft({ ...draft, commonOptions: { ...common, name } })}
             description={t("settings:mcp.server.detail_desc")}
             action={
@@ -627,6 +643,26 @@ function McpServerEditor({
         </SettingsStack>
       </div>
     </EditorShell>
+  );
+}
+
+/** 插件带来的服务器(D13):标题旁的来源徽标,点开是那个插件的详情。插件停用时它的服务器对谁都不可用,徽标转灰。 */
+function PluginSourceBadge({ source, name }: { source: PluginMcpSource; name: string }) {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      title={t("settings:mcp.from_plugin_open")}
+      onClick={() => openPluginDetail(source.pluginId)}
+      className={cn(
+        statusBadgeVariants({ tone: source.active ? "brand" : "neutral" }),
+        "max-w-48 cursor-pointer outline-none transition-opacity duration-(--ds-duration-fast) hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none",
+      )}
+    >
+      <Puzzle />
+      <span className="truncate">{t(source.active ? "settings:mcp.from_plugin" : "settings:mcp.from_plugin_disabled", { name })}</span>
+      <ArrowUpRight />
+    </button>
   );
 }
 

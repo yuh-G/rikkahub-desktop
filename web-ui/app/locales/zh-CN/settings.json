@@ -889,7 +889,10 @@
     "add_new": "新增",
     "transport": "传输方式",
     "unnamed_tool": "未命名工具",
-    "param_required": "（必填）"
+    "param_required": "（必填）",
+    "from_plugin": "来自插件 {{name}}",
+    "from_plugin_disabled": "来自插件 {{name}} · 插件已停用",
+    "from_plugin_open": "打开插件详情"
   },
   "speech": {
     "tts_delete_confirm": "删除语音合成服务「{{name}}」？",

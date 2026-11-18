@@ -114,6 +114,11 @@ export function pluginSubtitle(record: EnginePluginRecord): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+/** 插件的显示名:记录里的名字;记录已不在(卸载了)时退回 id 去掉引擎前缀的部分。 */
+export function pluginDisplayName(records: readonly EnginePluginRecord[] | undefined, pluginId: string): string {
+  return records?.find((record) => record.id === pluginId)?.name ?? pluginId.slice(pluginId.indexOf(":") + 1);
+}
+
 /** 市场条目对应的已装记录:同引擎、同包名、装进安装目录的来源(npm / git / 上传的压缩包;与后端
  *  engines/plugins.ts 的 isPackageSource 同一条规则,本地文件夹与上传的单个脚本不占包名)。 */
 export function marketInstalledRecord(

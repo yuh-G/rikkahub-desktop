@@ -780,6 +780,7 @@ export function SettingsDetailHeader({
   description,
   action,
   leading,
+  titleAddon,
   onTitleCommit,
   titlePlaceholder,
   titleLabel,
@@ -788,6 +789,8 @@ export function SettingsDetailHeader({
   description?: React.ReactNode;
   action?: React.ReactNode;
   leading?: React.ReactNode;
+  /** 紧跟标题的小件(来源徽标等)。 */
+  titleAddon?: React.ReactNode;
   onTitleCommit?: (next: string) => void;
   titlePlaceholder?: string;
   /** 可编辑标题的无障碍名(「名称」)。 */
@@ -798,20 +801,23 @@ export function SettingsDetailHeader({
       <div className="flex min-w-0 items-center gap-3">
         {leading}
         <div className="min-w-0">
-          {onTitleCommit ? (
-            <h2 className="flex min-w-0">
-              <InlineEditText
-                value={typeof title === "string" ? title : ""}
-                placeholder={titlePlaceholder}
-                ariaLabel={titleLabel ?? titlePlaceholder ?? ""}
-                className="text-base font-semibold"
-                inputClassName="w-72 text-base"
-                onCommit={onTitleCommit}
-              />
-            </h2>
-          ) : (
-            <h2 className="truncate text-base font-semibold text-[var(--ds-text-primary)]">{title}</h2>
-          )}
+          <div className="flex min-w-0 items-center gap-2">
+            {onTitleCommit ? (
+              <h2 className="flex min-w-0">
+                <InlineEditText
+                  value={typeof title === "string" ? title : ""}
+                  placeholder={titlePlaceholder}
+                  ariaLabel={titleLabel ?? titlePlaceholder ?? ""}
+                  className="text-base font-semibold"
+                  inputClassName="w-72 text-base"
+                  onCommit={onTitleCommit}
+                />
+              </h2>
+            ) : (
+              <h2 className="truncate text-base font-semibold text-[var(--ds-text-primary)]">{title}</h2>
+            )}
+            {titleAddon}
+          </div>
           {description != null ? (
             <p className="mt-0.5 text-xs text-[var(--ds-text-secondary)]">{description}</p>
           ) : null}
