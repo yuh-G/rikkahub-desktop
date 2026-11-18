@@ -40,7 +40,7 @@ export function useSlashCommand({ text, commands, enabled, onCompleteText }: Use
 
   const pick = React.useCallback(
     (command: SlashCommandDto) => {
-      onCompleteText(command.hasArgument ? `/${command.name} ` : `/${command.name}`);
+      onCompleteText(command.hasArgument ? `/${command.invocation} ` : `/${command.invocation}`);
     },
     [onCompleteText],
   );

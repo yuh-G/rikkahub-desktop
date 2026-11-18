@@ -47,7 +47,16 @@ export interface CommandDefinition {
   };
 }
 
-/** 全局指令表(V1 仅 /compact;后续指令 = 追加一行 + 绑实现,见方案 §6 路线图)。 */
+/** 入口类:前端执行,行与 client-commands.ts 的名单一一对应(两端测试锁住);对话模式与 pi 工作区都可用。 */
+const entry = (name: string): CommandDefinition => ({
+  name,
+  hasArgument: false,
+  kind: "entry",
+  executionTarget: "client",
+  availability: { chat: true, workspace: { pi: true } },
+});
+
+/** 全局指令表(后续指令 = 追加一行 + 绑实现,见方案 §6 路线图)。顺序即菜单「通用」组里的顺序。 */
 export const COMMAND_REGISTRY: readonly CommandDefinition[] = [
   {
     // /compact [额外指示] —— 压缩会话上下文。执行入口复用既有
@@ -60,6 +69,15 @@ export const COMMAND_REGISTRY: readonly CommandDefinition[] = [
     executionTarget: "server",
     availability: { chat: true, workspace: { pi: true } },
   },
+  // 名单本身住叶子模块(web-ui 运行时要引用,不能 import 本文件);这里逐个写出,注册表一眼可读。
+  entry("new"),
+  entry("fork"),
+  entry("name"),
+  entry("model"),
+  entry("thinking"),
+  entry("mcp"),
+  entry("skill"),
+  entry("settings"),
 ];
 
 /** 解析某环境此刻的可用通用指令。engineKind 是引擎路由(resolveEngine)的产物:

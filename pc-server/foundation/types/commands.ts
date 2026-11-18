@@ -6,7 +6,7 @@
 // 指令定义与可用性矩阵住 commands/registry.ts;这里只放前端可见的 DTO 形状。
 
 /** 指令执行目标:server = 前端调某个既有/专用 REST API;client = 纯前端动作(入口类通用指令,执行界面上对应
- *  按钮的同一个处理函数);engine = 引擎特色指令,前端调 POST /api/conversations/:id/command。
+ *  按钮的同一个处理函数,名单在 commands/client-commands.ts);engine = 引擎特色指令,前端调 POST /api/commands/run。
  *  注册表只声明目标类型,具体执行器在前端分发表。 */
 export type CommandExecutionTarget = "server" | "client" | "engine";
 

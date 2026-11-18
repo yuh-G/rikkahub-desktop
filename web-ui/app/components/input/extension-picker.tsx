@@ -5,9 +5,11 @@
 import * as React from "react";
 import { ExternalLink, PackageIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router";
 
 import { usePaneContainer } from "~/components/workspace/pane-container-context";
 import { usePickerPopover } from "~/hooks/use-picker-popover";
+import type { ComposerPickerRequest } from "~/lib/client-commands";
 import { extractErrorMessage } from "~/lib/error";
 import { cn } from "~/lib/utils";
 import { CHAT_CONTAINER } from "~/stores/container-tabs-store";
@@ -22,7 +24,7 @@ import {
   PopoverTrigger,
 } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { SettingsLink } from "~/components/settings/settings-link";
+import { SettingsLink, openSettings } from "~/components/settings/settings-link";
 import { EXTENSION_CATEGORIES, type ExtensionCategoryId } from "~/components/settings/extensions/categories";
 import {
   AVAILABLE_COUNTS,
@@ -41,6 +43,8 @@ export interface ExtensionPickerButtonProps {
   /** 选择的数据源已就绪(会话快照已到 / 新会话有草稿键)。 */
   ready: boolean;
   disabled?: boolean;
+  /** /mcp、/skill 指令打开到对应页签的请求。 */
+  openRequest?: ComposerPickerRequest | null;
   className?: string;
 }
 
@@ -50,11 +54,13 @@ function ExtensionPickerButtonImpl({
   onChange,
   ready,
   disabled = false,
+  openRequest,
   className,
 }: ExtensionPickerButtonProps) {
   const { t } = useTranslation("input");
+  const navigate = useNavigate();
   const canUse = Boolean(settings && ready && !disabled);
-  const { open, error, setError, popoverProps } = usePickerPopover(canUse);
+  const { open, setOpen, error, setError, popoverProps } = usePickerPopover(canUse);
   // 每次打开重拉技能目录,拿到刚在技能页新建的。
   const [openCount, setOpenCount] = React.useState(0);
   React.useEffect(() => {
@@ -63,6 +69,24 @@ function ExtensionPickerButtonImpl({
   const skills = useSkillSummaries(Boolean(settings), openCount);
   const [tab, setTab] = React.useState<ExtensionCategoryId | null>(null);
   const chatConversation = usePaneContainer() === CHAT_CONTAINER;
+
+  // 只认新来的请求(重挂载不重放)。一类可选的都没有时按钮不出现,改去设置里对应的拓展页,入口不落空。
+  const handledRequest = React.useRef(openRequest?.seq ?? 0);
+  React.useEffect(() => {
+    if (!openRequest || openRequest.seq === handledRequest.current) return;
+    handledRequest.current = openRequest.seq;
+    const target = openRequest.picker;
+    if (target !== "mcp" && target !== "skills") return;
+    const shown =
+      settings !== null &&
+      EXTENSION_CATEGORIES.some((item) => AVAILABLE_COUNTS[item.id]({ settings, skills, chatConversation }) > 0);
+    if (!canUse || !shown) {
+      openSettings(navigate, `?section=extensions&sub=${target}`);
+      return;
+    }
+    setTab(target);
+    setOpen(true);
+  }, [canUse, chatConversation, navigate, openRequest, setOpen, settings, skills]);
 
   if (!settings) return null;
   const available = Object.fromEntries(

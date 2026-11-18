@@ -393,6 +393,7 @@ export default function (pi) {
     };
     expect(listed.commands.map((command) => `${command.source} /${command.invocation}`)).toEqual([
       "app /compact",
+      ...["new", "fork", "name", "model", "thinking", "mcp", "skill", "settings"].map((name) => `app /${name}`),
       "plugin:dev:cmd-plugin /compact:cmd-plugin",
       "plugin:dev:cmd-plugin /todos",
       "plugin:dev:cmd-plugin /again",

@@ -1,9 +1,35 @@
 {
   "commands": {
     "menu_label": "斜杠指令",
+    "group_app": "通用",
+    "group_engine": "引擎",
     "compact": {
       "description": "压缩当前会话上下文",
       "argument_hint": "[额外指示]"
+    },
+    "new": {
+      "description": "新建对话"
+    },
+    "fork": {
+      "description": "从最新一条回复创建分叉"
+    },
+    "name": {
+      "description": "编辑会话标题"
+    },
+    "model": {
+      "description": "切换模型"
+    },
+    "thinking": {
+      "description": "调整思考强度"
+    },
+    "mcp": {
+      "description": "选择本会话用的 MCP 服务"
+    },
+    "skill": {
+      "description": "选择本会话用的技能"
+    },
+    "settings": {
+      "description": "打开设置"
     }
   },
   "reasoning": {

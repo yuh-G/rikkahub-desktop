@@ -1,9 +1,35 @@
 {
   "commands": {
     "menu_label": "Slash commands",
+    "group_app": "General",
+    "group_engine": "Engine",
     "compact": {
       "description": "Compact the conversation context",
       "argument_hint": "[instructions]"
+    },
+    "new": {
+      "description": "Start a new conversation"
+    },
+    "fork": {
+      "description": "Fork from the latest reply"
+    },
+    "name": {
+      "description": "Edit the conversation title"
+    },
+    "model": {
+      "description": "Switch model"
+    },
+    "thinking": {
+      "description": "Adjust reasoning intensity"
+    },
+    "mcp": {
+      "description": "Choose MCP servers for this conversation"
+    },
+    "skill": {
+      "description": "Choose skills for this conversation"
+    },
+    "settings": {
+      "description": "Open settings"
     }
   },
   "reasoning": {

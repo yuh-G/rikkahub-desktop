@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { EngineCommand } from "../engines/contract";
+import { CLIENT_COMMAND_NAMES } from "./client-commands";
 import { COMMAND_REGISTRY, mergeEngineCommands, pluginShortName, resolveAvailableCommands, type CommandDefinition } from "./registry";
 
 describe("指令注册表:定义形状约束", () => {
@@ -14,12 +15,19 @@ describe("指令注册表:定义形状约束", () => {
   test("入口类一律在前端执行(执行的是界面按钮的同一个处理函数)", () => {
     for (const command of COMMAND_REGISTRY.filter((c) => c.kind === "entry")) expect(command.executionTarget).toBe("client");
   });
+
+  test("在前端执行的行与前端名单一一对应(前端那边另有一条锁执行器表)", () => {
+    const client = COMMAND_REGISTRY.filter((c) => c.executionTarget === "client").map((c) => c.name);
+    expect([...client].sort()).toEqual([...CLIENT_COMMAND_NAMES].sort());
+  });
 });
 
 describe("可用性矩阵解析(白名单缺省禁用)", () => {
-  test("对话模式(chat):/compact 可用", () => {
+  test("对话模式(chat):/compact 与八个入口类可用", () => {
     const commands = resolveAvailableCommands("chat");
-    expect(commands).toEqual([{ name: "compact", hasArgument: true, executionTarget: "server", source: "app", invocation: "compact" }]);
+    expect(commands[0]).toEqual({ name: "compact", hasArgument: true, executionTarget: "server", source: "app", invocation: "compact" });
+    expect(commands.slice(1).map((c) => c.name)).toEqual(["new", "fork", "name", "model", "thinking", "mcp", "skill", "settings"]);
+    for (const command of commands.slice(1)) expect(command).toMatchObject({ hasArgument: false, executionTarget: "client", source: "app" });
   });
 
   test("pi 工作区:/compact 可用(绑 pi 原生 compaction)", () => {
@@ -36,7 +44,7 @@ describe("可用性矩阵解析(白名单缺省禁用)", () => {
   });
 });
 
-// 合并规则用固定的注册表测(真实注册表的入口类在 P6.4 随前端执行器一起加)。
+// 合并规则用固定的注册表测(真实注册表的行数会随指令增加而变)。
 const registry: CommandDefinition[] = [
   { name: "compact", hasArgument: true, kind: "capability", executionTarget: "server", availability: { chat: true, workspace: { pi: true } } },
   { name: "model", hasArgument: false, kind: "entry", executionTarget: "client", availability: { chat: true, workspace: { pi: true } } },

@@ -137,7 +137,13 @@
       "evening": "Good evening",
       "night": "Up late"
     },
-    "greeting_line": "{{greeting}} — how can I help?"
+    "greeting_line": "{{greeting}} — how can I help?",
+    "commands": {
+      "fork_nothing": "There is no reply to fork yet",
+      "busy": "The conversation is generating or compacting; run the command once it finishes",
+      "aborted": "{{command}} was stopped",
+      "failed": "{{command}} failed: {{error}}"
+    }
   },
   "workspace": {
     "tabs": {

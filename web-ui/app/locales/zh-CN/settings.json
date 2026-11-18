@@ -1412,7 +1412,7 @@
     "tools_title": "工具",
     "tools_desc": "模型可以调用的工具。关闭后不再提供给模型。",
     "commands_title": "指令",
-    "commands_desc": "在输入框输入 / 调用。",
+    "commands_desc": "在输入框输入 / 调用；与别的指令重名时写成 /名称:插件名，从菜单里选会自动填好。",
     "mcp_title": "MCP 服务",
     "mcp_registered": "已登记",
     "mcp_unregistered": "未登记",

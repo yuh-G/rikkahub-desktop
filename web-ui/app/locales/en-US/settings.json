@@ -1412,7 +1412,7 @@
     "tools_title": "Tools",
     "tools_desc": "Tools the model can call. When off, they are no longer offered to the model.",
     "commands_title": "Commands",
-    "commands_desc": "Type / in the input box to run them.",
+    "commands_desc": "Type / in the input box to run them. When a name clashes with another command, it is written /name:plugin; picking it from the menu fills that in.",
     "mcp_title": "MCP servers",
     "mcp_registered": "Registered",
     "mcp_unregistered": "Not registered",

@@ -10,10 +10,11 @@ import { ModelList } from "~/components/input/model-list";
 import { SearchPickerButton } from "~/components/input/search-picker";
 import { MemoryBadge } from "~/components/memory/memory-badge";
 import { ExtensionPickerButton } from "~/components/input/extension-picker";
-import { CommandHighlightOverlay, SlashCommandMenu, TEXTAREA_METRICS } from "~/components/input/slash-command-menu";
+import { CommandHighlightOverlay, SlashCommandMenu, TEXTAREA_METRICS, slashOptionId } from "~/components/input/slash-command-menu";
 import { WorkspacePermissionPicker } from "~/components/input/workspace-permission-picker";
 import { WorkspaceFilesButton } from "~/components/input/workspace-files-button";
 import { useSlashCommand } from "~/hooks/use-slash-command";
+import type { ComposerPicker, ComposerPickerRequest, SlashCommandComposer } from "~/lib/client-commands";
 import { parseSlashCommand, type SlashCommandDto } from "~/lib/slash-commands";
 import { useChatInputStore, useSettingsStore } from "~/stores";
 import { Button } from "~/components/ui/button";
@@ -52,10 +53,15 @@ export interface ChatInputProps {
    *  指令面整体关闭,推荐列表/染色/拦截均不生效)。 */
   slashCommands?: SlashCommandDto[];
   /** 斜杠指令拦截执行(完整指令提交时调用;输入框随即清空,不发消息)。执行中的
-   *  状态与结果反馈由执行器自理(压缩中提示/toast),不占用发送按钮。 */
+   *  状态与结果反馈由执行器自理(压缩中提示/toast),不占用发送按钮。composer = 本输入框交给执行器的能力
+   *  (打开右下角模型菜单、左下角「MCP 与拓展」等)。 */
   /** 域5-1(3F):返回 Promise<boolean>;true/undefined=已受理(输入框维持清空),
    *  false/抛错=未受理(输入框回填原始指令文本)。 */
-  onSlashCommand?: (name: string, argument: string) => Promise<boolean | void> | boolean | void;
+  onSlashCommand?: (
+    command: SlashCommandDto,
+    argument: string,
+    composer: SlashCommandComposer,
+  ) => Promise<boolean | void> | boolean | void;
   /** 产品决策①:安卓"清除上下文"对齐(切换语义,再点一次撤销)。 */
   // 提示词优化时,返回最近几轮对话的纯文本作为上下文(让优化模型理解模糊指代)。
   // 无对话(首条消息)时返回空串。只在用户点击"优化提示词"时调用。
@@ -396,6 +402,18 @@ function ChatInputInner({
     [availableSlashCommands, slashEnabled, value],
   );
   const commandPainted = parsedCommand !== null && !imeComposing;
+  // 指令打开输入框里的选择器:请求带递增序号交给对应选择器,它见到新序号才动。提交期间选择器是禁用的,
+  // 所以执行器只记下要开哪个,等提交收尾(submitting 复位)再递出去,两个状态在同一次渲染里生效。
+  const [pickerRequest, setPickerRequest] = React.useState<ComposerPickerRequest | null>(null);
+  const pendingPickerRef = React.useRef<ComposerPicker | null>(null);
+  const slashComposer = React.useMemo<SlashCommandComposer>(
+    () => ({
+      openPicker: (picker: ComposerPicker) => {
+        pendingPickerRef.current = picker;
+      },
+    }),
+    [],
+  );
   // 镜像挂载/文本变化时同步滚动位置(textarea 打字会自滚动)。
   React.useEffect(() => {
     const overlay = commandOverlayRef.current;
@@ -453,7 +471,7 @@ function ChatInputInner({
           const originalText = value;
           onValueChange("");
           try {
-            const accepted = await onSlashCommand(command.name, argument);
+            const accepted = await onSlashCommand(command, argument, slashComposer);
             if (accepted === false) onValueChange(originalText);
           } catch {
             onValueChange(originalText);
@@ -474,8 +492,13 @@ function ChatInputInner({
       setError(message);
     } finally {
       setSubmitting(false);
+      const picker = pendingPickerRef.current;
+      if (picker) {
+        pendingPickerRef.current = null;
+        setPickerRequest((previous) => ({ picker, seq: (previous?.seq ?? 0) + 1 }));
+      }
     }
-  }, [actionDisabled, canSend, canStop, isGenerating, onSend, onSlashCommand, onStop, onValueChange, parsedCommand, t, value]);
+  }, [actionDisabled, canSend, canStop, isGenerating, onSend, onSlashCommand, onStop, onValueChange, parsedCommand, slashComposer, t, value]);
 
   const handleOptimize = React.useCallback(async () => {
     const original = value.trim();
@@ -921,7 +944,7 @@ function ChatInputInner({
               aria-controls={slash.menuOpen ? SLASH_MENU_ID : undefined}
               aria-activedescendant={
                 slash.menuOpen && slash.matches[slash.selectedIndex]
-                  ? `${SLASH_MENU_ID}-option-${slash.matches[slash.selectedIndex].name}`
+                  ? slashOptionId(SLASH_MENU_ID, slash.matches[slash.selectedIndex])
                   : undefined
               }
               className={cn(
@@ -1046,6 +1069,7 @@ function ChatInputInner({
                 onChange={extensions.change}
                 ready={extensions.ready}
                 disabled={!canSwitchModel}
+                openRequest={pickerRequest}
               />
               <WorkspaceFilesButton />
               <WorkspacePermissionPicker />
@@ -1090,7 +1114,7 @@ function ChatInputInner({
                   {t("optimize.undo")}
                 </Button>
               ) : null}
-              <ModelList disabled={!canSwitchModel} />
+              <ModelList disabled={!canSwitchModel} openRequest={pickerRequest} />
               {/* cpd-action-btn:语音/发送合一——空文本=麦克风(常驻底色),有文本=
                   品牌色上箭头,录音=红底声纹条,生成中=红底停止。状态切换带宽度/配色过渡。
                   消息发送队列:生成中且有文本 → 上箭头=「发送并排队」(不打断当前流);仅空文本才落红停止。 */}
