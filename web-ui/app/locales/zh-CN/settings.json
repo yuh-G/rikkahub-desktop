@@ -610,7 +610,11 @@
     "show_sensitive": "显示敏感信息",
     "hide_sensitive": "隐藏敏感信息",
     "request_body": "请求体",
-    "response_body": "响应体"
+    "response_body": "响应体",
+    "body_loading": "正在读取正文…",
+    "body_released": "这条记录较早，正文已释放以节省内存（只保留最近记录的正文）",
+    "body_unavailable": "这条记录已不在服务端（日志被清空或已被更新的记录挤出），正文无法查看",
+    "body_length": "{{chars}} 字符"
   },
   "search": {
     "add": "添加搜索引擎",

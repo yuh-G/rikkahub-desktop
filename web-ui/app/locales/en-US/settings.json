@@ -610,7 +610,11 @@
     "show_sensitive": "Show sensitive",
     "hide_sensitive": "Hide sensitive",
     "request_body": "Request body",
-    "response_body": "Response body"
+    "response_body": "Response body",
+    "body_loading": "Loading body…",
+    "body_released": "This record is older; its body was released to save memory (only recent records keep their bodies)",
+    "body_unavailable": "This record is no longer on the server (logs were cleared or it was pushed out by newer records); its body is unavailable",
+    "body_length": "{{chars}} chars"
   },
   "search": {
     "add": "Add search engine",

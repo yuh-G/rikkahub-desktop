@@ -20,7 +20,7 @@ import { toolExecutionErrorPayload } from "../tools/format";
 import { finishReasoningParts } from "./parts";
 import type { StreamHooksWithSink, ToolCall, ToolDispatchContext, ToolResult } from "./events";
 import type { ToolOutputEntry, ToolPart } from "../foundation/types";
-import { jsonBody, textBody } from "../model-providers";
+import { textBody } from "../model-providers";
 import { addLog } from "../api/logs";
 import { touchStream } from "../api/sse";
 import { isRecord } from "../foundation/utils";
@@ -68,12 +68,13 @@ export const STREAM_IDLE_TIMEOUT_MS = 120_000;
 async function fetchRoundWithHeaderTimeout(
   adapter: ProviderRoundAdapter,
   requestBody: Record<string, unknown>,
+  requestText: string,
   round: number,
   externalSignal: AbortSignal | undefined,
   nonStream: boolean,
 ): Promise<Response> {
   const timeoutMs = adapter.headerTimeoutMs(requestBody, nonStream);
-  if (timeoutMs <= 0) return adapter.fetchRound(requestBody, round, externalSignal, nonStream);
+  if (timeoutMs <= 0) return adapter.fetchRound(requestBody, round, externalSignal, nonStream, requestText);
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | null = null;
   let abortHandler: (() => void) | null = null;
@@ -90,7 +91,7 @@ async function fetchRoundWithHeaderTimeout(
     () => controller.abort(new Error(`响应头超时:${Math.round(timeoutMs / 1000)}s 内未收到上游响应`)),
     timeoutMs,
   );
-  return adapter.fetchRound(requestBody, round, controller.signal, nonStream).finally(cleanup);
+  return adapter.fetchRound(requestBody, round, controller.signal, nonStream, requestText).finally(cleanup);
 }
 
 export function toolCallContext(hooks?: StreamHooksWithSink): ToolDispatchContext | undefined {
@@ -132,8 +133,9 @@ export interface ProviderRoundAdapter {
   /** 请求日志的 requestHeaders 字段。 */
   logHeaders: Record<string, string>;
   /** 发起单轮请求。骨架统一负责"头超时 + 外部 signal 桥接"(R3-1),传入桥接后的 signal;
-   *  adapter 只管拼 url/headers/body 并把 signal 透传给 fetch。 */
-  fetchRound(requestBody: Record<string, unknown>, round: number, signal: AbortSignal | undefined, nonStream?: boolean): Promise<Response>;
+   *  adapter 只管拼 url/headers/body 并把 signal 透传给 fetch。bodyText 是骨架序列化好的
+   *  requestBody(请求日志用的也是它),请求体原样发出时直接用,不要再序列化一遍。 */
+  fetchRound(requestBody: Record<string, unknown>, round: number, signal: AbortSignal | undefined, nonStream: boolean | undefined, bodyText: string): Promise<Response>;
   /** 本轮"响应头超时"预算(ms):上游 TCP 通但迟迟不回响应头时的看门狗;返回 0 表示禁用。
    *  下沉自 OpenAI,三家统一后 Claude/Google 主链路不再无超时裸奔;现三家流式/非流式
    *  均取 600s(2026-08-01 非流式对齐流式)。 */
@@ -176,7 +178,7 @@ function logRound(
   adapter: ProviderRoundAdapter,
   round: number,
   startedAt: number,
-  requestBody: Record<string, unknown>,
+  requestText: string,
   fields: { ok: boolean; status: number; responseHeaders?: Record<string, string>; responseBody: string; error?: string },
 ): void {
   addLog({
@@ -190,7 +192,7 @@ function logRound(
     method: "POST",
     requestHeaders: adapter.logHeaders,
     ...(fields.responseHeaders ? { responseHeaders: fields.responseHeaders } : {}),
-    requestBody: jsonBody(requestBody),
+    requestBody: requestText,
     responseBody: fields.responseBody,
     ...(fields.error !== undefined ? { error: fields.error } : {}),
   });
@@ -240,13 +242,15 @@ export async function runStreamingToolLoop(
       : forceNonStream && adapter.nonStreamFallback
         ? adapter.nonStreamFallback.makeBody(currentBody)
         : currentBody;
+    // 发出去与记日志共用一份序列化结果(长会话的请求体随上下文变长)
+    const requestText = JSON.stringify(requestBody);
 
     let response: Response;
     try {
-      response = await fetchRoundWithHeaderTimeout(adapter, requestBody, round, signal, nonStreamRound);
+      response = await fetchRoundWithHeaderTimeout(adapter, requestBody, requestText, round, signal, nonStreamRound);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      logRound(adapter, round, roundStarted, requestBody, { ok: false, status: 0, responseBody: "", error: detail });
+      logRound(adapter, round, roundStarted, requestText, { ok: false, status: 0, responseBody: "", error: detail });
       if (adapter.nonStreamFallback && !forceNonStream && !userNonStream && !signal?.aborted) {
         forceNonStream = true;
         hooks.sink?.({ kind: "reasoning_delta", text: `${adapter.nonStreamFallback.connectHint} ${detail}` });
@@ -258,7 +262,7 @@ export async function runStreamingToolLoop(
 
     if (!response.ok) {
       const text = await response.text();
-      logRound(adapter, round, roundStarted, requestBody, {
+      logRound(adapter, round, roundStarted, requestText, {
         ok: false,
         status: response.status,
         responseHeaders: Object.fromEntries(response.headers.entries()),
@@ -272,7 +276,7 @@ export async function runStreamingToolLoop(
     try {
       result = await adapter.readRound(response, signal, nonStreamRound);
     } catch (err) {
-      logRound(adapter, round, roundStarted, requestBody, {
+      logRound(adapter, round, roundStarted, requestText, {
         ok: false,
         status: response.status,
         responseHeaders: Object.fromEntries(response.headers.entries()),
@@ -305,7 +309,7 @@ export async function runStreamingToolLoop(
       else hooks.message.usage = mergeTokenUsage(hooks.message.usage, usagePayload);
     }
 
-    logRound(adapter, round, roundStarted, requestBody, {
+    logRound(adapter, round, roundStarted, requestText, {
       ok: true,
       status: response.status,
       responseHeaders: Object.fromEntries(response.headers.entries()),

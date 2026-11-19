@@ -510,6 +510,7 @@ export async function streamInteractionsChatWithTools(
     providerItem,
     logUrl: url,
     logHeaders: headers,
+    // 这一家的流式开关要改进请求体,发出去的与骨架记进日志的那份差一个 stream 字段,只能另序列化
     fetchRound: (requestBody, _round, sig, nonStream) => fetch(url, {
       method: "POST",
       headers: nonStream ? headers : { ...headers, Accept: "text/event-stream" },

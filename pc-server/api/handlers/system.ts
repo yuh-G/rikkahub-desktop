@@ -16,6 +16,7 @@ import { stripAuthSecrets } from "../auth";
 import { appClients, mcpHealthSnapshotFrame, openSse } from "../sse";
 import { memoryStore } from "../../memory/index";
 import { recentAppErrors } from "../../observability/app-errors";
+import { logListItem } from "../logs";
 import { computeStats } from "../../conversations/stats";
 import { getConversation } from "../../conversations";
 import { DEFAULT_PROMPT_OPTIMIZE_PROMPT, PROMPT_OPTIMIZE_OUTPUT_TOKENS } from "../../app-config/prompts";
@@ -273,7 +274,12 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
       return error(err instanceof Error ? err.message : String(err), 502);
     }
   }
-  if (path === "logs" && request.method === "GET") return json(state.logs);
+  if (path === "logs" && request.method === "GET") return json(state.logs.map(logListItem));
+  const logDetail = path.match(/^logs\/([^/]+)$/);
+  if (logDetail && request.method === "GET") {
+    const entry = state.logs.find((log) => log.id === decodeURIComponent(logDetail[1]!));
+    return entry ? json(entry) : error("Log not found", 404);
+  }
   if (path === "logs" && request.method === "DELETE") {
     state.logs = [];
     saveState();

@@ -621,6 +621,12 @@ async function api(path: string, init: RequestInit = {}) {
   return data;
 }
 
+/** 日志列表不带正文(PF.4),要看正文就按 id 逐条取详情。 */
+async function logsWithBodies(): Promise<AnyRecord[]> {
+  const list = await api("/api/logs");
+  return Promise.all(list.map((log: AnyRecord) => api(`/api/logs/${encodeURIComponent(log.id)}`)));
+}
+
 async function uploadFile(path: string, file: File) {
   const form = new FormData();
   form.append("files", file);
@@ -2030,7 +2036,7 @@ async function runImageGenerationSmoke() {
   const stateAfter = JSON.parse(readFileSync(join(tempDir, "state.json"), "utf8"));
   assert(stateAfter.generatedImages.some((item: AnyRecord) => item.type === "image_generation" && item.prompt === "smoke generated image"), "generated image was not persisted");
   assert(stateAfter.generatedImages.some((item: AnyRecord) => item.type === "image_edit" && item.sourceFileIds?.[0] === referenceId), "edited image reference was not persisted");
-  const imageLogs = await api("/api/logs");
+  const imageLogs = await logsWithBodies();
   assert(imageLogs.some((log: AnyRecord) => log.kind === "provider:image:generation" && log.requestBody?.includes("smoke generated image")), "image generation log missing request body");
   assert(imageLogs.some((log: AnyRecord) => log.kind === "provider:image:edit" && log.requestBody?.includes("reference.png")), "image edit log missing multipart reference body");
   return { generated: generated.images.length, edited: edited.images.length, referenceId };
@@ -2115,7 +2121,7 @@ async function runEpubStatsLogsSmoke() {
   const groupNames = (stats.requestGroups ?? []).map((item: AnyRecord) => item.name);
   assert(groupNames.includes("模型请求"), "stats missing model request group");
   assert(stats.totals?.requests > 0, "stats missing request totals");
-  const logs = await api("/api/logs");
+  const logs = await logsWithBodies();
   // logs 已改为内存态(最近 100 条,对齐移动端)。备份导入会重置 logs/stats,此时只剩
   // imageGen + epub 产生的新日志。验证完整 body + method/headers 字段对齐移动端。
   assert(logs.some((log: AnyRecord) => log.requestBody && log.responseBody), "logs missing request/response body");
@@ -2300,7 +2306,7 @@ async function main() {
     const webDavBackup = await runWebDavBackupSmoke();
     const imageGeneration = await runImageGenerationSmoke();
     const epubStatsLogs = await runEpubStatsLogsSmoke();
-    const logs = await api("/api/logs");
+    const logs = await logsWithBodies();
     assert(logs.some((log: AnyRecord) => log.requestBody), "no request log with body captured");
     assert(logs.some((log: AnyRecord) => log.method && log.requestHeaders), "no request log with method/headers captured");
     console.log(JSON.stringify({

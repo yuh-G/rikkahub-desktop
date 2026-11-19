@@ -420,6 +420,11 @@ export interface RequestLog {
   responseBody?: string;
   responseHeaders?: Record<string, string>;
   toolName?: string;
+  /** 请求体 / 响应体的字符数(PF.4):入列时记下,正文被释放后列表与详情仍能显示大小。 */
+  requestBodyLength?: number;
+  responseBodyLength?: number;
+  /** 正文因内存预算被释放(api/logs.ts 的 LOG_BODY_BUDGET_CHARS);条目本身还在。 */
+  bodiesReleased?: boolean;
 }
 
 // 与 logs 解耦的持久化请求统计累加器。logs 已改为内存态(重启清空,对齐移动端),
