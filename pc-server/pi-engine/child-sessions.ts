@@ -11,7 +11,7 @@
 // - 其余(插件自己登记的工具)是插件代码,不另加审批:发起子任务的那个插件工具已经过了审批。
 // 发起者经 AsyncLocalStorage 认领:runner 把生成与指令执行包在 runAsPiChildOwner 里,插件在其中另起的会话
 // (含转入后台继续跑的)都继承它。认领不到、或这一轮已结束(接线已清空),内建工具一律拒绝。
-// 插件以 pi 命令行模式再启动本程序跑后台子任务的做法不支持,入口处拦截(server.ts)。
+// 插件以 pi 命令行模式再启动本程序跑后台子任务的做法不支持,入口处拦截(foundation/process-roles.ts)。
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { BeforeToolCallContext, BeforeToolCallResult } from "../../pi/packages/agent/src/types.ts";

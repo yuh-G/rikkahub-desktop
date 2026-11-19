@@ -14,12 +14,12 @@
 // 「::1 端口被占」与「本机根本没有 IPv6 回环」——所以先用 OS 分配端口单独探一次 ::1,探得通才把它
 // 编入绑定组;否则禁用 IPv6 的机器会把每个端口都误判成被占、一路顺延到失败。
 //
-// 本模块只管「怎么绑」,提示文案与退出码留在 server.ts。
+// 本模块只管「怎么绑」,提示文案与退出码留在 server-main.ts。
 
 import { LOOPBACK_GROUP, isLoopbackHostname } from "./loopback";
 
 // 回环主机名判定收在 loopback.ts(纯模块,web-ui 可经 @server 打包);此处 re-export
-// 保持「绑定策略」的既有导入面,server.ts / api/auth.ts 不必改导入路径。
+// 保持「绑定策略」的既有导入面,server-main.ts / api/auth.ts 不必改导入路径。
 export { isLoopbackHostname };
 
 /** 界面拨号主机:Tauri 壳导航(web-ui/src-tauri/src/lib.rs 同名常量,契约测试锁一致)、便携模式

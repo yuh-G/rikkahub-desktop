@@ -3,7 +3,7 @@
 // 替身子代理插件:登记一个工具,执行时经虚拟模块拿到 pi 的 createAgentSession,另开一个默认工具(pi 默认后端)
 // 的会话跑子任务。锁定:①插件拿到的就是应用这份 pi(原型上的约束对它生效);②子会话的内建工具经发起这一轮的
 // 审批口判定(来源 engine、noPrompt),default 放行范围下区外写入与危险命令被拒、区内照常;③这一轮没有工作区工具时
-// 子会话的内建工具一律拒绝;④本程序被当作 pi 命令行再启动时入口能认出来。
+// 子会话的内建工具一律拒绝。「本程序被当作 pi 命令行再启动」的识别在 foundation/process-roles.test.ts。
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,7 +15,6 @@ import { model, provider } from "../model-providers";
 import { sessionViewOf } from "../test-utils/engine-session-view";
 import { startFakeOpenAiSse, type FakeOpenAiSseServer } from "../test-utils/fake-openai-sse";
 import type { PiBuiltinToolApproval } from "./builtin-tools";
-import { isPiCliRelaunch } from "./cli-relaunch";
 import { createPiSessionResources } from "./resources";
 import { runPiGeneration } from "./runner";
 
@@ -147,14 +146,4 @@ describe("插件另开的会话", () => {
     }
     expect(existsSync(join(cwd, "inside.txt"))).toBe(false);
   }, 30_000);
-});
-
-describe("当作 pi 命令行再启动", () => {
-  test("后台运行器的环境变量或 pi 命令行参数 → 认出;本程序自己的参数不误判", () => {
-    expect(isPiCliRelaunch(["rikkahub-pc.exe"], { PI_SUBAGENT_RUNNER_CONFIG: "C:\\tmp\\cfg.json" })).toBe(true);
-    expect(isPiCliRelaunch(["rikkahub-pc.exe", "--no-session", "--mode", "rpc", "--extension", "x.js"], {})).toBe(true);
-    expect(isPiCliRelaunch(["rikkahub-pc.exe", "--mode=json"], {})).toBe(true);
-    expect(isPiCliRelaunch(["rikkahub-pc.exe", "--port", "17455", "--ui-shell", "--no-open"], {})).toBe(false);
-    expect(isPiCliRelaunch(["bun", "server.ts", "--dev"], {})).toBe(false);
-  });
 });

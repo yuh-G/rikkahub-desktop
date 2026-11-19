@@ -2,11 +2,11 @@
 // 此前整个启动序列 = "server.ts import 块的求值顺序 + 三处模块顶层副作用"
 // (state-load 装载迁移、conversations 定时器、api/sse 接线),约束只靠 import 顺序
 // 隐式保证,且任何脚本/测试 import 到 state-load 就会执行真实磁盘迁移。
-// R1-1:本函数改为异步,由 server.ts 在 Bun.serve 绑端口、打出 RIKKAHUB_PORT 标记之后
+// R1-1:本函数改为异步,由 server-main.ts 在 Bun.serve 绑端口、打出 RIKKAHUB_PORT 标记之后
 // 调用——重数据老用户的一次性迁移可达分钟级,旧的"先迁移后绑端口"会撞上壳的就绪
 // 超时被连坐击杀,形成每次启动都从头重来的死循环。迁移期间 fetch 入口按启动闸门
 // (foundation/startup-gate)把 /api 挡成 503,前端渲染迁移进度页。
-// 实例锁(1-5)也随之移交 server.ts:锁冲突必须抢在端口标记打出之前退出,否则壳已
+// 实例锁(1-5)也随之移交 server-main.ts:锁冲突必须抢在端口标记打出之前退出,否则壳已
 // 拿到端口并导航,只会看到一扇死窗口。
 
 import { applyEffectiveProxy, installProxyFetchInterceptor, primeSystemProxyCache } from "./foundation/net";

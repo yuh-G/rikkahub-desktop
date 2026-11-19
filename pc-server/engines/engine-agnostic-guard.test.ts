@@ -5,8 +5,10 @@
 // 注册表拿到驱动句柄,只认契约。只查直接 import——注册表本身就是组装点,传递依赖经过它是
 // 设计使然。测试文件不在约束内(测试可以直接构造引擎夹具)。
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+
+import { closureHitsUnder, runtimeImportClosure, runtimeSpecifiers } from "../test-utils/import-closure";
 
 const serverRoot = resolve(import.meta.dir, "..");
 const forbiddenRoots = [join(serverRoot, "pi-engine"), resolve(serverRoot, "..", "pi")];
@@ -66,42 +68,9 @@ describe("引擎中立卫兵(§5.3 不变式 1)", () => {
 // import 一样会让子进程加载应用状态。只跟运行时导入(import type 在编译期擦除);vendored pi/ 不展开。
 const appStateRoots = ["persistence", "conversations", "api"].map((dir) => join(serverRoot, dir));
 
-/** 运行时导入的相对说明符:排除 `import type` / `export type`,含多行 import 与动态 import()。 */
-function runtimeSpecifiers(src: string): string[] {
-  const staticPattern = /^\s*(?:import|export)\s+(?!type\b)(?:[^"';]*?\sfrom\s+)?["'](\.{1,2}\/[^"']+)["']/gm;
-  const dynamicPattern = /\bimport\s*\(\s*["'](\.{1,2}\/[^"']+)["']/g;
-  return [...src.matchAll(staticPattern), ...src.matchAll(dynamicPattern)].map((match) => match[1]!);
-}
-
-function resolveModule(from: string, specifier: string): string | null {
-  const target = resolve(dirname(from), specifier);
-  for (const candidate of [target, `${target}.ts`, join(target, "index.ts")]) {
-    if (candidate.endsWith(".ts") && existsSync(candidate) && statSync(candidate).isFile()) return candidate;
-  }
-  return null;
-}
-
 /** 从入口出发的运行时导入闭包;返回落进应用状态目录的模块及其导入链。 */
 function appStateReachableFrom(entries: string[]): string[] {
-  const parent = new Map<string, string | null>(entries.map((entry) => [entry, null]));
-  const queue = [...entries];
-  const piRoot = resolve(serverRoot, "..", "pi");
-  while (queue.length > 0) {
-    const file = queue.shift()!;
-    for (const specifier of runtimeSpecifiers(readFileSync(file, "utf8"))) {
-      const target = resolveModule(file, specifier);
-      if (!target || target.startsWith(piRoot + sep) || parent.has(target)) continue;
-      parent.set(target, file);
-      queue.push(target);
-    }
-  }
-  return [...parent.keys()]
-    .filter((file) => appStateRoots.some((root) => file.startsWith(root + sep)))
-    .map((file) => {
-      const chain: string[] = [];
-      for (let cur: string | null = file; cur; cur = parent.get(cur) ?? null) chain.unshift(relative(serverRoot, cur).replaceAll("\\", "/"));
-      return chain.join(" → ");
-    });
+  return closureHitsUnder(runtimeImportClosure(entries, [resolve(serverRoot, "..", "pi")]), appStateRoots, serverRoot);
 }
 
 describe("pi 驱动可搬迁卫兵(P2.6)", () => {

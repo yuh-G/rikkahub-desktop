@@ -73,7 +73,7 @@ describe("boot-trace 取证黑匣子", () => {
     const log = readPreviousCrashLogIn(dir);
     expect(log).not.toBeNull();
     expect(log!.content).toContain("外力终止");
-    expect(log!.level).toBe("external"); // server.ts 据此静默:托盘用户"点X→关机"不再被骚扰
+    expect(log!.level).toBe("external"); // server-main.ts 据此静默:托盘用户"点X→关机"不再被骚扰
   });
 
   test("运行期记录到异常(uncaughtException)→ 即使里程碑全完成也是 abnormal", () => {

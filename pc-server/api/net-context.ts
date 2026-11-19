@@ -1,6 +1,6 @@
 // api/net-context.ts — 每请求网络上下文(回环判定)。
 //
-// server.ts 在 serve fetch 里标记(只有那里拿得到 server.requestIP),handler 层按需查询,
+// server-main.ts 在 serve fetch 里标记(只有那里拿得到 server.requestIP),handler 层按需查询,
 // 避免为个别端点改动 routeApi 与全部 handler 的签名。WeakSet 键住 Request 对象本身,
 // 生命周期与请求同长,零泄漏。
 //

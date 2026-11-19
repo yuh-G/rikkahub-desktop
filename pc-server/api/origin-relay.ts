@@ -225,7 +225,7 @@ export function createOriginRelayApi(opts: {
   try {
     desktopHost = new URL(currentOrigin).host.toLowerCase();
   } catch {
-    // currentOrigin 由 server.ts 用 uiOrigin(port) 拼出,恒可解析;防御分支,不触发。
+    // currentOrigin 由 server-main.ts 用 uiOrigin(port) 拼出,恒可解析;防御分支,不触发。
   }
   let lastRecordedOrigin = opts.recordedOrigin ?? null;
   let runtime: RelayRuntime | null = null;

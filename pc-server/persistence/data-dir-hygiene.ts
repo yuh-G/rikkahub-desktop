@@ -1,6 +1,6 @@
 // persistence/data-dir-hygiene.ts — 数据目录卫生(全面审查 R1-13)
 // 原则(审查阶段九):只碰"冗余/可再生/已过期"三类,绝不触碰唯一副本;每次清理在
-// 错误中心留 info 级痕迹。就绪后由 server.ts 异步触发,失败只留痕、不影响运行。
+// 错误中心留 info 级痕迹。就绪后由 server-main.ts 异步触发,失败只留痕、不影响运行。
 // 保留策略(批次四决策,详见发现文档批次四记录):
 // - corrupt-* 损坏隔离文件(活库/记忆):同族保最新一份(取证价值),其余超龄 30 天清;
 // - pi-agent/:旧版 pi 数据目录(装过 jsonl 时代的引擎记忆与空置的客房),pi 的数据目录已迁到
@@ -151,7 +151,7 @@ export function sweepLegacyPiAgentDirIn(dir: string): boolean {
   }
 }
 
-/** 就绪后异步执行的卫生任务总入口(server.ts 调用)。 */
+/** 就绪后异步执行的卫生任务总入口(server-main.ts 调用)。 */
 export async function runDataDirHygiene(): Promise<void> {
   try {
     // 让开启动后的首屏请求高峰

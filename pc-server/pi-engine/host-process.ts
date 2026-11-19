@@ -2,6 +2,7 @@
 //
 //   bun run pi-engine/host-process.ts      (父进程经 stdio 连接,见 scripts/engine-contract-smoke.ts)
 //
+// 也是进程角色 engine-host 的主体:入口 server.ts 认出角色后动态加载本文件(foundation/process-roles.ts)。
 // stdin / stdout 是契约的行帧通道(engines/stdio-transport):本进程建 pi 驱动,驱动拿到的 EngineHost
 // 是经 stdio 回调父进程的代理。驱动只经契约拿应用的东西,所以这里不加载任何应用状态
 // (engines/engine-agnostic-guard.test.ts 锁 pi-engine 的导入闭包不含 persistence/conversations/api)。
