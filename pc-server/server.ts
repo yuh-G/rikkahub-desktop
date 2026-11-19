@@ -460,8 +460,8 @@ async function flushAllStateBeforeExit(): Promise<void> {
   try {
     flushConvDirtyNow();
     // 全面审查 2-0b:生成中的会话再做一次全量 reconcile——流式增量 flush 只补写脏节点,
-    // 结构性变更(新增节点/截断/重排)要靠 persistConversation 的"删旧节点+按序重插"
-    // 才完整落盘。生成中会话通常 0~2 个,同步全量写可承受。
+    // 结构性变更(新增节点/截断/重排)要靠 persistConversation 的逐节点对账(删掉多余的、
+    // 补上缺的、更新序号)才完整落盘。生成中会话通常 0~2 个,同步全量写可承受。
     for (const convId of generating.keys()) {
       const conv = getConversation(convId);
       if (conv) persistConversation(conv);
