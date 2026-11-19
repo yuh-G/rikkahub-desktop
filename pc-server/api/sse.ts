@@ -54,6 +54,12 @@ export function scheduleNodeBroadcast(conversation: Conversation, node: MessageN
   if (existing.timer) return;
   existing.timer = setTimeout(() => flushNodeBroadcast(key), STREAM_BROADCAST_INTERVAL_MS - elapsed);
 }
+/** 立刻发掉这个节点挂在合帧定时器里的帧,没有挂着的就什么都不做;发增量还是关键帧照旧由指纹判定。
+ *  一轮收尾之前用(PF.5,见 orchestrator generateAnswer)。 */
+export function flushPendingNodeBroadcast(conversation: Conversation, node: MessageNode) {
+  const key = `${conversation.id}::${node.id}`;
+  if (pendingBroadcasts.get(key)?.timer) flushNodeBroadcast(key);
+}
 function clearNodeBroadcast(conversation: Conversation, node: MessageNode) {
   const key = `${conversation.id}::${node.id}`;
   const entry = pendingBroadcasts.get(key);

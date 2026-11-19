@@ -10,7 +10,7 @@ import { classifyProxyError, resolveUserAgent } from "../foundation/net";
 import { classifyContextOverflowError, classifyOAuthCredentialError, classifyOutputCapError, classifyRateLimitError } from "../inference-engine/provider-errors";
 import { state } from "../persistence/json-store";
 import { addLog } from "../api/logs";
-import { broadcastConversation, broadcastEngineStatus, broadcastList, broadcastNodeUpdate, touchStream } from "../api/sse";
+import { broadcastConversation, broadcastEngineStatus, broadcastList, broadcastNodeUpdate, flushPendingNodeBroadcast, touchStream } from "../api/sse";
 import { findModel } from "../model-providers";
 import {
   finishReasoningParts,
@@ -1099,6 +1099,11 @@ export async function generateAnswer(
       sink,
       controller.signal,
     );
+    // PF.5:收尾(输出变换、对账落库、快照、克隆)是一整段同步代码,入队的 SSE 字节要等事件循环转回来才写进套接字。
+    // 先发掉挂在 33ms 合帧定时器里的最后一帧,再让出一个宏任务让它出门,然后才收尾——帧的种类与先后不变,
+    // 最后几个字不再等落库。让出期间被接管、被删、被停的,由紧接着的中止判定照常处理。
+    flushPendingNodeBroadcast(conversation, session.node);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     if (controller.signal.aborted) throw new DOMException("Generation stopped", "AbortError");
     if (capabilities.resumeSemantics === "pause-resume" && hasPendingToolApproval(session.message)) {
       // 注:hasPendingToolApproval 判定在 applyOutputTransforms 之前与旧实现一致——
