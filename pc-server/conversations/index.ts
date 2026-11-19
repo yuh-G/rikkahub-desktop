@@ -10,7 +10,7 @@ import { hasQueuedMessages } from "./message-queue";
 import { getConversationMeta } from "./read-queries";
 import { generating } from "./generation-state";
 import type { Conversation, ConversationListDto, JsonValue, Message, MessageNode, MessageNodeDto, PcConversationRow, PcEngineTablesRows, PcMessageNodeRow, PcWorkspaceRow } from "../foundation/types";
-import { clearAllFts, deleteConversationFts, ensureMessageFtsTable, ftsRowCount, rebuildFtsFromNodeTable, replaceNodeFts } from "./fts";
+import { clearAllFts, ensureFtsDirectory, ensureMessageFtsTable, ftsRowCount, rebuildFtsFromNodeTable, replaceNodeFts } from "./fts";
 import { reportError } from "../observability/app-errors";
 import { copyEngineEntries, copyEngineTablesInto, ensureEngineEntryTables, pruneOrphanEngineEntries, refillEngineTables, snapshotLiveEngineTables } from "./engine-entries";
 import { collectPcFileRefs } from "../backup/file-refs";
@@ -214,6 +214,13 @@ function openConversationsDbUnsafe(): InstanceType<typeof Database> {
       }
     } catch (ftsErr) {
       console.warn("[conv-db] FTS 重建失败（搜索降级为空结果，不影响会话读写）:", ftsErr);
+    }
+    // 行号目录自检：第一次升级、或老版本写过这个库之后，按 FTS 现有内容重建目录（一次扫描，不重新分词）。
+    try {
+      const rebuiltDirectory = ensureFtsDirectory(db);
+      if (rebuiltDirectory) console.log(`[conv-db] 全文索引行号目录重建完成：${rebuiltDirectory.directoryRows} 行，清掉孤儿索引行 ${rebuiltDirectory.orphanRows} 行`);
+    } catch (dirErr) {
+      console.warn("[conv-db] 全文索引行号目录重建失败（改写节点时旧索引行可能残留，不影响会话读写）:", dirErr);
     }
     return db;
   } catch (err) {
@@ -464,7 +471,6 @@ export function persistConversation(conv: Conversation): void {
   const txn = db.transaction(() => {
     upsertConversationRow(conv);
     deleteNodes.run(conv.id);
-    deleteConversationFts(db, [conv.id]);
     for (let i = 0; i < (conv.messages ?? []).length; i += 1) {
       const node = conv.messages[i];
       if (!node?.id) continue;
@@ -486,14 +492,12 @@ export function persistForkedConversation(fork: Conversation, sourceConversation
   })();
 }
 
-/** 删除会话(CASCADE 带走其节点行,依赖 foreign_keys=ON)。 */
+/** 删除会话(CASCADE 带走其节点行,节点行再带走全文索引的目录行与索引行;依赖 foreign_keys=ON)。 */
 export function deletePcConversations(ids: string[]): void {
   if (!conversationsDb || ids.length === 0) return;
   const stmt = conversationsDb.prepare("DELETE FROM pc_conversation WHERE id = ?");
-  const db = conversationsDb;
-  const txn = db.transaction(() => {
+  const txn = conversationsDb.transaction(() => {
     for (const idValue of ids) stmt.run(idValue);
-    deleteConversationFts(db, ids);
   });
   txn();
 }
@@ -630,7 +634,6 @@ export function migrateConversationsIntoDb(db: InstanceType<typeof Database>, co
         conv.extensionSelection ? JSON.stringify(conv.extensionSelection) : null,
       );
       deleteNodes.run(conv.id);
-      deleteConversationFts(db, [conv.id]);
       for (let i = 0; i < (conv.messages ?? []).length; i += 1) {
         const node = conv.messages[i];
         if (!node?.id) continue;
@@ -771,8 +774,9 @@ export function resetConversationsDbTo(conversations: Conversation[], workspaces
   const db = conversationsDb;
   const txn = db.transaction(() => {
     const keptEngineTables = engineTables ?? snapshotLiveEngineTables(db);
-    db.exec("DELETE FROM pc_conversation");
+    // 先删表重建索引,再删会话行:反过来的话级联会逐行删索引,每行都要重新分词一遍
     clearAllFts(db);
+    db.exec("DELETE FROM pc_conversation");
     migrateConversationsIntoDb(db, conversations);
     if (keptEngineTables) refillEngineTables(db, keptEngineTables, conversations);
     if (workspaces) {
