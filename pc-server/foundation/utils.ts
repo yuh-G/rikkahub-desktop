@@ -45,14 +45,6 @@ export function textFromParts(parts: ToolOutputEntry[]) {
     .trim();
 }
 
-export function formatLocalDate(date = new Date()) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "full" }).format(date);
-}
-
-export function formatLocalTime(date = new Date()) {
-  return new Intl.DateTimeFormat(undefined, { timeStyle: "medium" }).format(date);
-}
-
 export function renderTemplate(template: string, variables: Record<string, string>) {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, key) => variables[key] ?? match);
 }
