@@ -32,7 +32,7 @@ if (mode === "crash") {
   await runEngineHost((host) => {
     const driver: EngineDriver = {
       kind: "fake-host",
-      capabilities: { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, workspace: "none", placement: "portable", commands: false },
+      capabilities: { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, workspace: "none", placement: "portable", commands: false, plugins: false },
       async startTurn(req) {
         if (mode === "hang") for (;;);
         process.stdout.write('{"jsonrpc":"2.0","id":1,"result":"插件往 stdout 写的假帧"}\n半行没有换行');

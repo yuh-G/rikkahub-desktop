@@ -92,3 +92,33 @@ describe("pi 驱动可搬迁卫兵(P2.6)", () => {
     expect(runtimeSpecifiers(sample)).toEqual(["../api/logs", "./c", "../conversations/index"]);
   });
 });
+
+// 主程序不运行插件代码(方案 §5.14.4,P7.2.5):主程序角色(server-main.ts)的运行时导入闭包里不能有 pi 的插件加载器与
+// 建会话的入口。读插件登记了什么经驱动的 inspectPlugin 交给引擎做。这里展开 vendored pi/:pi 的包入口会经
+// 虚拟模块表把加载器与 sdk 一起拉进来,只看直接导入会漏。
+// 登记的例外边:engines/index.ts → pi-engine/driver.ts(同进程的 pi 驱动)。P7.2.6 工作区改走宿主进程后这条边消失,
+// 下面「例外仍然成立」那条断言会变红,提醒删掉例外。
+const piCore = resolve(serverRoot, "..", "pi", "packages", "coding-agent", "src", "core");
+const pluginRunners = [join(piCore, "extensions", "loader.ts"), join(piCore, "sdk.ts")];
+const mainEntry = join(serverRoot, "server-main.ts");
+const inProcessPiEdge = [join(serverRoot, "engines", "index.ts"), join(serverRoot, "pi-engine", "driver.ts")] as const;
+
+describe("主程序不运行插件代码(P7.2.5)", () => {
+  test("主程序的运行时导入闭包不含 pi 的插件加载器与 createAgentSession(除登记的同进程 pi 驱动)", () => {
+    const closure = runtimeImportClosure([mainEntry], [], (from, to) => from === inProcessPiEdge[0] && to === inProcessPiEdge[1]);
+    expect(closureHitsUnder(closure, pluginRunners, serverRoot)).toEqual([]);
+  });
+
+  test("例外仍然成立:不剪这条边时能走到加载器(守卫确实看得见)", () => {
+    const closure = runtimeImportClosure([mainEntry]);
+    const hits = closureHitsUnder(closure, pluginRunners, serverRoot);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((chain) => chain.includes("engines/index.ts → pi-engine/driver.ts"))).toBe(true);
+  });
+
+  test("google 轨的请求日志壳装在宿主进程:pi 的请求从那里发出,不装的话工作区里用 Gemini 的请求进不了日志页", () => {
+    const src = readFileSync(join(serverRoot, "pi-engine", "host-process.ts"), "utf8");
+    expect(runtimeSpecifiers(src)).toContain("./llm-request-log");
+    expect(src).toMatch(/runEngineHost\(\(host\) => \{\s*installGoogleRequestLogShell\(\);/);
+  });
+});

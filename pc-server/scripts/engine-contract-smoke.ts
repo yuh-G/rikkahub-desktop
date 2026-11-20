@@ -6,10 +6,11 @@
 //   1. 工具调用 → 待审批(子进程的工具执行挂在跨进程的 host.tools.call 上,父进程在真实审批门
 //      inference-engine/approval-gate 登记等待)→ 批准 → 轮边界取补发 → 结束;
 //   2. 工具调用待审批时中止:父进程先收敛自己的审批等待(应用以生成信号做同一件事),再 driver.abort。
+// 另读一次插件登记了什么(inspectPlugin,P7.2.5):插件代码在宿主进程里执行,主程序只收到清单。
 // 断言事件带轮次身份、补发进了下一次模型请求、模型请求日志与 pi 原生条目(P3.4)经 host 回到父进程。
 // 生产不走这条路;它证明「同进程 / 独立进程」只是部署选择(方案 D9)。
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -199,6 +200,22 @@ try {
         && record.providerName === grant.providerName && record.responseBody === undefined),
       requestLogs.map((item) => item.record));
     signals.delete(turn.turnId);
+  }
+
+  // ── 插件登记了什么:在宿主进程里加载插件 ─────────────────────────────────────────
+  {
+    const pluginFile = join(scratch, "peek-plugin.ts");
+    writeFileSync(pluginFile, `export default function (pi) {
+  pi.registerTool({ name: "peek", label: "peek", description: "看一眼", parameters: { type: "object", properties: {} },
+    async execute() { return { content: [{ type: "text", text: "ok" }], details: {} }; } });
+  pi.registerCommand("todos", { description: "待办", handler: async () => {} });
+}
+`);
+    const inspection = await driver.inspectPlugin!({ plugin: { id: "dev:peek", path: pluginFile } });
+    check("inspectPlugin 跨进程:宿主进程加载插件,交回工具与指令清单",
+      JSON.stringify(inspection.tools) === JSON.stringify([{ name: "peek", description: "看一眼" }])
+        && inspection.commands.map((item) => item.name).join() === "todos" && inspection.errors.length === 0,
+      inspection);
   }
 
   // ── 第二轮:待审批时中止 ─────────────────────────────────────────────────────────

@@ -4,6 +4,8 @@
 // 安装:npm / git 来源经 engines/plugin-installer 装进 <数据目录>/engines/<engine>/npm,本地来源原地使用;
 // 装完校验包里有 pi 扩展入口,没有就卸掉并报错。插件 id = `<engine>:<包名>`(本地来源取包名或目录名),
 // 同名的 npm / git 记录即同一个安装位置,再装一次 = 重装 / 升级,沿用原记录的启停、开关与绑定。
+// 读插件登记了什么(详情、MCP 声明、脚本上传的试加载)要执行插件代码,经 engines/index 的 inspectEnginePlugin 交给引擎做,
+// 主程序自己不加载插件(P7.2.5,engines/engine-agnostic-guard.test.ts 锁)。
 // 插件声明的 MCP 服务(D13,P5.8b):安装 / 重装时加载一次插件读出声明,登记进应用的 MCP 列表(engines/plugin-mcp),
 // 工具清单在后台同步;启停翻服务器的 source.active,卸载移除。插件加载出错时不动已有登记。
 // 有插件运行时的引擎见 engines/plugin-engines(目前只有 pi)。安装 / 重装时从 package.json 读说明字段存进记录(P6.2.1)。
@@ -16,6 +18,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, isAbsolute, join } from "node:path";
 import { updateSettings } from "../../app-config";
 import { reportEngineError } from "../../engines/host";
+import { inspectEnginePlugin } from "../../engines/index";
 import { pluginAudit } from "../../engines/plugin-audit";
 import { isPluginEngine, PLUGIN_ENGINES } from "../../engines/plugin-engines";
 import { findMarketSource, marketDetail, marketSources, resolveMarketSource, searchMarket, withoutMarketSource } from "../../engines/plugin-market";
@@ -40,7 +43,6 @@ import {
 import { isPackageSource, isUploadedScript, locateEnginePlugin, pluginNameFromPath } from "../../engines/plugins";
 import { CodedError } from "../../foundation/errors";
 import { resolveEffectiveProxy } from "../../foundation/net";
-import { piAgentDir } from "../../foundation/paths";
 import type { JsonValue } from "../../foundation/types";
 import type {
   EnginePluginAuditDto,
@@ -58,7 +60,7 @@ import type {
 import type { EnginePluginRecord, EnginePluginSource } from "../../foundation/types/settings";
 import { reportError } from "../../observability/app-errors";
 import { state } from "../../persistence/json-store";
-import { inspectPiPlugin, piPluginEntryError } from "../../pi-engine/plugins/inspect";
+import { piPluginEntryError } from "../../pi-engine/plugins/entries";
 import { syncMcpServerTools } from "../../tools/mcp";
 import { ensureFreshMcpToken } from "../../tools/mcp-oauth";
 import { pluginMcpSource } from "../../tools/mcp-source";
@@ -110,7 +112,7 @@ function upsertRecord(record: EnginePluginRecord, patch: SettingsPatch = {}) {
 /** 插件加载期声明的 MCP 服务;加载出错时为 null(保留原有登记,不按半截结果删改)。 */
 async function pluginMcpDeclarations(record: EnginePluginRecord): Promise<PluginMcpDeclaration[] | null> {
   // 加载错误不在这里上报:会话加载这个插件时按插件记一条 pi_plugin_load_failed。
-  const inspection = await inspectPiPlugin({ id: record.id, path: locateEnginePlugin(record) }, piAgentDir).catch(() => null);
+  const inspection = await inspectEnginePlugin(record.engine, { id: record.id, path: locateEnginePlugin(record) }).catch(() => null);
   return inspection && inspection.errors.length === 0 ? inspection.mcpServers : null;
 }
 
@@ -251,7 +253,7 @@ function failure(err: unknown): Response {
 const PI_UPLOAD_CHECKS: UploadChecks = {
   packageEntryError: (dir) => piPluginEntryError({ id: "upload", path: dir }),
   scriptLoadError: async (path) => {
-    const inspection = await inspectPiPlugin({ id: "upload", path }, piAgentDir).catch((err: unknown) => ({ errors: [err instanceof Error ? err.message : String(err)] }));
+    const inspection = await inspectEnginePlugin("pi", { id: "upload", path }).catch((err: unknown) => ({ errors: [err instanceof Error ? err.message : String(err)] }));
     return inspection.errors[0] ?? null;
   },
 };
@@ -312,7 +314,7 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
     if (!record) return error("Plugin not found", 404);
     const view = pluginView(record);
     const inspection = view.installed
-      ? await inspectPiPlugin({ id: record.id, path: view.path }, piAgentDir).catch((err: unknown) => ({
+      ? await inspectEnginePlugin(record.engine, { id: record.id, path: view.path }).catch((err: unknown) => ({
           tools: [],
           commands: [],
           mcpServers: [],

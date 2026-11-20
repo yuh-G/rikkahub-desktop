@@ -25,8 +25,12 @@ export function resolveModule(from: string, specifier: string): string | null {
   return null;
 }
 
-/** 闭包里每个模块 → 把它引进来的模块(入口为 null)。 */
-export function runtimeImportClosure(entries: string[], stopAt: string[] = []): Map<string, string | null> {
+/** 闭包里每个模块 → 把它引进来的模块(入口为 null)。skip 返回 true 的导入不跟(登记在册的例外边)。 */
+export function runtimeImportClosure(
+  entries: string[],
+  stopAt: string[] = [],
+  skip?: (from: string, to: string) => boolean,
+): Map<string, string | null> {
   const parent = new Map<string, string | null>(entries.map((entry) => [entry, null]));
   const queue = [...entries];
   while (queue.length > 0) {
@@ -34,7 +38,7 @@ export function runtimeImportClosure(entries: string[], stopAt: string[] = []): 
     if (stopAt.some((root) => file.startsWith(root + sep))) continue;
     for (const specifier of runtimeSpecifiers(readFileSync(file, "utf8"))) {
       const target = resolveModule(file, specifier);
-      if (!target || parent.has(target)) continue;
+      if (!target || parent.has(target) || skip?.(file, target)) continue;
       parent.set(target, file);
       queue.push(target);
     }

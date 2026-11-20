@@ -14,7 +14,7 @@ import type { Conversation } from "../foundation/types";
 import { createPiDriver } from "../pi-engine/driver";
 import { workspaceRuntimeForConversation, type WorkspaceRuntime } from "../workspace/runtime";
 import { createChatDriver } from "./chat-driver";
-import type { EngineDriver } from "./contract";
+import type { EngineDriver, EnginePlugin, EnginePluginInspectionDto } from "./contract";
 import { appEngineHost } from "./host";
 import { reportError } from "../observability/app-errors";
 import { connectDriver, connectHost, STRICT_CONTRACT_TRANSPORT } from "./loopback";
@@ -37,6 +37,13 @@ export function resolveEngine(conversation: Conversation): EngineRoute {
   const wanted = runtime ? "required" : "none";
   const driver = ENGINE_DRIVERS.find((item) => item.capabilities.workspace === wanted) ?? ENGINE_DRIVERS.at(-1)!;
   return { driver, workspace: driver.capabilities.workspace === "required" ? runtime : null };
+}
+
+/** 一个插件登记了什么(插件页详情、安装 / 上传后的校验)。要执行插件代码,所以交给有插件运行时的那个驱动(P7.2.5)。 */
+export function inspectEnginePlugin(engine: string, plugin: EnginePlugin): Promise<EnginePluginInspectionDto> {
+  const driver = ENGINE_DRIVERS.find((item) => item.kind === engine && item.capabilities.plugins);
+  if (!driver?.inspectPlugin) return Promise.reject(new Error(`引擎 ${engine} 没有插件运行时`));
+  return driver.inspectPlugin({ plugin });
 }
 
 /** 让各引擎丢掉该会话的长驻状态(会话删除时)。失败只上报:删除本身不受影响。 */

@@ -2,6 +2,7 @@
 //
 // 只加载扩展(跑一次插件的工厂函数,不建会话、不发 session_start),读它登记的工具与指令。加载期裁决不在这里做:
 // 插件页要列出插件登记的全部工具(逐工具开关作用在名字上),被拿掉的那部分由审计说明。
+// 要执行插件代码,所以只经 pi 驱动的 inspectPlugin 调用(主程序不直接引用本文件,engines/engine-agnostic-guard.test.ts 锁)。
 
 import { loadExtensions } from "../../../pi/packages/coding-agent/src/core/extensions/loader.ts";
 import type { EnginePlugin } from "../../engines/contract";
@@ -32,10 +33,4 @@ export async function inspectPiPlugin(plugin: EnginePlugin, cwd: string): Promis
     inspection.mcpServers.push({ name: server.name, config: server.config as unknown as Record<string, unknown> });
   }
   return inspection;
-}
-
-/** 插件包里能不能找到 pi 扩展入口(安装后校验用);找不到时返回原因。 */
-export function piPluginEntryError(plugin: EnginePlugin): string | null {
-  const { entries, errors } = resolvePiPluginEntries([plugin]);
-  return entries.length > 0 ? null : (errors[0]?.error ?? "插件里找不到入口");
 }

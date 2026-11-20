@@ -8,7 +8,8 @@
 // 管线已有日志)。上下文只为 google 轨开(googleRequestLogContextFor),所以与出口不会双记。
 // 记录语义与出口同一函数(recordModelResponse)。
 //
-// 安装顺序:在 installProxyFetchInterceptor 之后安装(包外层),计时覆盖代理。
+// 安装顺序:在 installProxyFetchInterceptor 之后安装(包外层),计时覆盖代理。装在 pi 驱动所在的进程:引擎宿主进程
+// (pi-engine/host-process),以及 P7.2.6 之前仍在主程序里跑 pi 的 bootstrap。
 // **拆除条件**:pi 的 google 适配器接受注入的 fetch 后,google 轨改走模型出口,删除本文件与
 // bootstrap 的安装调用(engines/model-outlet.test.ts 的全局壳登记表同步删掉本文件)。
 

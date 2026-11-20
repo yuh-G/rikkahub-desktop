@@ -18,6 +18,7 @@
 //
 // 指令(P5.7):listCommands 读活会话的插件登记表,没有活会话时由 plugins/commands 单独加载一次插件(缓存)。
 // runCommand 与生成同一套会话装配(同会话串行、长驻会话复用判定),在会话上直接调插件的处理函数,不开模型轮次。
+// inspectPlugin(P7.2.5):插件页要的「这个插件登记了什么」,单独加载一次插件读出来(plugins/inspect),不建会话。
 //
 // 压缩的摘要模型回退在这里做:摘要模型映射不进 pi 时改用会话模型,并经 host.report 上报
 // warn——公共压缩模型是偏好不是硬约束,压缩必须总能进行。
@@ -30,6 +31,7 @@ import type {
   EngineDriver,
   EngineErrorReport,
   EngineHost,
+  EnginePluginInspectionDto,
   EngineSessionView,
   ModelGrant,
   TurnInput,
@@ -37,10 +39,12 @@ import type {
   TurnRequest,
   TurnResult,
 } from "../engines/contract";
+import { piAgentDir } from "../foundation/paths";
 import { bindPiAgentDir } from "./agent-dir";
 import { mapGrantToPi } from "./model-bridge";
 import type { PiPluginInteraction } from "./plugins/ui-bridge";
 import { createPiCommandCatalog } from "./plugins/commands";
+import { inspectPiPlugin } from "./plugins/inspect";
 import { createPiSessionResources } from "./resources";
 import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCommand, runPiCompaction, runPiGeneration, type PiSessionInputs } from "./runner";
 import { createPiSessionHost } from "./session-host";
@@ -57,6 +61,7 @@ const PI_CAPABILITIES: EngineCapabilities = {
   placement: "portable",
   // 插件登记的指令(裁决层已拿掉入口类名字);pi 自带的指令名归应用或不在本应用里出现,不列。
   commands: true,
+  plugins: true,
 };
 
 const MISSING_WORKSPACE = "pi 引擎被选中但请求未带工作区(路由判定与执行不一致)。";
@@ -253,6 +258,15 @@ export function createPiDriver(host: EngineHost): EngineDriver {
         req.workspace.cwd,
         live ? { extensions: live.session.resourceLoader.getExtensions().extensions, entries: live.pluginEntries } : undefined,
       );
+    },
+
+    async inspectPlugin(req): Promise<EnginePluginInspectionDto> {
+      return inspectPiPlugin(req.plugin, piAgentDir).catch((err: unknown) => ({
+        tools: [],
+        commands: [],
+        mcpServers: [],
+        errors: [err instanceof Error ? err.message : String(err)],
+      }));
     },
 
     async runCommand(req): Promise<CommandRunResult> {

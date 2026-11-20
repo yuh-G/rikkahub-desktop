@@ -83,3 +83,9 @@ export function pluginIdForTool(extensions: readonly Extension[], entries: reado
   }
   return undefined;
 }
+
+/** 插件包里能不能找到 pi 扩展入口(安装后校验用,只看文件,不执行插件);找不到时返回原因。 */
+export function piPluginEntryError(plugin: EnginePlugin): string | null {
+  const { entries, errors } = resolvePiPluginEntries([plugin]);
+  return entries.length > 0 ? null : (errors[0]?.error ?? "插件里找不到入口");
+}

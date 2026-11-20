@@ -52,7 +52,7 @@ function wire(createDriver: (host: EngineHost) => EngineDriver, host: Partial<En
 function baseDriver(host: EngineHost, overrides: Partial<EngineDriver> = {}): EngineDriver {
   return {
     kind: "fake",
-    capabilities: { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, workspace: "none", placement: "portable", commands: false },
+    capabilities: { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, workspace: "none", placement: "portable", commands: false, plugins: false },
     startTurn: async () => ({ text: "", stopReason: null, compactions: [] }),
     abort: async () => {},
     invalidate: async () => {},
@@ -122,6 +122,18 @@ describe("跨进程传输", () => {
     ]);
     const input = { model: {} as never, reasoningLevel: null, workspace: null, instructions: { appendSystemPrompt: [], globalAgentsFile: null, skills: { dir: "", enabled: [] } }, plugins: [], prompt: { text: "", images: [] }, tools: [] };
     expect((await driver.runCommand!({ ...turn, input, commandId: "c1", args: "x" })).compactions[0]!.summary).toBe("ran c1 x");
+  });
+
+  test("插件(P7.2.5):声明 plugins 才有 inspectPlugin 代理,调用跨通道往返", async () => {
+    expect((await wire((host) => baseDriver(host)).app.ready).inspectPlugin).toBeUndefined();
+    const { app } = wire((host) =>
+      baseDriver(host, {
+        capabilities: { ...baseDriver(host).capabilities, plugins: true },
+        inspectPlugin: async (req) => ({ tools: [{ name: "peek" }], commands: [], mcpServers: [], errors: [req.plugin.path] }),
+      }),
+    );
+    const driver = await app.ready;
+    expect(await driver.inspectPlugin!({ plugin: { id: "pi:x", path: "/p/x" } })).toEqual({ tools: [{ name: "peek" }], commands: [], mcpServers: [], errors: ["/p/x"] });
   });
 
   test("会话视图按指纹对账:第二轮只传变了的条目;拼回的视图与整份相同;invalidate 后整份重传", async () => {

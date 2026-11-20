@@ -30,6 +30,7 @@ import type {
   EngineDriver,
   EngineHost,
   EngineKind,
+  EnginePluginInspectionDto,
   PermissionGrant,
   SubscriptionCredential,
   TurnRef,
@@ -300,6 +301,9 @@ export function connectDriverOverRpc(
             runCommand: (req) => peer.request("driver.runCommand", [req]) as Promise<CommandRunResult>,
           }
         : {}),
+      ...(capabilities.plugins
+        ? { inspectPlugin: (req) => peer.request("driver.inspectPlugin", [req]) as Promise<EnginePluginInspectionDto> }
+        : {}),
       dispose: async () => {
         await peer.request("driver.dispose", []);
       },
@@ -363,6 +367,11 @@ export function serveDriverOverRpc(
         const current = target();
         if (!current.runCommand) throw new Error(`引擎 ${current.kind} 没有引擎特色指令`);
         return current.runCommand(...args);
+      },
+      "driver.inspectPlugin": (...args: Parameters<NonNullable<EngineDriver["inspectPlugin"]>>) => {
+        const current = target();
+        if (!current.inspectPlugin) throw new Error(`引擎 ${current.kind} 没有插件运行时`);
+        return current.inspectPlugin(...args);
       },
       "driver.dispose": () => target().dispose(),
     }, runtime),

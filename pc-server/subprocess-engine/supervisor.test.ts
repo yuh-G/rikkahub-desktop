@@ -25,7 +25,7 @@ import {
 const scratch = mkdtempSync(join(tmpdir(), "rkh-supervisor-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-const capabilities = { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, workspace: "none", placement: "portable", commands: false } as const;
+const capabilities = { resumeSemantics: "run-and-suspend", steering: "boundary", nativeCompaction: false, workspace: "none", placement: "portable", commands: false, plugins: false } as const;
 const turn = (conversationId = "c"): TurnRequest => ({ conversationId, turnId: "t" });
 
 type FakeOptions = {

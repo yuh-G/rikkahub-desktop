@@ -24,6 +24,7 @@ const CHAT_CAPABILITIES: EngineCapabilities = {
   placement: "in-process-only",
   // 只有应用的通用指令(注册表),没有引擎特色指令。
   commands: false,
+  plugins: false,
 };
 
 export function createChatDriver(): EngineDriver {

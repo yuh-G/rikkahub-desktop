@@ -36,6 +36,8 @@
 
 import type { JsonValue, Message, OAuthFlowId, ToolOutputEntry } from "../foundation/types";
 import type { AppErrorDomain, AppErrorSeverity } from "../foundation/types/dto";
+import type { EnginePluginInspectionDto } from "../foundation/types/plugins";
+export type { EnginePluginInspectionDto };
 import type { GenerationEvent } from "../inference-engine/events";
 import type { PermissionTarget, ToolCategory } from "../tools/permission";
 
@@ -68,6 +70,8 @@ export interface EngineCapabilities {
   readonly placement: "in-process-only" | "portable";
   /** 有引擎特色指令(listCommands / runCommand 必须实现)。 */
   readonly commands: boolean;
+  /** 有插件运行时(inspectPlugin 必须实现);插件记录的 engine 即驱动种类。 */
+  readonly plugins: boolean;
 }
 
 /** 用户输入的模型可见形态(文档/OCR 已文本化,图片已物化为 base64)。图片随消息整体后置,
@@ -443,6 +447,13 @@ export interface CommandRunResult {
   compactions: CapturedEngineCompaction[];
 }
 
+// ---- 插件(P7.2.5) ----
+
+export interface PluginInspectRequest {
+  /** 只读这一个插件登记了什么(工具、指令、声明的 MCP 服务),不建会话。 */
+  plugin: EnginePlugin;
+}
+
 export interface EngineErrorReport {
   domain: AppErrorDomain;
   severity: AppErrorSeverity;
@@ -477,6 +488,9 @@ export interface EngineDriver {
   listCommands?(req: CommandListRequest): Promise<EngineCommand[]>;
   /** capabilities.commands 为 true 时必须实现。处理函数出错或指令已不存在时以错误拒绝。 */
   runCommand?(req: CommandRunRequest): Promise<CommandRunResult>;
+  /** capabilities.plugins 为 true 时必须实现。要执行插件代码(插件页详情、安装 / 上传后的校验),所以归引擎做:
+   *  引擎在独立进程里时,插件卡死或崩溃不会拖住主程序(方案 §5.14.4)。加载出错写进 errors,不以错误拒绝。 */
+  inspectPlugin?(req: PluginInspectRequest): Promise<EnginePluginInspectionDto>;
   dispose(): Promise<void>;
 }
 

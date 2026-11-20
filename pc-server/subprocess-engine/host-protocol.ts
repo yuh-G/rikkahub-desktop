@@ -6,7 +6,7 @@
 
 import type { ProxyConfig } from "../foundation/types";
 
-export const ENGINE_HOST_PROTOCOL = 3;
+export const ENGINE_HOST_PROTOCOL = 4;
 
 /** 两端各自声明能收的单帧上限(都取这个值)。随会话长度增长的消息在 rpc-transport 里只传变化(P7.2.4),整份的只有
  *  宿主进程刚启动后某个会话的第一轮视图与第一次请求正文;带大图的会话这一帧可达几十 MB,所以上限定得宽。 */

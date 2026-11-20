@@ -526,6 +526,8 @@ export function supervisedDriver<H extends SupervisedHost>(supervisor: EngineHos
           runCommand: (req) => supervisor.run(req.conversationId, (host) => host.driver.runCommand!(req)),
         }
       : {}),
+    // 不属于任何会话:中止会话不会打断它。
+    ...(capabilities.plugins ? { inspectPlugin: (req) => supervisor.run(null, (host) => host.driver.inspectPlugin!(req)) } : {}),
     dispose: () => supervisor.dispose(),
   };
 }

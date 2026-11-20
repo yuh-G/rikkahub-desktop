@@ -119,6 +119,7 @@ export function connectDriver(driver: EngineDriver, options: { strict: boolean }
     invalidate: strictCall(label("invalidate"), driver.invalidate.bind(driver)),
     ...(driver.listCommands ? { listCommands: strictCall(label("listCommands"), driver.listCommands.bind(driver)) } : {}),
     ...(driver.runCommand ? { runCommand: strictCall(label("runCommand"), driver.runCommand.bind(driver)) } : {}),
+    ...(driver.inspectPlugin ? { inspectPlugin: strictCall(label("inspectPlugin"), driver.inspectPlugin.bind(driver)) } : {}),
     dispose: strictCall(label("dispose"), driver.dispose.bind(driver)),
   };
 }
