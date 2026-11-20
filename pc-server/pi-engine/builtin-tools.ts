@@ -54,7 +54,7 @@ import { markToolGated } from "./tool-gate";
 type PiToolResult = Awaited<ReturnType<ToolDefinition["execute"]>>;
 type ToolArgs = Record<string, JsonValue>;
 
-export type PiBuiltinToolApproval = Pick<PermissionCheck, "toolCallId" | "toolName" | "args" | "noPrompt"> & {
+export type PiBuiltinToolApproval = Pick<PermissionCheck, "toolCallId" | "toolName" | "summary" | "noPrompt"> & {
   category: ToolCategory;
   target: PermissionTarget;
 };
@@ -92,6 +92,12 @@ const TOOL_CATEGORIES: Readonly<Record<string, ToolEntry>> = {
   // 应用不挂载,只用于插件另开的会话(child-sessions)。
   powershell: { category: "execute", target: (args) => ({ command: String(args.command ?? "") }) },
 };
+
+/** 审批卡上显示的对象:命令或模型给的路径。应用只显示前 120 字,多传无用。 */
+function approvalSummary(args: ToolArgs): { summary?: string } {
+  const value = args.command ?? args.path;
+  return typeof value === "string" && value.trim() ? { summary: value.trim().slice(0, 120) } : {};
+}
 
 /** pi 内建工具名 → 类别 + 对象;不是内建工具名时 undefined。 */
 export function piBuiltinToolPermission(name: string, args: ToolArgs, cwd: string): { category: ToolCategory; target: PermissionTarget } | undefined {
@@ -143,7 +149,13 @@ function gate(variants: Variants, options: PiBuiltinToolsOptions): ToolDefinitio
     executionMode: "sequential",
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const args = (params ?? {}) as ToolArgs;
-      const grant = await options.approve({ toolCallId, toolName: name, category: entry.category, target: entry.target(args, options.cwd), args });
+      const grant = await options.approve({
+        toolCallId,
+        toolName: name,
+        category: entry.category,
+        target: entry.target(args, options.cwd),
+        ...approvalSummary(args),
+      });
       if (name === "bash") {
         const danger = findDangerousCommandReason(String(args.command ?? ""));
         // 执行层兜底:危险命令在审批里就会待审;没经用户批准(也不是完全访问)却走到这里,按档位拒绝。

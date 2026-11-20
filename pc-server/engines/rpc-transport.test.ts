@@ -146,7 +146,7 @@ describe("跨进程传输", () => {
 
   test("插件工具审批跨通道:请求原样到达宿主,宿主的拒绝回到引擎侧", async () => {
     const seen: unknown[] = [];
-    const check = { ...turn, toolCallId: "tc-p", toolName: "counter_add", origin: { kind: "plugin" as const, pluginId: "dev:counter" }, args: { n: 1 } };
+    const check = { ...turn, toolCallId: "tc-p", toolName: "counter_add", origin: { kind: "plugin" as const, pluginId: "dev:counter" } };
     const { app } = wire(
       (host) =>
         baseDriver(host, {

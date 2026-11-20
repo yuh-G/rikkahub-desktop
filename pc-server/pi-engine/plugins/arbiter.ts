@@ -29,7 +29,6 @@ import type {
 } from "../../../pi/packages/coding-agent/src/core/extensions/types.ts";
 import { allToolNames } from "../../../pi/packages/coding-agent/src/core/tools/index.ts";
 import type { EngineErrorReport } from "../../engines/contract";
-import type { JsonValue } from "../../foundation/types";
 import { markToolGated } from "../tool-gate";
 import { pluginIdForExtensionPath, type PiPluginEntry } from "./entries";
 
@@ -53,7 +52,6 @@ export interface PiPluginToolApproval {
   toolCallId: string;
   toolName: string;
   pluginId: string;
-  args: Record<string, JsonValue>;
 }
 
 /** 放行时兑现(放行结果对插件工具没有意义,不读);拒绝 / 中止时以错误拒绝,错误文本即给模型的工具结果。 */
@@ -212,7 +210,7 @@ function gatePluginTool(tool: RegisteredTool, pluginId: string, approve: PiPlugi
     // 与应用工具同为顺序执行:审批卡逐个弹(并行批里的多张待审卡会互相覆盖会话的等待态)。
     executionMode: "sequential",
     async execute(toolCallId, params, signal, onUpdate, ctx) {
-      await approve({ toolCallId, toolName: definition.name, pluginId, args: (params ?? {}) as Record<string, JsonValue> });
+      await approve({ toolCallId, toolName: definition.name, pluginId });
       return pluginScope.run(pluginId, () => definition.execute(toolCallId, params, signal, onUpdate, ctx));
     },
   };

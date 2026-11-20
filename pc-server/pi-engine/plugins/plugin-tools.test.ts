@@ -139,7 +139,7 @@ describe("插件工具 × 应用审批", () => {
     // 工作区会话照常带 pi 内建工具(测试 TurnInput 没有 shell → 兜底组)。
     expect(declared.toSorted()).toEqual(["counter_add", ...piBuiltinToolNames(undefined)].toSorted());
     expect(checks).toEqual([
-      { ...turn, toolCallId: "tc-add-1", toolName: "counter_add", origin: { kind: "plugin", pluginId: "dev:counter" }, args: { n: 2 } },
+      { ...turn, toolCallId: "tc-add-1", toolName: "counter_add", origin: { kind: "plugin", pluginId: "dev:counter" } },
     ]);
     expect(executed()).toEqual([2]);
     expect(approvals(events)).toEqual(["pending", "approved"]);

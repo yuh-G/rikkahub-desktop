@@ -182,7 +182,7 @@ export function createToolPermissionChecker(ctx: AppToolsContext): ToolPermissio
         `Tool '${req.toolName}' was NOT executed: it needs the user's approval${why}, and calls made inside a plugin's sub-session cannot ask for it. Do this step in the main conversation instead.`,
       );
     }
-    const summary = summaryOf(req.args.command ?? req.args.path);
+    const summary = summaryOf(req.summary);
     // 返回 true = 用户对 pending 卡显式批准:区外写入与危险命令的知情同意。
     const userApproved = await gateToolApproval(approval, { ...flow, ...(summary ? { summary } : {}) });
     touchWorkspaceAccess(workspace.id);

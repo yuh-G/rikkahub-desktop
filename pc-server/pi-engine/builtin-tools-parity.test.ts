@@ -480,7 +480,7 @@ describe("没有工具卡的调用(插件另开的子会话,noPrompt)", () => {
   test("需要用户确认的直接拒绝、不弹审批;免审的照常放行", async () => {
     const fx = fixture("confirm_each", false);
     const check = createToolPermissionChecker(fx.ctx);
-    const base = { origin: { kind: "engine" as const }, args: {}, noPrompt: true };
+    const base = { origin: { kind: "engine" as const }, noPrompt: true };
     await expect(check({ ...base, toolCallId: "np-write", toolName: "write", category: "write", target: { path: join(fx.root, "a.txt") } })).rejects.toThrow(
       "cannot ask for it",
     );

@@ -86,7 +86,7 @@ describe("执行前审批与放行范围", () => {
     const { root, approvals, exec } = setup();
     await exec("write")("tc-1", { path: "a.txt", content: "hello" });
     expect(approvals).toEqual([
-      { toolCallId: "tc-1", toolName: "write", category: "write", target: { path: resolve(root, "a.txt") }, args: { path: "a.txt", content: "hello" } },
+      { toolCallId: "tc-1", toolName: "write", category: "write", target: { path: resolve(root, "a.txt") }, summary: "a.txt" },
     ]);
     const read = await exec("read")("tc-2", { path: "a.txt" });
     expect(text(read)).toContain("hello");

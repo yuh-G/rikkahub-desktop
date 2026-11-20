@@ -58,7 +58,7 @@ async function checkChildToolCall(session: AgentSession, name: string, toolCallI
   }
   let grant: PermissionGrant;
   try {
-    grant = await owner.approve({ toolCallId, toolName: name, args, ...permission, noPrompt: true });
+    grant = await owner.approve({ toolCallId, toolName: name, ...permission, noPrompt: true });
   } catch (err) {
     return blocked(messageOf(err));
   }

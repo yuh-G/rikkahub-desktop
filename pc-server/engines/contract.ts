@@ -288,7 +288,9 @@ export interface PermissionCheck {
   category?: ToolCategory;
   /** 引擎自带工具必带(没有对象时为空对象)。 */
   target?: PermissionTarget;
-  args: Record<string, JsonValue>;
+  /** 审批卡与状态条上显示的对象(引擎自带工具:命令或模型给的路径;应用只显示前 120 字)。不带完整参数:
+   *  写文件的正文可达数 MB,应用用不上(P7.1 清点)。 */
+  summary?: string;
   /** 这次调用在会话里没有工具卡(插件另开的子会话里的调用):需要用户确认的不弹审批,直接拒绝。 */
   noPrompt?: boolean;
 }
