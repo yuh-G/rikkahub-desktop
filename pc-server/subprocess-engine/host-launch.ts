@@ -105,11 +105,16 @@ export async function launchEngineHost(options: LaunchEngineHostOptions): Promis
     proxyConfig: options.proxyConfig,
     parentPid: process.pid,
   };
-  child.stdin.write(`${JSON.stringify(launchLine)}\n`);
-  child.stdin.flush();
-
   let channel: FrameChannel;
   try {
+    try {
+      // write 在缓冲满或管道已断时返回 Promise,不 await 的话拒绝没人接
+      await child.stdin.write(`${JSON.stringify(launchLine)}\n`);
+      await child.stdin.flush();
+    } catch {
+      // 管道已断 = 宿主进程起来就退出了(插件在加载时把进程带走、被安全软件拦下):下面等通道时按「还没连上就退出」
+      // 报错,带上标准错误尾部
+    }
     const accepted = await Promise.race([
       listener.accepted,
       exited.then((info) => {
