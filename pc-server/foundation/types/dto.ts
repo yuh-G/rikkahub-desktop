@@ -340,8 +340,9 @@ export type EngineStatusEventDto =
   | {
       busy: true;
       /** awaiting_approval(域4-1):审批挂起期间持续——外显等待,供侧栏/标签双态点
-       *  与桌面通知消费。与 events.ts EngineStatus 同构。 */
-      phase: "compacting" | "retrying" | "awaiting_approval";
+       *  与桌面通知消费。与 events.ts EngineStatus 同构。unresponsive(P7.2.6):引擎宿主进程无响应,
+       *  在途调用还在等它缓过来(一直不答会被强杀重启)。 */
+      phase: "compacting" | "retrying" | "awaiting_approval" | "unresponsive";
       /** compacting:manual/threshold/overflow;retrying 无。 */
       reason?: string;
       /** retrying:第几次/共几次。 */

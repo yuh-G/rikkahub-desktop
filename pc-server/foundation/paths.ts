@@ -28,6 +28,9 @@ export const customFontsDir = join(dataDir, "fonts");
 // 是 state.json;技能与全局 AGENTS.md 也不住这里(应用级资源,见 skillsDir / globalAgentsPath)。
 // 不进任何备份。旧位置 pi-agent/ 由启动卫生(data-dir-hygiene)退役删除。
 export const piAgentDir = join(dataDir, "engines", "pi");
+// 引擎宿主进程的登记(P7.2.6):每个起过的宿主进程一个 <pid>.json,主程序下次启动据此清扫上次留下的进程
+// (subprocess-engine/supervisor 的 sweepStaleEngineHosts)。不进任何备份。
+export const engineHostRecordsDir = join(dataDir, "engine-hosts");
 // 全局工作区指引(引擎中立:所有 agent 引擎共读的用户层指令文件,pi 经
 // agentsFilesOverride 虚拟文件注入原生上下文件管线,未来引擎直接 import agents/ 域同源消费)。
 export const globalAgentsPath = join(dataDir, "AGENTS.md");

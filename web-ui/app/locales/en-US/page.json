@@ -84,6 +84,7 @@
       "compacting_auto": "Context near limit, auto-compacting…",
       "compacting_progress": "Compacting context ({{current}}/{{total}})",
       "retrying": "Upstream error, retrying automatically ({{attempt}}/{{max}})…",
+      "unresponsive": "Engine not responding, waiting for it to recover…",
       "elapsed_seconds": "Elapsed {{seconds}}s",
       "elapsed_minutes": "Elapsed {{minutes}}m {{seconds}}s",
       "interrupt": "Interrupt (Esc)"

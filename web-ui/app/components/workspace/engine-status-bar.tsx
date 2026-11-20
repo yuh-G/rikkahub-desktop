@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { FoldVertical, Loader2, Puzzle, ShieldAlert } from "lucide-react";
+import { FoldVertical, Loader2, Puzzle, ShieldAlert, TriangleAlert } from "lucide-react";
 
 import { usePluginName } from "~/components/message/parts/plugin-attribution";
 import { useConversationEngineStatus } from "~/stores/conversation-store";
@@ -58,7 +58,9 @@ export function EngineStatusBar({ conversationId }: { conversationId: string | n
   if (!status) return null;
 
   const text =
-    status.phase === "retrying"
+    status.phase === "unresponsive"
+      ? t("conversations.engine_status.unresponsive")
+      : status.phase === "retrying"
       ? t("conversations.engine_status.retrying", {
           attempt: status.attempt ?? 1,
           max: status.maxAttempts ?? 1,
@@ -95,7 +97,9 @@ export function EngineStatusBar({ conversationId }: { conversationId: string | n
   // 压缩相用折叠图标+文字呼吸(pulse),重试相保留 spinner(旋转更贴"重试中"语义)。
   return (
     <div className="mx-auto mb-2 flex w-full max-w-3xl items-center gap-2 px-4 text-muted-foreground text-xs">
-      {status.phase === "retrying" ? (
+      {status.phase === "unresponsive" ? (
+        <TriangleAlert className="size-3.5 shrink-0 text-warning" />
+      ) : status.phase === "retrying" ? (
         <Loader2 className="size-3.5 shrink-0 animate-spin" />
       ) : status.phase === "awaiting_approval" ? (
         dialog ? (

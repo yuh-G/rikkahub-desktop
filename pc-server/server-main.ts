@@ -28,6 +28,7 @@ import { existsSync } from "node:fs";
 import { installProcessSafetyNet, reportError } from "./observability/app-errors";
 import { bootCleanExit, bootMilestone, bootNote, bootTraceStartup, readPreviousCrashLog } from "./observability/boot-trace";
 import { killTrackedDetachedChildren } from "./workspace/tools/shell";
+import { disposeEngineHosts } from "./engines";
 
 // 全面审查 4-2:进程级异常兜底必须最早安装,罩住后续启动期与运行期的一切
 // 定时器/游离 Promise 顶层抛错(SIGINT/SIGTERM 的优雅停机在文件尾另行注册)。
@@ -208,10 +209,11 @@ function serveOn(hostname: string, port: number) {
             return error("Forbidden: shutdown is loopback-only", 403);
           }
           await flushAllStateBeforeExit();
-          // 响应发出后再停服自退;100ms 让 200 先落到壳侧。
-          setTimeout(() => {
+          // 响应发出后再停服自退;100ms 让 200 先落到壳侧。引擎宿主进程限时停掉(壳先硬杀了也无妨:主程序没了它自己结束)
+          setTimeout(async () => {
             originRelay.stopAll();
             stopListeners(listeners);
+            await disposeEngineHosts();
             process.exit(0);
           }, 100);
           return json({ ok: true });
@@ -471,6 +473,7 @@ async function shutdown() {
   // 工作区 bash 残留子进程清扫(M1-5)：detached 进程组不随宿主退出，不杀会变孤儿。
   killTrackedDetachedChildren();
   await flushAllStateBeforeExit();
+  await disposeEngineHosts();
   process.exit(0);
 }
 

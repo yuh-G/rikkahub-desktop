@@ -30,6 +30,7 @@ const { pendingToolApprovalCount } = await import("../inference-engine/approval-
 const { handleConversationRoutes } = await import("../api/handlers/conversations");
 const { handleCommandRoutes } = await import("../api/handlers/commands");
 const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
+const { useInProcessPiDriver } = await import("../test-utils/in-process-pi");
 const { appendEngineEntries, engineVisibleDigest, loadEngineEntries, readEngineSessionHeader, writeEngineSessionHeader } = await import("./engine-entries");
 
 import type { Conversation, State } from "../foundation/types";
@@ -51,7 +52,9 @@ configureWorkingSet({
 });
 
 const servers: FakeOpenAiSseServer[] = [];
+const restorePiDriver = useInProcessPiDriver();
 afterAll(async () => {
+  restorePiDriver();
   setState(priorState);
   await Promise.all(servers.map((server) => server.close()));
 });

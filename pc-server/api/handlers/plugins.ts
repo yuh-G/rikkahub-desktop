@@ -18,7 +18,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, isAbsolute, join } from "node:path";
 import { updateSettings } from "../../app-config";
 import { reportEngineError } from "../../engines/host";
-import { inspectEnginePlugin } from "../../engines/index";
+import { inspectEnginePlugin, resetEngineHosts } from "../../engines/index";
 import { pluginAudit } from "../../engines/plugin-audit";
 import { isPluginEngine, PLUGIN_ENGINES } from "../../engines/plugin-engines";
 import { findMarketSource, marketDetail, marketSources, resolveMarketSource, searchMarket, withoutMarketSource } from "../../engines/plugin-market";
@@ -93,6 +93,8 @@ interface SettingsPatch {
 }
 
 function saveRecords(next: EnginePluginRecord[], patch: SettingsPatch = {}) {
+  // 改了插件:引擎宿主进程因连续失败停止重启的(多半是插件弄崩的),允许再起
+  resetEngineHosts();
   updateSettings({
     ...state.settings,
     enginePlugins: next,

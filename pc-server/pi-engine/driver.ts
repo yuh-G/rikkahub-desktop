@@ -27,7 +27,6 @@ import type {
   CommandRunResult,
   CompactRequest,
   CompactResult,
-  EngineCapabilities,
   EngineDriver,
   EngineErrorReport,
   EngineHost,
@@ -41,6 +40,7 @@ import type {
 } from "../engines/contract";
 import { piAgentDir } from "../foundation/paths";
 import { bindPiAgentDir } from "./agent-dir";
+import { PI_CAPABILITIES } from "./capabilities";
 import { mapGrantToPi } from "./model-bridge";
 import type { PiPluginInteraction } from "./plugins/ui-bridge";
 import { createPiCommandCatalog } from "./plugins/commands";
@@ -48,21 +48,6 @@ import { inspectPiPlugin } from "./plugins/inspect";
 import { createPiSessionResources } from "./resources";
 import { MANUAL_COMPACT_KEEP_RECENT_TOKENS, runPiCommand, runPiCompaction, runPiGeneration, type PiSessionInputs } from "./runner";
 import { createPiSessionHost } from "./session-host";
-
-const PI_CAPABILITIES: EngineCapabilities = {
-  // 生成保持在跑,单个工具调用挂起等应用侧审批放行,不整批暂停重触发。
-  resumeSemantics: "run-and-suspend",
-  // runner 在 pi turn_end 调 host.steer.take,文本经 session.agent.steer() 入 pi steering 队列。
-  steering: "boundary",
-  // pi 原生 session.compact:压引擎记忆,界面历史不动。
-  nativeCompaction: true,
-  // 工作区引擎:请求必带 cwd/root(缺则以错误拒绝)。
-  workspace: "required",
-  placement: "portable",
-  // 插件登记的指令(裁决层已拿掉入口类名字);pi 自带的指令名归应用或不在本应用里出现,不列。
-  commands: true,
-  plugins: true,
-};
 
 const MISSING_WORKSPACE = "pi 引擎被选中但请求未带工作区(路由判定与执行不一致)。";
 

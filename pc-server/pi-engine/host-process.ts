@@ -4,8 +4,8 @@
 // 专用通道在 subprocess-engine/host-runtime.ts;这里只交出 pi 驱动。驱动拿到的 EngineHost 是经通道回调主程序的代理,
 // 驱动只经契约拿应用的东西,所以这里不加载任何应用状态(foundation/process-roles.test.ts 与
 // engines/engine-agnostic-guard.test.ts 锁宿主角色的导入闭包不含 persistence / conversations / api)。
-// pi 的模型请求从这个进程发出,所以 google 轨的请求日志壳装在这里(llm-request-log 头注);驱动工厂在网络壳装好之后
-// 才被调用,壳包在网络壳外层,与主程序里的安装顺序相同。
+// pi 的模型请求从这个进程发出,所以 google 轨的请求日志壳只装在这里(llm-request-log 头注);驱动工厂在网络壳装好之后
+// 才被调用,壳包在网络壳外层。
 
 import { runEngineHost } from "../subprocess-engine/host-runtime";
 import { createPiDriver } from "./driver";

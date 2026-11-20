@@ -23,7 +23,8 @@ import {
 import { createGenerationEventApplier } from "./generation-apply";
 import { apiToolCallFromPart, toolExecutionErrorPayload, toolResultTextForApi } from "../tools/format";
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
-import { resolveEngine, type EngineRoute } from "../engines";
+import { resolveEngine, setEngineHostStateHandler, type EngineRoute } from "../engines";
+import { ENGINE_HOST_EXITED, ENGINE_HOST_GAVE_UP } from "../subprocess-engine/supervisor";
 import { modelGrantFor } from "../engines/model-grant";
 import { appToolSpecsFor, createAppToolCaller, createToolPermissionChecker, type AppToolsContext } from "../engines/app-tools";
 import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
@@ -58,7 +59,7 @@ import { appendCompactionEntries, buildEngineSessionView, createEngineSessionWri
 import { createEngineInteraction } from "./engine-interaction";
 import { conversationExistsInDb } from "./read-queries";
 import { reportError } from "../observability/app-errors";
-import { abortGeneration, abortReasonOf, awaitingApproval, compressing, generating } from "./generation-state";
+import { abortGeneration, abortReasonOf, awaitingApproval, compressing, engineUnresponsive, generating, standingEngineStatuses } from "./generation-state";
 import { deliverQueuedReply, enqueueMessage, holdMessageQueue, isQueueHeldByInterrupt, isQueuePaused, notifyQueuedGenerationDispatched, pauseMessageQueue, queueSnapshotFor, removeQueuedMessage, setOnQueuedGenerationDispatched, shiftNextQueued } from "./message-queue";
 import { clearSteeringChannel, drainSteeringMessages } from "./steering-channel";
 import {
@@ -362,6 +363,24 @@ function handleEngineTurnRequest(req: EngineTurnRequest): void {
   void generateAnswer(conversation, undefined, { engineTrigger: { requestId: req.requestId } });
 }
 setEngineTurnRequestHandler(handleEngineTurnRequest);
+
+/** P7.2.6:引擎宿主进程无响应时,给有调用卡在它上面的会话亮「引擎无响应」状态条;缓过来或被强杀重启后撤掉,
+ *  恢复原来的状态条(等待审批 / 压缩中),都没有就清空。 */
+function onEngineHostState(hostState: string, conversationIds: string[]): void {
+  if (hostState === "unresponsive") {
+    const startedAt = Date.now();
+    for (const id of conversationIds) {
+      engineUnresponsive.set(id, startedAt);
+      broadcastEngineStatus(id, { busy: true, phase: "unresponsive", startedAt });
+    }
+    return;
+  }
+  for (const id of [...engineUnresponsive.keys()]) {
+    engineUnresponsive.delete(id);
+    broadcastEngineStatus(id, standingEngineStatuses(id).at(-1) ?? { busy: false });
+  }
+}
+setEngineHostStateHandler(onEngineHostState);
 
 async function runPostGenerationTasks(conversationId: string, snapshot: Conversation, assistantMessageId: string) {
   const liveConversation = () => getConversation(conversationId);
@@ -837,6 +856,7 @@ export async function compactEngineConversation(
       estimatedTokensAfter: result.estimatedTokensAfter,
     };
   } finally {
+    engineUnresponsive.delete(conversation.id);
     broadcastEngineStatus(conversation.id, { busy: false });
   }
 }
@@ -913,6 +933,7 @@ export async function runEngineCommand(conversation: Conversation, commandId: st
     interaction.close();
     clearToolApprovalWaiters(conversation.id);
     awaitingApproval.delete(conversation.id);
+    engineUnresponsive.delete(conversation.id);
     broadcastEngineStatus(conversation.id, { busy: false });
     // 执行期间进 steering 通道的补发不注入随后开的轮次(队列里还有同一条,收尾派发)。
     clearSteeringChannel(conversation.id);
@@ -1165,9 +1186,13 @@ export async function generateAnswer(
     // 匿名遥测:只记"发生了一次 provider 失败",不采集错误内容/模型/服务商。
     bumpAnalyticsErrCount();
     const rawContent = err instanceof Error ? err.message : String(err);
-    const proxyHint = classifyProxyError(err, state.settings.proxyConfig);
+    // P7.2.6:引擎宿主进程中途没了(崩溃、卡死被强杀、连续失败放弃)。监管器已经弹过提示(engines/index),
+    // 这里只把它的原文落到本条消息的错误卡上,不再按供应商错误上报一遍。
+    const engineHostGone = err instanceof CodedError && (err.errorCode === ENGINE_HOST_EXITED || err.errorCode === ENGINE_HOST_GAVE_UP);
+    const proxyHint = engineHostGone ? null : classifyProxyError(err, state.settings.proxyConfig);
     const failureText =
-      proxyHint
+      (engineHostGone ? rawContent : null)
+      ?? proxyHint
       ?? classifyContextOverflowError(err)
       ?? classifyOutputCapError(err)
       // 限流排在凭证失效之前:refresh 撞上游 429 时,错误串同时含 "OAuth refresh failed"
@@ -1177,7 +1202,7 @@ export async function generateAnswer(
       ?? `请求失败：${rawContent}`;
     // P2-1(N-7 归宿):失败文本除了落在消息注解上(仅会话内可见),还上报全局通道——
     // 用户不在该会话页时也能收到通知(批2 接前端 toast)。
-    reportError("provider", "error", failureText, err);
+    if (!engineHostGone) reportError("provider", "error", failureText, err);
     // 消息发送队列:失败自动暂停(保留全部排队项,待用户手动 resume 续跑)。对齐 APP
     // onGenerationFinished(cause != null) → pause。仅真失败暂停——用户主动 stop/中止在上面
     // 已 return,不会到这;故 stop 不会暂停队列,只停在「无下一条自动点火」。
@@ -1213,8 +1238,9 @@ export async function generateAnswer(
     if (isRunAndSuspend) broadcastEngineStatus(conversation.id, { busy: false });
     // 域4-1:审批等待注册表兜底清除——gateToolApproval 的正常路径(决定/中止)已注销,
     // 这里是"生成终局但审批仍挂着"的防御(引擎 run 因故结束而 execute 未走到注销)。
-    // 幂等(delete 不存在键无副作用),与 busy:false 同点收口。
+    // 幂等(delete 不存在键无副作用),与 busy:false 同点收口。「引擎无响应」登记同理。
     awaitingApproval.delete(conversation.id);
+    engineUnresponsive.delete(conversation.id);
     // steering 通道残留清扫:生成收尾时仍未被注入的补发(引擎无轮边界可注入:纯文本
     // 流无工具轮、pi 会话收束竞态等)直接作废——FIFO 队列仍持有同一条消息,上方
     // dispatchMessageQueue 派发兜底,零丢失。不清扫会让残留漂到下一轮生成被误注入。

@@ -33,6 +33,7 @@ const { forgetSessionToolAllowances, pendingToolApprovalCount } = await import("
 const { handleConversationRoutes } = await import("../../api/handlers/conversations");
 const { clearAppErrors, recentAppErrors } = await import("../../observability/app-errors");
 const { startFakeOpenAiSse } = await import("../../test-utils/fake-openai-sse");
+const { useInProcessPiDriver } = await import("../../test-utils/in-process-pi");
 
 import type { Conversation, State } from "../../foundation/types";
 import type { FakeOpenAiSseServer, FakeSseTurn } from "../../test-utils/fake-openai-sse";
@@ -77,7 +78,9 @@ configureWorkingSet({
 });
 
 const servers: FakeOpenAiSseServer[] = [];
+const restorePiDriver = useInProcessPiDriver();
 afterAll(async () => {
+  restorePiDriver();
   setState(priorState);
   await Promise.all(servers.map((server) => server.close()));
 });

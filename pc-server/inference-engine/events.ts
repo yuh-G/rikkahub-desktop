@@ -52,8 +52,9 @@ export type EngineStatus =
   | {
       busy: true;
       /** awaiting_approval(域4-1):审批挂起期间持续——用户离开页面/失焦时靠它外显
-       *  等待,与 compacting/retrying 同一瞬态通道(不落库、SSE 重连即快照恢复)。 */
-      phase: "compacting" | "retrying" | "awaiting_approval";
+       *  等待,与 compacting/retrying 同一瞬态通道(不落库、SSE 重连即快照恢复)。
+       *  unresponsive(P7.2.6):引擎宿主进程无响应,在途调用还在等它缓过来。 */
+      phase: "compacting" | "retrying" | "awaiting_approval" | "unresponsive";
       /** compacting:manual/threshold/overflow;retrying 无。 */
       reason?: string;
       /** retrying:第几次/共几次。 */

@@ -4,7 +4,7 @@
 
 import type { EngineStatus, StreamHooksWithSink } from "../inference-engine/events";
 import { initWorkingSetSseGuard, markConversationRowDirty, markMessageNodeDirty, scheduleThrottledConvFlush } from "../conversations";
-import { initAppErrorBroadcast } from "../observability/app-errors";
+import { initAppErrorBroadcast, reportError } from "../observability/app-errors";
 import { initProviderAuthBroadcast } from "../model-providers/auth";
 import type { Conversation, ConversationListInvalidateEventDto, ConversationNodeUpdateEventDto, ConversationSnapshotEventDto, ConversationTextDeltaEventDto, EngineStatusEventDto, EngineUiNotifyEventDto, EngineUiStateEventDto, JsonValue, MessageNode } from "../foundation/types";
 import { diffFingerprints, fingerprintNode, type NodeBroadcastFingerprint } from "./node-delta";
@@ -194,6 +194,18 @@ export function openSse(
 export function broadcastSettings() {
   // 剥认证敏感字段(webPasswordHash):SSE 是下发前端的暴露面,与 settings GET 同一净化纪律。
   broadcastTo(appClients, sseFrame("settings", stripAuthSecrets(state.settings)));
+  // P7.2.6:设置的每条变更路径(设置页、备份恢复)都经这里,引擎宿主进程的代理配置在这里跟上。钩子由 bootstrap()
+  // 注入(sse 不反向依赖 engines/);它自己不该抛,抛了也不能连累设置广播
+  try {
+    settingsChangedHook?.(state.settings);
+  } catch (err) {
+    reportError("internal", "info", "设置变更的后续处理失败", err);
+  }
+}
+
+let settingsChangedHook: ((settings: typeof state.settings) => void) | null = null;
+export function initSettingsChangedHook(hook: (settings: typeof state.settings) => void): void {
+  settingsChangedHook = hook;
 }
 
 // memory 事件(1.3.2):推送 MemorySnapshot 给前端记忆管理 UI + 待确认徽章。与 settings

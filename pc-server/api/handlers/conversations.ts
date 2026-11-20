@@ -15,6 +15,7 @@ import {
   truncateConversationForRegenerate,
 } from "../../conversations";
 import { getConversationsDb } from "../../conversations";
+import { prewarmEngineFor, resetEngineHosts } from "../../engines";
 import { checkoutConversation, registerConversation, releaseConversation } from "../../conversations/working-set";
 import { searchMessageFts } from "../../conversations/fts";
 import { listConversationMetas, pagedConversationMetas } from "../../conversations/read-queries";
@@ -40,7 +41,7 @@ import { deleteConversationsById, ensureConversation, findAssistant, finishInter
 import { forkConversationTitle } from "../../conversations/fork-title";
 import { editQueuedMessage, enqueueMessage, holdMessageQueue, pauseMessageQueue, releaseMessageQueueHold, removeQueuedMessage, resumeMessageQueue, waitForQueuedReply } from "../../conversations/message-queue";
 import { pushSteeringMessage, removeSteeringMessage } from "../../conversations/steering-channel";
-import { abortGeneration, awaitingApproval, compressing, generating } from "../../conversations/generation-state";
+import { abortGeneration, compressing, generating, standingEngineStatuses } from "../../conversations/generation-state";
 import { getWorkspace } from "../../workspace";
 import { resolveToolApproval } from "../../inference-engine/approval-gate";
 import { engineDialogDecision, engineUiSnapshot, pendingEngineDialogKind } from "../../conversations/engine-interaction";
@@ -114,6 +115,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
   if (conversationStream) {
     const conversation = getConversation(conversationStream[1]);
     if (!conversation) return error("Conversation not found", 404);
+    // P7.2.6:打开会话即预热它要用的引擎宿主进程(工作区会话),首轮不必等启动。
+    prewarmEngineFor(conversation);
     // I-1(专题2)快照协商:客户端带上缓存快照的令牌,与当前令牌一致 → 首帧只发轻量
     // snapshot_meta(客户端继续用缓存),大会话"切走再切回"不再整体重传。令牌不一致或
     // 未携带 → 照常全量快照。令牌语义见 api/snapshot-negotiation.ts。
@@ -123,28 +126,12 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       clientToken && clientToken === currentToken
         ? ["snapshot_meta", { type: "snapshot_meta", seq: Date.now(), conversationId: conversation.id, updateAt: conversation.updateAt, isGenerating: generating.has(conversation.id), negotiationToken: currentToken, serverTime: Date.now() } satisfies ConversationSnapshotMetaEventDto]
         : ["snapshot", { type: "snapshot", seq: Date.now(), conversation: toSnapshotConversationDto(conversation, generating.has(conversation.id)), serverTime: Date.now(), negotiationToken: currentToken } satisfies ConversationSnapshotEventDto];
-    // engine-status 帧是瞬态语义(重连即重置),压缩跨页/重连存活靠这份连接期快照:
-    // 压缩进行中(compressing 注册表,服务端权威)则补发状态条帧(含 startedAt,
-    // "已处理 xx秒"计时跨重连连续),切页回来即恢复显示。
-    const compressStartedAt = compressing.get(conversation.id);
-    // 域4-1:审批等待同哲学——等待中(awaitingApproval 注册表)补发琥珀态帧,侧栏/
-    // 标签双态点与"已等待 xx秒"跨切页/重连续存。压缩与审批互斥(压缩时无工具执行),
-    // 但快照逻辑各自独立判定,不互斥假设。
-    const pendingApproval = awaitingApproval.get(conversation.id);
-    const statusFrames: [string, JsonValue | object][] = [];
-    if (compressStartedAt) {
-      statusFrames.push(["engine-status", { busy: true, phase: "compacting", startedAt: compressStartedAt } satisfies EngineStatusEventDto]);
-    }
-    if (pendingApproval) {
-      statusFrames.push(["engine-status", {
-        busy: true,
-        phase: "awaiting_approval",
-        startedAt: pendingApproval.startedAt,
-        ...(pendingApproval.toolName ? { toolName: pendingApproval.toolName } : {}),
-        ...(pendingApproval.summary ? { summary: pendingApproval.summary } : {}),
-        ...(pendingApproval.dialog ? { dialog: pendingApproval.dialog } : {}),
-      } satisfies EngineStatusEventDto]);
-    }
+    // engine-status 帧是瞬态语义(重连即重置),压缩、审批等待、引擎无响应跨页/重连存活靠这份连接期快照
+    // (generation-state 的注册表,服务端权威;含 startedAt,"已处理/已等待 xx秒"计时跨重连连续),切页回来即恢复显示。
+    // 压缩与审批互斥(压缩时无工具执行),但快照逻辑各自独立判定,不互斥假设。
+    const statusFrames: [string, JsonValue | object][] = standingEngineStatuses(conversation.id).map(
+      (status) => ["engine-status", status satisfies EngineStatusEventDto],
+    );
     // 插件界面(P5.5):开着的对话框、状态条目、挂件同样跨切页 / 重连恢复。
     const engineUi = engineUiSnapshot(conversation.id);
     if (engineUi) statusFrames.push(["engine-ui", engineUi]);
@@ -477,6 +464,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         return error("已有压缩正在进行，请稍候", 409, "compress_in_progress");
       }
       const body = await readJson<{ messageId?: string }>(request);
+      // P7.2.6:重新生成是用户的手动重试——引擎宿主进程因连续失败停止重启的,允许再起。
+      resetEngineHosts();
       // 2-1:对齐 send 入口——先中止进行中的旧流。否则 generateAnswer 的 generating.set
       // 直接顶掉旧 controller,旧流成为无主流:与新流同写一个节点,或对已摘除节点持续
       // touchStream 广播幽灵帧。UI 虽屏蔽流式中的按钮,但 API 层必须自带守卫。

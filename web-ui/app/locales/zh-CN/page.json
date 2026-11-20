@@ -84,6 +84,7 @@
       "compacting_auto": "上下文接近上限，正在自动压缩…",
       "compacting_progress": "正在压缩上下文（{{current}}/{{total}}）",
       "retrying": "上游响应异常，正在自动重试（第 {{attempt}}/{{max}} 次）…",
+      "unresponsive": "引擎无响应，正在等待恢复…",
       "elapsed_seconds": "已处理 {{seconds}}秒",
       "elapsed_minutes": "已处理 {{minutes}}分{{seconds}}秒",
       "interrupt": "中止 (Esc)"

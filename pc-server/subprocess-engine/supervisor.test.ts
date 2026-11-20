@@ -194,6 +194,22 @@ describe("判活与卡死分级", () => {
     expect(states()).toEqual(["starting", "ready", "unresponsive", "ready", "stopping", "idle"]);
   });
 
+  test("activeConversations:只列有在途调用的会话,不含无会话的调用,结束即移除", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((done) => (release = done));
+    const { supervisor } = supervise(() => new FakeHost({ startTurn: async (host) => (await gate, { text: `来自 ${host.pid}` }) }));
+    const runs = [
+      supervisor.run("a", (host) => host.driver.startTurn(turn("a"))),
+      supervisor.run("a", (host) => host.driver.startTurn(turn("a"))),
+      supervisor.run(null, (host) => host.driver.startTurn(turn("x"))),
+    ];
+    expect(supervisor.activeConversations()).toEqual(["a"]);
+    release();
+    await Promise.all(runs);
+    expect(supervisor.activeConversations()).toEqual([]);
+    await supervisor.dispose();
+  });
+
   test("一直不答 → 强杀并重启;在途调用以带码的错误结束,提示已重启;算一次意外退出", async () => {
     let first = true;
     const { supervisor, hosts, exits } = supervise(() => {
@@ -303,6 +319,10 @@ describe("崩溃、崩溃循环、空闲回收", () => {
     expect(supervisor.state).toBe("failed");
     const gaveUp = events.find((event) => event.kind === "gave-up");
     expect(gaveUp?.kind === "gave-up" && gaveUp.message).toContain("dev:counter、dev:todo");
+    expect(gaveUp?.kind === "gave-up" && { failures: gaveUp.failures, plugins: gaveUp.plugins }).toEqual({
+      failures: 3,
+      plugins: ["dev:counter", "dev:todo"],
+    });
     expect(codeOf(await supervisor.run("c", (host) => host.driver.startTurn(turn())).catch((e) => e))).toBe(ENGINE_HOST_GAVE_UP);
     failing = false;
     supervisor.reset();

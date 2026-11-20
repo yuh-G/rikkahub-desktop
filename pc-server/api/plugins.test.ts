@@ -17,10 +17,13 @@ const { handleSettingsRoutes } = await import("./handlers/settings");
 const { enginePluginInstallRoot, enginePluginsFor, enginePluginUploadsDir } = await import("../engines/plugins");
 const { pluginAudit, recordPluginAudit } = await import("../engines/plugin-audit");
 const { pluginMcpServerId } = await import("../engines/plugin-mcp");
+const { useInProcessPiDriver } = await import("../test-utils/in-process-pi");
 
 jsonStore.setState(defaultState());
 const lab = mkdtempSync(join(tmpdir(), "rkh-plugins-api-lab-"));
+const restorePiDriver = useInProcessPiDriver();
 afterAll(() => {
+  restorePiDriver();
   rmSync(lab, { recursive: true, force: true });
   rmSync(process.env.RIKKAHUB_PC_DATA_DIR!, { recursive: true, force: true });
 });

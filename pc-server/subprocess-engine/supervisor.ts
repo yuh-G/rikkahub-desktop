@@ -36,7 +36,7 @@ export type SupervisorEvent =
   | { kind: "state"; state: SupervisorState }
   /** 一次意外退出(看板的重启次数按它计);restarting 为 false 表示已到崩溃循环上限。 */
   | { kind: "unplanned-exit"; reason: UnplannedExitReason; detail: string; restarting: boolean }
-  | { kind: "gave-up"; message: string };
+  | { kind: "gave-up"; message: string; failures: number; plugins: string[] };
 
 export interface SupervisorTiming {
   pingIntervalMs: number;
@@ -128,6 +128,11 @@ export class EngineHostSupervisor<H extends SupervisedHost = SupervisedHost> {
 
   get state(): SupervisorState {
     return this.stateValue;
+  }
+
+  /** 有在途调用的会话(宿主进程无响应时,界面给这些会话显示提示)。 */
+  activeConversations(): string[] {
+    return [...new Set([...this.calls].flatMap((call) => (call.conversationId === null ? [] : [call.conversationId])))];
   }
 
   /** 当前的宿主进程;没有就起一个(同一时刻只有一个启动在途)。 */
@@ -335,7 +340,7 @@ export class EngineHostSupervisor<H extends SupervisedHost = SupervisedHost> {
       const hint = plugins.length > 0 ? `当前启用的插件:${plugins.join("、")},可以先停用它们再试。` : "";
       this.gaveUpMessage = `${this.options.name} 引擎进程短时间内连续 ${this.failures.length} 次意外退出,已停止重启(最后一次:${detail})。${hint}`;
       this.setState("failed");
-      this.options.onEvent?.({ kind: "gave-up", message: this.gaveUpMessage });
+      this.options.onEvent?.({ kind: "gave-up", message: this.gaveUpMessage, failures: this.failures.length, plugins });
     }
     return restarting;
   }
