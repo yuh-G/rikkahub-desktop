@@ -4,7 +4,7 @@
 // 一份,交给每个驱动)。两条纪律:
 //   1. 全部异步。单向通知(emit/report)返回 void,其余返回 Promise。
 //   2. 全部载荷可 JSON 序列化:不传函数、活对象、类实例。进程内经 engines/loopback 直连
-//      (测试里 strict 模式把每个载荷 JSON 往返一次,强制本条);进程外经 stdio 行帧。
+//      (测试里 strict 模式把每个载荷 JSON 往返一次,强制本条);进程外经 engines/rpc-transport(引擎宿主进程的专用通道)。
 // 本模块只有类型,不 import 任何具体引擎目录(engines/engine-agnostic-guard.test.ts 锁定)。
 //
 // 相对 §5.3 骨架的定稿细化:

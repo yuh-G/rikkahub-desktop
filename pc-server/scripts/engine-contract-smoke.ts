@@ -1,8 +1,8 @@
 // scripts/engine-contract-smoke.ts — 契约跨进程证明(方案 §5.3 不变式 3,P2.6)
 //   bun run smoke:engine-contract      (在 pc-server 目录下)
 //
-// 父进程扮演应用:起假供应商,把 pi 驱动拉进子进程(pi-engine/host-process.ts),经 stdio 行帧
-// (engines/stdio-transport)连上,自己实现 EngineHost。跑两轮:
+// 父进程扮演应用:起假供应商,经 subprocess-engine/host-launch 把 pi 驱动拉进引擎宿主进程(spawnSelf("engine-host"),
+// 专用通道 + 长度前缀帧,与生产同一条路),自己实现 EngineHost。跑两轮:
 //   1. 工具调用 → 待审批(子进程的工具执行挂在跨进程的 host.tools.call 上,父进程在真实审批门
 //      inference-engine/approval-gate 登记等待)→ 批准 → 轮边界取补发 → 结束;
 //   2. 工具调用待审批时中止:父进程先收敛自己的审批等待(应用以生成信号做同一件事),再 driver.abort。
@@ -11,7 +11,7 @@
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import type {
   AppToolCall,
@@ -23,11 +23,9 @@ import type {
   TurnInput,
   TurnRef,
 } from "../engines/contract";
-import { connectDriverOverStdio } from "../engines/stdio-transport";
 import type { GenerationEvent } from "../inference-engine/events";
 import { pendingToolApprovalCount, resolveToolApproval, waitForToolApproval } from "../inference-engine/approval-gate";
-import { spawnSubprocess } from "../subprocess-engine/process";
-import { createLineFramer } from "../subprocess-engine/protocol";
+import { launchEngineHost } from "../subprocess-engine/host-launch";
 import { startFakeOpenAiSse } from "../test-utils/fake-openai-sse";
 
 let failures = 0;
@@ -47,7 +45,6 @@ async function waitUntil(cond: () => boolean, label: string, timeoutMs = 20_000)
   }
 }
 
-const serverDir = resolve(import.meta.dir, "..");
 const scratch = mkdtempSync(join(tmpdir(), "rkh-engine-contract-"));
 const workspaceRoot = mkdtempSync(join(scratch, "ws-"));
 const skillsDir = mkdtempSync(join(scratch, "skills-"));
@@ -146,51 +143,27 @@ const host: EngineHost = {
   report: (report) => console.error(`[host.report] ${report.severity} ${report.message}`),
 };
 
-// ── 拉起子进程并握手 ─────────────────────────────────────────────────────────────
-const stderrLines: string[] = [];
-let handleRef: ReturnType<typeof spawnSubprocess> | undefined;
-const connection = connectDriverOverStdio(
-  (line) => void handleRef?.writeLine(line),
+// ── 拉起引擎宿主进程并握手(与生产同一条路:spawnSelf + 专用通道)─────────────────────
+const protocolErrors: string[] = [];
+const hostErrors: string[] = [];
+const childEnv: Record<string, string | undefined> = {
+  ...process.env,
+  RIKKAHUB_PC_DATA_DIR: join(scratch, "pc-data"),
+  NO_PROXY: "127.0.0.1,localhost",
+};
+for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) delete childEnv[key];
+const child = await launchEngineHost({
   host,
-  (reason) => stderrLines.push(`[protocol] ${reason}`),
-);
-const framer = createLineFramer((frame) => {
-  if (frame.type === "line") connection.receive(frame.text);
-  else stderrLines.push(`[framer] ${frame.reason}`);
-});
-const child = spawnSubprocess({
-  cmd: process.execPath,
-  args: ["run", "pi-engine/host-process.ts"],
-  cwd: serverDir,
-  env: {
-    RIKKAHUB_PC_DATA_DIR: join(scratch, "pc-data"),
-    // 子进程不装 foundation/net 的代理壳:回环请求不能被宿主机的代理环境变量劫持。
-    HTTP_PROXY: "",
-    HTTPS_PROXY: "",
-    http_proxy: "",
-    https_proxy: "",
-    ALL_PROXY: "",
-    all_proxy: "",
-    NO_PROXY: "127.0.0.1,localhost",
-  },
-  displayName: "pi 引擎宿主进程",
-  onStdoutChunk: (chunk) => framer.feed(chunk),
-  onStderrChunk: (chunk) => stderrLines.push(Buffer.from(chunk).toString("utf8").trimEnd()),
-});
-handleRef = child;
-void child.exited.then((info) => {
-  framer.flush();
-  connection.close(`子进程退出:${info.kind}`);
+  // 宿主进程装了与主程序同一层网络壳;回环请求本来就绕过代理,这里直连
+  proxyConfig: { mode: "direct", url: "", username: "", password: "", bypassRules: "", userAgent: "" },
+  onAppError: (entry) => void hostErrors.push(`${entry.severity} ${entry.message}`),
+  onProtocolError: (reason) => void protocolErrors.push(reason),
+  env: childEnv,
 });
 
 try {
-  const driver = await Promise.race([
-    connection.ready,
-    Bun.sleep(30_000).then(() => {
-      throw new Error("子进程 30s 内未握手");
-    }),
-  ]);
-  console.log(`engine-contract smoke — 子进程 pid ${child.pid},驱动 ${driver.kind}(${driver.capabilities.placement})`);
+  const driver = child.driver;
+  console.log(`engine-contract smoke — 引擎宿主进程 pid ${child.pid},驱动 ${driver.kind}(${driver.capabilities.placement})`);
   check("握手:能力声明跨进程到达", driver.kind === "pi" && driver.capabilities.placement === "portable"
     && driver.capabilities.resumeSemantics === "run-and-suspend" && typeof driver.compact === "function");
 
@@ -247,16 +220,18 @@ try {
   }
 
   await driver.dispose();
+  check("通道上没有协议问题", protocolErrors.length === 0, protocolErrors);
 } catch (err) {
   failures++;
   console.error(`FAIL  ${err instanceof Error ? err.message : String(err)}`);
 } finally {
-  child.kill();
+  await child.stop();
   const exit = await child.exited;
+  check("关掉通道后宿主进程自己以 0 退出", exit.exitCode === 0, exit);
   await upstream.close();
   rmSync(scratch, { recursive: true, force: true });
   if (failures > 0) {
-    console.error(`子进程退出:${exit.kind};stderr 尾部:\n${stderrLines.slice(-40).join("\n")}`);
+    console.error(`宿主进程退出码 ${String(exit.exitCode ?? exit.signal)};转来的错误 ${JSON.stringify(hostErrors)};stderr 尾部:\n${exit.stderrTail}`);
   }
 }
 

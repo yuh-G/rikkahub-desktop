@@ -1,6 +1,6 @@
-// engines/stdio-transport.test.ts — 行帧传输的契约行为(P2.6;真子进程的证明在 smoke:engine-contract)
+// engines/rpc-transport.test.ts — 跨进程传输的契约行为(P2.6;真子进程的证明在 smoke:engine-contract)
 //
-// 两个 peer 在内存里对接(每行异步投递,模拟管道),锁:握手带能力声明;同方向帧按序(事件先于
+// 两个 peer 在内存里对接(每条消息异步投递,模拟管道),锁:握手带能力声明;同方向帧按序(事件先于
 // startTurn 结果到达);拒绝原因跨通道保真(AbortError / CodedError);载荷不可序列化即在发出端
 // 失败;通道关闭时在途调用以错误拒绝;未实现的方法回 METHOD_NOT_FOUND 而不是挂住。
 import { describe, expect, test } from "bun:test";
@@ -8,9 +8,9 @@ import { describe, expect, test } from "bun:test";
 import { CodedError } from "../foundation/errors";
 import type { EngineDriver, EngineHost, TurnRef } from "./contract";
 import { ContractPayloadError } from "./loopback";
-import { connectDriverOverStdio, serveDriverOverStdio } from "./stdio-transport";
+import { connectDriverOverRpc, serveDriverOverRpc } from "./rpc-transport";
 
-const turn: TurnRef = { conversationId: "conv-stdio", turnId: "turn-stdio" };
+const turn: TurnRef = { conversationId: "conv-rpc", turnId: "turn-rpc" };
 
 function wire(createDriver: (host: EngineHost) => EngineDriver, host: Partial<EngineHost> = {}) {
   const order: string[] = [];
@@ -28,8 +28,8 @@ function wire(createDriver: (host: EngineHost) => EngineDriver, host: Partial<En
     ...host,
   };
   let toEngine: (line: string) => void = () => {};
-  const app = connectDriverOverStdio((line) => queueMicrotask(() => toEngine(line)), fullHost, (reason) => void protocolErrors.push(reason));
-  const engine = serveDriverOverStdio(
+  const app = connectDriverOverRpc((line) => queueMicrotask(() => toEngine(line)), fullHost, (reason) => void protocolErrors.push(reason));
+  const engine = serveDriverOverRpc(
     (line) => queueMicrotask(() => app.receive(line)),
     createDriver,
     (reason) => void protocolErrors.push(reason),
@@ -50,7 +50,7 @@ function baseDriver(host: EngineHost, overrides: Partial<EngineDriver> = {}): En
   };
 }
 
-describe("stdio 传输", () => {
+describe("跨进程传输", () => {
   test("握手带能力声明;事件(通知)先于 startTurn 的结果到达;宿主回调往返", async () => {
     const { app, order } = wire(
       (host) =>
@@ -106,8 +106,8 @@ describe("stdio 传输", () => {
       }),
     );
     const driver = await app.ready;
-    expect(await driver.listCommands!({ conversationId: "conv-stdio", plugins: [], workspace: null })).toEqual([
-      { id: "c1", name: "todos", source: "plugin:dev:todo", description: "conv-stdio" },
+    expect(await driver.listCommands!({ conversationId: "conv-rpc", plugins: [], workspace: null })).toEqual([
+      { id: "c1", name: "todos", source: "plugin:dev:todo", description: "conv-rpc" },
     ]);
     const input = { model: {} as never, reasoningLevel: null, workspace: null, instructions: { appendSystemPrompt: [], globalAgentsFile: null, skills: { dir: "", enabled: [] } }, plugins: [], prompt: { text: "", images: [] }, tools: [] };
     expect((await driver.runCommand!({ ...turn, input, commandId: "c1", args: "x" })).compactions[0]!.summary).toBe("ran c1 x");
@@ -219,7 +219,7 @@ describe("stdio 传输", () => {
     expect(driver.compact).toBeUndefined();
     const replies: string[] = [];
     // 直接向引擎侧投递一帧未声明能力的调用,观察它的回包。
-    const probe = serveDriverOverStdio((line) => void replies.push(line), (host) => baseDriver(host), () => {});
+    const probe = serveDriverOverRpc((line) => void replies.push(line), (host) => baseDriver(host), () => {});
     probe.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "driver.compact", params: [{}] }));
     probe.receive(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "driver.nope", params: [] }));
     await Bun.sleep(5);
@@ -227,5 +227,25 @@ describe("stdio 传输", () => {
     expect(responses.find((frame) => frame.id === 1)?.error?.message).toContain("未实现原生压缩");
     expect(responses.find((frame) => frame.id === 2)?.error?.code).toBe(-32601);
     engine.close("测试结束");
+  });
+
+  test("进程运维消息(runtime.*)两个方向都能送达;名字不以 runtime. 开头即拒绝登记", async () => {
+    const toEngine: unknown[][] = [];
+    const toApp: unknown[][] = [];
+    let deliverToEngine: (line: string) => void = () => {};
+    const app = connectDriverOverRpc((line) => queueMicrotask(() => deliverToEngine(line)), {} as EngineHost, () => {}, {
+      "runtime.appError": (...args: unknown[]) => void toApp.push(args),
+    });
+    const engine = serveDriverOverRpc((line) => queueMicrotask(() => app.receive(line)), (host) => baseDriver(host), () => {}, {
+      "runtime.proxyConfig": (...args: unknown[]) => void toEngine.push(args),
+    });
+    deliverToEngine = (line) => engine.receive(line);
+    await app.ready;
+    app.notify("runtime.proxyConfig", [{ mode: "direct" }]);
+    engine.notify("runtime.appError", [{ message: "x" }]);
+    await Bun.sleep(5);
+    expect(toEngine).toEqual([[{ mode: "direct" }]]);
+    expect(toApp).toEqual([[{ message: "x" }]]);
+    expect(() => serveDriverOverRpc(() => {}, (host) => baseDriver(host), () => {}, { "driver.startTurn": () => undefined })).toThrow("runtime.");
   });
 });

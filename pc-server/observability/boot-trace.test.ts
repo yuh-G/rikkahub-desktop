@@ -10,6 +10,7 @@ import {
   beginBootTraceIn,
   capturePreviousBootTraceIn,
   cleanExitIn,
+  engineHostTracePathIn,
   readPreviousCrashLogIn,
 } from "./boot-trace";
 
@@ -102,6 +103,16 @@ describe("boot-trace 取证黑匣子", () => {
       beginBootTraceIn(dir, DEAD_PID);
       for (const m of ["进程拉起", "已拿数据目录锁", "端口已绑定"]) appendBootTraceIn(dir, m, DEAD_PID);
     }
+  });
+
+  test("引擎宿主进程的黑匣子另用前缀:主程序启动时的转存与干净退出都不碰它(归监管器按 pid 读)", () => {
+    beginBootTraceIn(dir, DEAD_PID, "engine-host.pending");
+    appendBootTraceIn(dir, "已连上通道", DEAD_PID, "engine-host.pending");
+    expect(existsSync(engineHostTracePathIn(dir, DEAD_PID))).toBe(true);
+    expect(capturePreviousBootTraceIn(dir)).toBe(false);
+    cleanExitIn(dir, DEAD_PID);
+    expect(existsSync(engineHostTracePathIn(dir, DEAD_PID))).toBe(true);
+    expect(existsSync(LOG())).toBe(false);
   });
 
   test("多尸体合并转存:等级取最重(任一 abnormal 即 abnormal)", () => {

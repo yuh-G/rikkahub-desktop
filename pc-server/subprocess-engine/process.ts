@@ -49,7 +49,8 @@ export interface SubprocessHandle {
   readonly exited: Promise<SubprocessExitInfo>;
 }
 
-function tailBuffer(): { push(chunk: Uint8Array): void; text(): string } {
+/** 只留最后 STDERR_TAIL_BYTES 字节的缓冲(子进程标准错误的尾部,退出归因用)。 */
+export function createTailBuffer(): { push(chunk: Uint8Array): void; text(): string } {
   const parts: Buffer[] = [];
   let total = 0;
   return {
@@ -81,7 +82,7 @@ function tailBuffer(): { push(chunk: Uint8Array): void; text(): string } {
  *  结算成分类 info,让调用方走单一的"归因→上报→给用户看"路径,不分叉 try/catch。 */
 export function spawnSubprocess(options: SpawnSubprocessOptions): SubprocessHandle {
   const { cmd, args = [], cwd, env, signal } = options;
-  const stderrTail = tailBuffer();
+  const stderrTail = createTailBuffer();
   let cancelled = false;
   let killed = false;
   let settled = false;

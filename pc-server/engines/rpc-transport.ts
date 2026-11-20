@@ -1,14 +1,15 @@
-// engines/stdio-transport.ts — 契约的跨进程传输(P2.6):JSON-RPC 2.0 over NDJSON
+// engines/rpc-transport.ts — 契约的跨进程传输(P2.6;P7.2.2 起一条消息一帧):JSON-RPC 2.0
 //
-// 一条双向行通道,两端各一个 peer:应用侧持驱动代理并服务宿主回调(connectDriverOverStdio),
-// 引擎侧持宿主代理并服务驱动调用(serveDriverOverStdio)。帧归类复用 subprocess-engine/protocol 的
-// parseJsonRpcLine;字节流切行由调用方接 createLineFramer(本模块只认整行)。
+// 一条双向消息通道,两端各一个 peer:应用侧持驱动代理并服务宿主回调(connectDriverOverRpc),
+// 引擎侧持宿主代理并服务驱动调用(serveDriverOverRpc)。本模块只认整条消息的文本;切帧归调用方
+// (引擎宿主进程走 subprocess-engine/channel 的长度前缀帧)。消息归类复用 subprocess-engine/protocol 的 parseJsonRpcLine。
 //
 // 方法名即契约路径(driver.startTurn、host.tools.call…),参数按位置成数组。返回 void 的单向通知
-// (emit / models.log / report)走 notification,其余走 request/response。同一方向的帧按序处理,
-// 所以一轮的事件恒先于该轮 startTurn 的结果到达;请求处理函数在收到帧时同步调用,驱动「在
+// (emit / models.log / report)走 notification,其余走 request/response。同一方向的消息按序处理,
+// 所以一轮的事件恒先于该轮 startTurn 的结果到达;请求处理函数在收到消息时同步调用,驱动「在
 // startTurn 的同步前缀里登记」的约定跨进程照样成立(紧随其后的 abort 不会落空)。
 // 引擎侧启动后先发 engine.ready(种类 + 能力声明),应用侧据此造驱动代理。
+// 契约之外的进程运维消息(推代理配置、转发错误)以 runtime. 开头,由两端各自登记处理函数,经 notify 发出。
 //
 // 载荷纪律与回环传输一致:发出前 assertJsonSafe(函数 / 类实例 / 循环引用即抛,不让 JSON 静默丢字段);
 // 拒绝原因按 serializeEngineError 的形态放进 error.data,对端 reviveEngineError 还原(AbortError、
@@ -61,6 +62,16 @@ function errorFromObject(error: JsonRpcErrorObject, method: string): Error {
   return new Error(error.message ?? `引擎调用 ${method} 失败`);
 }
 
+/** 契约之外的进程运维消息的处理函数;名字必须以 runtime. 开头,不能顶替契约方法。 */
+export type RuntimeHandlers = Record<string, Handler>;
+
+function withRuntime(handlers: Record<string, Handler>, runtime: RuntimeHandlers): Record<string, Handler> {
+  for (const name of Object.keys(runtime)) {
+    if (!name.startsWith("runtime.")) throw new Error(`进程运维消息必须以 runtime. 开头:${name}`);
+  }
+  return { ...handlers, ...runtime };
+}
+
 function createPeer(write: (line: string) => void, handlers: Record<string, Handler>, onProtocolError: (reason: string) => void): Peer {
   let nextId = 1;
   let closedReason: string | null = null;
@@ -75,25 +86,30 @@ function createPeer(write: (line: string) => void, handlers: Record<string, Hand
 
   const argsOf = (params: unknown): unknown[] => (Array.isArray(params) ? params : []);
 
+  /** 回包发不出去(载荷不可序列化、超过对端的单帧上限):改回一个错误,对端的调用不会挂住。 */
+  function reply(id: string | number, method: string, outcome: { result: unknown } | { error: unknown }): void {
+    try {
+      if ("error" in outcome) send({ id, error: errorObject(outcome.error) });
+      else {
+        assertJsonSafe(outcome.result, `${method}(返回值)`);
+        send({ id, result: outcome.result });
+      }
+    } catch (err) {
+      send({ id, error: errorObject(err) });
+    }
+  }
+
   function respond(id: string | number, method: string, run: () => unknown): void {
     let result: unknown;
     try {
       result = run();
     } catch (err) {
-      send({ id, error: errorObject(err) });
+      reply(id, method, { error: err });
       return;
     }
     Promise.resolve(result).then(
-      (value) => {
-        try {
-          assertJsonSafe(value, `${method}(返回值)`);
-        } catch (err) {
-          send({ id, error: errorObject(err) });
-          return;
-        }
-        send({ id, result: value });
-      },
-      (err: unknown) => send({ id, error: errorObject(err) }),
+      (value) => reply(id, method, { result: value }),
+      (err: unknown) => reply(id, method, { error: err }),
     );
   }
 
@@ -108,7 +124,12 @@ function createPeer(write: (line: string) => void, handlers: Record<string, Hand
       const id = nextId++;
       return new Promise((resolve, reject) => {
         pending.set(id, { method, resolve, reject });
-        send({ id, method, params: args });
+        try {
+          send({ id, method, params: args });
+        } catch (err) {
+          pending.delete(id);
+          reject(err);
+        }
       });
     },
 
@@ -164,21 +185,24 @@ function createPeer(write: (line: string) => void, handlers: Record<string, Hand
   };
 }
 
-export interface StdioDriverConnection {
+export interface RpcDriverConnection {
   /** 引擎侧握手(engine.ready)后可用的驱动代理。 */
   ready: Promise<EngineDriver>;
-  /** 收到对端的一行。 */
+  /** 收到对端的一条消息。 */
   receive(line: string): void;
+  /** 发一条进程运维消息(runtime.*)。 */
+  notify(method: string, args: unknown[]): void;
   /** 通道断开(子进程退出):在途调用以错误拒绝。 */
   close(reason: string): void;
 }
 
-/** 应用侧:经行通道连到另一端的驱动,宿主回调转给 host。 */
-export function connectDriverOverStdio(
+/** 应用侧:经消息通道连到另一端的驱动,宿主回调转给 host。 */
+export function connectDriverOverRpc(
   write: (line: string) => void,
   host: EngineHost,
   onProtocolError: (reason: string) => void,
-): StdioDriverConnection {
+  runtime: RuntimeHandlers = {},
+): RpcDriverConnection {
   let resolveReady!: (driver: EngineDriver) => void;
   let rejectReady!: (err: Error) => void;
   const ready = new Promise<EngineDriver>((resolve, reject) => {
@@ -188,7 +212,7 @@ export function connectDriverOverStdio(
 
   const peer = createPeer(
     write,
-    {
+    withRuntime({
       "engine.ready": (kind: EngineKind, capabilities: EngineCapabilities) => resolveReady(driverProxy(kind, capabilities)),
       "host.emit": (...args: Parameters<EngineHost["emit"]>) => host.emit(...args),
       "host.session.load": (...args: Parameters<EngineHost["session"]["load"]>) => host.session.load(...args),
@@ -203,7 +227,7 @@ export function connectDriverOverStdio(
       "host.models.credential": (...args: Parameters<EngineHost["models"]["credential"]>) => host.models.credential(...args),
       "host.models.log": (...args: Parameters<EngineHost["models"]["log"]>) => host.models.log(...args),
       "host.report": (...args: Parameters<EngineHost["report"]>) => host.report(...args),
-    },
+    }, runtime),
     onProtocolError,
   );
 
@@ -236,6 +260,7 @@ export function connectDriverOverStdio(
   return {
     ready,
     receive: (line) => peer.receive(line),
+    notify: (method, args) => peer.notify(method, args),
     close(reason) {
       peer.close(reason);
       rejectReady(new Error(`引擎进程未完成握手即断开(${reason})`));
@@ -243,17 +268,19 @@ export function connectDriverOverStdio(
   };
 }
 
-export interface StdioDriverServer {
+export interface RpcDriverServer {
   receive(line: string): void;
+  notify(method: string, args: unknown[]): void;
   close(reason: string): void;
 }
 
 /** 引擎侧:造宿主代理交给驱动工厂,服务应用发来的驱动调用;建好即发 engine.ready。 */
-export function serveDriverOverStdio(
+export function serveDriverOverRpc(
   write: (line: string) => void,
   createDriver: (host: EngineHost) => EngineDriver,
   onProtocolError: (reason: string) => void,
-): StdioDriverServer {
+  runtime: RuntimeHandlers = {},
+): RpcDriverServer {
   let driver: EngineDriver | undefined;
   const target = (): EngineDriver => {
     if (!driver) throw new Error("驱动尚未就绪");
@@ -261,7 +288,7 @@ export function serveDriverOverStdio(
   };
   const peer = createPeer(
     write,
-    {
+    withRuntime({
       "driver.startTurn": (...args: Parameters<EngineDriver["startTurn"]>) => target().startTurn(...args),
       "driver.abort": (...args: Parameters<EngineDriver["abort"]>) => target().abort(...args),
       "driver.compact": (...args: Parameters<NonNullable<EngineDriver["compact"]>>) => {
@@ -281,7 +308,7 @@ export function serveDriverOverStdio(
         return current.runCommand(...args);
       },
       "driver.dispose": () => target().dispose(),
-    },
+    }, runtime),
     onProtocolError,
   );
   const host: EngineHost = {
@@ -309,5 +336,5 @@ export function serveDriverOverStdio(
   };
   driver = createDriver(host);
   peer.notify("engine.ready", [driver.kind, driver.capabilities]);
-  return { receive: (line) => peer.receive(line), close: (reason) => peer.close(reason) };
+  return { receive: (line) => peer.receive(line), notify: (method, args) => peer.notify(method, args), close: (reason) => peer.close(reason) };
 }

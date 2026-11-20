@@ -55,8 +55,8 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
-function pendingPathIn(dir: string, pid: number): string {
-  return join(dir, `${PENDING_PREFIX}.${pid}.log`);
+function pendingPathIn(dir: string, pid: number, prefix = PENDING_PREFIX): string {
+  return join(dir, `${prefix}.${pid}.log`);
 }
 
 function logPathIn(dir: string): string {
@@ -112,10 +112,10 @@ function header(): string {
 // ---------- 注入目录核心(纯函数式,可测) ----------
 
 /** 为一次会话写 pending 头(pid 注入供测试;默认当前进程)。返回是否成功(失败=降级不取证)。 */
-export function beginBootTraceIn(dir: string, pid: number = process.pid): boolean {
+export function beginBootTraceIn(dir: string, pid: number = process.pid, prefix = PENDING_PREFIX): boolean {
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(pendingPathIn(dir, pid), header(), "utf8");
+    writeFileSync(pendingPathIn(dir, pid, prefix), header(), "utf8");
     return true;
   } catch {
     return false;
@@ -123,9 +123,9 @@ export function beginBootTraceIn(dir: string, pid: number = process.pid): boolea
 }
 
 /** 往 pending 追加一行(里程碑 / 兜底异常)。文件不存在时静默跳过(如盘只读)。 */
-export function appendBootTraceIn(dir: string, line: string, pid: number = process.pid): void {
+export function appendBootTraceIn(dir: string, line: string, pid: number = process.pid, prefix = PENDING_PREFIX): void {
   try {
-    appendFileSync(pendingPathIn(dir, pid), `  [${isoNow()}] ${line}\n`, "utf8");
+    appendFileSync(pendingPathIn(dir, pid, prefix), `  [${isoNow()}] ${line}\n`, "utf8");
   } catch {
     // 取证是锦上添花:盘写不进绝不反向阻塞启动/退出。
   }
@@ -231,30 +231,60 @@ export function cleanExitIn(dir: string, pid: number = process.pid): void {
   }
 }
 
+// ---------- 引擎宿主进程的黑匣子(P7.2.2,方案 §5.14.5) ----------
+// 宿主进程(进程角色 engine-host)写自己的 engine-host.pending.<pid>.log:连上通道、驱动就绪、兜底异常逐行落盘,
+// 干净退出删掉。前缀与主程序不同,主程序启动时的转存不碰它;宿主进程退出后由监管器按 pid 读出来归因(P7.2.3)。
+
+const ENGINE_HOST_PENDING_PREFIX = "engine-host.pending";
+
+export function engineHostTracePathIn(dir: string, pid: number): string {
+  return pendingPathIn(dir, pid, ENGINE_HOST_PENDING_PREFIX);
+}
+
 // ---------- 生产路径薄包装(全局 logsDir) ----------
 
-let sessionActive = false;
+/** 本进程正在写的 pending 前缀;null = 没开(或已干净退出)。 */
+let activePrefix: string | null = null;
 
 /** 启动最早期调用:先转存上次崩溃残留(若有),再为本次开 pending。 */
 export function bootTraceStartup(): void {
   capturePreviousBootTraceIn(logsDir);
-  sessionActive = beginBootTraceIn(logsDir);
+  activePrefix = beginBootTraceIn(logsDir) ? PENDING_PREFIX : null;
+}
+
+/** 宿主进程启动最早期调用。不转存任何东西(主程序的残留归主程序)。 */
+export function engineHostTraceStartup(): void {
+  activePrefix = beginBootTraceIn(logsDir, process.pid, ENGINE_HOST_PENDING_PREFIX) ? ENGINE_HOST_PENDING_PREFIX : null;
 }
 
 export function bootMilestone(milestone: BootMilestone, extra?: string): void {
-  if (!sessionActive) return;
+  if (activePrefix !== PENDING_PREFIX) return;
   appendBootTraceIn(logsDir, `${milestone}${extra ? ` — ${extra}` : ""}`);
+}
+
+export function engineHostMilestone(step: string): void {
+  if (activePrefix !== ENGINE_HOST_PENDING_PREFIX) return;
+  appendBootTraceIn(logsDir, step, process.pid, ENGINE_HOST_PENDING_PREFIX);
 }
 
 /** 记录一条 JS 兜底异常(uncaughtException/unhandledRejection),stack 一并留证。 */
 export function bootNote(kind: string, detail: string): void {
-  if (!sessionActive) return;
-  appendBootTraceIn(logsDir, `${kind}: ${detail}`);
+  if (!activePrefix) return;
+  appendBootTraceIn(logsDir, `${kind}: ${detail}`, process.pid, activePrefix);
 }
 
-/** 干净退出时调用:删 pending + 删上次残留的 server.log(假报警归零)。幂等。 */
+/** 干净退出时调用:主程序删 pending + 删上次残留的 server.log(假报警归零);宿主进程只删自己的 pending。幂等。 */
 export function bootCleanExit(): void {
-  sessionActive = false;
+  const prefix = activePrefix;
+  activePrefix = null;
+  if (prefix === ENGINE_HOST_PENDING_PREFIX) {
+    try {
+      rmSync(engineHostTracePathIn(logsDir, process.pid), { force: true });
+    } catch {
+      // 删不掉无害:监管器或下次启动清扫时一并处理
+    }
+    return;
+  }
   cleanExitIn(logsDir);
 }
 

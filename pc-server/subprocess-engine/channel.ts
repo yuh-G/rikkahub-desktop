@@ -6,7 +6,8 @@
 //   (Linux 优先 XDG_RUNTIME_DIR,否则在临时目录里新建一个 0700 目录),总长 Linux ≤ 107、mac ≤ 103,超了截短随机部分。
 // - 令牌:主程序以随机名监听,令牌不放环境变量(会传给孙进程),由调用方经子进程 stdin 第一行交过去;子进程连上后第一帧
 //   带令牌。只接受第一个令牌正确的连接,接受后立即关监听、删掉套接字文件;令牌不对或第一帧不对的连接直接断开。
-// - 帧:frames.ts 的长度前缀。第一帧(问候)的其余字段(身份、协议版本、应用版本)由调用方核对。
+// - 帧:frames.ts 的长度前缀。第一帧(问候)的其余字段(身份、协议版本、应用版本)由调用方核对。两端各自声明能收的
+//   单帧上限(握手时交换),发出前按对端的上限核对,超了在发出端抛错,不把对端的连接撑断。
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -38,12 +39,19 @@ function socketBaseDir(): { dir: string; owned: boolean } {
   return { dir: mkdtempSync(join(tmpdir(), "rkh-")), owned: true };
 }
 
+/** 对端正常断开时 onClose 收到的原因;其余原因(出错、协议违例)都是异常。 */
+export const PEER_CLOSED = "对端已断开";
+
 /** 一条按帧收发的连接。onFrame 设上之前到达的帧先排着,设上即按序交付。 */
 export interface FrameChannel {
+  /** 超过对端的单帧上限即抛错(什么也不发)。 */
   send(text: string): void;
   onFrame(handler: (text: string) => void): void;
   onClose(handler: (reason: string) => void): void;
+  /** 本端能收的单帧上限。 */
   setMaxFrameBytes(limit: number): void;
+  /** 对端能收的单帧上限(握手时得知)。 */
+  setPeerMaxFrameBytes(limit: number): void;
   close(reason?: string): void;
 }
 
@@ -52,6 +60,7 @@ function frameChannel(socket: Socket, decoderLimit = DEFAULT_MAX_FRAME_BYTES): F
   const queued: string[] = [];
   let closeHandler: ((reason: string) => void) | null = null;
   let closedReason: string | null = null;
+  let peerLimit = DEFAULT_MAX_FRAME_BYTES;
   const finish = (reason: string) => {
     if (closedReason !== null) return;
     closedReason = reason;
@@ -67,7 +76,7 @@ function frameChannel(socket: Socket, decoderLimit = DEFAULT_MAX_FRAME_BYTES): F
   );
   socket.on("data", (chunk: Buffer) => decoder.feed(chunk));
   socket.on("error", (err) => finish(`通道出错:${err.message}`));
-  socket.on("close", () => finish("对端已断开"));
+  socket.on("close", () => finish(PEER_CLOSED));
   const deliver = (next: (text: string) => void) => {
     handler = next;
     while (handler === next && queued.length > 0) next(queued.shift()!);
@@ -82,7 +91,10 @@ function frameChannel(socket: Socket, decoderLimit = DEFAULT_MAX_FRAME_BYTES): F
   };
   return {
     send(text) {
-      if (closedReason === null) socket.write(encodeFrame(text));
+      if (closedReason !== null) return;
+      const frame = encodeFrame(text);
+      if (frame.length - 4 > peerLimit) throw new Error(`消息 ${frame.length - 4} 字节,超过对端的单帧上限 ${peerLimit}`);
+      socket.write(frame);
     },
     onFrame: deliver,
     once,
@@ -91,6 +103,9 @@ function frameChannel(socket: Socket, decoderLimit = DEFAULT_MAX_FRAME_BYTES): F
       if (closedReason !== null) next(closedReason);
     },
     setMaxFrameBytes: (limit) => decoder.setMaxFrameBytes(limit),
+    setPeerMaxFrameBytes(limit) {
+      peerLimit = limit;
+    },
     close(reason = "本端关闭") {
       finish(reason);
       socket.end();

@@ -61,6 +61,11 @@ describe("监听与连接(实跑)", () => {
     for (let i = 0; i < 200 && (toParent.length < 2 || toChild.length < 1); i++) await Bun.sleep(10);
     expect(toParent).toEqual(["从宿主来", big]);
     expect(toChild).toEqual(["从主程序来"]);
+    child.setPeerMaxFrameBytes(16);
+    expect(() => child.send("x".repeat(17))).toThrow("单帧上限");
+    child.send("x".repeat(16));
+    for (let i = 0; i < 100 && toParent.length < 3; i++) await Bun.sleep(10);
+    expect(toParent[2]).toBe("x".repeat(16));
 
     // Windows:监听收起后,已接受的那条连接仍占着同名管道的唯一实例,新的连接会等满 30 秒才被拒绝,这里不实测
     if (process.platform !== "win32") {

@@ -1,12 +1,14 @@
 // foundation/process-roles.test.ts — 进程角色表、唯一的启动自己、入口分流(P7.2.1,方案 §5.14.3)
 // 锁定:①角色判定(含插件把本程序当 pi 命令行再启动、未知角色);②子进程角色先于数据目录锁分流——锁被占着,
-// 文档提取与引擎宿主照常起来(实跑子进程);③入口与角色表不静态引用别的模块,子角色的导入闭包不含应用状态;
+// 文档提取与引擎宿主照常起来(实跑子进程,宿主经专用通道握手);③入口与角色表不静态引用别的模块,子角色的导入闭包不含应用状态;
 // ④别处不拿本程序的路径启动进程。
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 
+import type { EngineHost } from "../engines/contract";
+import { launchEngineHost } from "../subprocess-engine/host-launch";
 import { closureHitsUnder, runtimeImportClosure, staticRuntimeSpecifiers } from "../test-utils/import-closure";
 import { PI_CLI_RELAUNCH_MESSAGE, resolveProcessLaunch, spawnSelf, unknownRoleMessage } from "./process-roles";
 
@@ -72,22 +74,19 @@ describe("子进程角色(实跑,数据目录锁被占着)", () => {
     expect(await child.exited).toBe(1);
   }, 30_000);
 
-  test("引擎宿主:spawnSelf 起来、在 stdout 发出 engine.ready;关掉 stdin 即以 0 退出", async () => {
-    const child = spawnSelf("engine-host", { env: { ...process.env, RIKKAHUB_PC_DATA_DIR: lockedDataDir("host") }, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-    const reader = child.stdout.getReader();
-    const decoder = new TextDecoder();
-    let text = "";
-    while (!text.includes("\n")) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      text += decoder.decode(value, { stream: true });
-    }
-    reader.releaseLock();
-    const ready = JSON.parse(text.slice(0, text.indexOf("\n"))) as { method: string; params: unknown[] };
-    expect(ready.method).toBe("engine.ready");
-    expect(ready.params[0]).toBe("pi");
-    child.stdin.end();
-    expect(await child.exited).toBe(0);
+  test("引擎宿主:spawnSelf 起来、经专用通道完成握手(stdout 不承载协议);关掉通道即以 0 退出,不碰锁", async () => {
+    const dataDir = lockedDataDir("host");
+    const proc = await launchEngineHost({
+      host: {} as EngineHost,
+      proxyConfig: { mode: "direct", url: "", username: "", password: "", bypassRules: "", userAgent: "" },
+      onAppError: () => undefined,
+      onProtocolError: () => undefined,
+      env: { ...process.env, RIKKAHUB_PC_DATA_DIR: dataDir },
+    });
+    expect(proc.driver.kind).toBe("pi");
+    await proc.stop();
+    expect((await proc.exited).exitCode).toBe(0);
+    expect(JSON.parse(readFileSync(join(dataDir, "pc-server.lock"), "utf8")).pid).toBe(process.pid);
   }, 30_000);
 });
 
