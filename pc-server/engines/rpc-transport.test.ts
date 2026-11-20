@@ -27,15 +27,26 @@ function wire(createDriver: (host: EngineHost) => EngineDriver, host: Partial<En
     report: () => undefined,
     ...host,
   };
+  const bytes = { toEngine: 0, toApp: 0 };
   let toEngine: (line: string) => void = () => {};
-  const app = connectDriverOverRpc((line) => queueMicrotask(() => toEngine(line)), fullHost, (reason) => void protocolErrors.push(reason));
+  const app = connectDriverOverRpc(
+    (line) => {
+      bytes.toEngine += line.length;
+      queueMicrotask(() => toEngine(line));
+    },
+    fullHost,
+    (reason) => void protocolErrors.push(reason),
+  );
   const engine = serveDriverOverRpc(
-    (line) => queueMicrotask(() => app.receive(line)),
+    (line) => {
+      bytes.toApp += line.length;
+      queueMicrotask(() => app.receive(line));
+    },
     createDriver,
     (reason) => void protocolErrors.push(reason),
   );
   toEngine = (line) => engine.receive(line);
-  return { app, engine, order, protocolErrors };
+  return { app, engine, order, protocolErrors, bytes };
 }
 
 function baseDriver(host: EngineHost, overrides: Partial<EngineDriver> = {}): EngineDriver {
@@ -111,6 +122,42 @@ describe("跨进程传输", () => {
     ]);
     const input = { model: {} as never, reasoningLevel: null, workspace: null, instructions: { appendSystemPrompt: [], globalAgentsFile: null, skills: { dir: "", enabled: [] } }, plugins: [], prompt: { text: "", images: [] }, tools: [] };
     expect((await driver.runCommand!({ ...turn, input, commandId: "c1", args: "x" })).compactions[0]!.summary).toBe("ran c1 x");
+  });
+
+  test("会话视图按指纹对账:第二轮只传变了的条目;拼回的视图与整份相同;invalidate 后整份重传", async () => {
+    const item = (id: string, text: string) => ({ message: { id, role: "USER", parts: [{ type: "text", text }] } as never, synthetic: false });
+    let view = { items: [item("m1", "甲".repeat(5000)), item("m2", "乙".repeat(5000))], compactions: [] };
+    const loaded: unknown[] = [];
+    const { app, bytes } = wire(
+      (host) =>
+        baseDriver(host, {
+          async startTurn(req) {
+            const got = await host.session.load(req);
+            loaded.push(structuredClone(got));
+            // 驱动改了拿到的对象,不影响下一轮拼回的视图。
+            (got.items[0]!.message as { id: string }).id = "被改了";
+            return { text: "", stopReason: null, compactions: [] };
+          },
+        }),
+      { session: { load: async () => structuredClone(view), append: async () => undefined } },
+    );
+    const driver = await app.ready;
+    const roundBytes = async () => {
+      const before = bytes.toEngine;
+      await driver.startTurn(turn);
+      return bytes.toEngine - before;
+    };
+    const first = await roundBytes();
+    expect(first).toBeGreaterThan(10_000);
+    view = { items: [...view.items, item("m3", "丙")], compactions: [] };
+    const second = await roundBytes();
+    expect(second).toBeLessThan(1_000);
+    view = { items: [item("m1", "改过的第一条"), view.items[1]!, view.items[2]!], compactions: [] };
+    expect(await roundBytes()).toBeLessThan(1_000);
+    expect(loaded.at(-1)).toEqual({ items: [item("m1", "改过的第一条"), item("m2", "乙".repeat(5000)), item("m3", "丙")], compactions: [] });
+    await driver.invalidate("conv-rpc");
+    expect(await roundBytes()).toBeGreaterThan(5_000);
+    expect(loaded.at(-1)).toEqual(view);
   });
 
   test("不可序列化的载荷在发出端失败(不让 JSON 静默丢字段)", async () => {

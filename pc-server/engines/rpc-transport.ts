@@ -12,6 +12,7 @@
 // 契约之外的进程运维消息(推代理配置、转发错误)以 runtime. 开头,由两端各自登记处理函数,经 notify 发出。
 // host.emit 不逐条发:宿主侧整形、攒批后以 host.emitBatch 发出,应用侧还原成原事件逐条交给 host.emit(rpc-events);
 // 这一端发任何其他消息前先把攒着的事件发完,所以上面「同方向按序」的保证对事件同样成立。
+// host.session.load 按指纹对账:宿主侧带上已缓存的条目指纹,应用侧只附宿主侧没有的条目(rpc-session-view)。
 //
 // 载荷纪律与回环传输一致:发出前 assertJsonSafe(函数 / 类实例 / 循环引用即抛,不让 JSON 静默丢字段);
 // 拒绝原因按 serializeEngineError 的形态放进 error.data,对端 reviveEngineError 还原(AbortError、
@@ -28,13 +29,14 @@ import type {
   EngineDriver,
   EngineHost,
   EngineKind,
-  EngineSessionView,
   PermissionGrant,
   SubscriptionCredential,
+  TurnRef,
   TurnResult,
 } from "./contract";
 import { assertJsonSafe, reviveEngineError, serializeEngineError, type EngineErrorPayload } from "./loopback";
 import { createEmitCoalescer, createEmitDecoder, type WireEmitBatch } from "./rpc-events";
+import { SessionViewCache, shrinkSessionView, type WireSessionView } from "./rpc-session-view";
 
 /** JSON-RPC 的实现自定义错误段;error.data 携带 EngineErrorPayload。 */
 const ENGINE_ERROR = -32000;
@@ -247,7 +249,11 @@ export function connectDriverOverRpc(
           host.emit(turn, event);
         }
       },
-      "host.session.load": (...args: Parameters<EngineHost["session"]["load"]>) => host.session.load(...args),
+      "host.session.load": async (turn: TurnRef, have: string[]) => {
+        const view = await host.session.load(turn);
+        assertJsonSafe(view, "host.session.load(返回值)");
+        return shrinkSessionView(view, have);
+      },
       "host.session.append": (...args: Parameters<EngineHost["session"]["append"]>) => host.session.append(...args),
       "host.tools.call": (...args: Parameters<EngineHost["tools"]["call"]>) => host.tools.call(...args),
       "host.permission.check": (...args: Parameters<EngineHost["permission"]["check"]>) => host.permission.check(...args),
@@ -321,6 +327,7 @@ export function serveDriverOverRpc(
     return driver;
   };
   let coalescer: ReturnType<typeof createEmitCoalescer> | undefined;
+  const views = new SessionViewCache();
   const peer = createPeer(
     write,
     withRuntime({
@@ -331,7 +338,10 @@ export function serveDriverOverRpc(
         if (!current.compact) throw new Error(`引擎 ${current.kind} 未实现原生压缩`);
         return current.compact(...args);
       },
-      "driver.invalidate": (...args: Parameters<EngineDriver["invalidate"]>) => target().invalidate(...args),
+      "driver.invalidate": (...args: Parameters<EngineDriver["invalidate"]>) => {
+        views.drop(args[0]);
+        return target().invalidate(...args);
+      },
       "driver.listCommands": (...args: Parameters<NonNullable<EngineDriver["listCommands"]>>) => {
         const current = target();
         if (!current.listCommands) throw new Error(`引擎 ${current.kind} 没有引擎特色指令`);
@@ -355,7 +365,11 @@ export function serveDriverOverRpc(
       events.emit(turn, event);
     },
     session: {
-      load: (turn) => peer.request("host.session.load", [turn]) as Promise<EngineSessionView>,
+      load: async (turn) => {
+        const snapshot = views.snapshot(turn.conversationId);
+        const wire = (await peer.request("host.session.load", [turn, [...snapshot.keys()]])) as WireSessionView;
+        return views.rebuild(turn.conversationId, snapshot, wire);
+      },
       append: async (turn, entries) => {
         await peer.request("host.session.append", [turn, entries]);
       },
