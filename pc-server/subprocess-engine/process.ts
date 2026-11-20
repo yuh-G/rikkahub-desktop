@@ -5,7 +5,7 @@
 // 全在这里统一,不在每个 adapter 里重写一遍。
 //
 // 关键决策:
-//  - 用 node:child_process.spawn 而非 Bun.spawn:需要 detached 进程组 + 跨平台杀树
+//  - 用 node:child_process.spawn 而非 Bun.spawn:需要 POSIX 的 detached 进程组 + 跨平台杀树
 //    (killProcessTree 复用 workspace/tools/shell.ts 的成熟实现——Windows taskkill /T,
 //    POSIX 负 pid 杀进程组),这是 Bun.spawn 目前给不了的。
 //  - stderr 全程摘录成尾部缓冲(默认留最后几 KB),供崩溃时归因展示;不管 stdout——
@@ -102,9 +102,9 @@ export function spawnSubprocess(options: SpawnSubprocessOptions): SubprocessHand
     child = spawn(cmd, args, {
       cwd,
       env: env ? { ...process.env, ...env } : process.env,
-      // detached: POSIX 下让子进程自成进程组,杀树时按组杀(killProcessTree 负 pid);
-      // Windows 下 detached 不影响(taskkill /T 按树杀),但保持一致无害。
-      detached: true,
+      // POSIX 下让子进程自成进程组,杀树时按组杀(killProcessTree 负 pid)。Windows 不能 detached:非 detached 的子进程
+      // 在「关闭即杀」的作业对象里,本进程没了它随之结束;detached 会让它连同它起的命令行一起留成孤儿(P7.1 X7 实测)。
+      detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });

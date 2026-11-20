@@ -3,7 +3,7 @@
 // 顺序:先以随机名监听 → spawnSelf("engine-host") → 经 stdin 第一行交过去地址、令牌、单帧上限、网络配置 → 等第一个令牌对的
 // 连接 → 核对问候(身份、协议版本、应用版本;不一致即拒绝并提示重启应用)→ 把契约的应用侧(connectDriverOverRpc)挂上去,
 // 等 engine.ready。之后用户改代理,调用方经 pushProxyConfig 推给宿主进程;宿主进程转来的错误中心条目交给 onAppError。
-// 子进程的 stdout 不读(插件随便写),stderr 只留尾部用于归因。启停、判活、重启归监管器(P7.2.3),这里只管一次启动。
+// 子进程的 stdout 不读(插件随便写),stderr 只留尾部用于归因。启停、判活、重启归监管器(supervisor.ts),这里只管一次启动。
 
 import type { Subprocess } from "bun";
 
@@ -19,10 +19,12 @@ import {
   ENGINE_HOST_PROTOCOL,
   engineHostHelloMismatch,
   RUNTIME_APP_ERROR,
+  RUNTIME_PING,
   RUNTIME_PROXY_CONFIG,
   type EngineHostLaunchLine,
 } from "./host-protocol";
 import { createTailBuffer } from "./process";
+import { killProcessAndDescendants } from "./process-info";
 
 export interface LaunchEngineHostOptions {
   host: EngineHost;
@@ -35,6 +37,8 @@ export interface LaunchEngineHostOptions {
   env?: Record<string, string | undefined>;
   /** 从启动到 engine.ready 的限时。 */
   timeoutMs?: number;
+  /** 子进程一起来就告诉调用方 pid(监管器据此记下,主程序下次启动清扫用),早于握手。 */
+  onSpawn?(pid: number): void;
   /** 测试用:换成起测试替身的入口。生产只用 spawnSelf("engine-host")。 */
   spawnHost?: (options: HostSpawnOptions) => Subprocess<"pipe", "ignore", "pipe">;
 }
@@ -45,6 +49,10 @@ export interface EngineHostProcess {
   driver: EngineDriver;
   pid: number;
   pushProxyConfig(config: ProxyConfig): void;
+  /** 问一句 runtime.ping;宿主进程主线程被占住时一直不回(期限由监管器把握)。 */
+  ping(): Promise<unknown>;
+  /** 立即强杀宿主进程连同它起的命令行。 */
+  kill(): void;
   /** 宿主进程退出:退出码、信号、标准错误尾部。 */
   exited: Promise<{ exitCode: number | null; signal: string | null; stderrTail: string }>;
   /** 关掉通道与 stdin,宿主进程自己退出;timeoutMs 内没退就强杀。 */
@@ -64,6 +72,9 @@ export async function launchEngineHost(options: LaunchEngineHostOptions): Promis
     listener.close();
     throw err;
   }
+  options.onSpawn?.(child.pid);
+  // Windows 上它起的命令行在作业对象里随它结束;其余平台命令行自成进程组,要连后代一起杀
+  const kill = () => (process.platform === "win32" ? child.kill("SIGKILL") : killProcessAndDescendants(child.pid));
   const stderrDrained = (async () => {
     const reader = child.stderr.getReader();
     for (;;) {
@@ -82,7 +93,7 @@ export async function launchEngineHost(options: LaunchEngineHostOptions): Promis
 
   const fail = async (message: string): Promise<never> => {
     listener.close();
-    child.kill("SIGKILL");
+    kill();
     const info = await exited;
     throw new Error(info.stderrTail ? `${message}\n引擎宿主进程的标准错误尾部:\n${info.stderrTail}` : message);
   };
@@ -92,6 +103,7 @@ export async function launchEngineHost(options: LaunchEngineHostOptions): Promis
     token: listener.token,
     maxFrameBytes: ENGINE_HOST_MAX_FRAME_BYTES,
     proxyConfig: options.proxyConfig,
+    parentPid: process.pid,
   };
   child.stdin.write(`${JSON.stringify(launchLine)}\n`);
   child.stdin.flush();
@@ -141,13 +153,15 @@ export async function launchEngineHost(options: LaunchEngineHostOptions): Promis
     driver,
     pid: child.pid,
     pushProxyConfig: (config) => connection.notify(RUNTIME_PROXY_CONFIG, [config]),
+    ping: () => connection.request(RUNTIME_PING, []),
+    kill,
     exited,
     async stop(stopTimeoutMs = 5_000) {
       channel.close("主程序停止引擎宿主进程");
       child.stdin.end();
       const done = await Promise.race([exited.then(() => true), Bun.sleep(stopTimeoutMs).then(() => false)]);
       if (!done) {
-        child.kill("SIGKILL");
+        kill();
         await exited;
       }
     },

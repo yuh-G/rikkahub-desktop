@@ -65,6 +65,14 @@ function errorFromObject(error: JsonRpcErrorObject, method: string): Error {
 /** 契约之外的进程运维消息的处理函数;名字必须以 runtime. 开头,不能顶替契约方法。 */
 export type RuntimeHandlers = Record<string, Handler>;
 
+/** 通道已关闭(对端进程退出或被结束)时,在途与之后的调用以它拒绝;监管器据此去查进程是怎么没的。 */
+export class EngineChannelClosedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EngineChannelClosedError";
+  }
+}
+
 function withRuntime(handlers: Record<string, Handler>, runtime: RuntimeHandlers): Record<string, Handler> {
   for (const name of Object.keys(runtime)) {
     if (!name.startsWith("runtime.")) throw new Error(`进程运维消息必须以 runtime. 开头:${name}`);
@@ -115,7 +123,7 @@ function createPeer(write: (line: string) => void, handlers: Record<string, Hand
 
   return {
     request(method, args) {
-      if (closedReason !== null) return Promise.reject(new Error(`引擎通道已关闭(${closedReason}),无法调用 ${method}`));
+      if (closedReason !== null) return Promise.reject(new EngineChannelClosedError(`引擎通道已关闭(${closedReason}),无法调用 ${method}`));
       try {
         assertJsonSafe(args, `${method}(参数)`);
       } catch (err) {
@@ -179,7 +187,7 @@ function createPeer(write: (line: string) => void, handlers: Record<string, Hand
     close(reason) {
       if (closedReason !== null) return;
       closedReason = reason;
-      for (const waiter of pending.values()) waiter.reject(new Error(`引擎通道已关闭(${reason}),${waiter.method} 未完成`));
+      for (const waiter of pending.values()) waiter.reject(new EngineChannelClosedError(`引擎通道已关闭(${reason}),${waiter.method} 未完成`));
       pending.clear();
     },
   };
@@ -192,6 +200,8 @@ export interface RpcDriverConnection {
   receive(line: string): void;
   /** 发一条进程运维消息(runtime.*)。 */
   notify(method: string, args: unknown[]): void;
+  /** 发一条进程运维请求(runtime.*),等对端回包(监管器判活用)。 */
+  request(method: string, args: unknown[]): Promise<unknown>;
   /** 通道断开(子进程退出):在途调用以错误拒绝。 */
   close(reason: string): void;
 }
@@ -261,6 +271,8 @@ export function connectDriverOverRpc(
     ready,
     receive: (line) => peer.receive(line),
     notify: (method, args) => peer.notify(method, args),
+    request: (method, args) =>
+      method.startsWith("runtime.") ? peer.request(method, args) : Promise.reject(new Error(`进程运维请求必须以 runtime. 开头:${method}`)),
     close(reason) {
       peer.close(reason);
       rejectReady(new Error(`引擎进程未完成握手即断开(${reason})`));

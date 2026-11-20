@@ -8,7 +8,8 @@
 //   4. 把 reportError 的广播口接到通道上(runtime.appError),宿主进程里的错误回到主程序的错误中心;
 //   5. 连通道、发问候,把契约的引擎侧(rpc-transport 的 serveDriverOverRpc)挂上去。
 // 标准输出与标准错误不承载协议:插件往 stdout 写什么都不影响通道;console 输出改到 stderr,主程序摘录尾部归因。
-// 主程序断开(通道关闭、stdin 关闭)即退出:主程序没了,宿主进程留着只会成孤儿。
+// 主程序断开(通道关闭、stdin 关闭)即退出:主程序没了,宿主进程留着只会成孤儿。主线程被插件占住时这条路走不通,
+// 另有一条独立线程盯主程序(parent-watch.ts);主程序判活问的 runtime.ping 由主线程答,答不了即是卡住了。
 
 import { installProxyFetchInterceptor, normalizeProxyConfig, primeSystemProxyCache } from "../foundation/net";
 import type { ProxyConfig } from "../foundation/types";
@@ -23,10 +24,12 @@ import {
   ENGINE_HOST_MAX_FRAME_BYTES,
   ENGINE_HOST_PROTOCOL,
   RUNTIME_APP_ERROR,
+  RUNTIME_PING,
   RUNTIME_PROXY_CONFIG,
   type EngineHostHello,
   type EngineHostLaunchLine,
 } from "./host-protocol";
+import { startParentWatchdog } from "./parent-watch";
 
 /** 读 stdin 的第一行;之后 stdin 不再读,关闭即视为主程序已退出。 */
 function readLaunchLine(onStdinEnd: () => void): Promise<EngineHostLaunchLine> {
@@ -83,6 +86,8 @@ export async function runEngineHost(createDriver: (host: EngineHost) => EngineDr
 
   let proxyConfig: ProxyConfig = normalizeProxyConfig(launch.proxyConfig);
   installProxyFetchInterceptor(() => proxyConfig);
+  // 主线程被插件占住时,通道断开与 stdin 关闭都没人处理;另一条线程盯主程序(§5.14.7 第一层)
+  if (launch.parentPid > 0) startParentWatchdog(launch.parentPid);
 
   const hello: EngineHostHello = {
     token: launch.token,
@@ -117,6 +122,7 @@ export async function runEngineHost(createDriver: (host: EngineHost) => EngineDr
       [RUNTIME_PROXY_CONFIG]: (next: ProxyConfig) => {
         proxyConfig = normalizeProxyConfig(next);
       },
+      [RUNTIME_PING]: () => true,
     },
   );
   channel.onFrame((text) => server.receive(text));

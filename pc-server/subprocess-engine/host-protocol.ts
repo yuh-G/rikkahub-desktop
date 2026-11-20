@@ -6,7 +6,7 @@
 
 import type { ProxyConfig } from "../foundation/types";
 
-export const ENGINE_HOST_PROTOCOL = 1;
+export const ENGINE_HOST_PROTOCOL = 2;
 
 /** 两端各自声明能收的单帧上限(都取这个值)。大块内容分块传、不包进 JSON 字符串在 P7.2.4 做。 */
 export const ENGINE_HOST_MAX_FRAME_BYTES = 256 * 1024 * 1024;
@@ -19,6 +19,8 @@ export interface EngineHostLaunchLine {
   maxFrameBytes: number;
   /** 网络壳(代理 / UA / 空闲定时器)的配置;之后用户改代理,主程序推 runtime.proxyConfig。 */
   proxyConfig: ProxyConfig;
+  /** 主程序的 pid:宿主进程的独立线程盯它(不用 process.ppid:Linux 上父进程没了会改挂到别的进程)。 */
+  parentPid: number;
 }
 
 /** 宿主进程连上通道后的第一帧。 */
@@ -35,6 +37,8 @@ export type EngineHostHello = {
 /** 进程运维消息(契约之外):主程序 → 宿主进程推新的网络配置;宿主进程 → 主程序转发错误中心条目。 */
 export const RUNTIME_PROXY_CONFIG = "runtime.proxyConfig";
 export const RUNTIME_APP_ERROR = "runtime.appError";
+/** 主程序 → 宿主进程的判活请求(监管器定期问,带期限;宿主进程的主线程被占住时答不了)。 */
+export const RUNTIME_PING = "runtime.ping";
 
 /** 核对问候;对不上返回原因(给用户看),对得上返回 null。 */
 export function engineHostHelloMismatch(hello: Record<string, unknown>, expected: { protocol: number; appVersion: string }): string | null {

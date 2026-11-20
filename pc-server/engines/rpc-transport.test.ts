@@ -238,11 +238,14 @@ describe("跨进程传输", () => {
     });
     const engine = serveDriverOverRpc((line) => queueMicrotask(() => app.receive(line)), (host) => baseDriver(host), () => {}, {
       "runtime.proxyConfig": (...args: unknown[]) => void toEngine.push(args),
+      "runtime.ping": () => "pong",
     });
     deliverToEngine = (line) => engine.receive(line);
     await app.ready;
     app.notify("runtime.proxyConfig", [{ mode: "direct" }]);
     engine.notify("runtime.appError", [{ message: "x" }]);
+    expect(await app.request("runtime.ping", [])).toBe("pong");
+    await expect(app.request("driver.dispose", [])).rejects.toThrow("runtime.");
     await Bun.sleep(5);
     expect(toEngine).toEqual([[{ mode: "direct" }]]);
     expect(toApp).toEqual([[{ message: "x" }]]);

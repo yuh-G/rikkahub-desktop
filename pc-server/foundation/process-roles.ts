@@ -22,6 +22,11 @@ export type ChildRole = Exclude<ProcessRole, "server">;
 
 const ROLE_FLAG = "--rikkahub-role=";
 
+/** 子进程启动参数里的角色标记(启动清扫按它认出自己起的进程)。 */
+export function roleFlag(role: ChildRole): string {
+  return `${ROLE_FLAG}${role}`;
+}
+
 export type ProcessLaunch =
   | { kind: "role"; role: ProcessRole }
   | { kind: "pi-cli-relaunch" }
@@ -56,7 +61,7 @@ export function spawnSelf<
   const Out extends SpawnOptions.Readable = "pipe",
   const Err extends SpawnOptions.Readable = "inherit",
 >(role: ChildRole, options: SpawnOptions.SpawnOptions<In, Out, Err> = {}): Subprocess<In, Out, Err> {
-  const flag = `${ROLE_FLAG}${role}`;
+  const flag = roleFlag(role);
   const cmd = Bun.isStandaloneExecutable ? [process.execPath, flag] : [process.execPath, resolve(import.meta.dir, "..", "server.ts"), flag];
   return Bun.spawn<In, Out, Err>({ ...options, cmd });
 }
