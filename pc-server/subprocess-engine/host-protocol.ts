@@ -6,7 +6,7 @@
 
 import type { ProxyConfig } from "../foundation/types";
 
-export const ENGINE_HOST_PROTOCOL = 2;
+export const ENGINE_HOST_PROTOCOL = 3;
 
 /** 两端各自声明能收的单帧上限(都取这个值)。大块内容分块传、不包进 JSON 字符串在 P7.2.4 做。 */
 export const ENGINE_HOST_MAX_FRAME_BYTES = 256 * 1024 * 1024;

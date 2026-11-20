@@ -10,6 +10,8 @@
 // startTurn 的同步前缀里登记」的约定跨进程照样成立(紧随其后的 abort 不会落空)。
 // 引擎侧启动后先发 engine.ready(种类 + 能力声明),应用侧据此造驱动代理。
 // 契约之外的进程运维消息(推代理配置、转发错误)以 runtime. 开头,由两端各自登记处理函数,经 notify 发出。
+// host.emit 不逐条发:宿主侧整形、攒批后以 host.emitBatch 发出,应用侧还原成原事件逐条交给 host.emit(rpc-events);
+// 这一端发任何其他消息前先把攒着的事件发完,所以上面「同方向按序」的保证对事件同样成立。
 //
 // 载荷纪律与回环传输一致:发出前 assertJsonSafe(函数 / 类实例 / 循环引用即抛,不让 JSON 静默丢字段);
 // 拒绝原因按 serializeEngineError 的形态放进 error.data,对端 reviveEngineError 还原(AbortError、
@@ -32,6 +34,7 @@ import type {
   TurnResult,
 } from "./contract";
 import { assertJsonSafe, reviveEngineError, serializeEngineError, type EngineErrorPayload } from "./loopback";
+import { createEmitCoalescer, createEmitDecoder, type WireEmitBatch } from "./rpc-events";
 
 /** JSON-RPC 的实现自定义错误段;error.data 携带 EngineErrorPayload。 */
 const ENGINE_ERROR = -32000;
@@ -80,13 +83,20 @@ function withRuntime(handlers: Record<string, Handler>, runtime: RuntimeHandlers
   return { ...handlers, ...runtime };
 }
 
-function createPeer(write: (line: string) => void, handlers: Record<string, Handler>, onProtocolError: (reason: string) => void): Peer {
+function createPeer(
+  write: (line: string) => void,
+  handlers: Record<string, Handler>,
+  onProtocolError: (reason: string) => void,
+  beforeSend?: () => void,
+): Peer {
   let nextId = 1;
   let closedReason: string | null = null;
   const pending = new Map<number, { method: string; resolve: (value: unknown) => void; reject: (err: unknown) => void }>();
 
   const send = (frame: Record<string, unknown>) => {
-    if (closedReason === null) write(JSON.stringify({ jsonrpc: "2.0", ...frame }));
+    if (closedReason !== null) return;
+    beforeSend?.();
+    write(JSON.stringify({ jsonrpc: "2.0", ...frame }));
   };
 
   const handlerFor = (method: string) =>
@@ -220,11 +230,23 @@ export function connectDriverOverRpc(
     rejectReady = reject;
   });
 
+  const decode = createEmitDecoder();
   const peer = createPeer(
     write,
     withRuntime({
       "engine.ready": (kind: EngineKind, capabilities: EngineCapabilities) => resolveReady(driverProxy(kind, capabilities)),
-      "host.emit": (...args: Parameters<EngineHost["emit"]>) => host.emit(...args),
+      "host.emitBatch": (batch: WireEmitBatch) => {
+        for (const [turn, wire] of batch) {
+          let event;
+          try {
+            event = decode(turn, wire);
+          } catch (err) {
+            onProtocolError(`host.emitBatch 还原失败:${err instanceof Error ? err.message : String(err)}`);
+            continue;
+          }
+          host.emit(turn, event);
+        }
+      },
       "host.session.load": (...args: Parameters<EngineHost["session"]["load"]>) => host.session.load(...args),
       "host.session.append": (...args: Parameters<EngineHost["session"]["append"]>) => host.session.append(...args),
       "host.tools.call": (...args: Parameters<EngineHost["tools"]["call"]>) => host.tools.call(...args),
@@ -298,6 +320,7 @@ export function serveDriverOverRpc(
     if (!driver) throw new Error("驱动尚未就绪");
     return driver;
   };
+  let coalescer: ReturnType<typeof createEmitCoalescer> | undefined;
   const peer = createPeer(
     write,
     withRuntime({
@@ -322,9 +345,15 @@ export function serveDriverOverRpc(
       "driver.dispose": () => target().dispose(),
     }, runtime),
     onProtocolError,
+    () => coalescer?.flush(),
   );
+  coalescer = createEmitCoalescer((batch) => peer.notify("host.emitBatch", [batch]));
+  const events = coalescer;
   const host: EngineHost = {
-    emit: (turn, event) => peer.notify("host.emit", [turn, event]),
+    emit: (turn, event) => {
+      assertJsonSafe([turn, event], "host.emit(参数)");
+      events.emit(turn, event);
+    },
     session: {
       load: (turn) => peer.request("host.session.load", [turn]) as Promise<EngineSessionView>,
       append: async (turn, entries) => {
@@ -348,5 +377,12 @@ export function serveDriverOverRpc(
   };
   driver = createDriver(host);
   peer.notify("engine.ready", [driver.kind, driver.capabilities]);
-  return { receive: (line) => peer.receive(line), notify: (method, args) => peer.notify(method, args), close: (reason) => peer.close(reason) };
+  return {
+    receive: (line) => peer.receive(line),
+    notify: (method, args) => peer.notify(method, args),
+    close(reason) {
+      events.close();
+      peer.close(reason);
+    },
+  };
 }
