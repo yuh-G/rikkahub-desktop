@@ -10,7 +10,7 @@ import type { AddressInfo } from "node:net";
 export interface FakeSseToolCall {
   id: string;
   name: string;
-  /** 完整 JSON 参数字符串(单帧发出;分帧累计路径由桥单测覆盖)。 */
+  /** 完整 JSON 参数字符串(缺省单帧发出;分帧见 FakeSseTurn.argumentFrames)。 */
   arguments: string;
 }
 
@@ -19,6 +19,9 @@ export interface FakeSseTurn {
   content?: string;
   /** 本轮工具调用(P3:驱动 pi 执行 customTools;finish_reason 自动为 tool_calls)。 */
   toolCalls?: FakeSseToolCall[];
+  /** 只有一个工具调用时,把参数切成这么多帧依次发出(首帧只带 id 与名字),帧间隔 frameIntervalMs。 */
+  argumentFrames?: number;
+  frameIntervalMs?: number;
   usage?: { prompt_tokens: number; completion_tokens: number };
   /** 收到请求后、写响应前执行:确定性模拟"LLM 调用进行中"发生的并发事件
    *  (如压缩落库防线测试在摘要生成期间注入新消息)。 */
@@ -66,7 +69,18 @@ export async function startFakeOpenAiSse(turns: FakeSseTurn[]): Promise<FakeOpen
         choices: [{ index: 0, delta: { role: "assistant", content: turn.content }, finish_reason: null }],
       });
     }
-    if (turn.toolCalls?.length) {
+    const streamed = turn.toolCalls?.length === 1 && (turn.argumentFrames ?? 1) > 1 ? turn.toolCalls[0]! : undefined;
+    if (streamed) {
+      const chunk = (delta: object) =>
+        frame({ id: "chatcmpl-fake", object: "chat.completion.chunk", created: 0, model: "fake-model", choices: [{ index: 0, delta, finish_reason: null }] });
+      chunk({ role: "assistant", tool_calls: [{ index: 0, id: streamed.id, type: "function", function: { name: streamed.name, arguments: "" } }] });
+      const frames = turn.argumentFrames!;
+      const size = Math.ceil(streamed.arguments.length / frames);
+      for (let i = 0; i < streamed.arguments.length; i += size) {
+        if (turn.frameIntervalMs) await new Promise((resolve) => setTimeout(resolve, turn.frameIntervalMs));
+        chunk({ tool_calls: [{ index: 0, function: { arguments: streamed.arguments.slice(i, i + size) } }] });
+      }
+    } else if (turn.toolCalls?.length) {
       frame({
         id: "chatcmpl-fake",
         object: "chat.completion.chunk",

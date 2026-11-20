@@ -115,8 +115,17 @@ export function excludedPiBuiltinToolNames(shell: string | undefined): string[] 
   return [...allToolNames].filter((name) => !provided.has(name));
 }
 
+/** pi 的截断细节带一份截断后的全文(与结果文本相同,最多 50 KB),工具卡不读它。去掉,免得执行中的每个输出快照、
+ *  终局结果与原生条目都多带一份。 */
+function withoutTruncatedCopy(details: Record<string, unknown>): Record<string, unknown> {
+  const truncation = details.truncation;
+  if (!truncation || typeof truncation !== "object" || !("content" in truncation)) return details;
+  const { content: _content, ...rest } = truncation as Record<string, unknown>;
+  return { ...details, truncation: rest };
+}
+
 function withDetailsMarker(name: string, result: PiToolResult, final: boolean, extra?: Record<string, JsonValue>): PiToolResult {
-  const raw = (result.details ?? {}) as Record<string, unknown>;
+  const raw = withoutTruncatedCopy((result.details ?? {}) as Record<string, unknown>);
   const exitCode = name === "bash" && final ? (result.isError ? exitCodeOf(result) : 0) : undefined;
   const details = jsonSafeDetails({ ...raw, ...extra, ...(exitCode === undefined ? {} : { exitCode }) });
   return { ...result, details: details ? { workspace: { tool: name, details } } : {} } as PiToolResult;

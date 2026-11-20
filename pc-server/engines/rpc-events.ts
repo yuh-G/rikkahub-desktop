@@ -4,8 +4,9 @@
 // 终局 tool_call_created 还会把参数原样再带两遍。同进程传引用不要紧,跨进程每次都要整段转成文字。通道两端各留一份
 // 同样的「每张卡上次的参数 / 输出」记录:宿主侧只发相对上次的后缀(参数没变就不带),应用侧拼回原事件,GenerationEvent
 // 的语义与应用器都不变。两端的记录只随经过通道的事件按同一规则更新(编码后、解码后各 remember 一次),所以始终一致,
-// 不另发同步消息;终局 tool_result 清掉那张卡的记录,超过上限按登记先后淘汰,两端淘汰的是同一条。不是前缀延伸的快照
-// (pi 对执行中的输出有滚动截断)整份发。
+// 不另发同步消息;终局 tool_result 清掉那张卡的记录,超过上限按登记先后淘汰,两端淘汰的是同一条。执行中的输出超过
+// pi 的保留上限后改为滚动保留尾部,新快照 = 上次快照去掉开头若干字 + 新增内容,这时只发去掉的字数与新增内容;
+// 对不上的整份发。
 //
 // 合并(宿主侧):增量事件(正文、思考、参数、执行中的输出)约 16 ms 发一批,批内相邻的正文 / 思考拼接,同一张卡的
 // 参数与输出快照只留最新;窗口外来的第一条立即发,首字不等。其余事件、以及这一端发出的任何其他消息,发出前都先把
@@ -41,6 +42,22 @@ function singleText(output: ToolOutputEntry[]): string | undefined {
 
 const extendsText = (prev: string | undefined, next: string): prev is string =>
   prev !== undefined && next.length >= prev.length && next.startsWith(prev);
+
+const ROLL_PROBE_CHARS = 64;
+const MAX_ROLL_CANDIDATES = 16;
+
+/** 新快照能否写成 prev.slice(drop) + 后缀:返回 drop,对不上返回 undefined。用新快照开头一小段在旧快照里找候选位置,
+ *  逐个核对(任何一个核对通过的位置都能逐字还原,不要求是「真实」的那个)。 */
+function rollingDrop(prev: string, next: string): number | undefined {
+  const probe = next.slice(0, ROLL_PROBE_CHARS);
+  if (!probe) return undefined;
+  let at = prev.indexOf(probe, 1);
+  for (let tries = 0; at !== -1 && tries < MAX_ROLL_CANDIDATES; tries += 1) {
+    if (prev.length - at <= next.length && next.startsWith(prev.slice(at))) return at;
+    at = prev.indexOf(probe, at + 1);
+  }
+  return undefined;
+}
 
 class CardRecords {
   private readonly cards = new Map<string, CardRecord>();
@@ -81,9 +98,14 @@ function shrink(record: CardRecord | undefined, event: GenerationEvent): WireEmi
   }
   if (event.kind === "tool_result" && event.final === false) {
     const text = singleText(event.output);
-    if (text !== undefined && extendsText(record?.output, text)) {
-      const { output, ...rest } = event;
-      return { ...rest, append: text.slice(record!.output!.length), entry: { ...(output[0] as Record<string, JsonValue>), text: "" } };
+    const prev = record?.output;
+    if (text !== undefined && prev !== undefined) {
+      const drop = extendsText(prev, text) ? 0 : rollingDrop(prev, text);
+      if (drop !== undefined) {
+        const { output, ...rest } = event;
+        const entry = { ...(output[0] as Record<string, JsonValue>), text: "" };
+        return { ...rest, ...(drop ? { drop } : {}), append: text.slice(prev.length - drop), entry };
+      }
     }
   }
   return event;
@@ -101,8 +123,9 @@ function expand(record: CardRecord | undefined, wire: WireEmitEvent): Generation
   }
   if (wire.kind === "tool_result" && typeof wire.append === "string") {
     if (record?.output === undefined) throw new Error(`工具卡 ${String(wire.toolCallId)} 的输出后缀没有前文`);
-    const { append, entry, ...rest } = wire;
-    return { ...rest, output: [{ ...(entry as Record<string, JsonValue>), text: record.output + append }] } as GenerationEvent;
+    const { append, entry, drop, ...rest } = wire;
+    const kept = typeof drop === "number" ? record.output.slice(drop) : record.output;
+    return { ...rest, output: [{ ...(entry as Record<string, JsonValue>), text: kept + append }] } as GenerationEvent;
   }
   return wire as GenerationEvent;
 }

@@ -61,6 +61,17 @@ describe("整形", () => {
     expect(wires[9]).toEqual(events[9]);
   });
 
+  test("执行中的输出滚动保留尾部:只发去掉的字数与新增内容;对不上的整份发", () => {
+    const lines = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `line ${from + i} ${"·".repeat(40)}\n`).join("");
+    const events: GenerationEvent[] = [running(lines(0, 100)), running(lines(30, 160)), running(lines(90, 200)), running("全新的输出\n")];
+    const { wires, decoded } = roundTrip(events);
+    expect(decoded).toEqual(events);
+    expect(wires[1].drop).toBe(lines(0, 30).length);
+    expect(wires[1].append).toBe(lines(100, 160));
+    expect(wires[2].append).toBe(lines(160, 200));
+    expect(wires[3]).toEqual(events[3]);
+  });
+
   test("不同轮的同 id 工具卡互不干扰;缩写找不到前文即抛", () => {
     const encode = createEmitEncoder();
     const other: TurnRef = { conversationId: "conv-ev", turnId: "turn-other" };
@@ -180,8 +191,7 @@ describe("经应用器落成的消息", () => {
       { kind: "tool_approval_updated", toolCallId: "tc", approvalState: { type: "pending" } },
       { kind: "tool_approval_updated", toolCallId: "tc", approvalState: { type: "approved" } },
       card('{"n":1}'),
-      ...Array.from({ length: 20 }, (_, i) => running(Array.from({ length: i + 1 }, (_, k) => `L${k}
-`).join(""))),
+      ...Array.from({ length: 20 }, (_, i) => running(Array.from({ length: i + 1 }, (_, k) => `L${k}\n`).join(""))),
       { kind: "tool_result", toolCallId: "tc", output: [{ type: "text", text: "完成" }] },
       { kind: "text_delta", text: "收尾" },
     ];

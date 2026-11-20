@@ -3,16 +3,17 @@
 // 会话视图每轮整份交付(引擎每轮自己对比,编辑 / 重新生成 / 切分支不用另外通知);同进程传引用,跨进程每轮要把整段
 // 会话转成文字(300 轮约 2.7 MB)。对账保留「每轮整份交付」的语义,只是不重复传宿主侧已有的条目:
 // 1. 宿主侧发请求时带上自己缓存的这个会话的条目指纹;
-// 2. 应用侧把每一条转成 JSON 文本、算指纹,按顺序回全部指纹,只附上宿主侧没有的条目文本;
+// 2. 应用侧把每一条转成 JSON 文本、算指纹,按顺序回全部条目:宿主侧已有的写成它清单里的位置(连续的一段写成
+//    [起点, 条数]),没有的写指纹并附上条目文本;
 // 3. 宿主侧用缓存加新条目拼回完整视图,缓存换成这一轮的条目。
 // 指纹对「要传的那份文本」本身算,文本不同指纹就不同。宿主进程刚启动、被回收、崩溃重启后缓存是空的,该会话第一轮
 // 整份传。宿主侧每次都从文本解析出新对象交给驱动,与整份传时一样,驱动改了拿到的对象也影响不到下一轮。
 
 import type { EngineSessionItem, EngineSessionView } from "./contract";
 
-/** 线上的会话视图:按顺序的全部指纹,宿主侧缺的条目附 JSON 文本。 */
+/** 线上的会话视图:按顺序的全部条目——[起点, 条数] = 宿主侧清单里连续的一段,字符串 = 指纹(文本在 items 里)。 */
 export interface WireSessionView {
-  order: string[];
+  order: Array<string | [number, number]>;
   items: Record<string, string>;
   compactions: EngineSessionView["compactions"];
 }
@@ -24,14 +25,24 @@ export function sessionItemFingerprint(json: string): string {
 
 /** 应用侧:整份视图 → 线上形态。have = 宿主侧已缓存的指纹。 */
 export function shrinkSessionView(view: EngineSessionView, have: readonly string[]): WireSessionView {
-  const known = new Set(have);
-  const order: string[] = [];
+  const known = new Map<string, number>();
+  have.forEach((fingerprint, index) => {
+    if (!known.has(fingerprint)) known.set(fingerprint, index);
+  });
+  const order: WireSessionView["order"] = [];
   const items: Record<string, string> = {};
   for (const item of view.items) {
     const json = JSON.stringify(item);
     const fingerprint = sessionItemFingerprint(json);
-    order.push(fingerprint);
-    if (!known.has(fingerprint)) items[fingerprint] = json;
+    const index = known.get(fingerprint);
+    if (index === undefined) {
+      order.push(fingerprint);
+      items[fingerprint] = json;
+      continue;
+    }
+    const run = order.at(-1);
+    if (Array.isArray(run) && run[0] + run[1] === index) run[1] += 1;
+    else order.push([index, 1]);
   }
   return { order, items, compactions: view.compactions };
 }
@@ -58,14 +69,25 @@ export class SessionViewCache {
     return this.views.get(conversationId)?.view ?? new Map();
   }
 
-  rebuild(conversationId: string, snapshot: CachedView, wire: WireSessionView): EngineSessionView {
+  /** have = 发请求时交出去的清单(snapshot 的指纹,按同一顺序)。 */
+  rebuild(conversationId: string, snapshot: CachedView, have: readonly string[], wire: WireSessionView): EngineSessionView {
     const next: CachedView = new Map();
     const items: EngineSessionItem[] = [];
-    for (const fingerprint of wire.order) {
-      const json = Object.hasOwn(wire.items, fingerprint) ? wire.items[fingerprint] : snapshot.get(fingerprint);
-      if (json === undefined) throw new Error(`会话视图对账失败:条目 ${fingerprint} 既不在回包里也不在缓存里`);
+    const take = (fingerprint: string | undefined, json: string | undefined) => {
+      if (fingerprint === undefined || json === undefined) throw new Error(`会话视图对账失败:条目 ${String(fingerprint)} 既不在回包里也不在缓存里`);
       next.set(fingerprint, json);
       items.push(JSON.parse(json) as EngineSessionItem);
+    };
+    for (const entry of wire.order) {
+      if (typeof entry === "string") {
+        take(entry, Object.hasOwn(wire.items, entry) ? wire.items[entry] : undefined);
+        continue;
+      }
+      const [start, count] = entry;
+      for (let index = start; index < start + count; index += 1) {
+        const fingerprint = have[index];
+        take(fingerprint, fingerprint === undefined ? undefined : snapshot.get(fingerprint));
+      }
     }
     this.store(conversationId, next);
     return { items, compactions: wire.compactions };

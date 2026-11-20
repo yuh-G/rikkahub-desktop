@@ -13,6 +13,7 @@
 // host.emit 不逐条发:宿主侧整形、攒批后以 host.emitBatch 发出,应用侧还原成原事件逐条交给 host.emit(rpc-events);
 // 这一端发任何其他消息前先把攒着的事件发完,所以上面「同方向按序」的保证对事件同样成立。
 // host.session.load 按指纹对账:宿主侧带上已缓存的条目指纹,应用侧只附宿主侧没有的条目(rpc-session-view)。
+// host.models.log 的请求正文只传与同一会话上一次正文不同的部分(rpc-request-log)。
 //
 // 载荷纪律与回环传输一致:发出前 assertJsonSafe(函数 / 类实例 / 循环引用即抛,不让 JSON 静默丢字段);
 // 拒绝原因按 serializeEngineError 的形态放进 error.data,对端 reviveEngineError 还原(AbortError、
@@ -36,6 +37,7 @@ import type {
 } from "./contract";
 import { assertJsonSafe, reviveEngineError, serializeEngineError, type EngineErrorPayload } from "./loopback";
 import { createEmitCoalescer, createEmitDecoder, type WireEmitBatch } from "./rpc-events";
+import { createRequestLogDecoder, createRequestLogEncoder, type WireRequestRecord } from "./rpc-request-log";
 import { SessionViewCache, shrinkSessionView, type WireSessionView } from "./rpc-session-view";
 
 /** JSON-RPC 的实现自定义错误段;error.data 携带 EngineErrorPayload。 */
@@ -233,6 +235,7 @@ export function connectDriverOverRpc(
   });
 
   const decode = createEmitDecoder();
+  const decodeLog = createRequestLogDecoder();
   const peer = createPeer(
     write,
     withRuntime({
@@ -263,7 +266,15 @@ export function connectDriverOverRpc(
       "host.steer.take": (...args: Parameters<EngineHost["steer"]["take"]>) => host.steer.take(...args),
       "host.turn.request": (...args: Parameters<EngineHost["turn"]["request"]>) => host.turn.request(...args),
       "host.models.credential": (...args: Parameters<EngineHost["models"]["credential"]>) => host.models.credential(...args),
-      "host.models.log": (...args: Parameters<EngineHost["models"]["log"]>) => host.models.log(...args),
+      "host.models.log": (turn: TurnRef, wire: WireRequestRecord) => {
+        try {
+          host.models.log(turn, decodeLog(turn, wire));
+        } catch (err) {
+          onProtocolError(`host.models.log 还原失败:${err instanceof Error ? err.message : String(err)}`);
+          const { bodyDiff: _bodyDiff, ...record } = wire;
+          host.models.log(turn, record);
+        }
+      },
       "host.report": (...args: Parameters<EngineHost["report"]>) => host.report(...args),
     }, runtime),
     onProtocolError,
@@ -328,6 +339,7 @@ export function serveDriverOverRpc(
   };
   let coalescer: ReturnType<typeof createEmitCoalescer> | undefined;
   const views = new SessionViewCache();
+  const encodeLog = createRequestLogEncoder();
   const peer = createPeer(
     write,
     withRuntime({
@@ -367,8 +379,9 @@ export function serveDriverOverRpc(
     session: {
       load: async (turn) => {
         const snapshot = views.snapshot(turn.conversationId);
-        const wire = (await peer.request("host.session.load", [turn, [...snapshot.keys()]])) as WireSessionView;
-        return views.rebuild(turn.conversationId, snapshot, wire);
+        const have = [...snapshot.keys()];
+        const wire = (await peer.request("host.session.load", [turn, have])) as WireSessionView;
+        return views.rebuild(turn.conversationId, snapshot, have, wire);
       },
       append: async (turn, entries) => {
         await peer.request("host.session.append", [turn, entries]);
@@ -385,7 +398,10 @@ export function serveDriverOverRpc(
     turn: { request: (req) => peer.notify("host.turn.request", [req]) },
     models: {
       credential: (req) => peer.request("host.models.credential", [req]) as Promise<SubscriptionCredential>,
-      log: (turn, record) => peer.notify("host.models.log", [turn, record]),
+      log: (turn, record) => {
+        assertJsonSafe([turn, record], "host.models.log(参数)");
+        peer.notify("host.models.log", [turn, encodeLog(turn, record)]);
+      },
     },
     report: (report) => peer.notify("host.report", [report]),
   };
