@@ -8,7 +8,8 @@ import type { ProxyConfig } from "../foundation/types";
 
 export const ENGINE_HOST_PROTOCOL = 3;
 
-/** 两端各自声明能收的单帧上限(都取这个值)。大块内容分块传、不包进 JSON 字符串在 P7.2.4 做。 */
+/** 两端各自声明能收的单帧上限(都取这个值)。随会话长度增长的消息在 rpc-transport 里只传变化(P7.2.4),整份的只有
+ *  宿主进程刚启动后某个会话的第一轮视图与第一次请求正文;带大图的会话这一帧可达几十 MB,所以上限定得宽。 */
 export const ENGINE_HOST_MAX_FRAME_BYTES = 256 * 1024 * 1024;
 
 /** 主程序经子进程 stdin 第一行交过去的启动参数。令牌不放环境变量:环境变量会传给插件起的孙进程。 */
