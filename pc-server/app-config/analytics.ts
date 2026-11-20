@@ -41,6 +41,7 @@ let analyticsSearchCount = 0;  // search_web / scrape_web 执行次数
 let analyticsTtsCount = 0;     // TTS 朗读次数
 let analyticsMcpCount = 0;     // MCP 工具调用次数
 let analyticsImgCount = 0;     // 图像生成次数
+let analyticsEngineRestartCount = 0; // 引擎宿主进程意外退出后的自动重启次数(P7.2.7)
 
 // 专题6:使用时长的口径是"用户实际在用"而非"进程在线"。此前 hb 每次 ping 无条件
 // +1,而 ping 只要 server 进程活着就发——托盘常驻/Docker 7×24 部署把"使用时长"灌成
@@ -75,6 +76,7 @@ export function bumpAnalyticsSearchCount() { analyticsSearchCount++; }
 export function bumpAnalyticsTtsCount() { analyticsTtsCount++; }
 export function bumpAnalyticsMcpCount() { analyticsMcpCount++; }
 export function bumpAnalyticsImgCount() { analyticsImgCount++; }
+export function bumpAnalyticsEngineRestartCount() { analyticsEngineRestartCount++; }
 
 function resetAnalyticsCounters(): void {
   analyticsMsgCount = 0;
@@ -85,6 +87,7 @@ function resetAnalyticsCounters(): void {
   analyticsTtsCount = 0;
   analyticsMcpCount = 0;
   analyticsImgCount = 0;
+  analyticsEngineRestartCount = 0;
 }
 
 function readOrCreateDeviceId(): string {
@@ -121,7 +124,8 @@ function sendAnalyticsPing(): void {
     + `&fs=${analyticsSearchCount}`
     + `&ft=${analyticsTtsCount}`
     + `&fm=${analyticsMcpCount}`
-    + `&fi=${analyticsImgCount}`;
+    + `&fi=${analyticsImgCount}`
+    + `&rs=${analyticsEngineRestartCount}`;
   // 三重静默防御:
   //   (1) try/catch 包裹同步部分,防 fetch() 同步抛错(比如 URL 不合法)
   //   (2) AbortSignal.timeout 限制网络等待,DNS 失败/连接超时都会被吞

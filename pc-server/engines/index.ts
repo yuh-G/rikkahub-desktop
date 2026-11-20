@@ -15,6 +15,7 @@
 // 宿主进程的意外退出、放弃重启经错误中心提示(带码,中英文案在前端);状态变化交给编排器(无响应时给卡住的
 // 会话亮状态条)。记录目录 engineHostRecordsDir 供下次启动清扫(sweepStaleEngines,bootstrap 在就绪前调)。
 
+import { bumpAnalyticsEngineRestartCount } from "../app-config/analytics";
 import { engineHostRecordsDir } from "../foundation/paths";
 import type { Conversation, ProxyConfig } from "../foundation/types";
 import { getStringArray } from "../foundation/utils";
@@ -77,8 +78,9 @@ function onPiHostEvent(event: SupervisorEvent): void {
 /** 宿主进程的意外退出、放弃重启 → 错误中心(带码,前端按界面语言渲染)。 */
 export function reportEngineHostTrouble(event: Exclude<SupervisorEvent, { kind: "state" }>): void {
   if (event.kind === "unplanned-exit") {
-    // 不再重启的那次由 gave-up 提示;主程序退出途中的不提示
+    // 不再重启的那次由 gave-up 提示;主程序退出途中的不提示。看板的「引擎进程重启次数」(D24)也只数真的重启了的
     if (event.restarting) {
+      bumpAnalyticsEngineRestartCount();
       reportError("pi-engine", "warn", UNPLANNED_EXIT_TEXT[event.reason], event.detail, UNPLANNED_EXIT_CODES[event.reason]);
     }
   } else if (event.plugins.length > 0) {

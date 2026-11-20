@@ -213,11 +213,12 @@ export const onRequest = async (context) => {
         "COUNT(DISTINCT device_id) AS base " +
         "FROM pings WHERE date BETWEEN ? AND ? " + allAnd
       ).bind(sevenDaysAgo, today, ...allBinds).first(),
-      // 质量趋势:逐日失败数 / 消息数 / 平均使用时长。时长优先取 active_minutes
+      // 质量趋势:逐日失败数 / 消息数 / 引擎进程重启次数 / 平均使用时长。时长优先取 active_minutes
       // (分钟级,窗口激活口径,0003 迁移新增);老客户端只报 hb,回退 hb×10 粗估。
       // 两口径混算期(用户逐步升级)均值会向真实值回落,属预期。
       DB.prepare(
-        "SELECT date, SUM(err_count) AS errs, SUM(msg_count) AS msgs, " +
+        "SELECT date, SUM(err_count) AS errs, SUM(msg_count) AS msgs, SUM(engine_restarts) AS restarts, " +
+        "COUNT(DISTINCT CASE WHEN engine_restarts > 0 THEN device_id END) AS restart_devices, " +
         "ROUND(AVG(CASE WHEN active_minutes > 0 THEN active_minutes * 1.0 " +
         "               WHEN hb_count > 0 THEN hb_count * 10.0 END), 0) AS avg_minutes " +
         "FROM pings WHERE date BETWEEN ? AND ? " + allAnd + " GROUP BY date ORDER BY date"

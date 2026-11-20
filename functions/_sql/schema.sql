@@ -1,7 +1,7 @@
 -- RikkaHub 遥测 D1 库结构参考(与线上保持同步,灾备重建/新环境初始化用)。
 -- 应用方式:npx wrangler d1 execute <DB_NAME> --remote --file=functions/_sql/schema.sql
 -- 全部 IF NOT EXISTS,对已有库执行只会补缺失的索引,不动数据。
--- 已有库补新列请执行 0002_telemetry_extend.sql(只跑一次)。
+-- 已有库补新列请依次执行 0002_telemetry_extend.sql、0003_active_minutes.sql、0004_engine_restarts.sql(各只跑一次)。
 
 -- 原始上报:每设备每天一行,计数列取当日最大值(客户端每 10 分钟心跳累计,当日单调递增)。
 CREATE TABLE IF NOT EXISTS pings (
@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS pings (
   feat_tts    INTEGER NOT NULL DEFAULT 0,                  -- 当日 TTS 朗读次数
   feat_mcp    INTEGER NOT NULL DEFAULT 0,                  -- 当日 MCP 工具调用次数
   feat_img    INTEGER NOT NULL DEFAULT 0,                  -- 当日图像生成次数
+  engine_restarts INTEGER NOT NULL DEFAULT 0,              -- 当日引擎宿主进程意外退出后的自动重启次数
   first_seen  INTEGER NOT NULL DEFAULT 0,                  -- 仅设备历史首日为 1(rebuild 可全量矫正)
   created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (device_id, date)
