@@ -265,6 +265,25 @@ describe("主程序自己卡过、用户点停止", () => {
     await supervisor.dispose();
   });
 
+  test("已经无响应时点停止:不再等几秒,立即强杀并重启(中止它收不到,等的时候新发的消息也会派给它)", async () => {
+    let first = true;
+    const { supervisor, hosts, exits } = supervise(() => {
+      const host = new FakeHost({ silent: first, startTurn: () => new Promise(() => {}) });
+      first = false;
+      return host;
+    }, { timing: { ...fast, restartAfterMs: 60_000, stopDeadlineMs: 60_000 } });
+    const call = supervisor.run("c", (host) => host.driver.startTurn(turn()));
+    expect(await until(() => supervisor.state === "unresponsive")).toBe(true);
+    const stoppedAt = performance.now();
+    await supervisor.abort("c", "user");
+    expect(codeOf(await call.catch((e) => e))).toBe(ENGINE_HOST_EXITED);
+    expect(performance.now() - stoppedAt).toBeLessThan(1_000);
+    expect(hosts[0]!.calls).toContain("kill");
+    expect(exits()).toEqual(["stop-ignored:true"]);
+    expect(await until(() => hosts.length === 2 && supervisor.state === "ready")).toBe(true);
+    await supervisor.dispose();
+  });
+
   test("别的会话的停止不牵连:只等被停的那个会话的调用", async () => {
     const { supervisor, hosts } = supervise(() => new FakeHost({ startTurn: () => new Promise(() => {}) }));
     void supervisor.run("other", (host) => host.driver.startTurn(turn("other"))).catch(() => undefined);
@@ -290,15 +309,41 @@ describe("主程序自己卡过、用户点停止", () => {
 });
 
 describe("崩溃、崩溃循环、空闲回收", () => {
-  test("进程中途崩溃:在途调用以带码的错误结束(带退出码与标准错误尾部),立即起新进程", async () => {
+  test("改了插件:在途调用照常做完,之后进程正常停掉(不算意外退出);下一次调用起新进程", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((done) => (release = done));
+    let firstHost = true;
+    const { supervisor, hosts, exits } = supervise(() => {
+      const host = new FakeHost(firstHost ? { startTurn: async (self) => (await gate, { text: `来自 ${self.pid}` }) } : {});
+      firstHost = false;
+      return host;
+    });
+    const call = supervisor.run("c", (host) => host.driver.startTurn(turn()));
+    await until(() => hosts[0]?.calls.includes("startTurn") ?? false);
+    supervisor.recycle();
+    await Bun.sleep(30);
+    expect(hosts[0]!.calls).not.toContain("stop");
+    release();
+    expect((await call).text).toBe(`来自 ${hosts[0]!.pid}`);
+    expect(await until(() => hosts[0]!.gone)).toBe(true);
+    expect(hosts[0]!.calls).not.toContain("kill");
+    expect((await supervisor.run("c", (host) => host.driver.startTurn(turn()))).text).toBe(`来自 ${hosts[1]!.pid}`);
+    expect(exits()).toEqual([]);
+    // 空闲时改插件:立即换
+    supervisor.recycle();
+    expect(await until(() => hosts[1]!.gone)).toBe(true);
+    await supervisor.dispose();
+  });
+  test("进程中途崩溃:在途调用以带码的错误结束(带退出码与标准错误尾部,调用栈的行不带),立即起新进程", async () => {
     const { supervisor, hosts, exits } = supervise(() => new FakeHost({ startTurn: () => new Promise(() => {}) }));
     const call = supervisor.run("c", (host) => host.driver.startTurn(turn()));
     await until(() => hosts[0]?.calls.includes("startTurn") ?? false);
-    hosts[0]!.exit({ exitCode: 3, stderrTail: "插件抛了异常\n" });
+    hosts[0]!.exit({ exitCode: 3, stderrTail: "插件抛了异常\n    at load (B:/~BUN/root/host.js:1:2)\n    at run (native:7:39)\n" });
     const err = await call.catch((e) => e);
     expect(codeOf(err)).toBe(ENGINE_HOST_EXITED);
     expect(String(err.message)).toContain("退出码 3");
     expect(String(err.message)).toContain("插件抛了异常");
+    expect(String(err.message)).not.toContain("host.js");
     expect(exits()).toEqual(["crashed:true"]);
     expect(await until(() => hosts.length === 2 && supervisor.state === "ready")).toBe(true);
     await supervisor.dispose();

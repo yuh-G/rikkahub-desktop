@@ -158,9 +158,15 @@ export function prewarmEngineFor(conversation: Conversation): void {
   if (resolveEngine(conversation).driver === piDriver) piHosts.prewarm();
 }
 
-/** 用户改了插件或手动重试(重新生成):清掉连续失败记录,放弃重启之后允许再起。 */
+/** 用户手动重试(重新生成):清掉连续失败记录,放弃重启之后允许再起。 */
 export function resetEngineHosts(): void {
   piHosts.reset();
+}
+
+/** 用户改了插件(装、卸、停用、开发者路径):同上,并且正在跑的宿主进程空下来就换一个——停用的插件已经加载过的代码
+ *  和它对进程全局的改动(换掉 fetch、泄漏的内存)只有换进程才清得掉。 */
+export function enginePluginsChanged(): void {
+  piHosts.recycle();
 }
 
 /** 设置变了:代理配置变了就推给正在跑的宿主进程(它的网络壳读这份)。 */

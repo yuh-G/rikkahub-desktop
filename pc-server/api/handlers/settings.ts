@@ -11,7 +11,7 @@ import { RUNNING_IN_CONTAINER } from "../../foundation/platform";
 import { searchSelectionAfterDelete } from "../../foundation/search-selection";
 import { handleSetWebPassword, handleWebAuthStatus, stripAuthSecrets } from "../auth";
 import { refreshShellAvailability } from "../../workspace/runtime";
-import { resetEngineHosts } from "../../engines/index";
+import { enginePluginsChanged } from "../../engines/index";
 import { shellStatusPayload } from "./workspaces";
 import {
   applyEffectiveProxy,
@@ -1114,8 +1114,8 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
       if (!existsSync(item)) return error(`路径不存在: ${item}`, 400);
     }
     updateSettings({ ...state.settings, devPiPluginPaths: paths });
-    // 改了插件:引擎宿主进程因连续失败停止重启的,允许再起
-    resetEngineHosts();
+    // 改了插件:引擎宿主进程因连续失败停止重启的允许再起;在跑的那个空下来就换掉
+    enginePluginsChanged();
     return json({ status: "ok", paths });
   }
   if (path === "settings/proxy/detect" && request.method === "POST") {

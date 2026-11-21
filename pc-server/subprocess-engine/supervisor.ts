@@ -5,12 +5,13 @@
 //
 // 判活:通道断即进程没了(exited);每隔 pingIntervalMs 问一句 runtime.ping,同一时刻只有一句在途。卡死分级:
 //   不答超过 unresponsiveAfterMs → 状态「无响应」(调用方在会话上提示),不杀;
-//   用户点停止 → abort 转过去,stopDeadlineMs 内这个会话的调用还没结束 → 强杀;
+//   用户点停止 → abort 转过去,stopDeadlineMs 内这个会话的调用还没结束 → 强杀(已经无响应的不等,立即强杀);
 //   不答超过 restartAfterMs → 强杀并重启。
 // 计时前先看主程序自己:两次检查的间隔(墙钟与单调时钟取大)比预定长出 lagToleranceMs,说明主程序卡过或电脑睡眠过,
 // 这一轮不算,不答的计时从头起。
 // 意外退出(崩溃、卡死被杀、停止时不配合被杀、启动失败)各算一次失败并立即重启;crashLoopWindowMs 内满 crashLoopLimit 次
-// 就停止重启,提示当前启用的插件。没有调用在途且 idleReclaimMs 内没有新调用 → 正常停掉。
+// 就停止重启,提示当前启用的插件。没有调用在途且 idleReclaimMs 内没有新调用 → 正常停掉。用户改了插件(recycle)→ 在途调用
+// 做完后正常停掉,下一次调用起新的。
 // 每起一个进程在 recordsDir 记下 pid 与启动时刻,退出即删;主程序启动时 sweepStaleEngineHosts 清扫上次留下的。
 
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -100,7 +101,9 @@ type CallRecord<H> = { conversationId: string | null; live: Live<H> | null; abor
 function exitDetail(info: ExitInfo | null): string {
   if (!info) return "退出原因未知";
   const how = info.signal ? `信号 ${info.signal}` : `退出码 ${String(info.exitCode)}`;
-  const tail = info.stderrTail.trim().split("\n").slice(-3).join(" | ").slice(-500);
+  // 调用栈的行(「at 函数 (文件:行:列)」)对用户没有信息量,只留说了什么的那几行
+  const said = info.stderrTail.split("\n").map((line) => line.trim()).filter((line) => line && !/^at\s/.test(line));
+  const tail = said.slice(-3).join(" | ").slice(-500);
   return tail ? `${how};标准错误:${tail}` : how;
 }
 
@@ -117,6 +120,8 @@ export class EngineHostSupervisor<H extends SupervisedHost = SupervisedHost> {
   /** 意外退出的时刻(单调时钟);有调用正常完成即清空——「连续」失败才算。 */
   private failures: number[] = [];
   private gaveUpMessage = "";
+  /** 改了插件、等在途调用结束后要换掉的进程。 */
+  private recycling: Live<H> | null = null;
   private watchTimer: ReturnType<typeof setInterval> | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
@@ -153,6 +158,22 @@ export class EngineHostSupervisor<H extends SupervisedHost = SupervisedHost> {
     if (this.stateValue === "failed") this.setState("idle");
   }
 
+  /** 用户改了插件(装、卸、停用、改开发者路径):清掉失败记录,正在跑的进程空下来就停掉,下一次调用起新的。
+   *  插件加载过的代码和它对进程全局的改动(换掉 fetch、泄漏的内存)卸不掉,只有换进程才干净。 */
+  recycle(): void {
+    this.reset();
+    const live = this.live;
+    if (live && live.ending === null) this.recycling = live;
+    this.recycleIfIdle();
+  }
+
+  private recycleIfIdle(): void {
+    const live = this.recycling;
+    if (!live || this.calls.size > 0) return;
+    this.recycling = null;
+    if (this.live === live && live.ending === null) void this.stop();
+  }
+
   /** 在当前宿主进程上做一次调用(没有就先起一个)。进程中途没了 → 以带码的错误拒绝。 */
   async run<T>(conversationId: string | null, call: (host: H) => Promise<T>): Promise<T> {
     const record: CallRecord<H> = { conversationId, live: null, aborted: false, wake: null, done: false };
@@ -177,11 +198,13 @@ export class EngineHostSupervisor<H extends SupervisedHost = SupervisedHost> {
     } finally {
       record.done = true;
       this.calls.delete(record);
+      this.recycleIfIdle();
       this.scheduleIdle();
     }
   }
 
-  /** 用户点停止:转给宿主进程;stopDeadlineMs 内这个会话当时在途的调用还没结束,就强杀(依据是用户的明确意图)。 */
+  /** 用户点停止:转给宿主进程;stopDeadlineMs 内这个会话当时在途的调用还没结束,就强杀(依据是用户的明确意图)。
+   *  进程已经无响应时不再等:中止它收不到,等的这几秒里新发的消息也会派给这个卡住的进程。 */
   async abort(conversationId: string, reason: string): Promise<void> {
     const targets = [...this.calls].filter((call) => call.conversationId === conversationId);
     for (const call of targets) {
@@ -192,6 +215,10 @@ export class EngineHostSupervisor<H extends SupervisedHost = SupervisedHost> {
     const live = this.live;
     if (!live) return;
     const dispatched = targets.filter((call) => call.live === live);
+    if (dispatched.length > 0 && this.stateValue === "unresponsive") {
+      this.kill(live, "stop-ignored");
+      return;
+    }
     if (dispatched.length > 0) {
       const timer = setTimeout(() => {
         if (this.live === live && dispatched.some((call) => !call.done)) this.kill(live, "stop-ignored");
