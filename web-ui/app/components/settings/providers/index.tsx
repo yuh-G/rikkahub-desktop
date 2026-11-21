@@ -55,6 +55,7 @@ import {
 import {
   applyAutoModelType,
   balanceOptionOf,
+  cacheWarmingRowOf,
   createProvider,
   defaultPathForKind,
   endpointPreview,
@@ -298,14 +299,16 @@ export function ProvidersSection({
 
   const isOauth = draft.authMode === "oauth";
   const claudeCaching = claudePromptCachingEnabled(draft);
+  const warming = cacheWarmingRowOf(draft);
   // 收起时高级区里有非默认配置就亮小圆点,免得默认折叠把用户自己的配置藏起来。
-  // 「Claude 提示缓存」按端点取默认,官方端点开着不算非默认。
+  // 「Claude 提示缓存」「缓存预热」按端点取默认,官方端点开着不算非默认。
   const advancedAttention =
     providerHeaders.some((header) => header.key.trim() !== "") ||
     (!isOauth &&
       kind === "openai" &&
       (hasCustomEndpointPath(draft) || draft.includeHistoryReasoning === false || draft.promptCacheKey === true)) ||
     (!isOauth && kind === "claude" && claudeCaching !== claudePromptCachingDefault(draft)) ||
+    warming.nonDefault ||
     (!isOauth && kind === "google" && draft.useInteractionsApi === true) ||
     balanceOption.enabled === true;
   const getKeyUrl = providerGetKeyUrl(textValue(draft.baseUrl));
@@ -612,6 +615,14 @@ export function ProvidersSection({
                     </SettingsField>
                   ) : null}
                 </SettingsSwitchRow>
+              ) : null}
+              {warming.visible ? (
+                <SettingsSwitchRow
+                  label={t("settings:providers.prompt_cache_warming_title")}
+                  description={t(warming.descriptionKey)}
+                  checked={warming.checked}
+                  onCheckedChange={(promptCacheWarming) => patchDraft({ promptCacheWarming })}
+                />
               ) : null}
               <SettingsSwitchRow
                 label={t("settings:providers.balance_title")}

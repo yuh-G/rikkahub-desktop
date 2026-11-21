@@ -40,20 +40,20 @@ export function claudePromptCachingEnabled(provider: PromptCacheFields): boolean
 /** 会预热的只有 API Key 的 Claude 格式(任意主机)与 Claude 订阅;其余订阅、其余协议不预热,字段写了也不算。
  *  subscriptionFlow:订阅行所属的授权流程 id(服务端 oauthFlowFor(provider)?.id,前端 oauthStatus.flow)。预置订阅表
  *  在 flows.ts,本模块引不到它,由调用方给。 */
-function cacheWarmingEligible(provider: PromptCacheFields, subscriptionFlow: string | undefined): boolean {
+export function claudePromptCacheWarmingEligible(provider: PromptCacheFields, subscriptionFlow?: string): boolean {
   if (provider.authMode === "oauth") return subscriptionFlow === CLAUDE_SUBSCRIPTION_FLOW;
   return provider.type === "claude";
 }
 
 /** 「缓存预热」不填时的值:官方端点(API Key)与 Claude 订阅开,其余关。 */
 export function claudePromptCacheWarmingDefault(provider: PromptCacheFields, subscriptionFlow?: string): boolean {
-  if (!cacheWarmingEligible(provider, subscriptionFlow)) return false;
+  if (!claudePromptCacheWarmingEligible(provider, subscriptionFlow)) return false;
   return provider.authMode === "oauth" || hostOf(provider.baseUrl) === OFFICIAL_ANTHROPIC_HOST;
 }
 
 /** 「缓存预热」开关的生效值(没资格的行恒为 false)。API Key 行还要缓存开着才真的预热,见 promptCachePolicyFor。 */
 export function claudePromptCacheWarmingEnabled(provider: PromptCacheFields, subscriptionFlow?: string): boolean {
-  if (!cacheWarmingEligible(provider, subscriptionFlow)) return false;
+  if (!claudePromptCacheWarmingEligible(provider, subscriptionFlow)) return false;
   return typeof provider.promptCacheWarming === "boolean"
     ? provider.promptCacheWarming
     : claudePromptCacheWarmingDefault(provider, subscriptionFlow);
