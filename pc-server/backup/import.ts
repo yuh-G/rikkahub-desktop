@@ -152,7 +152,9 @@ function snapshotStateJsonBeforeImport(): void {
  *    normalizeState 之前种入——它见标记缺失会当场重排,事后补写救不回顺序。
  *    (2.0.0-preview-v4 二次重排 PROVIDER_REORDER_MIGRATION_V2 同理。)
  *  新增一次性迁移时必须评估:恢复后其不变式是否成立;成立则登记于此,不成立则保证
- *  该迁移可在恢复后的数据上安全重跑(幂等)。 */
+ *  该迁移可在恢复后的数据上安全重跑(幂等)。
+ *  例外:描述设置数据形状的标记(state-load.ts 的 BACKUP_CARRIED_MIGRATIONS)由 pc-backup.json 自己带着,
+ *  经 incoming.appliedMigrations 原样回来;旧备份没带就照常重跑。 */
 const RESTORE_GUARANTEED_MIGRATIONS = [
   CONVERSATIONS_SQLITE_MIGRATION,
   MEMORY_FILE_SPLIT_MIGRATION,

@@ -18,6 +18,8 @@ import { isWindowsReservedName } from "../foundation/windows-names";
 import { reportError } from "../observability/app-errors";
 import { tempDir } from "../foundation/platform";
 import { state } from "../persistence/json-store";
+import { BACKUP_CARRIED_MIGRATIONS } from "../persistence/state-load";
+import { claudePromptCachingEnabled } from "../model-providers/prompt-cache-defaults";
 import { GLOBAL_MEMORY_ID, memoryStore } from "../memory/index";
 import { DEFAULT_ASSISTANT_ID, collectConversationReferencedFileIds, exportPcConversationsDump, flushConvDirtyNow, getConversationsDb, loadConversationNodesFromDb } from "../conversations";
 import { listAllConversationMetas } from "../conversations/read-queries";
@@ -92,6 +94,8 @@ export function backupPayloadMetadataOnly(settingsOverride?: Settings, backupNam
     // Including them here caused OOM crashes for users with large imported Android histories.
     state: {
       settings,
+      // 只带描述设置数据形状的迁移标记(BACKUP_CARRIED_MIGRATIONS 头注);本机安装史的标记不随备份跨机(import.ts R4-1)。
+      appliedMigrations: (state.appliedMigrations ?? []).filter((marker) => BACKUP_CARRIED_MIGRATIONS.includes(marker)),
       generatedImages: state.generatedImages,
       // backupName = zip 内 upload/ 实际文件名(去重/重名规避后),恢复端据此回链原 id(批5)。
       files: state.files.map((file) =>
@@ -276,10 +280,16 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     // 订阅制供应商 OAuth 凭证(方案 §3 决策④):refresh token 是长效凭证,不扩散到移动端 zip。
     // 剥 authMode/oauth 但保留供应商行——chatModelId/favoriteModels 等引用仍可解析,APP 侧表现
     // 同「未填 key」。pc-backup(PC→PC)不剥,跨机恢复带上(免重登,与 apiKey 同策略)。
+    // 「Claude 提示缓存」桌面端可以不填(按端点取默认,官方端点开),APP 端字段必填、默认关:写生效值,两端聊天行为一致。
+    // 须在剥 authMode 之前算——订阅行的默认值靠它判定。
     if (Array.isArray(copy.providers)) {
       copy.providers = copy.providers.map((p: any) => {
-        if (!isRecord(p) || (p.authMode === undefined && p.oauth === undefined)) return p;
-        const stripped = { ...p };
+        if (!isRecord(p)) return p;
+        const withCaching = p.type === "claude" && typeof p.promptCaching !== "boolean"
+          ? { ...p, promptCaching: claudePromptCachingEnabled(p) }
+          : p;
+        if (withCaching.authMode === undefined && withCaching.oauth === undefined) return withCaching;
+        const stripped = { ...withCaching };
         delete stripped.authMode;
         delete stripped.oauth;
         return stripped;

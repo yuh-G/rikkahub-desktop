@@ -16,6 +16,7 @@ import { modelsDevCache } from "../inference-engine/providers";
 import { applyModelRequestHeaders } from "../model-providers";
 import { isOAuthProvider, oauthFlowFor } from "../model-providers/auth";
 import { contextWindowFor, requiredOutputCap } from "../model-providers/model-limits";
+import { claudePromptCachingEnabled } from "../model-providers/prompt-cache-defaults";
 import type { ModelGrant, ModelProtocol, PromptCachePolicy } from "./contract";
 
 const DEFAULT_COMPLETIONS_PATH = "/chat/completions";
@@ -27,15 +28,15 @@ function protocolFor(provider: Provider): ModelProtocol | null {
   return null;
 }
 
-/** 读的是聊天引擎请求构建读的同几个字段(promptCaching/promptCacheTtl/promptCacheKey),
- *  所以同一个开关对两个引擎含义一致。
+/** 读的是聊天引擎请求构建读的同几个字段(promptCaching 经 claudePromptCachingEnabled 取生效值/promptCacheTtl/
+ *  promptCacheKey),所以同一个开关对两个引擎含义一致。
  *  订阅登录行恒开、保留期取服务端默认:设置页对它们不显示缓存开关,字段从未被用户写过,
  *  照字面读会把订阅端点判成关;这些通道的缓存形态由引擎侧的内建供应商定义维护。
  *  google 没有缓存开关,恒关。 */
 export function promptCachePolicyFor(provider: Provider): PromptCachePolicy {
   if (isOAuthProvider(provider)) return { enabled: true, retention: "short" };
   if (provider.type === "claude") {
-    return { enabled: provider.promptCaching === true, retention: provider.promptCacheTtl === "1h" ? "long" : "short" };
+    return { enabled: claudePromptCachingEnabled(provider), retention: provider.promptCacheTtl === "1h" ? "long" : "short" };
   }
   if (provider.type === "openai") return { enabled: provider.promptCacheKey === true, retention: "short" };
   return { enabled: false, retention: "short" };

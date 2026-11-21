@@ -28,6 +28,7 @@ import {
   SILICONFLOW_THINKING_MODELS,
   ZHIPU_GLM53_EFFORT_BY_LEVEL,
 } from "../model-providers/request-dialect";
+import { claudePromptCachingEnabled } from "../model-providers/prompt-cache-defaults";
 import { fallbackDocumentText, readExtractedTextSync } from "../files/index";
 import { ensureExtractedTextAsync } from "../files/extraction";
 import { UNRESOLVED_TOOL_RESULT_TEXT, parseToolInput, toolArgumentsJson, toolResultTextForApi } from "../tools/format";
@@ -253,7 +254,7 @@ export function claudeSystemContent(system: unknown, providerItem: Provider) {
   // 对齐安卓 ClaudeProvider.buildMessageRequest：system 始终以 text block 数组发送
   // （无缓存时也用数组，避免部分第三方代理只认数组格式）；开启 promptCaching 时
   // 在最后一个 block 上加 cache_control。
-  if (providerItem.promptCaching === true) return withClaudeCacheOnLastBlock(text, providerItem);
+  if (claudePromptCachingEnabled(providerItem)) return withClaudeCacheOnLastBlock(text, providerItem);
   return [claudeTextBlock(text)];
 }
 
@@ -300,7 +301,7 @@ export function claudeMessagesFromApiMessages(messages: ApiMessage[], providerIt
     }
   }
 
-  if (providerItem.promptCaching !== true) return mergedItems;
+  if (!claudePromptCachingEnabled(providerItem)) return mergedItems;
 
   const realUserIndices = mergedItems
     .map((item, index) => {
@@ -329,7 +330,7 @@ export function claudeToolsFromOpenAiTools(tools: any[], providerItem: Provider)
         name,
         description: String(fn.description ?? ""),
         input_schema: isRecord(fn.parameters) ? fn.parameters : { type: "object", properties: {} },
-        ...(providerItem.promptCaching === true && index === tools.length - 1
+        ...(claudePromptCachingEnabled(providerItem) && index === tools.length - 1
           ? { cache_control: claudeCacheControlEphemeral(providerItem) }
           : {}),
       };

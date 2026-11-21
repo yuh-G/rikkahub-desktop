@@ -116,7 +116,7 @@ export function provider(input: Partial<Provider> & Pick<Provider, "id" | "name"
     useResponseApi: false,
     // 对齐安卓 ProviderSetting.OpenAI.includeHistoryReasoning 默认值 (commit e63d017)
     includeHistoryReasoning: true,
-    promptCaching: false,
+    // promptCaching 不填:按端点取默认(prompt-cache-defaults.ts),预置的 Anthropic 行因此默认开。
     promptCacheTtl: "5m",
     promptCacheKey: false,
     // 出厂即视为连通、免手动测试的,只有 RikkaHub 内置供应商一条;它已下架(SUNSET),

@@ -11,6 +11,7 @@ import { resolveProviderAuthForProvider, applyShaping } from "../model-providers
 import { endpointFor } from "../model-providers/checks";
 import { openAiMaxTokensField, reasoningLevelNormalized } from "../model-providers/request-dialect";
 import { requiredOutputCap } from "../model-providers/model-limits";
+import { claudePromptCachingEnabled } from "../model-providers/prompt-cache-defaults";
 import {
   claudeCacheControlEphemeral,
   claudeMessagesFromApiMessages,
@@ -159,7 +160,7 @@ export async function callProvider(
       messages: claudeMessagesFromApiMessages(messages, providerItem),
       // 顶层 cache_control: 让 Anthropic 自动管理缓存断点
       // 对齐安卓 ClaudeProvider.kt:275-278 (commit d2e52106)
-      ...(providerItem.promptCaching === true
+      ...(claudePromptCachingEnabled(providerItem)
         ? { cache_control: claudeCacheControlEphemeral(providerItem) }
         : {}),
       ...(assistant.temperature != null && !reasoningActive ? { temperature: assistant.temperature } : {}),
