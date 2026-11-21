@@ -1,41 +1,45 @@
-// scripts/pi-plugin-smoke.ts — pi 插件冒烟(P5.10;每次同步 pi 上游的验收项)
+// scripts/pi-plugin-smoke.ts — pi 插件冒烟(P5.10;每次同步 pi 上游的验收项;P7.2.8 起经引擎宿主进程跑)
 //   bun run smoke:pi-plugins      (在 pc-server 目录下)
 //
 // 两批插件的本地副本(Reference-project 下装好的 node_modules,不进仓库):八个头部插件(HEAD)同时装进一个会话,
 // 另一批十二个(EXTRA)同时装进另一个会话。假供应商脚本化跑若干轮,断言每个插件的主要功能在应用的接线下照常工作。
 // 插件声明的 pi 版本要求很松(多是 "*"),pi 升级把它们弄坏了不会自己报,所以升级 pi 后必须跑一次(CLAUDE.md
 // 升级流程第 6 步)。版本钉在 HEAD / EXTRA:副本的版本与之不符即失败——换了副本要重新确认用例,再改表。
-// 走 runner 这一层(资源装配 → 裁决层 → 界面桥 → 工作区工具 → 子会话约束);编排器与存储那一层由
-// pi-engine/plugins/acceptance.test.ts 管。
+// 与生产同一条路:经 subprocess-engine/host-launch 起一个引擎宿主进程(spawnSelf("engine-host") + 专用通道),插件在那里
+// 加载执行;本脚本扮演应用,实现 EngineHost(审批、对话框、界面通知、开轮请求、上报都跨进程回到这里)。编排器与存储
+// 那一层由 pi-engine/plugins/acceptance.test.ts 管。
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-// 插件与 pi 内部会读写 pi 数据目录:指到临时目录,先于任何引用 foundation/paths 的模块。不少插件还往用户主目录里
-// 写自己的数据(~/.pi-lens、~/.cc-safety-net、~/.context-mode,pi-memory 写 ~/.pi/agent/memory),主目录也指过去。
+// 插件与 pi 内部会读写 pi 数据目录:指到临时目录。不少插件还往用户主目录里写自己的数据(~/.pi-lens、~/.cc-safety-net、
+// ~/.context-mode,pi-memory 写 ~/.pi/agent/memory),主目录也指过去;宿主进程继承这几个环境变量。
 const scratch = mkdtempSync(join(tmpdir(), "rkh-pi-plugin-smoke-"));
 process.env.RIKKAHUB_PC_DATA_DIR = join(scratch, "data");
 process.env.HOME = process.env.USERPROFILE = join(scratch, "home");
 mkdirSync(process.env.HOME, { recursive: true });
 
-const { bindPiAgentDir } = await import("../pi-engine/agent-dir");
-const { createPiSessionResources } = await import("../pi-engine/resources");
-const { runPiCommand, runPiGeneration } = await import("../pi-engine/runner");
-const { createPiSessionHost } = await import("../pi-engine/session-host");
-const { commandsOfExtensions, piCommandId } = await import("../pi-engine/plugins/commands");
 const { modelGrantFor } = await import("../engines/model-grant");
 const { model, provider } = await import("../model-providers");
+const { launchEngineHost } = await import("../subprocess-engine/host-launch");
 const { sessionViewOf } = await import("../test-utils/engine-session-view");
 const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
 const { shellAvailability } = await import("../workspace/runtime");
 
-import type { EngineDialogAnswer, EngineDialogCall, EngineErrorReport, EnginePlugin, EngineUiNoticeCall, TurnRef } from "../engines/contract";
-import type { PiBuiltinToolApproval } from "../pi-engine/builtin-tools";
-import type { PiGenerationContext } from "../pi-engine/runner";
+import type {
+  EngineDialogAnswer,
+  EngineDialogCall,
+  EngineErrorReport,
+  EngineHost,
+  EnginePlugin,
+  EngineTurnRequest,
+  EngineUiNoticeCall,
+  PermissionCheck,
+  TurnInput,
+} from "../engines/contract";
+import type { AppErrorDto } from "../foundation/types/dto";
 import type { FakeOpenAiSseServer, FakeSseTurn } from "../test-utils/fake-openai-sse";
-
-bindPiAgentDir();
 
 const HEAD_ROOT = resolve(import.meta.dir, "../../Reference-project/extensions/_lab/appdata/engines/pi/npm/node_modules");
 const EXTRA_ROOT = resolve(import.meta.dir, "../../Reference-project/extensions/_lab_more/node_modules");
@@ -110,81 +114,133 @@ const extraPlugins = pluginsOf(EXTRA, EXTRA_ROOT);
 const instructions = { appendSystemPrompt: [], globalAgentsFile: null, skills: { dir: join(scratch, "skills"), enabled: [] } };
 mkdirSync(instructions.skills.dir, { recursive: true });
 
-// ---- 一个用例 = 一个工作区 + 一个假上游 + 全部插件 ----
+// ---- 一个用例 = 一个工作区 + 一个假上游 + 全部插件,一个会话 ----
 
 interface Harness {
   cwd: string;
   outside: string;
   server: FakeOpenAiSseServer;
   reports: EngineErrorReport[];
-  dialogs: Array<Omit<EngineDialogCall, keyof TurnRef>>;
-  notices: Array<Omit<EngineUiNoticeCall, keyof TurnRef>>;
-  approvals: PiBuiltinToolApproval[];
+  dialogs: EngineDialogCall[];
+  notices: EngineUiNoticeCall[];
+  approvals: PermissionCheck[];
   pluginToolCalls: string[];
+  turnRequests: EngineTurnRequest[];
+  answer: (call: EngineDialogCall) => EngineDialogAnswer;
 }
 
 const servers: FakeOpenAiSseServer[] = [];
 const { shell } = shellAvailability();
 
 /** 对话框默认答法:选第二项;确认 = 是;输入 = 固定文本。 */
-function defaultAnswer(call: Omit<EngineDialogCall, keyof TurnRef>): EngineDialogAnswer {
+function defaultAnswer(call: EngineDialogCall): EngineDialogAnswer {
   if (call.request.kind === "select") return { cancelled: false, value: call.request.options[1] ?? call.request.options[0]! };
   if (call.request.kind === "confirm") return { cancelled: false, value: true };
   return { cancelled: false, value: "smoke" };
 }
 
+// ---- 应用这一侧:一个引擎宿主进程,EngineHost 按会话把回调分给各用例 ----
+
+const ourModel = model("fake-model", "Smoke Model");
+const harnesses = new Map<string, Harness>();
+/** host.report 不带会话:记给当前用例最近建的那个(用例一个接一个跑)。 */
+let reportTo: Harness | null = null;
+const hostAppErrors: AppErrorDto[] = [];
+const protocolErrors: string[] = [];
+function harnessOf(conversationId: string): Harness {
+  const h = harnesses.get(conversationId);
+  if (!h) throw new Error(`没有这个会话的用例:${conversationId}`);
+  return h;
+}
+const appHost: EngineHost = {
+  emit: () => undefined,
+  session: { load: async () => sessionViewOf([], { model: ourModel }), append: async () => undefined },
+  tools: {
+    call: async (call) => {
+      throw new Error(`冒烟没有应用工具:${call.name}`);
+    },
+  },
+  permission: {
+    async check(req) {
+      const h = harnessOf(req.conversationId);
+      if (req.origin.kind === "plugin") h.pluginToolCalls.push(req.toolName);
+      else h.approvals.push(req);
+      return { scope: "default" };
+    },
+  },
+  interaction: {
+    dialog: async (call) => {
+      const h = harnessOf(call.conversationId);
+      h.dialogs.push(call);
+      return h.answer(call);
+    },
+    dismiss: () => undefined,
+    show: (call) => void harnessOf(call.conversationId).notices.push(call),
+  },
+  steer: { take: async () => [] },
+  turn: { request: (req) => void harnessOf(req.conversationId).turnRequests.push(req) },
+  models: {
+    credential: async () => {
+      throw new Error("冒烟只用 API Key 授权");
+    },
+    log: () => undefined,
+  },
+  report: (report) => void reportTo?.reports.push(report),
+};
+const hostEnv: Record<string, string | undefined> = { ...process.env, NO_PROXY: "127.0.0.1,localhost" };
+for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) delete hostEnv[key];
+const engineHost = await launchEngineHost({
+  host: appHost,
+  // 宿主进程装了与主程序同一层网络壳;假上游在回环上,直连
+  proxyConfig: { mode: "direct", url: "", username: "", password: "", bypassRules: "", userAgent: "" },
+  onAppError: (entry) => void hostAppErrors.push(entry),
+  onProtocolError: (reason) => void protocolErrors.push(reason),
+  env: hostEnv,
+});
+const { driver } = engineHost;
+console.log(`引擎宿主进程 pid ${engineHost.pid}`);
+
+/** 本用例里建的会话:用例结束时让引擎丢掉它们的长驻会话(插件状态不带到下一个用例)。 */
+let scenarioConversations: string[] = [];
+
 async function harness(
   name: string,
   turns: FakeSseTurn[],
-  options: { plugins?: EnginePlugin[]; answer?: typeof defaultAnswer; sessions?: PiGenerationContext["sessions"] } = {},
+  options: { plugins?: EnginePlugin[]; answer?: typeof defaultAnswer } = {},
 ) {
   const cwd = join(scratch, name, "ws");
   mkdirSync(cwd, { recursive: true });
   writeFileSync(join(cwd, "notes.md"), "hello from notes");
   const server = await startFakeOpenAiSse(turns);
   servers.push(server);
-  const h: Harness = { cwd, outside: join(scratch, name, "outside.txt"), server, reports: [], dialogs: [], notices: [], approvals: [], pluginToolCalls: [] };
-  const report = (r: EngineErrorReport) => void h.reports.push(r);
-  const approvePluginTool = async (req: { toolName: string }) => {
-    h.pluginToolCalls.push(req.toolName);
-    return undefined;
-  };
-  const resources = await createPiSessionResources({ cwd, root: cwd, instructions, plugins: options.plugins ?? plugins, approvePluginTool, report });
-  const ourModel = model("fake-model", "Smoke Model");
   const conversationId = `conv-${name}`;
-  const answer = options.answer ?? defaultAnswer;
-  const inputs = {
-    grant: modelGrantFor(provider({ id: crypto.randomUUID(), name: "Smoke", baseUrl: server.baseUrl, apiKey: "sk-test" }), ourModel, null, conversationId)!,
-    conversationId,
-    cwd,
-    view: sessionViewOf([], { model: ourModel }),
-    // 长驻会话与生产一样按需装配:插件往会话里写了消息而视图没跟上时会话会重建,重建要拿到新加载的插件,
-    // 否则插件留着的旧会话 ctx 已失效。
-    resources: options.sessions
-      ? () => createPiSessionResources({ cwd, root: cwd, instructions, plugins: options.plugins ?? plugins, approvePluginTool, report })
-      : resources,
-    approvePluginTool,
-    report,
-    workspaceTools: {
-      root: cwd,
-      ...(shell ? { shell } : {}),
-      approve: async (req: PiBuiltinToolApproval) => {
-        h.approvals.push(req);
-        return { scope: "default" as const };
-      },
-    },
-    interaction: {
-      dialog: async (call: Omit<EngineDialogCall, keyof TurnRef>) => {
-        h.dialogs.push(call);
-        return answer(call);
-      },
-      dismiss: () => undefined,
-      show: (call: Omit<EngineUiNoticeCall, keyof TurnRef>) => void h.notices.push(call),
-    },
-    ...(options.sessions ? { sessions: options.sessions } : {}),
-    sink: () => undefined,
+  const h: Harness = {
+    cwd, outside: join(scratch, name, "outside.txt"), server, reports: [], dialogs: [], notices: [], approvals: [], pluginToolCalls: [], turnRequests: [],
+    answer: options.answer ?? defaultAnswer,
   };
-  return { h, resources, inputs };
+  harnesses.set(conversationId, h);
+  scenarioConversations.push(conversationId);
+  reportTo = h;
+  const input: TurnInput = {
+    model: modelGrantFor(provider({ id: crypto.randomUUID(), name: "Smoke", baseUrl: server.baseUrl, apiKey: "sk-test" }), ourModel, null, conversationId)!,
+    reasoningLevel: null,
+    workspace: { cwd, root: cwd, ...(shell ? { shell } : {}) },
+    instructions,
+    plugins: options.plugins ?? plugins,
+    prompt: { text: "", images: [] },
+    tools: [],
+  };
+  let seq = 0;
+  const turn = (promptText: string) =>
+    driver.startTurn({ conversationId, turnId: `${name}-t${++seq}`, input: { ...input, prompt: { text: promptText, images: [] } } });
+  const commands = () => driver.listCommands!({ conversationId, plugins: input.plugins, workspace: input.workspace });
+  /** 照界面的走法:先列出这个会话的指令,按插件与名字找到调用键,再执行。 */
+  const command = async (pluginId: string, commandName: string, args = "") => {
+    const found = (await commands()).find((item) => item.source === `plugin:${pluginId}` && item.name === commandName);
+    if (!found) throw new Error(`指令不在清单里:${pluginId} /${commandName}`);
+    return driver.runCommand!({ conversationId, turnId: `${name}-c${++seq}`, input, commandId: found.id, args });
+  };
+  return { h, turn, command, commands };
 }
 
 /** 工具结果(从之后的模型请求里取:pi 把它作为 role=tool 的消息回灌)。 */
@@ -218,20 +274,30 @@ async function scenario(title: string, run: () => Promise<void>, timeoutMs = 90_
     check(`${title}:跑完`, false, err instanceof Error ? err.stack ?? err.message : String(err));
   } finally {
     clearTimeout(timer);
+    // 插件状态不带到下一个用例
+    for (const conversationId of scenarioConversations) await driver.invalidate(conversationId);
+    scenarioConversations = [];
   }
 }
 
+/** 每个插件单独读一遍登记了什么(插件页走的那条路),固定的工具都在;再全部同时装进一个会话跑一轮:没有加载错误,
+ *  固定的指令在这个会话的指令清单里。 */
 async function loadScenario(name: string, set: Pinned[], group: EnginePlugin[]) {
-  const { h, resources } = await harness(name, [], { plugins: group });
-  const { extensions, errors } = resources.resourceLoader.getExtensions();
-  check("没有加载错误", errors.length === 0 && pluginFailures(h).length === 0, { errors, failures: pluginFailures(h) });
-  check(`${group.length} 个插件都进了会话`, new Set(resources.plugins.map((entry) => entry.pluginId)).size === group.length, resources.plugins);
-  const commands = commandsOfExtensions(extensions, resources.plugins);
+  const { h, turn, commands } = await harness(name, [{ content: "装好了" }], { plugins: group });
+  const registered = new Map<string, string[]>();
   for (const pinned of set) {
-    const files = new Set(resources.plugins.filter((entry) => entry.pluginId === pinned.id).map((entry) => entry.file));
-    const tools = extensions.filter((ext) => files.has(ext.path)).flatMap((ext) => [...ext.tools.keys()]);
-    const names = commands.filter((command) => command.source === `plugin:${pinned.id}`).map((command) => command.name);
-    const missing = [...pinned.tools.filter((name) => !tools.includes(name)), ...pinned.commands.filter((name) => !names.includes(name))];
+    const inspection = await driver.inspectPlugin!({ plugin: group.find((item) => item.id === pinned.id)! });
+    check(`${pinned.id} 单独加载没有错误`, inspection.errors.length === 0, inspection.errors);
+    registered.set(pinned.id, inspection.tools.map((tool) => tool.name));
+  }
+  const result = await turn("装好了吗");
+  check(`${group.length} 个插件同时装上跑完一轮`, result.text === "装好了", result.text);
+  check("没有加载错误", pluginFailures(h).length === 0, pluginFailures(h));
+  const listed = await commands();
+  for (const pinned of set) {
+    const tools = registered.get(pinned.id) ?? [];
+    const names = listed.filter((command) => command.source === `plugin:${pinned.id}`).map((command) => command.name);
+    const missing = [...pinned.tools.filter((tool) => !tools.includes(tool)), ...pinned.commands.filter((command) => !names.includes(command))];
     check(`${pinned.id} 的工具与指令`, missing.length === 0, { missing, tools, commands: names });
   }
 }
@@ -240,13 +306,13 @@ await scenario("加载:八个头部插件同时装上,登记的工具与指令�
 
 await scenario("待办 + 提问:插件工具经审批口执行,提问走应用对话框,答案回到模型;/todos 指令经界面通道通知", async () => {
   const questions = [{ question: "用哪个方案?", header: "方案", options: [{ label: "甲", description: "稳妥" }, { label: "乙", description: "激进" }] }];
-  const { h, inputs } = await harness("todo-ask", [
+  const { h, turn, command } = await harness("todo-ask", [
     { toolCalls: [call("tc-todo-1", "todo", { action: "create", subject: "写冒烟报告" })] },
     { toolCalls: [call("tc-todo-2", "todo", { action: "list" })] },
     { toolCalls: [call("tc-ask-1", "ask_user_question", { questions })] },
     { content: "那就乙" },
   ]);
-  const result = await runPiGeneration({ ...inputs, promptText: "记个待办再问我" });
+  const result = await turn("记个待办再问我");
   check("这一轮答完", result.text === "那就乙", result.text);
   check("插件工具都经过审批口", JSON.stringify(h.pluginToolCalls) === JSON.stringify(["todo", "todo", "ask_user_question"]), h.pluginToolCalls);
   check("todo 建出任务", toolResult(h.server, "tc-todo-1") === "Created #1: 写冒烟报告 (pending)", toolResult(h.server, "tc-todo-1"));
@@ -256,17 +322,17 @@ await scenario("待办 + 提问:插件工具经审批口执行,提问走应用�
   check("答案回到模型", toolResult(h.server, "tc-ask-1")?.includes('"用哪个方案?"="乙"') === true, toolResult(h.server, "tc-ask-1"));
   check("没有插件故障", pluginFailures(h).length === 0, pluginFailures(h));
 
-  await runPiCommand({ ...inputs, commandId: piCommandId("dev:rpiv-todo", "todos"), args: "" });
+  await command("dev:rpiv-todo", "todos");
   const notice = h.notices.find((item) => item.source === "dev:rpiv-todo" && item.notice.kind === "notify");
   check("/todos 经界面通道通知", notice !== undefined, h.notices);
 });
 
 await scenario("权限插件:tool_call 里的询问被吞、裁决作废,写入照常(署名进错误中心)", async () => {
-  const { h, inputs } = await harness("permission", [
+  const { h, turn } = await harness("permission", [
     { toolCalls: [call("tc-w-1", "write", { path: "notes.txt", content: "ok" })] },
     { content: "写完了" },
   ]);
-  const result = await runPiGeneration({ ...inputs, promptText: "写个文件" });
+  const result = await turn("写个文件");
   check("这一轮答完", result.text === "写完了", result.text);
   check("文件写进工作区", existsSync(join(h.cwd, "notes.txt")) && readFileSync(join(h.cwd, "notes.txt"), "utf8") === "ok");
   check("写入经工作区审批口", h.approvals.some((req) => req.toolName === "write" && req.category === "write"), h.approvals);
@@ -276,14 +342,14 @@ await scenario("权限插件:tool_call 里的询问被吞、裁决作废,写入�
 });
 
 await scenario("工具类插件:pi-lens 的钩子不挡读改;mcp 报出服务器状态;fetch_content 拦下内网地址", async () => {
-  const { h, inputs } = await harness("tools", [
+  const { h, turn } = await harness("tools", [
     { toolCalls: [call("tc-read", "read", { path: "notes.md" })] },
     { toolCalls: [call("tc-edit", "edit", { path: "notes.md", edits: [{ oldText: "hello", newText: "hi" }] })] },
     { toolCalls: [call("tc-mcp", "mcp", {})] },
     { toolCalls: [call("tc-fetch", "fetch_content", { url: "http://127.0.0.1:9/" })] },
     { content: "看完了" },
   ]);
-  const result = await runPiGeneration({ ...inputs, promptText: "读改一下文件,再看看 mcp 与网页" });
+  const result = await turn("读改一下文件,再看看 mcp 与网页");
   check("这一轮答完", result.text === "看完了", result.text);
   check("read 读到内容", toolResult(h.server, "tc-read")?.includes("hello from notes") === true, toolResult(h.server, "tc-read"));
   check("edit 改进文件", readFileSync(join(h.cwd, "notes.md"), "utf8") === "hi from notes", readFileSync(join(h.cwd, "notes.md"), "utf8"));
@@ -308,9 +374,9 @@ const childTurns = (cwd: string, outside: string, prefix: string): FakeSseTurn[]
 
 async function subagentScenario(name: string, spawn: (h: Harness) => ReturnType<typeof call>) {
   const turns: FakeSseTurn[] = [];
-  const { h, inputs } = await harness(name, turns);
+  const { h, turn } = await harness(name, turns);
   turns.push({ toolCalls: [spawn(h)] }, ...childTurns(h.cwd, h.outside, name), { content: "完成" });
-  const result = await runPiGeneration({ ...inputs, promptText: "派个子任务" });
+  const result = await turn("派个子任务");
   check("这一轮答完", result.text === "完成", { text: result.text, requests: h.server.requests.length });
   const childApprovals = h.approvals.filter((req) => req.noPrompt);
   check("子会话的内建工具经审批口(noPrompt)", childApprovals.map((req) => req.toolName).join(",") === "write,read", h.approvals);
@@ -337,7 +403,7 @@ const BTW_ANSWER = "旁路回答:2";
 await scenario("补充插件 · 加载:十二个插件同时装上,登记的工具与指令都在", () => loadScenario("extra-load", EXTRA, extraPlugins));
 
 await scenario("补充插件 · 生成:别家的 tool_call 否决、运行期登记的工具、记忆工具、按模型能力拒绝的搜索", async () => {
-  const { h, inputs } = await harness(
+  const { h, turn } = await harness(
     "extra-turn",
     [
       { toolCalls: [call("x-env", "read", { path: ".env" })] },
@@ -352,7 +418,7 @@ await scenario("补充插件 · 生成:别家的 tool_call 否决、运行期登
     { plugins: extraPlugins },
   );
   writeFileSync(join(h.cwd, ".env"), "SECRET=1");
-  const result = await runPiGeneration({ ...inputs, promptText: "跑一圈" });
+  const result = await turn("跑一圈");
   check("这一轮答完", result.text === "补充一轮完", result.text);
   check("cc-safety-net 否决读 .env(署名)", toolResult(h.server, "x-env")?.startsWith('Blocked by plugin "dev:cc-safety-net"') === true, toolResult(h.server, "x-env"));
   // 应用自己的危险命令表不认这条(删的不是根目录与主目录本身),是插件拦下的。
@@ -370,17 +436,13 @@ await scenario("补充插件 · 生成:别家的 tool_call 否决、运行期登
 });
 
 await scenario("补充插件 · 指令:菜单走对话框、模式切换、旁路会话、请求开轮", async () => {
-  const turnRequests: Array<{ source: string; prompt?: string }> = [];
-  const host = createPiSessionHost({ onTurnRequest: (req) => void turnRequests.push(req) });
   const turns: FakeSseTurn[] = [{ content: BTW_ANSWER }];
   // 菜单类指令循环弹选择框直到选「关闭」:前两次照默认答,之后取消。
   let menuDialogs = 0;
-  const { h, inputs } = await harness("extra-commands", turns, {
+  const { h, command: run } = await harness("extra-commands", turns, {
     plugins: extraPlugins,
-    sessions: { host, key: "smoke" },
     answer: (dialog) => (++menuDialogs > 2 ? { cancelled: true } : defaultAnswer(dialog)),
   });
-  const run = (pluginId: string, name: string, args = "") => runPiCommand({ ...inputs, commandId: piCommandId(pluginId, name), args });
   const noticesOf = (pluginId: string) => h.notices.filter((item) => item.source === pluginId).map((item) => item.notice);
 
   await run("dev:pi-usage", "usage");
@@ -403,12 +465,19 @@ await scenario("补充插件 · 指令:菜单走对话框、模式切换、旁�
   check("/btw 的回答经界面通道显示", noticesOf("dev:pi-btw").some((notice) => notice.kind === "notify"), noticesOf("dev:pi-btw"));
 
   await run("dev:cc-safety-net", "cc-safety-net", "为什么拦我");
-  check("/cc-safety-net 以用户消息请求开轮(带说明与提问)", turnRequests.some((req) => req.source === "dev:cc-safety-net" && req.prompt?.includes("为什么拦我") === true), turnRequests);
+  check("/cc-safety-net 以用户消息请求开轮(带说明与提问)", h.turnRequests.some((req) => req.source === "dev:cc-safety-net" && req.prompt?.includes("为什么拦我") === true), h.turnRequests);
 
   check("没有插件故障", pluginFailures(h).length === 0, pluginFailures(h));
-  await host.dispose();
 });
 
+check("通道上没有协议问题", protocolErrors.length === 0, protocolErrors);
+// 宿主进程里经 reportError 记下的(未捕获异常兜底等)随通道回到这里;插件自己的 info 级记录不算
+const hostErrors = hostAppErrors.filter((entry) => entry.severity !== "info");
+check("宿主进程没有报出 warn / error", hostErrors.length === 0, hostErrors.map((entry) => `${entry.severity} ${entry.message}`));
+await driver.dispose();
+await engineHost.stop();
+const exit = await engineHost.exited;
+check("关掉通道后宿主进程自己以 0 退出", exit.exitCode === 0, exit);
 await Promise.all(servers.map((server) => server.close()));
 console.log(failures === 0 ? "\n全部通过" : `\n${failures} 项失败`);
 process.exit(failures === 0 ? 0 : 1);

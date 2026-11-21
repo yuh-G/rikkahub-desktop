@@ -62,7 +62,7 @@ const env = (dataDir: string) => {
 };
 
 describe("启动引擎宿主进程(实跑测试替身)", () => {
-  test("握手后经通道跑一轮;请求走主程序给的代理,改代理推过去下一个请求即生效;错误回到主程序;stdout 的杂音不影响通道", async () => {
+  test("握手后经通道跑一轮;请求走主程序给的代理,改代理推过去下一个请求即生效;错误回到主程序;插件与它起的子命令往 stdout 写的杂音不影响通道", async () => {
     const dataDir = join(scratch, "normal");
     const events: string[] = [];
     const appErrors: AppErrorDto[] = [];
@@ -121,5 +121,71 @@ describe("启动引擎宿主进程(实跑测试替身)", () => {
       spawnHost: (options) => Bun.spawn([process.execPath, "-e", "console.error('宿主进程起不来'); process.exit(3)"], options),
     });
     await expect(launching).rejects.toThrow(/还没连上通道就退出了(?:.|\n)*宿主进程起不来/);
+  }, 30_000);
+
+  test("契约的每个方法在真实通道上各走一次:驱动侧七个、宿主侧十三个,参数与回答原样往返", async () => {
+    const calls: string[] = [];
+    const seen = (name: string, value: unknown) => void calls.push(`${name} ${JSON.stringify(value)}`);
+    const recording: EngineHost = {
+      emit: (_turn, event) => seen("emit", event),
+      session: {
+        load: async (turn) => (seen("session.load", turn.turnId), { items: [], compactions: [] }),
+        append: async (_turn, entries) => seen("session.append", entries),
+      },
+      tools: { call: async (call) => (seen("tools.call", call.args), { content: [{ type: "text", text: "工具结果" }] }) },
+      permission: { check: async (req) => (seen("permission.check", [req.category, req.target, req.summary]), { scope: "unrestricted" }) },
+      interaction: {
+        dialog: async (call) => (seen("interaction.dialog", call.request.kind), { cancelled: false, value: true }),
+        dismiss: (call) => seen("interaction.dismiss", call.requestId),
+        show: (call) => seen("interaction.show", call.notice),
+      },
+      steer: { take: async () => (seen("steer.take", null), ["补发"]) },
+      turn: { request: (req) => seen("turn.request", req.requestId) },
+      models: {
+        credential: async (req) => (seen("models.credential", req.providerId), { access: "令牌" }),
+        log: (_turn, record) => seen("models.log", record.url),
+      },
+      report: (report) => seen("report", report.code),
+    };
+    const protocolErrors: string[] = [];
+    const proc = await launchEngineHost({
+      host: recording,
+      proxyConfig: manual(proxyA.url),
+      onAppError: () => undefined,
+      onProtocolError: (reason) => void protocolErrors.push(reason),
+      env: env(join(scratch, "contract")),
+      spawnHost: (options) => Bun.spawn([process.execPath, fakeHost, "contract"], options),
+    });
+    const { driver } = proc;
+    expect(driver.capabilities).toMatchObject({ nativeCompaction: true, commands: true, plugins: true });
+    const input = { workspace: { cwd: "/w", root: "/w" }, plugins: [], prompt: { text: "", images: [] } } as never;
+    const result = await driver.startTurn({ conversationId: "c", turnId: "t1", input });
+    expect(JSON.parse(result.text)).toEqual({
+      items: 0,
+      tool: { content: [{ type: "text", text: "工具结果" }] },
+      grant: { scope: "unrestricted" },
+      answer: { cancelled: false, value: true },
+      steer: ["补发"],
+      credential: { access: "令牌" },
+      workspace: "/w",
+    });
+    // 单向通知与请求的回答不保证谁先到;等最后一条通知到了再比
+    for (let i = 0; i < 100 && !calls.some((line) => line.startsWith("report ")); i++) await Bun.sleep(10);
+    expect(calls.map((line) => line.slice(0, line.indexOf(" "))).sort()).toEqual(
+      ["emit", "session.load", "session.append", "tools.call", "permission.check", "interaction.dialog", "interaction.dismiss", "interaction.show", "steer.take", "turn.request", "models.credential", "models.log", "report"].sort(),
+    );
+    expect(calls).toContain(`permission.check ${JSON.stringify(["write", { path: "/w/a.txt" }, "a.txt"])}`);
+    expect(calls).toContain(`models.log "http://model.invalid/v1"`);
+
+    expect((await driver.compact!({ conversationId: "c", turnId: "t2", customInstructions: "只留结论" } as never)).summary).toBe("摘要:只留结论");
+    expect(await driver.listCommands!({ conversationId: "c", plugins: [], workspace: null })).toEqual([{ id: "c1", name: "hello", source: "engine", description: "会话 c" }]);
+    expect((await driver.runCommand!({ conversationId: "c", turnId: "t3", input, commandId: "c1", args: "世界" })).compactions[0]!.summary).toBe("指令 c1 世界");
+    expect((await driver.inspectPlugin!({ plugin: { id: "dev:x", path: "/p" } })).tools).toEqual([{ name: "dev:x-tool" }]);
+    await driver.abort("c", "user");
+    await driver.invalidate("c");
+    await driver.dispose();
+    expect(protocolErrors).toEqual([]);
+    await proc.stop();
+    expect((await proc.exited).exitCode).toBe(0);
   }, 30_000);
 });

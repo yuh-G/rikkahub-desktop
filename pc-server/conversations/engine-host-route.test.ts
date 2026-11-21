@@ -2,7 +2,7 @@
 //
 // 注册表的 pi 驱动换成「真监管器 + 测试替身宿主」(不起子进程):
 //   1) 宿主进程中途没了:本条回答按「出错」收尾(错误卡写监管器的原文、计入失败、队列暂停),不按中止;
-//      监管器的提示走错误中心(带码),不再按供应商错误重复上报;
+//      监管器的提示走错误中心(带码),不再按供应商错误重复上报;下一轮照常;
 //   2) 宿主进程无响应:有调用卡在它上面的会话亮「引擎无响应」状态条,SSE 重连时补发;缓过来后撤掉。
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
@@ -46,7 +46,8 @@ configureWorkingSet({
   hasDirty: () => false,
 });
 
-/** 替身宿主:startTurn 按 behavior 走;exit() 模拟进程没了(在途调用以通道关闭拒绝)。 */
+/** 替身宿主:startTurn 按调用时的 behavior 走(崩溃后监管器立即重启出来的那个也认新的 behavior);
+ *  exit() 模拟进程没了(在途调用以通道关闭拒绝)。 */
 class StubHost implements SupervisedHost {
   static nextPid = 5000;
   readonly pid = StubHost.nextPid++;
@@ -58,12 +59,13 @@ class StubHost implements SupervisedHost {
   answerPing: (() => void) | null = null;
   silent = false;
 
-  constructor(behavior: "crash" | "stall") {
+  constructor() {
     this.driver = {
       kind: "pi",
       capabilities: PI_CAPABILITIES,
       startTurn: () => {
         this.started += 1;
+        if (behavior === "ok") return Promise.resolve({ text: "照常", stopReason: "stop", compactions: [] });
         return new Promise((resolve, reject) => {
           this.inflight.add(reject);
           if (behavior === "crash") queueMicrotask(() => this.exit({ exitCode: 3, stderrTail: "插件把进程带走了" }));
@@ -91,11 +93,11 @@ class StubHost implements SupervisedHost {
 }
 
 const hosts: StubHost[] = [];
-let behavior: "crash" | "stall" = "crash";
+let behavior: "crash" | "stall" | "ok" = "crash";
 const supervisor = new EngineHostSupervisor<StubHost>({
   name: "pi",
   launch: async () => {
-    const host = new StubHost(behavior);
+    const host = new StubHost();
     hosts.push(host);
     return host;
   },
@@ -192,6 +194,20 @@ describe("工作区会话经引擎宿主进程(P7.2.6)", () => {
     expect(generating.has(conversation.id)).toBe(false);
     expect(await until(() => recentAppErrors().some((entry) => entry.code === "engine_host_crashed"))).toBe(true);
     expect(recentAppErrors().filter((entry) => entry.domain === "provider")).toEqual([]);
+
+    // 下一轮照常:监管器已经起好新进程,不用用户做什么
+    behavior = "ok";
+    const crashedHost = hosts.at(-2)!;
+    conversation.messages.push({
+      id: `host-route-n-${seq}-next`,
+      selectIndex: 0,
+      messages: [{ id: `host-route-m-${seq}-next`, role: "USER", parts: [{ type: "text", text: "再来" }], annotations: [], createdAt: new Date().toISOString(), finishedAt: null, translation: null }],
+    } as never);
+    await generateAnswer(conversation);
+    const next = lastAssistantMessage(conversation);
+    expect(next.parts).toEqual([expect.objectContaining({ type: "text", text: "照常" })]);
+    expect((next.annotations as Array<{ type?: string }>).some((item) => item.type === "model_call_error")).toBe(false);
+    expect(hosts.at(-1)).not.toBe(crashedHost);
   }, 15_000);
 
   test("宿主进程无响应:卡住的会话亮状态条,重连时补发;缓过来后撤掉", async () => {
