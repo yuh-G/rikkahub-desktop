@@ -17,6 +17,7 @@
 
 import { bumpAnalyticsEngineRestartCount } from "../app-config/analytics";
 import { engineHostRecordsDir } from "../foundation/paths";
+import { onSystemProxyChange, readSystemProxy } from "../foundation/net";
 import type { Conversation, ProxyConfig } from "../foundation/types";
 import { getStringArray } from "../foundation/utils";
 import { reportError } from "../observability/app-errors";
@@ -103,6 +104,15 @@ function pushProxyIfChanged(host: EngineHostProcess, config: ProxyConfig): void 
   host.pushProxyConfig(config);
 }
 
+/** 同上,系统代理(主程序探测,宿主进程不自己探测)。 */
+let pushedSystemProxy: string | null = null;
+
+function pushSystemProxyIfChanged(host: EngineHostProcess, value: string | null): void {
+  if (value === pushedSystemProxy) return;
+  pushedSystemProxy = value;
+  host.pushSystemProxy(value);
+}
+
 const piHosts: EngineHostSupervisor<EngineHostProcess> = new EngineHostSupervisor<EngineHostProcess>({
   name: "pi",
   recordsDir: engineHostRecordsDir,
@@ -110,18 +120,28 @@ const piHosts: EngineHostSupervisor<EngineHostProcess> = new EngineHostSuperviso
   onEvent: onPiHostEvent,
   async launch({ onSpawn }) {
     const proxyConfig = state.settings.proxyConfig;
+    const systemProxy = readSystemProxy() ?? null;
     const host = await launchEngineHost({
       host: appEngineHost,
       proxyConfig,
+      systemProxy,
       onAppError: (entry) => reportError(entry.domain, entry.severity, entry.message, entry.detail, entry.code, entry.params),
       onProtocolError: (reason) => reportError("pi-engine", "info", `pi 引擎通道上有协议问题:${reason}`),
       onSpawn,
     });
-    // 握手期间用户改了代理:那时还没有进程可推(whenRunning 跳过),这里补推
+    // 握手期间用户改了代理、系统代理变了:那时还没有进程可推(whenRunning 跳过),这里补推
     pushedProxy = JSON.stringify(proxyConfig);
     pushProxyIfChanged(host, state.settings.proxyConfig);
+    pushedSystemProxy = systemProxy;
+    pushSystemProxyIfChanged(host, readSystemProxy() ?? null);
     return host;
   },
+});
+
+onSystemProxyChange((value) => {
+  piHosts.whenRunning(async (host) => pushSystemProxyIfChanged(host, value ?? null)).catch((err: unknown) => {
+    reportError("pi-engine", "info", "系统代理没能推给 pi 引擎宿主进程", err);
+  });
 });
 
 const piDriver = supervisedDriver(piHosts, "pi", PI_CAPABILITIES);

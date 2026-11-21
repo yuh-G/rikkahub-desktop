@@ -1,4 +1,5 @@
-// subprocess-engine/host-launch.test.ts — 主程序启动引擎宿主进程:握手、网络壳与配置推送、错误回传、版本不一致、退出(P7.2.2)
+// subprocess-engine/host-launch.test.ts — 主程序启动引擎宿主进程:握手、网络壳与配置推送、系统代理由主程序给、错误回传、版本不一致、
+// 退出(P7.2.2、PF2.1)
 // 宿主进程用测试替身 test-utils/fake-engine-host.ts(真实的公共底座与通道 + 假驱动);真 pi 驱动的跨进程证明在
 // smoke:engine-contract,入口分流在 foundation/process-roles.test.ts。
 import { afterAll, describe, expect, test } from "bun:test";
@@ -9,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import type { EngineHost, TurnRef } from "../engines/contract";
+import { SYSTEM_PROXY_TTL_MS } from "../foundation/net";
 import type { ProxyConfig } from "../foundation/types";
 import type { AppErrorDto } from "../foundation/types/dto";
 import { engineHostTracePathIn } from "../observability/boot-trace";
@@ -97,6 +99,44 @@ describe("启动引擎宿主进程(实跑测试替身)", () => {
     await proc.stop();
     expect((await proc.exited).exitCode).toBe(0);
     expect(existsSync(engineHostTracePathIn(join(dataDir, "logs"), proc.pid))).toBe(false);
+  }, 30_000);
+
+  test("系统代理:宿主进程用主程序给的值、自己不探测;缓存过期时提醒主程序且每个过期周期一条;主程序推来新值,下一个请求即生效", async () => {
+    const stale: number[] = [];
+    const proc = await launchEngineHost({
+      host: host([]),
+      proxyConfig: { ...manual(""), mode: "auto" },
+      systemProxy: proxyA.url,
+      onSystemProxyStale: () => void stale.push(Date.now()),
+      onAppError: () => undefined,
+      onProtocolError: () => undefined,
+      env: env(join(scratch, "system-proxy")),
+      spawnHost: (options) => Bun.spawn([process.execPath, fakeHost, "normal"], options),
+    });
+    const target = (path: string) => `http://rikkahub-host-test.invalid:${upstream.port}${path}`;
+    const run = async (path: string) => (await proc.driver.startTurn({ conversationId: "s", turnId: path, input: { prompt: { text: target(path), images: [] } } as never })).text;
+
+    expect(await run("/sys1")).toBe("上游:/sys1");
+    expect(proxyA.seen).toContain(target("/sys1"));
+    // 机器慢时启动到第一轮可能已超过 2 s,那一轮就会提醒一次;只数之后的
+    const before = stale.length;
+
+    // 过期以后:旧值照用(自己探测的话,值会换成本机真实的系统设置),并提醒主程序;紧接着的请求不再提醒
+    await Bun.sleep(SYSTEM_PROXY_TTL_MS + 200);
+    expect(await run("/sys2")).toBe("上游:/sys2");
+    expect(await run("/sys3")).toBe("上游:/sys3");
+    expect(proxyA.seen).toEqual(expect.arrayContaining([target("/sys2"), target("/sys3")]));
+    for (let i = 0; i < 100 && stale.length === before; i++) await Bun.sleep(10);
+    await Bun.sleep(50);
+    expect(stale.length - before).toBe(1);
+
+    proc.pushSystemProxy(proxyB.url);
+    expect(await run("/sys4")).toBe("上游:/sys4");
+    expect(proxyB.seen).toContain(target("/sys4"));
+    expect(proxyA.seen).not.toContain(target("/sys4"));
+
+    await proc.stop();
+    expect((await proc.exited).exitCode).toBe(0);
   }, 30_000);
 
   test("问候里的版本对不上:拒绝、杀掉子进程,提示重启应用", async () => {

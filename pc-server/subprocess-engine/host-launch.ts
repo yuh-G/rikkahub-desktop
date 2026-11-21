@@ -1,8 +1,9 @@
 // subprocess-engine/host-launch.ts — 主程序一侧:启动引擎宿主进程、连上专用通道、核对问候(P7.2.2,方案 §5.14.6)
 //
-// 顺序:先以随机名监听 → spawnSelf("engine-host") → 经 stdin 第一行交过去地址、令牌、单帧上限、网络配置 → 等第一个令牌对的
-// 连接 → 核对问候(身份、协议版本、应用版本;不一致即拒绝并提示重启应用)→ 把契约的应用侧(connectDriverOverRpc)挂上去,
-// 等 engine.ready。之后用户改代理,调用方经 pushProxyConfig 推给宿主进程;宿主进程转来的错误中心条目交给 onAppError。
+// 顺序:先以随机名监听 → spawnSelf("engine-host") → 经 stdin 第一行交过去地址、令牌、单帧上限、网络配置与系统代理 → 等第一个
+// 令牌对的连接 → 核对问候(身份、协议版本、应用版本;不一致即拒绝并提示重启应用)→ 把契约的应用侧(connectDriverOverRpc)挂上去,
+// 等 engine.ready。之后用户改代理、系统代理变了,调用方经 pushProxyConfig / pushSystemProxy 推给宿主进程;宿主进程的系统代理
+// 缓存过期时会提醒(onSystemProxyStale),它自己不探测(PF2.1);宿主进程转来的错误中心条目交给 onAppError。
 // 子进程的 stdout 不读(插件随便写),stderr 只留尾部用于归因。启停、判活、重启归监管器(supervisor.ts),这里只管一次启动。
 
 import type { Subprocess } from "bun";
@@ -10,6 +11,7 @@ import type { Subprocess } from "bun";
 import type { EngineDriver, EngineHost } from "../engines/contract";
 import { connectDriverOverRpc } from "../engines/rpc-transport";
 import { spawnSelf } from "../foundation/process-roles";
+import { refreshSystemProxyIfStale } from "../foundation/net";
 import type { ProxyConfig } from "../foundation/types";
 import type { AppErrorDto } from "../foundation/types/dto";
 import { APP_VERSION } from "../updates/index";
@@ -21,6 +23,8 @@ import {
   RUNTIME_APP_ERROR,
   RUNTIME_PING,
   RUNTIME_PROXY_CONFIG,
+  RUNTIME_SYSTEM_PROXY,
+  RUNTIME_SYSTEM_PROXY_STALE,
   type EngineHostLaunchLine,
 } from "./host-protocol";
 import { createTailBuffer } from "./process";
@@ -29,6 +33,10 @@ import { killProcessAndDescendants } from "./process-info";
 export interface LaunchEngineHostOptions {
   host: EngineHost;
   proxyConfig: ProxyConfig;
+  /** 主程序探测到的系统代理(宿主进程自己不探测)。不给 = 没有(测试与冒烟脚本都用直连)。 */
+  systemProxy?: string | null;
+  /** 宿主进程说系统代理的缓存过期了;不给就是主程序的 refreshSystemProxyIfStale(查到的值变了,调用方经 pushSystemProxy 推)。 */
+  onSystemProxyStale?(): void;
   /** 宿主进程里 reportError 的条目(由调用方并入主程序的错误中心)。 */
   onAppError(entry: AppErrorDto): void;
   /** 通道上的协议问题(非 JSON、无主响应等)。 */
@@ -49,6 +57,8 @@ export interface EngineHostProcess {
   driver: EngineDriver;
   pid: number;
   pushProxyConfig(config: ProxyConfig): void;
+  /** 主程序探测到的系统代理变了(null = 没有)。 */
+  pushSystemProxy(value: string | null): void;
   /** 问一句 runtime.ping;宿主进程主线程被占住时一直不回(期限由监管器把握)。 */
   ping(): Promise<unknown>;
   /** 立即强杀宿主进程连同它起的命令行。 */
@@ -103,6 +113,7 @@ export async function launchEngineHost(options: LaunchEngineHostOptions): Promis
     token: listener.token,
     maxFrameBytes: ENGINE_HOST_MAX_FRAME_BYTES,
     proxyConfig: options.proxyConfig,
+    systemProxy: options.systemProxy ?? null,
     parentPid: process.pid,
   };
   let channel: FrameChannel;
@@ -135,6 +146,7 @@ export async function launchEngineHost(options: LaunchEngineHostOptions): Promis
 
   const connection = connectDriverOverRpc((text) => channel.send(text), options.host, options.onProtocolError, {
     [RUNTIME_APP_ERROR]: (entry: AppErrorDto) => options.onAppError(entry),
+    [RUNTIME_SYSTEM_PROXY_STALE]: () => (options.onSystemProxyStale ?? refreshSystemProxyIfStale)(),
   });
   channel.onFrame((text) => connection.receive(text));
   channel.onClose((reason) => connection.close(reason));
@@ -158,6 +170,7 @@ export async function launchEngineHost(options: LaunchEngineHostOptions): Promis
     driver,
     pid: child.pid,
     pushProxyConfig: (config) => connection.notify(RUNTIME_PROXY_CONFIG, [config]),
+    pushSystemProxy: (value) => connection.notify(RUNTIME_SYSTEM_PROXY, [value]),
     ping: () => connection.request(RUNTIME_PING, []),
     kill,
     exited,

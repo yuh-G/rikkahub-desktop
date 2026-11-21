@@ -1119,8 +1119,7 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     return json({ status: "ok", paths });
   }
   if (path === "settings/proxy/detect" && request.method === "POST") {
-    // R1-7:探测函数已异步化;detectSystemProxy 按平台分发(Windows 注册表 / GNOME
-    // gsettings),此前只探 Windows,Linux 桌面点"检测"永远返回空。
+    // detectSystemProxy 按平台读 Windows 注册表 / GNOME gsettings,在探测线程里跑(foundation/system-proxy-probe.ts)。
     const detected = await detectSystemProxy();
     // 专题10-②:常规系统代理未检出时补测 PAC。只配了 PAC 的用户此前得到"未检测到系统
     // 代理"且毫无线索;现在前端据此提示去代理工具查 HTTP 端口手动填写。检出常规代理时

@@ -2,8 +2,9 @@
 // 纪律：纯函数，不直接读取 state；调用方通过参数传入 ProxyConfig。
 
 import { isRecord } from "./utils";
-import { RUNNING_IN_CONTAINER, RUNTIME_PLATFORM } from "./platform";
+import { RUNNING_IN_CONTAINER } from "./platform";
 import { defaultPreferredPort } from "./port-binding";
+import { probeSystemSetting } from "./system-proxy-probe";
 import type { ProxyConfig , ProxyMode } from "./types";
 
 export let lastDetectedSystemProxy: string | undefined;
@@ -34,135 +35,96 @@ export function resolveUserAgent(cfg: ProxyConfig | undefined | null): string {
   return custom ? custom : getDefaultUserAgent();
 }
 
-export function parseProxyServerValue(value: string): string | undefined {
-  if (!value) return undefined;
-  // `ProxyServer` can be either a single endpoint ("127.0.0.1:7890") or per-protocol
-  // ("http=127.0.0.1:7890;https=127.0.0.1:7891;ftp=..."). Prefer the https= variant for
-  // outbound API calls; fall back to http= or the bare endpoint.
-  if (value.includes("=")) {
-    const map = new Map<string, string>();
-    for (const piece of value.split(";")) {
-      const [k, v] = piece.split("=");
-      if (k && v) map.set(k.trim().toLowerCase(), v.trim());
-    }
-    // P0-3: 不 fallback 到 socks=。Bun fetch 只支持 http/https 代理，把 SOCKS 端口当
-    // HTTP 代理用会导致 CONNECT 握手挂起。注册表只有 socks= 时返回 undefined（等同无系统代理）。
-    const target = map.get("https") ?? map.get("http");
-    if (!target) return undefined;
-    return /^https?:\/\//i.test(target) ? target : `http://${target}`;
-  }
-  return /^https?:\/\//i.test(value) ? value : `http://${value}`;
-}
+// ── 系统代理(「跟随系统代理」模式)────────────────────────────────────────────
+// 读系统设置要起子进程,在探测线程里做(system-proxy-probe.ts;起子进程这一步会挡住调用线程)。网络壳每个请求只读缓存:
+// 缓存 2 s,过期后照旧返回旧值、在后台刷新一次(一次只查一个)。
+// 只有主程序探测。引擎宿主进程的值由主程序推过去(useExternalSystemProxy / setExternalSystemProxy),它的缓存过期时
+// 不自己查,而是提醒主程序查(每 2 s 最多一次);主程序查到的值变了再推(onSystemProxyChange)。
 
-// R1-7:reg/gsettings 读取全部改异步(Bun.spawn),消灭"fetch 拦截器内同步 spawn 阻塞
-// 事件循环数十 ms"的病灶。运行期唯一热路径入口是缓存读(readSystemProxy);这两个函数
-// 只被启动预热、后台刷新和 settings/proxy/detect 端点调用。
-async function runCommandText(cmd: string[]): Promise<{ exitCode: number; stdout: string }> {
-  const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "ignore" });
-  const stdout = await new Response(proc.stdout).text();
-  const exitCode = await proc.exited;
-  return { exitCode, stdout };
-}
-
-export async function readWindowsSystemProxy(): Promise<string | undefined> {
-  if (process.platform !== "win32") return undefined;
-  try {
-    const key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
-    const enable = await runCommandText(["reg", "query", key, "/v", "ProxyEnable"]);
-    if (enable.exitCode !== 0) return undefined;
-    if (!/ProxyEnable\s+REG_DWORD\s+0x1/i.test(enable.stdout)) return undefined;
-    const server = await runCommandText(["reg", "query", key, "/v", "ProxyServer"]);
-    if (server.exitCode !== 0) return undefined;
-    const match = server.stdout.match(/ProxyServer\s+REG_SZ\s+([^\r\n]+)/i);
-    if (!match) return undefined;
-    return parseProxyServerValue(match[1].trim());
-  } catch {
-    return undefined;
-  }
-}
-
-// Linux 桌面 GNOME 代理读取（gsettings）。仅处理 mode='manual'（明确主机端口）；
-// 'none' 返回 undefined；'auto'（PAC）不支持（我们不实现 PAC 解析）。
-// KDE 暂不支持，用户可在 UI 手动填代理（mode=manual）。
-export async function readGnomeProxy(): Promise<string | undefined> {
-  if (process.platform !== "linux") return undefined;
-  try {
-    const get = async (args: string[]) => (await runCommandText(["gsettings", ...args])).stdout.trim();
-    const modeRaw = await get(["get", "org.gnome.system.proxy", "mode"]);
-    if (!modeRaw || modeRaw === "'none'") return undefined;
-    if (modeRaw !== "'manual'") return undefined; // 'auto'（PAC）未实现
-    const host = (await get(["get", "org.gnome.system.proxy.http", "host"])).replace(/^'|'$/g, "");
-    const port = await get(["get", "org.gnome.system.proxy.http", "port"]);
-    if (!host || !port || host === "''" || port === "0") return undefined;
-    return `http://${host}:${port}`;
-  } catch {
-    return undefined;
-  }
+/** 「检测系统代理」按钮与缓存刷新用:读一次当前生效的系统代理。 */
+export function detectSystemProxy(): Promise<string | undefined> {
+  return probeSystemSetting("proxy");
 }
 
 // 专题10-②:PAC(自动配置脚本)存在性探测。应用不解析 PAC(实现成本高、收益低),本函数
 // 仅供"检测系统代理"按钮的诊断提示:常规系统代理未检出但存在 PAC 配置时,告诉用户
 // 去代理工具查 HTTP 端口手动填写,而不是留下"未检测到系统代理"的死胡同。
 // 不进代理解析主链路(resolveEffectiveProxy),探测失败一律视作无 PAC。
-export async function detectSystemPacUrl(): Promise<string | undefined> {
-  try {
-    if (RUNTIME_PLATFORM === "win") {
-      const key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
-      const res = await runCommandText(["reg", "query", key, "/v", "AutoConfigURL"]);
-      if (res.exitCode !== 0) return undefined;
-      const match = res.stdout.match(/AutoConfigURL\s+REG_SZ\s+([^\r\n]+)/i);
-      return match?.[1]?.trim() || undefined;
-    }
-    if (RUNTIME_PLATFORM === "linux" && !RUNNING_IN_CONTAINER) {
-      const mode = (await runCommandText(["gsettings", "get", "org.gnome.system.proxy", "mode"])).stdout.trim();
-      if (mode !== "'auto'") return undefined;
-      const url = (await runCommandText(["gsettings", "get", "org.gnome.system.proxy", "autoconfig-url"])).stdout
-        .trim()
-        .replace(/^'|'$/g, "");
-      // GNOME mode='auto' 即 PAC 模式;url 可能为空(WPAD 自动发现),仍算存在 PAC。
-      return url || "wpad";
-    }
-  } catch {
-    // 纯诊断增强,探测异常绝不能影响检测主流程。
-  }
-  return undefined;
+export function detectSystemPacUrl(): Promise<string | undefined> {
+  return probeSystemSetting("pac");
 }
 
-export async function detectSystemProxy(): Promise<string | undefined> {
-  if (RUNTIME_PLATFORM === "win") return readWindowsSystemProxy();
-  if (RUNTIME_PLATFORM === "linux" && !RUNNING_IN_CONTAINER) return readGnomeProxy();
-  return undefined;
-}
-
+/** ts:主程序里是读到这个值的时刻;引擎宿主进程里是最近一次收到推送或发出提醒的时刻。 */
 let systemProxyCache: { value: string | undefined; ts: number } | null = null;
 export const SYSTEM_PROXY_TTL_MS = 2000;
-let systemProxyRefreshInFlight = false;
+let systemProxyRefresh: Promise<void> | null = null;
+/** 引擎宿主进程:值由主程序推来,过期时调它提醒主程序。 */
+let remindSystemProxySource: (() => void) | null = null;
+const systemProxyListeners = new Set<(value: string | undefined) => void>();
+
+function storeSystemProxy(value: string | undefined): void {
+  const previous = systemProxyCache;
+  systemProxyCache = { value, ts: Date.now() };
+  if (previous?.value === value) return;
+  for (const listener of systemProxyListeners) listener(value);
+}
 
 function scheduleSystemProxyRefresh(): void {
-  if (systemProxyRefreshInFlight) return;
-  systemProxyRefreshInFlight = true;
-  void detectSystemProxy()
-    .then((value) => { systemProxyCache = { value, ts: Date.now() }; })
-    .finally(() => { systemProxyRefreshInFlight = false; });
-}
-
-/** R1-7:启动时(首个业务出站 fetch 之前,见 bootstrap 第 2 步)预热一次缓存,
- *  之后 readSystemProxy 永不阻塞。 */
-export async function primeSystemProxyCache(): Promise<void> {
-  systemProxyCache = { value: await detectSystemProxy(), ts: Date.now() };
-}
-
-/** R1-7:同步读缓存(fetch 拦截器 per-request 调用,不能阻塞)。TTL 过期返回陈值并触发
- *  后台单飞刷新(stale-while-revalidate)——旧实现 TTL 过期后的首个出站 fetch 要同步
- *  spawn 两次 reg query,阻塞事件循环数十 ms,多路流式并发时表现为周期性微卡。
- *  冷缓存(未预热,常规启动流程不会发生)返回 undefined 并触发后台刷新,该次请求按直连走。 */
-export function readSystemProxy(): string | undefined {
-  if (!systemProxyCache) {
-    scheduleSystemProxyRefresh();
-    return undefined;
+  if (remindSystemProxySource) {
+    systemProxyCache = { value: systemProxyCache?.value, ts: Date.now() };
+    remindSystemProxySource();
+    return;
   }
-  if (Date.now() - systemProxyCache.ts >= SYSTEM_PROXY_TTL_MS) scheduleSystemProxyRefresh();
-  return systemProxyCache.value;
+  systemProxyRefresh ??= detectSystemProxy()
+    .then(storeSystemProxy)
+    .finally(() => {
+      systemProxyRefresh = null;
+    });
+}
+
+/** 启动时(首个业务出站 fetch 之前,见 bootstrap 第 2 步)预热一次缓存,首个请求就能拿到正确的系统代理。 */
+export async function primeSystemProxyCache(): Promise<void> {
+  storeSystemProxy(await detectSystemProxy());
+}
+
+/** 同步读缓存(网络壳每个请求调,不能阻塞)。过期返回旧值并触发后台刷新;冷缓存(未预热,常规启动流程不会发生)
+ *  返回 undefined,该次请求按直连走。 */
+export function readSystemProxy(): string | undefined {
+  if (!systemProxyCache || Date.now() - systemProxyCache.ts >= SYSTEM_PROXY_TTL_MS) scheduleSystemProxyRefresh();
+  return systemProxyCache?.value;
+}
+
+/** 主程序:引擎宿主进程提醒「该查了」时调,缓存过期才查。 */
+export function refreshSystemProxyIfStale(): void {
+  readSystemProxy();
+}
+
+/** 主程序:缓存里的系统代理变了时通知(推给引擎宿主进程)。返回取消订阅的函数。 */
+export function onSystemProxyChange(listener: (value: string | undefined) => void): () => void {
+  systemProxyListeners.add(listener);
+  return () => systemProxyListeners.delete(listener);
+}
+
+/** 引擎宿主进程:系统代理改由主程序给(启动行里那份),本进程不再自己查;缓存过期时调 remind。 */
+export function useExternalSystemProxy(value: string | undefined, remind: () => void): void {
+  remindSystemProxySource = remind;
+  systemProxyCache = { value, ts: Date.now() };
+}
+
+/** 引擎宿主进程:主程序推来新的系统代理。 */
+export function setExternalSystemProxy(value: string | undefined): void {
+  systemProxyCache = { value, ts: Date.now() };
+}
+
+/** 仅测试:等在途的后台刷新结束。 */
+export function settleSystemProxyRefreshForTests(): Promise<void> {
+  return systemProxyRefresh ?? Promise.resolve();
+}
+
+/** 仅测试:清空缓存,回到「本进程自己探测」。 */
+export function resetSystemProxyCacheForTests(): void {
+  systemProxyCache = null;
+  remindSystemProxySource = null;
 }
 
 export function composeProxyUrl(base: string, username: string, password: string): string {

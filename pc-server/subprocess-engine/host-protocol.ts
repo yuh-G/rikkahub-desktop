@@ -6,7 +6,7 @@
 
 import type { ProxyConfig } from "../foundation/types";
 
-export const ENGINE_HOST_PROTOCOL = 4;
+export const ENGINE_HOST_PROTOCOL = 5;
 
 /** 两端各自声明能收的单帧上限(都取这个值)。随会话长度增长的消息在 rpc-transport 里只传变化(P7.2.4),整份的只有
  *  宿主进程刚启动后某个会话的第一轮视图与第一次请求正文;带大图的会话这一帧可达几十 MB,所以上限定得宽。 */
@@ -20,6 +20,8 @@ export interface EngineHostLaunchLine {
   maxFrameBytes: number;
   /** 网络壳(代理 / UA / 空闲定时器)的配置;之后用户改代理,主程序推 runtime.proxyConfig。 */
   proxyConfig: ProxyConfig;
+  /** 主程序探测到的系统代理(「跟随系统代理」用;宿主进程自己不探测,PF2.1)。null = 没有。之后变了推 runtime.systemProxy。 */
+  systemProxy: string | null;
   /** 主程序的 pid:宿主进程的独立线程盯它(不用 process.ppid:Linux 上父进程没了会改挂到别的进程)。 */
   parentPid: number;
 }
@@ -38,6 +40,10 @@ export type EngineHostHello = {
 /** 进程运维消息(契约之外):主程序 → 宿主进程推新的网络配置;宿主进程 → 主程序转发错误中心条目。 */
 export const RUNTIME_PROXY_CONFIG = "runtime.proxyConfig";
 export const RUNTIME_APP_ERROR = "runtime.appError";
+/** 主程序 → 宿主进程:系统代理变了(参数是新值,null = 没有)。 */
+export const RUNTIME_SYSTEM_PROXY = "runtime.systemProxy";
+/** 宿主进程 → 主程序:系统代理的缓存过期了,该查一次(宿主进程每 2 s 最多发一条)。 */
+export const RUNTIME_SYSTEM_PROXY_STALE = "runtime.systemProxyStale";
 /** 主程序 → 宿主进程的判活请求(监管器定期问,带期限;宿主进程的主线程被占住时答不了)。 */
 export const RUNTIME_PING = "runtime.ping";
 

@@ -1206,6 +1206,7 @@
       "engine_host_launch_failed": "The pi engine failed to start, retrying",
       "engine_host_gave_up": "The pi engine process exited unexpectedly {{count}} times in a short period, so it will not be restarted. Regenerating a reply or changing plugins will try again",
       "engine_host_gave_up_plugins": "The pi engine process exited unexpectedly {{count}} times in a short period, so it will not be restarted. Enabled plugins: {{plugins}}. Try disabling them first",
+      "system_proxy_probe_fallback": "The system proxy detection thread is unavailable, so detection now runs on the main thread. Following the system proxy still works, but requests may pause briefly before being sent",
       "voice_provider_preserved": "Detected voice services from the mobile app ({{types}}) that this desktop app doesn't support yet. Their configuration is preserved as-is for round-trip and won't be lost"
     }
   },

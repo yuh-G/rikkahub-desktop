@@ -1206,6 +1206,7 @@
       "engine_host_launch_failed": "pi 引擎启动失败，正在重试",
       "engine_host_gave_up": "pi 引擎进程短时间内连续 {{count}} 次意外退出，已停止重启。重新生成或修改插件后会再试",
       "engine_host_gave_up_plugins": "pi 引擎进程短时间内连续 {{count}} 次意外退出，已停止重启。当前启用的插件：{{plugins}}，可以先停用它们再试",
+      "system_proxy_probe_fallback": "系统代理检测线程不可用，已改在主线程上检测：跟随系统代理照常生效，但请求前可能稍有停顿",
       "voice_provider_preserved": "检测到来自 APP端的语音服务（{{types}}），桌面端暂不支持，已原样保留配置以便回传，不会丢失"
     }
   },
