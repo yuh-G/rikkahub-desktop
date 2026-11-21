@@ -131,10 +131,11 @@ export function normalizeState(input: Partial<State>): State {
   // 订阅供应商「贴同家 API」邻接归位(方案 §6.1):新补插的 OAuth 预置被 mergeById 追加到
   // 尾部,这里把它们移到同家 API 锚点之后。幂等——只在不在正确邻位时动,不推翻用户手动排序。
   normalized.settings.providers = placeOAuthProvidersAfterAnchors(normalized.settings.providers);
-  normalized.settings.providers = normalized.settings.providers.map(({ promptCaching, ...providerItem }) => ({
+  normalized.settings.providers = normalized.settings.providers.map(({ promptCaching, promptCacheWarming, ...providerItem }) => ({
     ...providerItem,
-    // 「Claude 提示缓存」是三态,不填 = 按端点取默认(model-providers/prompt-cache-defaults.ts),这里只丢掉非布尔的脏值。
+    // 「Claude 提示缓存」「缓存预热」都是三态,不填 = 按端点取默认(model-providers/prompt-cache-defaults.ts),这里只丢掉非布尔的脏值。
     ...(typeof promptCaching === "boolean" ? { promptCaching } : {}),
+    ...(typeof promptCacheWarming === "boolean" ? { promptCacheWarming } : {}),
     promptCacheTtl: providerItem.promptCacheTtl === "1h" ? "1h" : "5m",
     models: (providerItem.models ?? []).map((item) => enrichModel(item)),
   }));

@@ -94,8 +94,11 @@ export async function createPiSessionResources(options: {
   compactionKeepRecentTokens?: number;
   /** 技能加载诊断的上报出口(生产 = host.report)。 */
   report?: (report: EngineErrorReport) => void;
+  /** 本会话是否预热提示缓存(授权的 promptCache.warming)。不传 = 不预热(压缩用的一次性会话)。 */
+  cacheWarming?: boolean;
 }): Promise<PiSessionResources> {
-  const { cwd, root, instructions, plugins = [], appToolNames = [], approvePluginTool, compactionKeepRecentTokens, report } = options;
+  const { cwd, root, instructions, plugins = [], appToolNames = [], approvePluginTool, compactionKeepRecentTokens, report, cacheWarming = false } =
+    options;
   // inMemory:零文件 I/O(不读不写任何 settings.json);projectTrusted:false 是给
   // resource-loader 的发现逻辑看的(.pi/SYSTEM.md 门控)。压缩面 P5 接管:threshold/
   // overflow 自动压缩显式开启(数值与 pi 默认一致,但不再依赖库默认值漂移),
@@ -105,9 +108,9 @@ export async function createPiSessionResources(options: {
   // 而我们的引擎上下文每轮由 context-encoder 从 SQLite 原图重建——本轮「缩放图+说明」
   // 下轮「原图无说明」,模型前后所见不一致且该轮缓存失效。关闭后两轮逐字节一致
   // (代价:工具结果图片也不缩放,与我们聊天引擎的图片直发口径对齐)。
-  // cacheWarming:"streaming"(pi 1.5.1 起默认 idle,运行之间最长保温 30 分钟):显式钉回 1.0.3
-  // 语义。runner 每轮结束即 dispose(会取消预热),idle 档在我们这里几乎不生效,不如说死;
-  // 预热归属在方案 P2.3 的 ModelGrant 缓存策略里重定。
+  // cacheWarming:应用决定、pi 执行(方案 §5.17,D31)。授权的 promptCache.warming 为真给 "streaming"(一轮运行期间
+  // 在缓存到期前重发续期,agent_settled 即停),否则 "off"。不用 pi 1.5.1 默认的 idle(两轮之间也续,最长 30 分钟):
+  // 多会话界面里回复完没接着问,多半是去做别的了。设置每个会话一份,授权进长驻会话的配置键,改开关下一轮换会话。
   // enableInstallTelemetry:false:SDK 路径下它只决定 pi 的归属头(client-identity.ts:关闭则
   // attribution 为 null,OpenRouter/NVIDIA/opencode 不再收到 pi 的归属头);pi 的版本 ping
   // 只在 CLI 交互模式跑,与我们无关。
@@ -119,7 +122,7 @@ export async function createPiSessionResources(options: {
       },
       thinkingBudgets: { ...PI_THINKING_BUDGETS },
       images: { autoResize: false },
-      cacheWarming: "streaming",
+      cacheWarming: cacheWarming ? "streaming" : "off",
       enableInstallTelemetry: false,
     },
     { projectTrusted: false },

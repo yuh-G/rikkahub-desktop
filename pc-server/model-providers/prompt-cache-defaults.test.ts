@@ -2,6 +2,7 @@
 //
 // 锁四件事:①默认值表(官方 / 中转站 / 订阅 / 非 Claude);②生效值 = 用户设过的值优先;③聊天引擎请求在官方端点
 // 默认带 cache_control;④没有第二处按字面读 promptCaching(源码扫描:生产代码只许本模块与登记的几处读这个字段)。
+// 「缓存预热」(promptCacheWarming)的默认值表与同样的源码扫描也在这里;授权与引擎侧在 pi-engine/cache-warming.test.ts。
 
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -11,7 +12,12 @@ import type { Provider } from "../foundation/types";
 import { claudeMessagesFromApiMessages, claudeSystemContent, claudeToolsFromOpenAiTools } from "../inference-engine/message-builder";
 import { promptCachePolicyFor } from "../engines/model-grant";
 import { provider } from "./index";
-import { claudePromptCachingDefault, claudePromptCachingEnabled } from "./prompt-cache-defaults";
+import {
+  claudePromptCacheWarmingDefault,
+  claudePromptCacheWarmingEnabled,
+  claudePromptCachingDefault,
+  claudePromptCachingEnabled,
+} from "./prompt-cache-defaults";
 
 const row = (overrides: Partial<Provider>) => provider({ id: crypto.randomUUID(), name: "T", baseUrl: "https://api.anthropic.com/v1", type: "claude", ...overrides });
 
@@ -43,6 +49,24 @@ describe("默认值表", () => {
 
   test("出厂的供应商行不再写死 promptCaching(不填 = 按端点取默认)", () => {
     expect("promptCaching" in provider({ id: "x", name: "X", baseUrl: "https://api.anthropic.com/v1" })).toBe(false);
+  });
+});
+
+describe("「缓存预热」默认值表(§5.17.3)", () => {
+  test("官方端点(API Key)与 Claude 订阅 → 开;中转站 → 关;其余订阅、其余协议 → 关,字段写了开也不算", () => {
+    expect(claudePromptCacheWarmingDefault(row({}))).toBe(true);
+    expect(claudePromptCacheWarmingDefault(row({ baseUrl: "https://relay.example.com/v1" }))).toBe(false);
+    expect(claudePromptCacheWarmingDefault(row({ authMode: "oauth" }), "anthropic")).toBe(true);
+    expect(claudePromptCacheWarmingEnabled(row({ authMode: "oauth", promptCacheWarming: true }), "kimi-coding")).toBe(false);
+    expect(claudePromptCacheWarmingEnabled(row({ authMode: "oauth", promptCacheWarming: true }))).toBe(false);
+    expect(claudePromptCacheWarmingEnabled(row({ type: "openai", promptCacheWarming: true }))).toBe(false);
+    expect(claudePromptCacheWarmingEnabled(row({ type: "google", promptCacheWarming: true }))).toBe(false);
+  });
+
+  test("生效值:用户设过就用它,不填才取默认", () => {
+    expect(claudePromptCacheWarmingEnabled(row({ promptCacheWarming: false }))).toBe(false);
+    expect(claudePromptCacheWarmingEnabled(row({ baseUrl: "https://relay.example.com", promptCacheWarming: true }))).toBe(true);
+    expect(claudePromptCacheWarmingEnabled(row({ authMode: "oauth", promptCacheWarming: false }), "anthropic")).toBe(false);
   });
 });
 
@@ -89,6 +113,12 @@ test("源码扫描:只有登记的文件按字面读 promptCaching,其余都经 
     .filter((file) => !file.startsWith("test-utils/") && !ALLOWED_READERS.has(file))
     .filter((file) => /\.promptCaching\b/.test(readFileSync(join(serverRoot, file), "utf8")));
   expect(offenders).toEqual([]);
+  // 「缓存预热」只有默认值模块按字面读(加载时的脏值清理是解构,不算)。
+  const warmingReaders = productionFiles(serverRoot)
+    .map((file) => relative(serverRoot, file).split(sep).join("/"))
+    .filter((file) => !file.startsWith("test-utils/") && file !== "model-providers/prompt-cache-defaults.ts")
+    .filter((file) => /\.promptCacheWarming\b/.test(readFileSync(join(serverRoot, file), "utf8")));
+  expect(warmingReaders).toEqual([]);
   const webUi = resolve(serverRoot, "..", "web-ui", "app", "components", "settings", "providers", "index.tsx");
-  expect(readFileSync(webUi, "utf8")).not.toMatch(/\.promptCaching\b/);
+  expect(readFileSync(webUi, "utf8")).not.toMatch(/\.promptCach(ing|eWarming)\b/);
 });

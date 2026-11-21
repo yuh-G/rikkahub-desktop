@@ -71,7 +71,7 @@ const grant: ModelGrant = {
   limits: { contextWindow: 128_000, maxTokens: 8_192 },
   headers: {},
   credential: { kind: "api-key", apiKey: "sk-smoke" },
-  promptCache: { enabled: false, retention: "short" },
+  promptCache: { enabled: false, retention: "short", warming: false },
   userAgent: "RikkaHub-ContractSmoke/1.0",
 };
 const instructions: EngineInstructions = { appendSystemPrompt: [], globalAgentsFile: null, skills: { dir: skillsDir, enabled: [] } };

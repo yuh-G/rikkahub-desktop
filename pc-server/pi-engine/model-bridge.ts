@@ -8,11 +8,13 @@
 // 只做 pi 选项翻译。订阅凭据不随授权下发:pi 的 CredentialStore 换成「向应用取令牌」的薄层,
 // 刷新只在应用侧发生。
 import type { CredentialStore, OAuthCredential } from "../../pi/packages/ai/src/auth/types.ts";
+import { getBuiltinModels } from "../../pi/packages/ai/src/providers/all.ts";
 import type { Api, CacheRetention, KnownApi, Model as PiModel } from "../../pi/packages/ai/src/types.ts";
 import { type ClientIdentity, mergeClientIdentity } from "../../pi/packages/ai/src/utils/identity.ts";
 import { ModelRuntime } from "../../pi/packages/coding-agent/src/core/model-runtime.ts";
 import type { ProviderConfigInput } from "../../pi/packages/coding-agent/src/core/provider-composer.ts";
 import type { ModelGrant, PromptCachePolicy, SubscriptionCredential } from "../engines/contract";
+import { STRICT_CONTRACT_TRANSPORT } from "../engines/loopback";
 import { OAUTH_FLOWS } from "../model-providers/auth/flows";
 import {
   ARK_SEED2_EFFORT_BY_LEVEL,
@@ -72,7 +74,8 @@ export type PiModelMapping =
 
 export type PiMappingResult = { ok: true; mapping: PiModelMapping } | { ok: false; reason: string };
 
-// 我们不做成本核算（pi 用 cost 算展示成本，全 0 = 不产生虚假数字）。
+// 我们不做成本核算（pi 用 cost 算展示成本，全 0 = 不产生虚假数字）。例外是要预热的 API Key Claude 行：pi 按价格算重发
+// 划不划算，价格取 pi 目录（anthropicCatalogCacheFacts）。
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 // 我们的模型配置不含上下文窗口/输出上限（安卓同构无此字段）。授权的 limits 带 models.dev
 // 真实值（影响 pi 自动压缩阈值 contextWindow-reserveTokens 与请求 max_tokens），
@@ -161,6 +164,22 @@ function piCompatOverridesFor(host: string, api: KnownApi, promptCacheEnabled: b
 export function piCacheRetentionFor(policy: PromptCachePolicy): CacheRetention {
   if (!policy.enabled) return "none";
   return policy.retention === "long" ? "long" : "short";
+}
+
+/** 预热要用的缓存寿命与价格,取 pi 目录里 anthropic 同 id 的模型(与 pi 自己预热时用的同一份数字,方案 §5.17.3)。
+ *  中转站借官方同名模型的价格;查不到同 id(中转站改了模型名)返回 undefined,不给寿命与价格,pi 不预热。 */
+function anthropicCatalogCacheFacts(modelId: string): Required<Pick<PiModel<Api>, "cost" | "promptCache">> | undefined {
+  const entry = (getBuiltinModels("anthropic") as PiModel<Api>[]).find((item) => item.id === modelId);
+  if (!entry?.promptCache) return undefined;
+  return { cost: entry.cost, promptCache: testPromptCacheLifetime() ?? entry.promptCache };
+}
+
+/** 只测试用:预热时间线测试把寿命换成几秒(pi 在寿命的 90% 与到期前 10 秒里取早的那个重发),不必等 5 分钟。
+ *  只在 bun test 下生效(与回环的严格传输同一个判定);引擎宿主进程继承同一份环境变量。 */
+function testPromptCacheLifetime(): PiModel<Api>["promptCache"] | undefined {
+  if (!STRICT_CONTRACT_TRANSPORT) return undefined;
+  const seconds = Number(process.env.RIKKAHUB_TEST_PROMPT_CACHE_TTL_SECONDS);
+  return seconds > 0 ? { short: seconds, long: seconds } : undefined;
 }
 
 /** pi 受控 settings 的思考预算表——聊天引擎预算表(方言 THINKING_BUDGET_BY_LEVEL,
@@ -403,6 +422,8 @@ export function mapGrantToPi(grant: ModelGrant): PiMappingResult {
           ? { thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" } }
           : { thinkingLevelMap: { off: "none", xhigh: "xhigh", max: "max" } };
 
+  const cacheFacts = grant.promptCache.warming && api === "anthropic-messages" ? anthropicCatalogCacheFacts(grant.modelId) : undefined;
+
   const { contextWindow: grantWindow, maxTokens: grantMaxTokens } = grant.limits;
   const contextWindow = typeof grantWindow === "number" && grantWindow > 0 ? grantWindow : DEFAULT_CONTEXT_WINDOW;
   const maxTokens = typeof grantMaxTokens === "number" && grantMaxTokens > 0 ? grantMaxTokens : DEFAULT_OUTPUT_TOKENS;
@@ -421,9 +442,11 @@ export function mapGrantToPi(grant: ModelGrant): PiMappingResult {
         name: grant.displayName || grant.modelId,
         reasoning: grant.reasoning,
         input: grant.imageInput ? ["text", "image"] : ["text"],
-        cost: ZERO_COST,
+        cost: cacheFacts?.cost ?? ZERO_COST,
         contextWindow,
         maxTokens,
+        // 缓存寿命:pi 按它排预热的重发时间,没有就不预热(只在授权要预热时给)。
+        ...(cacheFacts ? { promptCache: cacheFacts.promptCache } : {}),
         // 厂商思考开关+档位收拢(方言单源,与聊天引擎同表同判定;见 piThinkingOverridesFor 头注)。
         ...(thinkingOverrides?.thinkingLevelMap ? { thinkingLevelMap: thinkingOverrides.thinkingLevelMap } : {}),
         // 请求口径对齐聊天引擎(缺陷修复与依据见 piCompatOverridesFor/piThinkingOverridesFor 头注)。

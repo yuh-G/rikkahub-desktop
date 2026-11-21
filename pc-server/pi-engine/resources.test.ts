@@ -120,12 +120,15 @@ describe("P4 资源装配", () => {
     expect(resourceLoader.getAppendSystemPrompt().join("\n")).not.toContain("HIJACKED");
   });
 
-  test("受控设置显式钉住 pi 1.5.1 改了默认值的项:预热 streaming、不带 pi 归属头", async () => {
+  test("受控设置显式钉住 pi 1.5.1 改了默认值的项:预热按授权给 streaming 或 off(从不 idle)、不带 pi 归属头", async () => {
     const root = mkdtempSync(join(tmpdir(), "rkh-res-defaults-"));
     const { assistant, conversation } = fixture();
-    const { settingsManager } = await createPiSessionResources({ cwd: root, root, instructions: buildEngineInstructions(conversation, assistant, fakeModel) });
-    // pi 1.5.1 默认 idle(运行之间保温 30 分钟);我们每轮 dispose,钉回 1.0.3 的 streaming。
-    expect(settingsManager.getCacheWarmingMode()).toBe("streaming");
+    const instructions = buildEngineInstructions(conversation, assistant, fakeModel);
+    const { settingsManager } = await createPiSessionResources({ cwd: root, root, instructions });
+    // pi 1.5.1 默认 idle(两轮之间也续期,最长 30 分钟);我们只在一轮之内续期(方案 §5.17,D31)。
+    expect(settingsManager.getCacheWarmingMode()).toBe("off");
+    const warming = await createPiSessionResources({ cwd: root, root, instructions, cacheWarming: true });
+    expect(warming.settingsManager.getCacheWarmingMode()).toBe("streaming");
     // 关闭后 SDK 的 client identity 不带 attribution(OpenRouter/NVIDIA/opencode 归属头)。
     // 第二参显式传 undefined:不让测试机的 PI_TELEMETRY 环境变量左右断言。
     expect(isInstallTelemetryEnabled(settingsManager, undefined)).toBe(false);

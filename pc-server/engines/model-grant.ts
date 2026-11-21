@@ -16,7 +16,7 @@ import { modelsDevCache } from "../inference-engine/providers";
 import { applyModelRequestHeaders } from "../model-providers";
 import { isOAuthProvider, oauthFlowFor } from "../model-providers/auth";
 import { contextWindowFor, requiredOutputCap } from "../model-providers/model-limits";
-import { claudePromptCachingEnabled } from "../model-providers/prompt-cache-defaults";
+import { claudePromptCacheWarmingEnabled, claudePromptCachingEnabled } from "../model-providers/prompt-cache-defaults";
 import type { ModelGrant, ModelProtocol, PromptCachePolicy } from "./contract";
 
 const DEFAULT_COMPLETIONS_PATH = "/chat/completions";
@@ -32,14 +32,23 @@ function protocolFor(provider: Provider): ModelProtocol | null {
  *  promptCacheKey),所以同一个开关对两个引擎含义一致。
  *  订阅登录行恒开、保留期取服务端默认:设置页对它们不显示缓存开关,字段从未被用户写过,
  *  照字面读会把订阅端点判成关;这些通道的缓存形态由引擎侧的内建供应商定义维护。
- *  google 没有缓存开关,恒关。 */
+ *  google 没有缓存开关,恒关。
+ *  预热(§5.17.3)只看「缓存预热」的生效值,资格(API Key 的 Claude 格式、Claude 订阅)在默认值模块里判;
+ *  API Key 行缓存关着就不预热(没有缓存可续)。 */
 export function promptCachePolicyFor(provider: Provider): PromptCachePolicy {
-  if (isOAuthProvider(provider)) return { enabled: true, retention: "short" };
-  if (provider.type === "claude") {
-    return { enabled: claudePromptCachingEnabled(provider), retention: provider.promptCacheTtl === "1h" ? "long" : "short" };
+  if (isOAuthProvider(provider)) {
+    return { enabled: true, retention: "short", warming: claudePromptCacheWarmingEnabled(provider, oauthFlowFor(provider)?.id) };
   }
-  if (provider.type === "openai") return { enabled: provider.promptCacheKey === true, retention: "short" };
-  return { enabled: false, retention: "short" };
+  if (provider.type === "claude") {
+    const enabled = claudePromptCachingEnabled(provider);
+    return {
+      enabled,
+      retention: provider.promptCacheTtl === "1h" ? "long" : "short",
+      warming: enabled && claudePromptCacheWarmingEnabled(provider),
+    };
+  }
+  if (provider.type === "openai") return { enabled: provider.promptCacheKey === true, retention: "short", warming: false };
+  return { enabled: false, retention: "short", warming: false };
 }
 
 /** null = provider 类型不在已知协议之内(状态损坏时的防御面,正常配置不可达)。

@@ -133,6 +133,7 @@ export function createPiDriver(host: EngineHost): EngineDriver {
           appToolNames: input.tools.map((tool) => tool.name),
           approvePluginTool,
           report,
+          cacheWarming: input.model.promptCache.warming,
         }),
       sessions: { host: sessions, key: JSON.stringify({ instructions: input.instructions, plugins: input.plugins ?? [] }) },
       // 插件工具由 pi 执行,执行前回应用审批(类别 plugin,来源带插件 id)。

@@ -195,23 +195,29 @@ test("显式值优先:手动压缩的摘要请求在策略开着时也不打缓�
 }, 20_000);
 
 describe("策略组装与翻译", () => {
-  test("订阅登录行恒开(保留期取服务端默认);google 恒关;API Key 行跟随各自开关", () => {
+  test("订阅登录行恒开(保留期取服务端默认);google 恒关;API Key 行跟随各自开关(预热的资格表在 cache-warming.test.ts)", () => {
     const oauthClaude = claudeRow({ authMode: "oauth", promptCaching: false });
-    expect(promptCachePolicyFor(oauthClaude)).toEqual({ enabled: true, retention: "short" });
+    expect(promptCachePolicyFor(oauthClaude)).toEqual({ enabled: true, retention: "short", warming: false });
     expect(promptCachePolicyFor(provider({ id: "g", name: "G", baseUrl: "https://g.example", type: "google" }))).toEqual({
       enabled: false,
       retention: "short",
+      warming: false,
     });
-    expect(promptCachePolicyFor(claudeRow({ promptCaching: true, promptCacheTtl: "1h" }))).toEqual({ enabled: true, retention: "long" });
+    expect(promptCachePolicyFor(claudeRow({ promptCaching: true, promptCacheTtl: "1h" }))).toEqual({
+      enabled: true,
+      retention: "long",
+      warming: false,
+    });
     expect(promptCachePolicyFor(provider({ id: "o", name: "O", baseUrl: "https://o.example", promptCacheKey: true }))).toEqual({
       enabled: true,
       retention: "short",
+      warming: false,
     });
   });
 
   test("翻译:关 = none(pi 缺省按 short,必须显式关),开 = short / long", () => {
-    expect(piCacheRetentionFor({ enabled: false, retention: "long" })).toBe("none");
-    expect(piCacheRetentionFor({ enabled: true, retention: "short" })).toBe("short");
-    expect(piCacheRetentionFor({ enabled: true, retention: "long" })).toBe("long");
+    expect(piCacheRetentionFor({ enabled: false, retention: "long", warming: false })).toBe("none");
+    expect(piCacheRetentionFor({ enabled: true, retention: "short", warming: false })).toBe("short");
+    expect(piCacheRetentionFor({ enabled: true, retention: "long", warming: false })).toBe("long");
   });
 });

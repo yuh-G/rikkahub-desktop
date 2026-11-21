@@ -82,6 +82,9 @@ export interface Provider {
   includeHistoryReasoning?: boolean;
   promptCaching?: boolean;
   promptCacheTtl?: "5m" | "1h";
+  // 「缓存预热」(方案 §5.17.3):工作区会话一轮之内在缓存到期前重发一次请求续期。三态,不填 = 官方端点与 Claude
+  // 订阅开、其余关(model-providers/prompt-cache-defaults.ts)。桌面端独有字段,APP 端解析时忽略。
+  promptCacheWarming?: boolean;
   // 专题12:OpenAI 系请求附带 prompt_cache_key=会话ID,官方端据此把同一会话路由到
   // 同一缓存分片提高命中率(codex 同款)。第三方兼容端可能不识别该字段报 400,
   // 故做成 provider 级开关,默认关。
