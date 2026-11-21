@@ -605,6 +605,8 @@
     "field_duration": "耗时",
     "field_provider": "服务商",
     "field_kind": "类型",
+    "purpose_cache_warm": "预热",
+    "purpose_cache_warm_hint": "工作区会话在缓存到期前重发的请求，用于续期缓存，不计入请求统计",
     "request_headers": "请求头",
     "response_headers": "响应头",
     "show_sensitive": "显示敏感信息",

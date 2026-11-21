@@ -248,6 +248,8 @@ export interface ModelRequestRecord {
   responseHeaders?: Record<string, string>;
   responseBody?: string;
   error?: string;
+  /** "cache_warm" = 引擎为续期提示缓存重发的请求(方案 §5.17.5):日志页标「预热」,不计入请求统计。缺省 = 会话请求。 */
+  purpose?: "cache_warm";
 }
 
 /** 订阅凭据(pi-ai OAuthCredential 原样 JSON,对应用不透明)。 */

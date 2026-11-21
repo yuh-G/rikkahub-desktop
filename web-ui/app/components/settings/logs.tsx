@@ -94,6 +94,15 @@ export function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: ()
 const FEED_ROW =
   "block w-full rounded-[var(--ds-radius-md)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--ds-on-surface)]";
 
+/** 缓存预热的重发(log.purpose === "cache_warm")在列表与详情里带一枚「预热」徽标。 */
+function CacheWarmBadge({ log }: { log: RequestLog }) {
+  const { t } = useTranslation();
+  if (log.purpose !== "cache_warm") return null;
+  return (
+    <StatusBadge title={t("settings:logs.purpose_cache_warm_hint")}>{t("settings:logs.purpose_cache_warm")}</StatusBadge>
+  );
+}
+
 function RequestLogRow({ log, onClick }: { log: RequestLog; onClick: () => void }) {
   return (
     <button
@@ -102,7 +111,10 @@ function RequestLogRow({ log, onClick }: { log: RequestLog; onClick: () => void 
       className={FEED_ROW}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="font-semibold text-primary">{log.method ?? "POST"}</span>
+        <span className="flex items-center gap-2">
+          <span className="font-semibold text-primary">{log.method ?? "POST"}</span>
+          <CacheWarmBadge log={log} />
+        </span>
         <span className={cn("text-xs font-medium", log.ok ? "text-success" : "text-destructive")}>
           {log.status}
         </span>
@@ -267,6 +279,12 @@ export function LogDetailContent({ log, loading, unavailable }: { log: RequestLo
         <DetailField label={t("settings:logs.field_provider")} value={log.providerName} />
         <DetailField label={t("settings:logs.field_kind")} value={log.kind ?? "-"} />
       </div>
+      {log.purpose === "cache_warm" ? (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <CacheWarmBadge log={log} />
+          <span>{t("settings:logs.purpose_cache_warm_hint")}</span>
+        </div>
+      ) : null}
       <div className="flex justify-end">
         <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={() => setReveal((v) => !v)}>
           {reveal ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}

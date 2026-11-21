@@ -137,7 +137,8 @@ export function logListItem(log: RequestLog): RequestLog {
 }
 
 export function addLog(input: Omit<RequestLog, "id" | "at">) {
-  bumpStatsCounters(state.stats, input);
+  // 缓存预热的重发(方案 §5.17.5)只进日志,不算请求:统计页的请求数、失败数只数会话与辅助请求。
+  if (input.purpose !== "cache_warm") bumpStatsCounters(state.stats, input);
   const entry: RequestLog = { id: id(), at: Date.now(), ...input, url: sanitizeLogUrl(input.url) };
   if (entry.requestHeaders) entry.requestHeaders = sanitizeLogHeaders(entry.requestHeaders);
   if (entry.responseHeaders) entry.responseHeaders = sanitizeLogHeaders(entry.responseHeaders);

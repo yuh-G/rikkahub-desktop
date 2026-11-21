@@ -428,6 +428,8 @@ export interface RequestLog {
   responseBodyLength?: number;
   /** 正文因内存预算被释放(api/logs.ts 的 LOG_BODY_BUDGET_CHARS);条目本身还在。 */
   bodiesReleased?: boolean;
+  /** "cache_warm" = 工作区引擎续期提示缓存的重发(契约 ModelRequestRecord.purpose):日志页标「预热」,不计入统计。 */
+  purpose?: "cache_warm";
 }
 
 // 与 logs 解耦的持久化请求统计累加器。logs 已改为内存态(重启清空,对齐移动端),

@@ -7,6 +7,7 @@
 //   2. 记请求日志:响应头到手即记(durationMs = 到响应头的时间),经 log 回调交给应用(引擎在
 //      子进程里时它是一次单向通知)。流式响应体不读(SSE 由引擎消费,tee 全量会翻倍内存);非 2xx
 //      克隆读截断的错误体;网络失败记 status 0。返回给调用方的 Response 与 promise 语义不变。
+// purpose 给出口打上请求用途(缓存预热的重发用另一个出口,记录带 purpose,见 pi-engine/model-bridge applyModelOutlet)。
 // 代理 / UA / 空闲定时器仍归 foundation/net.ts 的全局壳。本模块不读应用状态、不 import 应用模块,
 // 随引擎一起搬进子进程。
 
@@ -28,6 +29,7 @@ export interface ModelRequestStart {
   method: string;
   requestBody: string | undefined;
   started: number;
+  purpose?: ModelRequestRecord["purpose"];
 }
 
 /** 记录一条请求的结局。模型出口与 google 轨的全局日志壳(pi-engine/llm-request-log)共用,
@@ -39,6 +41,7 @@ export function recordModelResponse(start: ModelRequestStart, promise: Promise<R
     url: start.url,
     method: start.method,
     ...(start.requestBody !== undefined ? { requestBody: start.requestBody } : {}),
+    ...(start.purpose ? { purpose: start.purpose } : {}),
   };
   void promise.then(
     async (response) => {
@@ -94,7 +97,7 @@ async function normalizeRequest(
   };
 }
 
-export function createModelOutlet(identity: ModelOutletIdentity, log: ModelRequestLog): typeof fetch {
+export function createModelOutlet(identity: ModelOutletIdentity, log: ModelRequestLog, purpose?: ModelRequestRecord["purpose"]): typeof fetch {
   return async function modelOutlet(input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
     const started = Date.now();
     const request = await normalizeRequest(input, init);
@@ -106,6 +109,7 @@ export function createModelOutlet(identity: ModelOutletIdentity, log: ModelReque
         method: request.init.method ?? "GET",
         requestBody: typeof request.init.body === "string" ? request.init.body : undefined,
         started,
+        purpose,
       },
       promise,
       log,

@@ -4,21 +4,42 @@
 // 10.25 秒:pi 在寿命 90% 与到期前 10 秒里取早的那个重发,即会话请求后 250 毫秒重发一次。轮里放一个跑得慢或挂住的
 // 工具,这段时间就是「一轮运行期间」。重发请求按 max_tokens === 1 认(pi 只有预热把输出上限压到 1)。
 // 经真的引擎宿主进程跑的那一遍在 PW.5。
+// 记账(§5.17.5):重发按 disableContinuation 认,源码扫描锁住 pi 里只有预热设它;预热的用量条目作为私有条目交给应用、
+// 重载时原样回到 pi 会话、不影响长驻会话复用。日志与统计口径的端到端在 conversations/cache-warming-route.test.ts。
 
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
-import type { AppToolResult, EngineHost, EngineInstructions, ModelGrant, TurnInput } from "../engines/contract";
+import type {
+  AppToolResult,
+  EngineEntryInput,
+  EngineHost,
+  EngineInstructions,
+  EngineSessionView,
+  ModelGrant,
+  TurnInput,
+} from "../engines/contract";
 import { connectDriver, connectHost } from "../engines/loopback";
 import { modelGrantFor, promptCachePolicyFor } from "../engines/model-grant";
-import type { Provider } from "../foundation/types";
+import type { Provider, ToolPart } from "../foundation/types";
+import { message } from "../foundation/utils";
 import { model, provider } from "../model-providers";
+import { sessionViewOf } from "../test-utils/engine-session-view";
+import {
+  anthropicTextTurn,
+  anthropicToolTurn,
+  type FakeAnthropicReply,
+  type FakeAnthropicServer,
+  startFakeAnthropic,
+} from "../test-utils/fake-anthropic-sse";
 import { createPiDriver } from "./driver";
 import { mapGrantToPi } from "./model-bridge";
+import { createPiSessionResources } from "./resources";
+import { runPiGeneration } from "./runner";
+import { createPiSessionHost } from "./session-host";
+import { createPiSessionFromView } from "./session-view";
 
 const CLAUDE_SUBSCRIPTION = "d4f86913-80d5-45e4-84ea-3e652ac63cda"; // OAUTH_FLOWS.anthropic.presetProviderId
 const KIMI_SUBSCRIPTION = "f9622c8b-5037-4540-b875-3d301521367b"; // OAUTH_FLOWS["kimi-coding"].presetProviderId
@@ -92,71 +113,20 @@ const DELAY_MS = 250;
 const TOOL_MS = 700; // 工具跑这么久,够重发两次
 const QUIET_MS = 700; // 近三个重发间隔:该停的话这段时间里不会再有请求
 
-const sse = (events: Array<[string, Record<string, unknown>]>) =>
-  events.map(([type, data]) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`).join("");
 // pi 按上一条回复的提示词量算账,太小时重发不划算,它不预热。给 40 万:idle 档(两轮之间,续上的概率按 15% 算)也划算,
 // 所以「一轮结束即停」能分清我们给的 streaming 与 pi 默认的 idle。
 const PROMPT_TOKENS = 400_000;
-const toolTurn = (id: string) =>
-  sse([
-    ["message_start", { message: { usage: { input_tokens: PROMPT_TOKENS } } }],
-    ["content_block_start", { index: 0, content_block: { type: "tool_use", id, name: "lookup", input: {} } }],
-    ["content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: "{}" } }],
-    ["content_block_stop", { index: 0 }],
-    ["message_delta", { delta: { stop_reason: "tool_use" }, usage: { output_tokens: 5 } }],
-    ["message_stop", {}],
-  ]);
-const textTurn = (text: string, usage: Record<string, number> = { input_tokens: PROMPT_TOKENS }) =>
-  sse([
-    ["message_start", { message: { usage } }],
-    ["content_block_start", { index: 0, content_block: { type: "text", text: "" } }],
-    ["content_block_delta", { index: 0, delta: { type: "text_delta", text } }],
-    ["content_block_stop", { index: 0 }],
-    ["message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } }],
-    ["message_stop", {}],
-  ]);
-const WARM_REPLY = textTurn(".", { input_tokens: 0, cache_read_input_tokens: PROMPT_TOKENS });
+const toolTurn = (id: string) => anthropicToolTurn(id, "lookup", {}, PROMPT_TOKENS);
+const textTurn = (text: string) => anthropicTextTurn(text, { input_tokens: PROMPT_TOKENS });
 
-interface UpstreamCall {
-  body: Record<string, unknown>;
-  /** performance.now():1 小时上限那条会拨 Date。 */
-  at: number;
-}
-
-const isWarm = (call: UpstreamCall) => call.body.max_tokens === 1;
 const closers: Array<() => Promise<void>> = [];
 
-type Reply = string | { status: number; body: string };
-
-/** 会话请求按剧本依次回;重发(max_tokens 1)默认回一条命中缓存的短回复。count = 这是第几次重发。 */
-async function anthropicUpstream(turns: Reply[], warm: { onWarm?: (count: number) => void; reply?: (count: number) => Reply } = {}) {
-  const calls: UpstreamCall[] = [];
-  const server = http.createServer(async (req, res) => {
-    let raw = "";
-    for await (const chunk of req) raw += chunk.toString();
-    const call = { body: JSON.parse(raw) as Record<string, unknown>, at: performance.now() };
-    calls.push(call);
-    const warmCount = isWarm(call) ? calls.filter(isWarm).length : 0;
-    if (warmCount) warm.onWarm?.(warmCount);
-    const reply = warmCount ? (warm.reply?.(warmCount) ?? WARM_REPLY) : (turns.shift() ?? textTurn("剧本外的请求"));
-    if (typeof reply !== "string") {
-      res.writeHead(reply.status, { "content-type": "application/json" });
-      res.end(reply.body);
-      return;
-    }
-    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-    res.end(reply);
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  closers.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
-  return {
-    baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-    calls,
-    warms: () => calls.filter(isWarm),
-    sessions: () => calls.filter((call) => !isWarm(call)),
-  };
+async function anthropicUpstream(turns: FakeAnthropicReply[], warm: Parameters<typeof startFakeAnthropic>[1] = {}) {
+  const server = await startFakeAnthropic(turns, { promptTokens: PROMPT_TOKENS, ...warm });
+  closers.push(server.close);
+  return server;
 }
-type Upstream = Awaited<ReturnType<typeof anthropicUpstream>>;
+type Upstream = FakeAnthropicServer;
 
 const root = mkdtempSync(join(tmpdir(), "pi-cache-warming-"));
 const instructions: EngineInstructions = {
@@ -294,7 +264,7 @@ describe("时间线(假 Anthropic 上游,寿命缩成几秒)", () => {
 
   test("重发失败(429)不影响这一轮,下一次照常再试", async () => {
     const upstream = await anthropicUpstream([toolTurn("tu-5"), textTurn("完成")], {
-      reply: (count) => (count === 1 ? { status: 429, body: JSON.stringify({ type: "error", error: { type: "rate_limit_error", message: "慢点" } }) } : WARM_REPLY),
+      reply: (count) => (count === 1 ? { status: 429, body: JSON.stringify({ type: "error", error: { type: "rate_limit_error", message: "慢点" } }) } : undefined),
     });
     const driver = driverWith(toolTakes(TOOL_MS));
     const result = await driver.startTurn(turnOf("conv-warm-5", inputFor(upstream)));
@@ -340,6 +310,91 @@ describe("时间线(假 Anthropic 上游,寿命缩成几秒)", () => {
       expect((await run).text).toBe("完成");
     } finally {
       setSystemTime();
+    }
+  }, 20_000);
+});
+
+describe("记账(§5.17.5)", () => {
+  afterAll(async () => {
+    await Promise.all(closers.map((close) => close()));
+  });
+
+  test("源码扫描:pi 里只有预热的重放选项设 disableContinuation(模型出口按它认出预热的重发)", () => {
+    const packages = resolve(import.meta.dir, "..", "..", "pi", "packages");
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        if (entry.name === "node_modules") return [];
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) return walk(full);
+        return entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") ? [full] : [];
+      });
+    const setters = readdirSync(packages)
+      .flatMap((name) => {
+        const src = join(packages, name, "src");
+        try {
+          return walk(src);
+        } catch {
+          return []; // 没有 src 的包(只有脚本或文档)
+        }
+      })
+      .filter((file) => /disableContinuation\s*[:=]\s*true\b/.test(readFileSync(file, "utf8")))
+      .map((file) => relative(packages, file).split(sep).join("/"));
+    expect(setters).toEqual(["ai/src/cache-warming.ts"]);
+  });
+
+  test("预热的用量作为私有条目交给应用;重载时原样回到 pi 会话;下一轮照常接着用长驻会话", async () => {
+    process.env.RIKKAHUB_TEST_PROMPT_CACHE_TTL_SECONDS = String(TTL_SECONDS);
+    try {
+      const upstream = await anthropicUpstream([toolTurn("tu-r1"), textTurn("完成"), textTurn("第二轮")]);
+      const sessions = createPiSessionHost({ onTurnRequest: () => undefined });
+      closers.push(() => sessions.dispose());
+      const conversationId = crypto.randomUUID();
+      const grant = inputFor(upstream).model;
+      const turn = async (view: EngineSessionView, promptText: string) => {
+        const delivered: EngineEntryInput[] = [];
+        await runPiGeneration({
+          grant,
+          conversationId,
+          cwd: root,
+          view,
+          promptText,
+          resources: (approvePluginTool) => createPiSessionResources({ cwd: root, root, instructions, approvePluginTool, cacheWarming: true }),
+          appendEntries: async (entries) => void delivered.push(...entries),
+          sessions: { host: sessions, key: "k" },
+          tools: [lookupTool],
+          callTool: toolTakes(TOOL_MS),
+          sink: () => undefined,
+        });
+        return delivered;
+      };
+
+      const delivered = await turn(sessionViewOf([]), "查一下");
+      const warmUsage = delivered.filter((entry) => {
+        const payload = entry.payload as { type?: string; kind?: string };
+        return payload.type === "usage" && payload.kind === "cache_warm";
+      });
+      expect(warmUsage.length).toBeGreaterThanOrEqual(1);
+      expect(warmUsage.length).toBeLessThanOrEqual(upstream.warms().length);
+      const live = sessions.peek(conversationId);
+      expect(live).toBeDefined();
+
+      // 应用封存后下一轮原样给回:中立消息 = 工具调用 + 回答正文,原生组 = 这一轮交出的全部条目。
+      const user = message("USER", [{ type: "text", text: "查一下" }]);
+      const tool = { type: "tool", toolCallId: "tu-r1", toolName: "lookup", input: "{}", output: [{ type: "text", text: "查到了" }], approvalState: { type: "auto" } } as ToolPart;
+      const answer = message("ASSISTANT", [tool, { type: "text", text: "完成" }], CATALOG_MODEL);
+      const view = sessionViewOf([user, answer]);
+      view.items[1]!.native = delivered.map((entry, seq) => ({ seq, format: entry.format, entryId: entry.entryId ?? null, payload: JSON.parse(JSON.stringify(entry.payload)) }));
+
+      const reloaded = createPiSessionFromView({ cwd: root, conversationId, view, fallbackModelId: CATALOG_MODEL });
+      const reloadedIds = new Set(reloaded.manager.getEntries().map((entry) => entry.id));
+      expect(warmUsage.every((entry) => reloadedIds.has(entry.entryId!))).toBe(true);
+      expect(reloaded.degradedMessageIds).toEqual([]);
+
+      await turn(view, "接着");
+      expect(sessions.peek(conversationId)).toBe(live);
+      expect(upstream.sessions().length).toBe(3);
+    } finally {
+      delete process.env.RIKKAHUB_TEST_PROMPT_CACHE_TTL_SECONDS;
     }
   }, 20_000);
 });

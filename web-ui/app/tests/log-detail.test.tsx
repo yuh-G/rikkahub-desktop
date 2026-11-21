@@ -52,4 +52,13 @@ describe("日志详情的正文区", () => {
     expect(html).toContain(en.logs.body_released);
     expect(html).toContain("5 chars");
   });
+
+  test("缓存预热的重发标「预热」并说明不计入统计;会话请求不标", async () => {
+    const warm = render({ ...base, purpose: "cache_warm", requestBodyLength: 2 });
+    expect(warm).toContain(zh.logs.purpose_cache_warm);
+    expect(warm).toContain(zh.logs.purpose_cache_warm_hint);
+    expect(render({ ...base, requestBodyLength: 2 })).not.toContain(zh.logs.purpose_cache_warm);
+    await i18n.changeLanguage("en-US");
+    expect(render({ ...base, purpose: "cache_warm", requestBodyLength: 2 })).toContain(en.logs.purpose_cache_warm);
+  });
 });

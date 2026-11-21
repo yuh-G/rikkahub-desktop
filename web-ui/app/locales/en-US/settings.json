@@ -605,6 +605,8 @@
     "field_duration": "Duration",
     "field_provider": "Provider",
     "field_kind": "Kind",
+    "purpose_cache_warm": "Warm-up",
+    "purpose_cache_warm_hint": "Resent by a workspace session before the cache expires to keep it alive. Not counted in request statistics",
     "request_headers": "Request headers",
     "response_headers": "Response headers",
     "show_sensitive": "Show sensitive",

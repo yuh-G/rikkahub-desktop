@@ -202,10 +202,11 @@ function createModelRuntimeFor(
   ctx: Pick<PiGenerationContext, "grant" | "credentialSource" | "requestLog">,
 ) {
   const { requestLog } = ctx;
-  const outlet = requestLog
-    ? createModelOutlet({ providerId: ctx.grant.providerId, providerName: ctx.grant.providerName }, requestLog)
+  const identity = { providerId: ctx.grant.providerId, providerName: ctx.grant.providerName };
+  const outlets = requestLog
+    ? { session: createModelOutlet(identity, requestLog), cacheWarm: createModelOutlet(identity, requestLog, "cache_warm") }
     : undefined;
-  return createPiModelRuntime(mapping, ctx.credentialSource, outlet);
+  return createPiModelRuntime(mapping, ctx.credentialSource, outlets);
 }
 
 /** 会话装载完成后建对账器(不传 appendEntries = 不写)。送达失败报一次 warn。pending = 接着用的会话

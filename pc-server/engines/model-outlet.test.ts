@@ -112,7 +112,7 @@ describe("A 行为:模型出口", () => {
       }) as never,
     };
     const outlet = createModelOutlet(identity, () => {});
-    applyModelOutlet(runtime, outlet);
+    applyModelOutlet(runtime, { session: outlet, cacheWarm: outlet });
     const call = runtime.streamSimple as unknown as (model: { api: string }, context: unknown, options?: object) => void;
     for (const api of ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai", "google-vertex"]) {
       call({ api }, {}, { signal: undefined });
@@ -124,6 +124,27 @@ describe("A 行为:模型出口", () => {
       ["google-generative-ai", false],
       ["google-vertex", false],
     ]);
+  });
+
+  test("缓存预热的重放(disableContinuation)走另一个出口,记录带 purpose:cache_warm", async () => {
+    const used: unknown[] = [];
+    const runtime = {
+      streamSimple: ((_model: unknown, _context: unknown, options?: { fetch?: unknown }) => {
+        used.push(options?.fetch);
+        return undefined as never;
+      }) as never,
+    };
+    const session = createModelOutlet(identity, () => {});
+    const records: ModelRequestRecord[] = [];
+    const cacheWarm = createModelOutlet(identity, (record) => void records.push(record), "cache_warm");
+    applyModelOutlet(runtime, { session, cacheWarm });
+    const call = runtime.streamSimple as unknown as (model: { api: string }, context: unknown, options?: object) => void;
+    call({ api: "anthropic-messages" }, {}, {});
+    call({ api: "anthropic-messages" }, {}, { maxTokens: 1, disableContinuation: true });
+    expect(used).toEqual([session, cacheWarm]);
+    await cacheWarm(`${server.url}warm`, { method: "POST", body: "{}" });
+    await flushLogs();
+    expect(records[0]).toMatchObject({ method: "POST", ok: true, purpose: "cache_warm" });
   });
 });
 
