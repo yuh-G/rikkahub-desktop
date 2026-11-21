@@ -172,6 +172,28 @@ describe("跨进程传输", () => {
     expect(loaded.at(-1)).toEqual(view);
   });
 
+  test("会话视图里新条目或压缩记录不可序列化:这次 load 失败,指出是哪一条(宿主侧已有的条目不再重查)", async () => {
+    const item = (id: string, extra: object = {}) => ({ message: { id, role: "USER", parts: [{ type: "text", text: id, ...extra }] } as never, synthetic: false });
+    let view: { items: unknown[]; compactions: unknown[] } = { items: [item("m1")], compactions: [] };
+    const { app } = wire(
+      (host) =>
+        baseDriver(host, {
+          async startTurn(req) {
+            await host.session.load(req);
+            return { text: "", stopReason: null, compactions: [] };
+          },
+        }),
+      { session: { load: async () => view as never, append: async () => undefined } },
+    );
+    const driver = await app.ready;
+    await driver.startTurn(turn);
+    view = { items: [item("m1"), item("m2", { at: new Date(0) })], compactions: [] };
+    const bad = await driver.startTurn(turn).catch((err: unknown) => err as Error);
+    expect(bad).toMatchObject({ name: "ContractPayloadError", message: expect.stringContaining("items[1]") });
+    view = { items: [item("m1")], compactions: [{ cutMessageId: "m1", summary: () => "" }] };
+    expect(await driver.startTurn(turn).catch((err: unknown) => (err as Error).message)).toContain("compactions");
+  });
+
   test("不可序列化的载荷在发出端失败(不让 JSON 静默丢字段)", async () => {
     const { app } = wire((host) => baseDriver(host));
     const driver = await app.ready;

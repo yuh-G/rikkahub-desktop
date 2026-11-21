@@ -8,8 +8,11 @@
 // 3. 宿主侧用缓存加新条目拼回完整视图,缓存换成这一轮的条目。
 // 指纹对「要传的那份文本」本身算,文本不同指纹就不同。宿主进程刚启动、被回收、崩溃重启后缓存是空的,该会话第一轮
 // 整份传。宿主侧每次都从文本解析出新对象交给驱动,与整份传时一样,驱动改了拿到的对象也影响不到下一轮。
+// 可序列化检查(assertJsonSafe)只查宿主侧没有的条目:宿主侧已有的,文本与它第一次传过去时(那时查过)逐字相同,
+// 宿主拿到的数据不会因 JSON 丢字段而变。300 轮的视图整份查一次约 4 ms,每轮都付不值。
 
 import type { EngineSessionItem, EngineSessionView } from "./contract";
+import { assertJsonSafe } from "./loopback";
 
 /** 线上的会话视图:按顺序的全部条目——[起点, 条数] = 宿主侧清单里连续的一段,字符串 = 指纹(文本在 items 里)。 */
 export interface WireSessionView {
@@ -23,19 +26,22 @@ export function sessionItemFingerprint(json: string): string {
   return new Bun.CryptoHasher("sha256").update(json).digest("hex").slice(0, 32);
 }
 
-/** 应用侧:整份视图 → 线上形态。have = 宿主侧已缓存的指纹。 */
+/** 应用侧:整份视图 → 线上形态。have = 宿主侧已缓存的指纹。新条目不可序列化即抛 ContractPayloadError。 */
 export function shrinkSessionView(view: EngineSessionView, have: readonly string[]): WireSessionView {
+  const label = "host.session.load(返回值)";
+  assertJsonSafe(view.compactions, `${label}.compactions`);
   const known = new Map<string, number>();
   have.forEach((fingerprint, index) => {
     if (!known.has(fingerprint)) known.set(fingerprint, index);
   });
   const order: WireSessionView["order"] = [];
   const items: Record<string, string> = {};
-  for (const item of view.items) {
+  for (const [position, item] of view.items.entries()) {
     const json = JSON.stringify(item);
     const fingerprint = sessionItemFingerprint(json);
     const index = known.get(fingerprint);
     if (index === undefined) {
+      assertJsonSafe(item, `${label}.items[${position}]`);
       order.push(fingerprint);
       items[fingerprint] = json;
       continue;

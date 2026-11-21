@@ -15,7 +15,8 @@
 // host.session.load 按指纹对账:宿主侧带上已缓存的条目指纹,应用侧只附宿主侧没有的条目(rpc-session-view)。
 // host.models.log 的请求正文只传与同一会话上一次正文不同的部分(rpc-request-log)。
 //
-// 载荷纪律与回环传输一致:发出前 assertJsonSafe(函数 / 类实例 / 循环引用即抛,不让 JSON 静默丢字段);
+// 载荷纪律与回环传输一致:发出前 assertJsonSafe(函数 / 类实例 / 循环引用即抛,不让 JSON 静默丢字段;会话视图只查
+// 宿主侧没有的条目,见 rpc-session-view);
 // 拒绝原因按 serializeEngineError 的形态放进 error.data,对端 reviveEngineError 还原(AbortError、
 // CodedError 保真)。通道关闭(对端退出)时在途请求一律以错误拒绝。
 
@@ -253,11 +254,7 @@ export function connectDriverOverRpc(
           host.emit(turn, event);
         }
       },
-      "host.session.load": async (turn: TurnRef, have: string[]) => {
-        const view = await host.session.load(turn);
-        assertJsonSafe(view, "host.session.load(返回值)");
-        return shrinkSessionView(view, have);
-      },
+      "host.session.load": async (turn: TurnRef, have: string[]) => shrinkSessionView(await host.session.load(turn), have),
       "host.session.append": (...args: Parameters<EngineHost["session"]["append"]>) => host.session.append(...args),
       "host.tools.call": (...args: Parameters<EngineHost["tools"]["call"]>) => host.tools.call(...args),
       "host.permission.check": (...args: Parameters<EngineHost["permission"]["check"]>) => host.permission.check(...args),
