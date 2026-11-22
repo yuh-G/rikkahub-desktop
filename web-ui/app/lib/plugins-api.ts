@@ -37,7 +37,7 @@ export const pluginsApi = {
   setEnabled: (id: string, enabled: boolean) => api.post<EnginePluginMutationDto>("plugins/enabled", { id, enabled }),
   setSwitches: (
     id: string,
-    patch: { toolCall?: boolean; tools?: Record<string, { enabled?: boolean; exempt?: boolean }> },
+    patch: { toolCall?: boolean; tools?: Record<string, { enabled?: boolean }> },
   ) => api.post<EnginePluginMutationDto>("plugins/switches", { id, ...patch }),
 
   marketSources: () => api.get<PluginMarketSourcesDto>("plugins/market/sources"),

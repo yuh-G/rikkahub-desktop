@@ -32,8 +32,8 @@ export interface EnginePluginRecord {
   enabled: boolean;
   /** 行为裁决的兜底开关(D7):false = 停用这个插件的 tool_call 钩子。 */
   hookSwitches: { toolCall: boolean };
-  /** 逐工具设置(按插件登记的工具名):enabled=false 不进会话;exempt=true 免审批。缺省 = 启用、询问。 */
-  toolSwitches: Record<string, { enabled?: boolean; exempt?: boolean }>;
+  /** 逐工具设置(按插件登记的工具名):enabled=false 不进会话。缺省 = 启用。问不问由工作区档位决定(D32)。 */
+  toolSwitches: Record<string, { enabled?: boolean }>;
   installedAt: string;
   meta?: EnginePluginMeta;
 }

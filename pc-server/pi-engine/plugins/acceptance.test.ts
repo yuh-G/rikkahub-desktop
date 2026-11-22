@@ -176,7 +176,7 @@ async function waitUntil(cond: () => boolean, timeoutMs = 20_000): Promise<void>
   }
 }
 
-/** 插件工具默认询问:等审批卡挂起,批准。 */
+/** 「询问批准」档下插件工具每次询问:等审批卡挂起,批准。 */
 async function approvePluginTool(conversationId: string, toolCallId: string, alwaysAllowInSession = false) {
   await waitUntil(() => pendingToolApprovalCount() === 1);
   expect(await post(conversationId, "tool-approval", { toolCallId, approved: true, alwaysAllowInSession })).toBe(202);
@@ -202,6 +202,7 @@ describe.skipIf(!realPluginsPresent)("P5a 验收:四个插件同时装上", () =
       { content: "重启后也在" },
     ]);
     const workspace = ws.createWorkspace({ type: "managed", name: "acc-todo" });
+    ws.updateWorkspace(workspace.id, { permissionPreset: "confirm_each" });
     const conversation = seedConversation(workspace.id, "记个待办");
 
     const first = generateAnswer(conversation);
@@ -240,11 +241,11 @@ describe.skipIf(!realPluginsPresent)("P5a 验收:四个插件同时装上", () =
       { toolCalls: [{ id: "tc-ask-1", name: "ask_user_question", arguments: JSON.stringify({ questions }) }] },
       { content: "那就乙" },
     ]);
+    // 「默认权限」档(新建工作区的默认)下插件工具不问,直接执行到插件的对话框。
     const workspace = ws.createWorkspace({ type: "managed", name: "acc-ask" });
     const conversation = seedConversation(workspace.id, "问我一下");
 
     const run = generateAnswer(conversation);
-    await approvePluginTool(conversation.id, "tc-ask-1");
     await waitUntil(() => (engineUiSnapshot(conversation.id)?.dialogs.length ?? 0) === 1);
     const dialog = engineUiSnapshot(conversation.id)!.dialogs[0]!;
     expect(dialog.source).toBe(PLUGIN_IDS.ask);
@@ -256,6 +257,7 @@ describe.skipIf(!realPluginsPresent)("P5a 验收:四个插件同时装上", () =
     await run;
 
     expect(outputText(toolPart(conversation, "tc-ask-1"))).toContain('"用哪个方案?"="乙"');
+    expect(toolPart(conversation, "tc-ask-1")?.approvalState?.type).toBe("auto");
     expect(JSON.stringify(server.requests[1]!.messages)).toContain('\\"用哪个方案?\\"=\\"乙\\"');
     expect(engineUiSnapshot(conversation.id)).toBeNull();
     expect(pendingToolApprovalCount()).toBe(0);

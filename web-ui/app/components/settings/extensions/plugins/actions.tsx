@@ -58,7 +58,7 @@ export function setPluginToolCallHook(record: EnginePluginRecord, toolCall: bool
 export function setPluginToolSwitch(
   record: EnginePluginRecord,
   toolName: string,
-  patch: { enabled?: boolean; exempt?: boolean },
+  patch: { enabled?: boolean },
 ): Promise<void> {
   const toolSwitches = { ...record.toolSwitches, [toolName]: { ...record.toolSwitches[toolName], ...patch } };
   return optimistic(record, { ...record, toolSwitches }, () => pluginsApi.setSwitches(record.id, { tools: { [toolName]: patch } }));

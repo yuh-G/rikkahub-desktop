@@ -26,7 +26,8 @@ export interface ApprovalFlowContext {
   toolName?: string;
   summary?: string;
   /** 会话级免问键(P4.3):带了它,用户批准时选「此会话内总是允许」才会被记下,同会话之后
-   *  判定为免问。目前只有插件工具带;工作区与 MCP 工具不带,沿用各自的档位与逐工具设置。 */
+   *  判定为免问。插件工具与工作区会话里的 MCP 工具带(D32);写入 / 执行类与对话模式的 MCP 工具不带,
+   *  沿用档位与逐工具设置。 */
   sessionAllowKey?: string;
 }
 

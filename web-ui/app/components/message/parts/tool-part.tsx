@@ -34,6 +34,8 @@ import { cn } from "~/lib/utils";
 import type { TextPart as UITextPart, ToolPart as UIToolPart } from "~/types";
 
 import { workspaceToolKind } from "~/lib/workspace-tool-model";
+import { usePaneContainer } from "~/components/workspace/pane-container-context";
+import { CHAT_CONTAINER } from "~/stores/container-tabs-store";
 import {
   buildAskUserAnswerMap,
   normalizeAskUserQuestions,
@@ -1099,6 +1101,7 @@ export function PendingToolAttentionCard({
   const { t } = useTranslation("message");
   // 渲染的卡恒为 pending 态:计时存活只取决于审批等待是否仍在挂起。
   const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt, Boolean(loading) || Boolean(awaitingApproval));
+  const paneContainer = usePaneContainer();
 
   // ask_user 已经有自己的专属醒目卡片（AskUserToolStep 内部的 pending 分支），
   // 不需要再多套一层 banner。
@@ -1128,8 +1131,11 @@ export function PendingToolAttentionCard({
     }
   })();
 
-  // 插件登记的工具:卡上写明来源,并可「此会话内总是允许」(后端只对插件工具的审批记这个免问)。
+  // 插件登记的工具:卡上写明来源。第三方工具(插件工具、工作区会话里的 MCP 工具)可「此会话内总是允许」,后端只对
+  // 这两类的审批记这个免问(D32);对话模式的 MCP 工具由逐工具的「需要用户审核」决定,不给这个按钮。MCP 工具名的
+  // mcp__ 前缀见 pc-server/tools/definitions.ts。
   const pluginId = readToolAttribution(tool)?.pluginId ?? null;
+  const canAlwaysAllow = pluginId !== null || (paneContainer !== CHAT_CONTAINER && tool.toolName.startsWith("mcp__"));
 
   const handleApprove = async (alwaysAllowInSession = false) => {
     if (!onToolApproval) return;
@@ -1189,15 +1195,15 @@ export function PendingToolAttentionCard({
           <X className="mr-1.5 h-3.5 w-3.5" />
           {t("tool_part.pending_deny")}
         </Button>
-        {pluginId ? (
+        {canAlwaysAllow ? (
           <Button
             size="sm"
             variant="secondary"
             onClick={() => void handleApprove(true)}
             disabled={!onToolApproval}
-            title={t("plugin.always_allow_hint")}
+            title={t("tool_part.always_allow_hint")}
           >
-            {t("plugin.always_allow")}
+            {t("tool_part.always_allow")}
           </Button>
         ) : null}
         <Button size="sm" onClick={() => void handleApprove()} disabled={!onToolApproval}>

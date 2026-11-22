@@ -137,6 +137,8 @@
     "pending_approval_desc": "The assistant wants to call \"{{toolName}}\" to continue. Generation is paused until you approve or deny.",
     "pending_approve": "Approve",
     "pending_deny": "Deny",
+    "always_allow": "Always allow in this conversation",
+    "always_allow_hint": "Approve now and stop asking for this tool in this conversation. Asking resumes after the app restarts.",
     "deny_dialog_title": "Deny tool call",
     "deny_dialog_desc": "Optionally tell the AI why you're denying it — this helps it adjust what it does next.",
     "deny_dialog_placeholder": "Rejection reason (optional)",
@@ -193,8 +195,6 @@
     "blocked": "Blocked by plugin {{plugin}}: {{reason}}",
     "blocked_no_reason": "Blocked by plugin {{plugin}}",
     "settings": "Plugin settings",
-    "settings_hint": "Open this plugin's settings, where you can stop it from intercepting tool calls",
-    "always_allow": "Always allow in this conversation",
-    "always_allow_hint": "Approve now and stop asking for this tool in this conversation. Asking resumes after the app restarts."
+    "settings_hint": "Open this plugin's settings, where you can stop it from intercepting tool calls"
   }
 }

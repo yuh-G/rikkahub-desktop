@@ -3,7 +3,8 @@
 // 助手的「拓展管理」弹窗(写助手的默认)与输入框的「拓展」选择器(写会话)共用:入参是一份选择与
 // 变更回调,列表不知道结果写到哪里。每类只列全局可用的条目:有全局「启用」的(MCP、提示词注入)只列
 // 已启用的;插件带来的 MCP 服务器跟随插件(「随插件」,开关只读)。按类别表的 id 做 Record,漏一类编译不过。
-// 插件只对工作区会话生效:聊天会话的选择器里「插件」页签只有一句说明,助手弹窗在列表下注明。
+// 插件只对工作区会话生效:聊天会话的选择器里「插件」页签只有一句说明,助手弹窗在列表下注明。MCP 逐工具的「需要用户
+// 审核」只对对话模式生效(D32):工作区会话的选择器里不出现,助手弹窗照旧可设并在列表下注明。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -167,7 +168,7 @@ function SelectionEmpty({
   );
 }
 
-function McpSelectionList({ settings, selection, onChange, disabled, onNavigate }: SelectionListProps) {
+function McpSelectionList({ settings, selection, onChange, disabled, onNavigate, chatConversation }: SelectionListProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = React.useState<string | null>(null);
   const servers = availableMcpServers(settings);
@@ -176,57 +177,64 @@ function McpSelectionList({ settings, selection, onChange, disabled, onNavigate 
   }
   const mcp = { mcpServers: selection.mcpServers, mcpToolOverrides: selection.mcpToolOverrides };
   return (
-    <SelectionGroup>
-      {servers.map((server) => {
-        const fromPlugin = pluginMcpSource(server) !== null;
-        const selected = isMcpServerSelected(selection, server);
-        const tools = visibleTools(server);
-        const overrides = selection.mcpToolOverrides[server.id] ?? {};
-        const enabledCount = tools.filter((tool) => overrides[tool.name]?.enable !== false).length;
-        const open = expanded === server.id && tools.length > 0;
-        return (
-          <SelectionRow
-            key={server.id}
-            title={getDisplayName(server.commonOptions?.name, t("settings:mcp.server.default_name"))}
-            description={
-              tools.length > 0
-                ? t("settings:extension_select.mcp_tools", { enabled: enabledCount, total: tools.length })
-                : t("settings:extension_select.mcp_no_tools")
-            }
-            checked={selected}
-            // 插件带来的服务器跟随插件(在「插件」里选),这里只读。
-            disabled={disabled || fromPlugin}
-            onCheckedChange={(checked) => onChange(withMcpServerSelected(mcp, server.id, checked, settings.mcpServers))}
-            trailing={
-              fromPlugin ? (
-                <span className="shrink-0 text-xs text-[var(--ds-text-tertiary)]">
-                  {t("settings:extension_select.follows_plugin")}
-                </span>
-              ) : null
-            }
-            after={
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                disabled={tools.length === 0}
-                aria-expanded={open}
-                aria-label={open ? t("settings:mcp.server.collapse") : t("settings:mcp.server.expand")}
-                onClick={() => setExpanded(open ? null : server.id)}
-              >
-                <ExpandChevron expanded={open} />
-              </Button>
-            }
-          >
-            {open ? <McpToolOverrides server={server} tools={tools} selected={selected} {...{ settings, selection, onChange, disabled }} /> : null}
-          </SelectionRow>
-        );
-      })}
-    </SelectionGroup>
+    <div className="space-y-2">
+      <SelectionGroup>
+        {servers.map((server) => {
+          const fromPlugin = pluginMcpSource(server) !== null;
+          const selected = isMcpServerSelected(selection, server);
+          const tools = visibleTools(server);
+          const overrides = selection.mcpToolOverrides[server.id] ?? {};
+          const enabledCount = tools.filter((tool) => overrides[tool.name]?.enable !== false).length;
+          const open = expanded === server.id && tools.length > 0;
+          return (
+            <SelectionRow
+              key={server.id}
+              title={getDisplayName(server.commonOptions?.name, t("settings:mcp.server.default_name"))}
+              description={
+                tools.length > 0
+                  ? t("settings:extension_select.mcp_tools", { enabled: enabledCount, total: tools.length })
+                  : t("settings:extension_select.mcp_no_tools")
+              }
+              checked={selected}
+              // 插件带来的服务器跟随插件(在「插件」里选),这里只读。
+              disabled={disabled || fromPlugin}
+              onCheckedChange={(checked) => onChange(withMcpServerSelected(mcp, server.id, checked, settings.mcpServers))}
+              trailing={
+                fromPlugin ? (
+                  <span className="shrink-0 text-xs text-[var(--ds-text-tertiary)]">
+                    {t("settings:extension_select.follows_plugin")}
+                  </span>
+                ) : null
+              }
+              after={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  disabled={tools.length === 0}
+                  aria-expanded={open}
+                  aria-label={open ? t("settings:mcp.server.collapse") : t("settings:mcp.server.expand")}
+                  onClick={() => setExpanded(open ? null : server.id)}
+                >
+                  <ExpandChevron expanded={open} />
+                </Button>
+              }
+            >
+              {open ? (
+                <McpToolOverrides server={server} tools={tools} selected={selected} {...{ settings, selection, onChange, disabled, chatConversation }} />
+              ) : null}
+            </SelectionRow>
+          );
+        })}
+      </SelectionGroup>
+      {chatConversation === undefined ? (
+        <p className="px-1 text-xs text-[var(--ds-text-tertiary)]">{t("settings:extension_select.mcp_approval_chat_only")}</p>
+      ) : null}
+    </div>
   );
 }
 /** 展开后的逐工具设置。总开关关着时只读置灰,但仍显示上次的偏好,重新打开后照此生效。 */
-function McpToolOverrides({
+export function McpToolOverrides({
   server,
   tools,
   selected,
@@ -234,7 +242,8 @@ function McpToolOverrides({
   selection,
   onChange,
   disabled,
-}: Pick<SelectionListProps, "settings" | "selection" | "onChange" | "disabled"> & {
+  chatConversation,
+}: Pick<SelectionListProps, "settings" | "selection" | "onChange" | "disabled" | "chatConversation"> & {
   server: McpServerConfig;
   tools: readonly McpToolOption[];
   selected: boolean;
@@ -259,13 +268,15 @@ function McpToolOverrides({
             <span className="min-w-0 flex-1 truncate font-mono text-xs" title={tool.name}>
               {tool.name}
             </span>
-            <ToolSwitch
-              label={t("settings:mcp.server.needs_approval")}
-              checked={override.needsApproval ?? globalApproval}
-              disabled={disabled || !selected}
-              // 与全局设置一致时清掉覆盖,跟着全局走。
-              onCheckedChange={(checked) => update(tool.name, { needsApproval: checked === globalApproval ? null : checked })}
-            />
+            {chatConversation === false ? null : (
+              <ToolSwitch
+                label={t("settings:mcp.server.needs_approval")}
+                checked={override.needsApproval ?? globalApproval}
+                disabled={disabled || !selected}
+                // 与全局设置一致时清掉覆盖,跟着全局走。
+                onCheckedChange={(checked) => update(tool.name, { needsApproval: checked === globalApproval ? null : checked })}
+              />
+            )}
             <ToolSwitch
               label={t("settings:mcp.enabled")}
               checked={override.enable !== false}

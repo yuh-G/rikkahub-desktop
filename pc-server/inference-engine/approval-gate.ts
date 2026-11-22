@@ -19,7 +19,7 @@
 //
 // 会话级免问(P4.3,方案 §5.6):用户在审批卡上选「此会话内总是允许该工具」,同一会话里该工具
 // 之后不再询问。只在内存:重启即忘,不进会话数据与备份;会话删除时清掉。记不记由调用方的
-// 免问键决定(approval-flow 的 sessionAllowKey,目前只有插件工具带),这里只存取。
+// 免问键决定(approval-flow 的 sessionAllowKey,插件工具与工作区会话里的 MCP 工具带),这里只存取。
 
 export interface ToolApprovalDecision {
   approved: boolean;

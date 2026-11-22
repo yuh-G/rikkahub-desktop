@@ -464,12 +464,11 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
       next.hookSwitches.toolCall = body.toolCall;
     }
     if (body.tools !== undefined) {
-      if (!body.tools || typeof body.tools !== "object" || Array.isArray(body.tools)) return error("tools 必须是 { 工具名: { enabled?, exempt? } }", 400);
+      if (!body.tools || typeof body.tools !== "object" || Array.isArray(body.tools)) return error("tools 必须是 { 工具名: { enabled? } }", 400);
       for (const [name, patch] of Object.entries(body.tools as Record<string, unknown>)) {
-        const sw = (patch ?? {}) as { enabled?: unknown; exempt?: unknown };
+        const sw = (patch ?? {}) as { enabled?: unknown };
         const merged = { ...next.toolSwitches[name] };
         if (typeof sw.enabled === "boolean") merged.enabled = sw.enabled;
-        if (typeof sw.exempt === "boolean") merged.exempt = sw.exempt;
         next.toolSwitches[name] = merged;
       }
     }

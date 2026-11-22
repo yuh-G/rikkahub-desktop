@@ -1,7 +1,8 @@
 // tools/approval.ts — 工具审批接线:工具名 + 参数 → PermissionRequest,应用设置 → PermissionPolicy
 // 判定本身在 tools/permission.ts(只读「类别 + 对象」的纯函数),工具名 → 类别 + 对象的知识在
 // tools/tool-categories.ts。这里只做两件事:查表并从参数取对象(args 缺省 = 参数未到,请求不带对象,
-// 得无参数下界);把会话绑定工作区的档位与 MCP 逐工具设置解析成策略。策略按类别惰性解析:非 MCP 工具不读 state,非写入 / 执行不查工作区。
+// 得无参数下界);把会话绑定工作区的档位与 MCP 逐工具设置解析成策略。策略按类别惰性解析:对话模式的 MCP 工具才读
+// 逐工具设置,写入 / 执行与工作区会话里的第三方工具才查工作区。
 // 终局比下界只升不降,循环层负责把上调同步回已建的卡(见 tools/permission.ts 头注)。
 
 import { isRecord } from "../foundation/utils";
@@ -10,7 +11,6 @@ import { skillsDir } from "../foundation/paths";
 import { state } from "../persistence/json-store";
 import { lexicalWorkspaceCwd } from "../workspace/approval";
 import { getWorkspace } from "../workspace";
-import { isEnginePluginToolExempt } from "../engines/plugins";
 import { isToolAllowedForSession } from "../inference-engine/approval-gate";
 import { isMcpServerSelected } from "./mcp-source";
 import {
@@ -108,7 +108,8 @@ function mcpApprovalRequired(toolName: string, assistant: Assistant): boolean {
 }
 
 /** 一次应用工具调用的审批判定(两个引擎、聊天引擎各供应商路径的唯一入口)。args 缺省 = 参数未到
- *  (流式建卡),给无参数下界;结果直接作工具卡的初始审批态。 */
+ *  (流式建卡),给无参数下界;结果直接作工具卡的初始审批态。MCP 工具在工作区会话里看档位与会话级
+ *  「总是允许」,对话模式看逐工具的 needsApproval(D32)。 */
 export function decideAppToolPermission(
   toolName: string,
   assistant: Assistant,
@@ -120,7 +121,11 @@ export function decideAppToolPermission(
   const { category } = entry;
   const policy: PermissionPolicy = {};
   if (category === "write" || category === "execute") policy.workspace = workspacePolicy(conversation);
-  if (category === "mcp") policy.mcpApprovalRequired = mcpApprovalRequired(toolName, assistant);
+  if (category === "mcp") {
+    policy.workspace = workspacePolicy(conversation);
+    if (conversation && policy.workspace) policy.allowedForSession = isToolAllowedForSession(conversation.id, mcpToolSessionKey(toolName));
+    else policy.mcpApprovalRequired = mcpApprovalRequired(toolName, assistant);
+  }
   return decidePermission(
     {
       conversationId: conversation?.id ?? "",
@@ -146,18 +151,29 @@ export function decideEngineToolPermission(
   return decidePermission({ conversationId: conversation.id, toolName, category, target, origin: { kind: "engine" } }, policy);
 }
 
-/** 插件工具的会话级免问键(审批卡「此会话内总是允许该工具」记在这个键上)。 */
+/** 工作区会话里 MCP 工具的会话级免问键(审批卡「此会话内总是允许该工具」记在这个键上)。 */
+export function mcpToolSessionKey(toolName: string): string {
+  return `mcp:${toolName}`;
+}
+
+/** 应用工具审批时带的会话级免问键:只有工作区会话里的 MCP 工具有;对话模式的 MCP 工具由逐工具设置决定,不记。 */
+export function appToolSessionAllowKey(toolName: string, conversation: ConversationWorkspacePick | null | undefined): string | undefined {
+  if (!conversation?.workspaceId || classifyAppTool(toolName)?.category !== "mcp") return undefined;
+  return mcpToolSessionKey(toolName);
+}
+
+/** 插件工具的会话级免问键。 */
 export function pluginToolSessionKey(pluginId: string, toolName: string): string {
   return `plugin:${pluginId}:${toolName}`;
 }
 
-/** 一次插件工具调用的审批判定:默认询问;插件页设了免问或本会话已选「总是允许」则免问。 */
-export function pluginToolApprovalState(conversationId: string, pluginId: string, toolName: string): ToolApprovalState {
+/** 一次插件工具调用的审批判定:只看工作区档位(confirm_each 询问,另两档不问);本会话已选「总是允许」则免问。 */
+export function pluginToolApprovalState(conversation: ConversationWorkspacePick, pluginId: string, toolName: string): ToolApprovalState {
   return decidePermission(
-    { conversationId, toolName, category: "plugin", origin: { kind: "plugin", pluginId } },
+    { conversationId: conversation.id, toolName, category: "plugin", origin: { kind: "plugin", pluginId } },
     {
-      pluginToolExempt: isEnginePluginToolExempt(state.settings.enginePlugins, pluginId, toolName),
-      allowedForSession: isToolAllowedForSession(conversationId, pluginToolSessionKey(pluginId, toolName)),
+      workspace: workspacePolicy(conversation),
+      allowedForSession: isToolAllowedForSession(conversation.id, pluginToolSessionKey(pluginId, toolName)),
     },
   );
 }

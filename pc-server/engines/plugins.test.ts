@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 import type { EnginePluginRecord } from "../foundation/types/settings";
-import { enginePluginInstallRoot, enginePluginsFor, enginePluginUploadsDir, isEnginePluginToolExempt, isPackageSource, locateEnginePlugin, normalizeEnginePluginRecords } from "./plugins";
+import { enginePluginInstallRoot, enginePluginsFor, enginePluginUploadsDir, isPackageSource, locateEnginePlugin, normalizeEnginePluginRecords } from "./plugins";
 
 function record(overrides: Partial<EnginePluginRecord> = {}): EnginePluginRecord {
   return {
@@ -61,7 +61,7 @@ describe("enginePluginsFor", () => {
   test("位置、钩子开关、逐工具开关与安装时刻随清单给出(都进长驻会话的配置键)", () => {
     const settings = {
       enginePlugins: [
-        record({ hookSwitches: { toolCall: false }, toolSwitches: { todo: { enabled: false }, peek: { exempt: true } } }),
+        record({ hookSwitches: { toolCall: false }, toolSwitches: { todo: { enabled: false }, peek: {} } }),
         record({ id: "pi:local", name: "local", source: { kind: "local", spec: join("D:", "lab", "local") } }),
       ],
     };
@@ -86,9 +86,9 @@ describe("enginePluginsFor", () => {
 });
 
 describe("插件记录", () => {
-  test("规范化:丢坏行与重复 id,补齐开关缺省值;说明字段按上限规整,空的整项去掉", () => {
+  test("规范化:丢坏行与重复 id,补齐开关缺省值,旧记录里的逐工具免问(exempt,D32 删除)丢掉;说明字段按上限规整,空的整项去掉", () => {
     const records = normalizeEnginePluginRecords([
-      { id: "pi:a", engine: "pi", source: { kind: "npm", spec: "a" }, toolSwitches: { x: { exempt: true, junk: 1 }, y: null }, meta: { license: "MIT", author: 3 } },
+      { id: "pi:a", engine: "pi", source: { kind: "npm", spec: "a" }, toolSwitches: { x: { exempt: true, junk: 1 }, z: { enabled: false, exempt: true }, y: null }, meta: { license: "MIT", author: 3 } },
       { id: "pi:m", engine: "pi", source: { kind: "npm", spec: "m", registry: "javascript:x" }, meta: { author: "" } },
       { id: "pi:r", engine: "pi", source: { kind: "npm", spec: "r", registry: "https://npm.example.com" } },
       { id: "pi:a", engine: "pi", source: { kind: "npm", spec: "a" } },
@@ -108,7 +108,7 @@ describe("插件记录", () => {
         version: null,
         enabled: true,
         hookSwitches: { toolCall: true },
-        toolSwitches: { x: { exempt: true } },
+        toolSwitches: { x: {}, z: { enabled: false } },
         installedAt: "",
         meta: { license: "MIT" },
       },
@@ -147,13 +147,5 @@ describe("插件记录", () => {
       },
     ]);
     expect(normalizeEnginePluginRecords(undefined)).toEqual([]);
-  });
-
-  test("逐工具免问只认对应插件的对应工具", () => {
-    const records = [record({ toolSwitches: { peek: { exempt: true }, todo: { exempt: false } } })];
-    expect(isEnginePluginToolExempt(records, "pi:@demo/todo", "peek")).toBe(true);
-    expect(isEnginePluginToolExempt(records, "pi:@demo/todo", "todo")).toBe(false);
-    expect(isEnginePluginToolExempt(records, "pi:other", "peek")).toBe(false);
-    expect(isEnginePluginToolExempt(undefined, "pi:@demo/todo", "peek")).toBe(false);
   });
 });

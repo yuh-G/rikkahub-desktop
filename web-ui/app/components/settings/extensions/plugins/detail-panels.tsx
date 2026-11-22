@@ -200,7 +200,7 @@ export function PluginToolsPanel({
   );
 }
 
-/** 「需要审核」= 没有免审批(默认开);插件停用时开关只读、整行淡出。展开看说明。 */
+/** 插件停用时开关只读、整行淡出。展开看说明。调用前问不问由工作区的权限档位决定(D32),这里没有审核开关。 */
 function PluginToolRow({ record, tool }: { record: EnginePluginRecord; tool: { name: string; description?: string } }) {
   const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
@@ -211,12 +211,6 @@ function PluginToolRow({ record, tool }: { record: EnginePluginRecord; tool: { n
         <span className="min-w-0 flex-1 truncate text-sm font-medium" title={tool.name}>
           {tool.name}
         </span>
-        <ToolSwitch
-          label={t("settings:mcp.server.needs_approval")}
-          checked={sw.exempt !== true}
-          disabled={!record.enabled}
-          onCheckedChange={(checked) => void setPluginToolSwitch(record, tool.name, { exempt: !checked })}
-        />
         <ToolSwitch
           label={t("settings:mcp.enabled")}
           checked={sw.enabled !== false}

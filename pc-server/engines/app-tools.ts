@@ -12,10 +12,10 @@
 //   进模型的 schema 逐字同源,关掉的面天然为空);执行走 tools/execution.executeToolCall
 //   (搜索开关守卫/MCP OAuth 预刷新/analytics/save_memory 写策略全在其内)。
 //
-// 审批:tools/approval.decideAppToolPermission(与聊天引擎同一判定函数:MCP 每工具 needsApproval +
-// 助手级 override,search/scrape/memory 恒 auto)+ approval-flow 共享生命周期。ask_user 是「决议里多带一个
-// answer 字段」的特例,经 gateAskUser 挂起,答案即工具结果(扁平 {"answers":{...}} 契约,与聊天引擎
-// answered 回放逐字一致)。
+// 审批:tools/approval.decideAppToolPermission(与聊天引擎同一判定函数:工作区会话里 MCP 工具看档位与会话级
+// 「总是允许」,对话模式看每工具 needsApproval + 助手级 override,search/scrape/memory 恒 auto)+ approval-flow
+// 共享生命周期。ask_user 是「决议里多带一个 answer 字段」的特例,经 gateAskUser 挂起,答案即工具结果
+// (扁平 {"answers":{...}} 契约,与聊天引擎 answered 回放逐字一致)。
 //
 // 结果形态(AppToolResult):
 // - content 是模型可见结果 = openAiToolOutput(entries),与聊天回灌模型的字符串同源。
@@ -27,7 +27,7 @@ import type { Assistant, Conversation, JsonValue, Model, ToolOutputEntry } from 
 import type { GenerationEventSink, GenerationTarget } from "../inference-engine/events";
 import { gateToolApproval } from "../inference-engine/approval-flow";
 import { gateAskUser } from "../inference-engine/ask-user-flow";
-import { decideAppToolPermission, decideEngineToolPermission, pluginToolApprovalState, pluginToolSessionKey } from "../tools/approval";
+import { appToolSessionAllowKey, decideAppToolPermission, decideEngineToolPermission, pluginToolApprovalState, pluginToolSessionKey } from "../tools/approval";
 import { ASK_USER_TOOL_NAME, normalizeAskUserQuestions, serializeAskUserAnswer } from "../tools/ask-user";
 import { openAiLocalTools, openAiMcpTools, openAiSearchTools } from "../tools/bound";
 import { executeToolCall, realizeToolResult, toolResultToParts } from "../tools/execution";
@@ -118,6 +118,7 @@ async function callGeneralTool(ctx: AppToolsContext, call: AppToolInvocation): P
   const argsJson = JSON.stringify(args);
   const approval = decideAppToolPermission(name, ctx.assistant, ctx.conversation, argsJson);
   const summary = summaryOf(args.url ?? args.query ?? args.content ?? args.path ?? args.command);
+  const sessionAllowKey = appToolSessionAllowKey(name, ctx.conversation);
   await gateToolApproval(approval, {
     conversationId: ctx.conversation.id,
     toolCallId,
@@ -125,6 +126,7 @@ async function callGeneralTool(ctx: AppToolsContext, call: AppToolInvocation): P
     signal: ctx.signal,
     toolName: name,
     ...(summary ? { summary } : {}),
+    ...(sessionAllowKey ? { sessionAllowKey } : {}),
   });
   const raw = await executeToolCall({ id: toolCallId, function: { name, arguments: argsJson } }, ctx.assistant, {
     conversationId: ctx.conversation.id,
@@ -155,7 +157,7 @@ const DEFAULT_GRANT: PermissionGrant = { scope: "default" };
 
 /** 引擎自己执行的工具在执行前过应用审批。工具卡由引擎事件建,这里只驱动它的审批态;拒绝与中止的语义
  *  与应用工具同一生命周期。
- *  - 插件工具:类别 plugin,默认询问;插件页免问或本会话已「总是允许」则免问。放行范围恒为 default。
+ *  - 插件工具:类别 plugin,看工作区档位(confirm_each 询问,另两档不问);本会话已「总是允许」则免问。放行范围恒为 default。
  *  - 引擎自带工具(pi 的 read / bash 等):按引擎给的类别与对象走工作区三档矩阵。用户在卡上批准了这次调用
  *    或档位是完全访问 → unrestricted(写入走宽界、危险命令放行),否则 default。noPrompt(没有工具卡的调用)
  *    遇到需要确认的直接拒绝,不弹审批。 */
@@ -164,7 +166,7 @@ export function createToolPermissionChecker(ctx: AppToolsContext): ToolPermissio
     const flow = { conversationId: ctx.conversation.id, toolCallId: req.toolCallId, sink: ctx.sink, signal: ctx.signal, toolName: req.toolName };
     if (req.origin.kind === "plugin") {
       const { pluginId } = req.origin;
-      await gateToolApproval(pluginToolApprovalState(ctx.conversation.id, pluginId, req.toolName), {
+      await gateToolApproval(pluginToolApprovalState(ctx.conversation, pluginId, req.toolName), {
         ...flow,
         sessionAllowKey: pluginToolSessionKey(pluginId, req.toolName),
       });

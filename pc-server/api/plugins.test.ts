@@ -119,6 +119,7 @@ describe("插件管理端点", () => {
     const assistantId = jsonStore.state.settings.assistants[0]!.id;
     expect((await call("settings/assistant/plugins", { assistantId, pluginIds: ["pi:nope"] })).status).toBe(400);
     expect((await call("settings/assistant/plugins", { assistantId, pluginIds: [plugin.id] })).status).toBe(200);
+    // 逐工具免问已删(D32):老界面送来的 exempt 不收。
     expect((await call("plugins/switches", { id: plugin.id, toolCall: false, tools: { peek: { enabled: false, exempt: true } } })).status).toBe(200);
     const assistant = () => jsonStore.state.settings.assistants.find((item) => item.id === assistantId)!;
     expect(enginePluginsFor("pi", jsonStore.state.settings, assistant())).toEqual([
@@ -129,7 +130,8 @@ describe("插件管理端点", () => {
 
     const reinstalled = await call("plugins/reinstall", { id: plugin.id });
     expect(reinstalled.status).toBe(200);
-    expect(reinstalled.body.plugin).toMatchObject({ id: plugin.id, enabled: false, hookSwitches: { toolCall: false }, toolSwitches: { peek: { enabled: false, exempt: true } } });
+    expect(reinstalled.body.plugin).toMatchObject({ id: plugin.id, enabled: false, hookSwitches: { toolCall: false } });
+    expect(reinstalled.body.plugin.toolSwitches).toEqual({ peek: { enabled: false } });
     expect(jsonStore.state.settings.enginePlugins).toHaveLength(1);
 
     const uninstalled = await call("plugins/uninstall", { id: plugin.id });

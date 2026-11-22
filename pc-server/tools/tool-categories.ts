@@ -4,8 +4,8 @@
 // 自己的驱动带一张表(pi 内建的 read / bash 等在 pi-engine/builtin-tools.ts),经 host.permission.check 把类别与
 // 对象交给应用。审批判定(tools/permission.ts)只认这里给出的类别与对象,工具名的知识只在本表。
 //
-// 联网搜索 / 抓取与本地工具免审,ask_user 恒待答,MCP 读逐工具设置;不认识的名字不挂审批(执行层报
-// Unknown tool 回灌模型)。
+// 联网搜索 / 抓取与本地工具免审,ask_user 恒待答,MCP 在工作区会话看档位、在对话模式读逐工具设置;不认识的名字
+// 不挂审批(执行层报 Unknown tool 回灌模型)。
 
 import type { JsonValue } from "../foundation/types";
 import { ASK_USER_TOOL_NAME } from "./ask-user";

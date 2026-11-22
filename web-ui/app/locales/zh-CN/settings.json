@@ -817,7 +817,7 @@
       "headers_desc": "连接与调用时附加到每个请求上，常用于 API Key 鉴权。",
       "last_error": "最近错误：{{error}}",
       "tools_title": "工具",
-      "tools_count": "共 {{count}} 个工具，可逐个设置是否启用、是否需要用户审核。",
+      "tools_count": "共 {{count}} 个工具，可逐个设置是否启用、是否需要用户审核。「需要用户审核」只对对话模式生效，工作区会话问不问由权限档位决定。",
       "tools_empty": "启用并保存后会自动同步工具。",
       "needs_approval": "需要用户审核",
       "collapse": "收起",
@@ -1332,7 +1332,8 @@
     "mcp_tools": "已启用 {{enabled}}/{{total}} 个工具",
     "mcp_no_tools": "暂无可用工具",
     "follows_plugin": "随插件",
-    "plugins_workspace_only": "插件只在工作区会话里生效"
+    "plugins_workspace_only": "插件只在工作区会话里生效",
+    "mcp_approval_chat_only": "「需要用户审核」只对对话模式生效，工作区会话问不问由权限档位决定"
   },
   "plugins": {
     "title": "插件",

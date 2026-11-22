@@ -1,7 +1,7 @@
 // pi-engine/plugins/plugin-tools.test.ts — 插件工具进会话 + 执行前审批(P5.4)
 //
 // 锁定:①裁决后的插件工具进入上游请求的工具声明,执行前经 host.permission.check(带 turnId、来源 = 插件 id);
-// ②应用侧审批口(createToolPermissionChecker)默认询问:待审卡 → 批准后执行、拒绝则不执行且拒绝理由
+// ②应用侧审批口(createToolPermissionChecker)在要询问时:待审卡 → 批准后执行、拒绝则不执行且拒绝理由
 // 回给模型;选了「此会话内总是允许」后同会话同工具不再询问;③事件桥给插件工具建通用工具卡,结果只按 content
 // 映射(插件自己的 details 不进卡);④没有审批口的会话(压缩)不声明插件工具。
 import { afterAll, describe, expect, test } from "bun:test";
@@ -61,7 +61,8 @@ function harness(conversationId: string) {
   const events: GenerationEvent[] = [];
   const checks: PermissionCheck[] = [];
   const sink = (event: GenerationEvent) => void events.push(event);
-  // 应用侧审批口(生产 = 编排器给本轮绑定的 checkPermission,经 host.permission.check 到达)。
+  // 应用侧审批口(生产 = 编排器给本轮绑定的 checkPermission,经 host.permission.check 到达)。会话不绑工作区记录 →
+  // 按最严档询问,与「询问批准」同一判定。
   const check = createToolPermissionChecker({ conversation: { id: conversationId } as never, assistant: {} as never, sink });
   const host: EngineHost = {
     emit: (_turn, event) => sink(event),

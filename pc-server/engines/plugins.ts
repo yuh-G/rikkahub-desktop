@@ -111,10 +111,7 @@ export function normalizeEnginePluginRecords(value: unknown): EnginePluginRecord
     const toolSwitches: EnginePluginRecord["toolSwitches"] = {};
     for (const [name, sw] of Object.entries(raw.toolSwitches ?? {})) {
       if (!sw || typeof sw !== "object") continue;
-      toolSwitches[name] = {
-        ...(typeof sw.enabled === "boolean" ? { enabled: sw.enabled } : {}),
-        ...(typeof sw.exempt === "boolean" ? { exempt: sw.exempt } : {}),
-      };
+      toolSwitches[name] = typeof sw.enabled === "boolean" ? { enabled: sw.enabled } : {};
     }
     records.push({
       id: raw.id,
@@ -130,9 +127,4 @@ export function normalizeEnginePluginRecords(value: unknown): EnginePluginRecord
     });
   }
   return records;
-}
-
-/** 插件页逐工具免问(插件工具审批的读取点)。 */
-export function isEnginePluginToolExempt(records: readonly EnginePluginRecord[] | undefined, pluginId: string, toolName: string): boolean {
-  return records?.find((record) => record.id === pluginId)?.toolSwitches[toolName]?.exempt === true;
 }

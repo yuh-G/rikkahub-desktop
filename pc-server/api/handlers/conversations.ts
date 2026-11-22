@@ -43,7 +43,8 @@ import { editQueuedMessage, enqueueMessage, holdMessageQueue, pauseMessageQueue,
 import { pushSteeringMessage, removeSteeringMessage } from "../../conversations/steering-channel";
 import { abortGeneration, compressing, generating, standingEngineStatuses } from "../../conversations/generation-state";
 import { getWorkspace } from "../../workspace";
-import { resolveToolApproval } from "../../inference-engine/approval-gate";
+import { allowToolForSession, resolveToolApproval } from "../../inference-engine/approval-gate";
+import { appToolSessionAllowKey } from "../../tools/approval";
 import { engineDialogDecision, engineUiSnapshot, pendingEngineDialogKind } from "../../conversations/engine-interaction";
 import { finishToolParts, stripLoadingPlaceholder } from "../../inference-engine/parts";
 
@@ -785,11 +786,13 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         alwaysAllowInSession?: boolean;
       }>(request);
       let changed = false;
+      let approvedToolName = "";
       for (const node of conversation.messages) {
         for (const msg of node.messages) {
           msg.parts = msg.parts.map((part) => {
             if (!part || typeof part !== "object" || Array.isArray(part) || part.type !== "tool" || part.toolCallId !== body.toolCallId) return part;
             changed = true;
+            approvedToolName = part.toolName;
             return {
               ...part,
               approvalState: body.approved
@@ -816,9 +819,14 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         ...(body.reason ? { reason: String(body.reason) } : {}),
         // ask_user:把答复载荷一并送达在途等待者(pi 引擎 execute 据此把答案回灌模型)。
         ...(body.answer != null ? { answer: String(body.answer) } : {}),
-        // 「此会话内总是允许该工具」:只对带免问键的审批(插件工具)生效,见 approval-flow。
+        // 「此会话内总是允许该工具」:只对带免问键的审批(插件工具、工作区会话里的 MCP 工具)生效,见 approval-flow。
         ...(body.approved === true && body.alwaysAllowInSession === true ? { alwaysAllowInSession: true } : {}),
       });
+      // 没有在途等待者(工作区不可用时由聊天引擎兜底,走暂停→续跑):「此会话内总是允许」在这里记,卡上的按钮照样生效。
+      if (!consumed && body.approved === true && body.alwaysAllowInSession === true) {
+        const sessionAllowKey = appToolSessionAllowKey(approvedToolName, conversation);
+        if (sessionAllowKey) allowToolForSession(conversation.id, sessionAllowKey);
+      }
       if (consumed || resolveEngineForConversation(conversation).capabilities.resumeSemantics === "run-and-suspend") {
         return json({ status: "accepted" }, { status: 202 });
       }

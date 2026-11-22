@@ -13,6 +13,10 @@
 // confirm_each 的写入 / 执行是待审批,而它不看对象。
 // 词法判定看不出的逃逸(软链指向区外等)不产生审批漏洞:未经批准的执行走严界(boundary.ts
 // realpath 断言),照样被拒。
+//
+// 第三方工具(MCP、插件)按模式分治(D32):工作区会话只看档位——confirm_each 询问,另两档不问(应用不认得
+// 它们的参数,「区外写入、危险命令」那套套不上);对话模式没有档位,MCP 看逐工具的 needsApproval。插件工具
+// 只在工作区会话里出现。会话级「总是允许」对两类都先放行。
 
 import type { WorkspacePermissionPreset } from "../foundation/types";
 import { resolveToCwd } from "../../pi/packages/coding-agent/src/core/tools/path-utils.ts";
@@ -53,13 +57,12 @@ export interface WorkspacePolicy {
 
 /** 判定要用的应用设置,按类别只填用得到的部分。 */
 export interface PermissionPolicy {
-  /** 写入 / 执行类。null = 会话没绑工作区:这两类工具不会挂载,残留调用由执行层拒绝,不挂审批。 */
+  /** 写入 / 执行类,以及工作区会话里的 MCP / 插件类。null = 会话没绑工作区(对话模式):写入 / 执行两类工具
+   *  不会挂载,残留调用由执行层拒绝,不挂审批。 */
   workspace?: WorkspacePolicy | null;
-  /** MCP 类:该工具对当前助手生效的 needsApproval(助手级覆盖优先,否则全局逐工具设置)。 */
+  /** MCP 类,只在对话模式用:该工具对当前助手生效的 needsApproval(助手级覆盖优先,否则全局逐工具设置)。 */
   mcpApprovalRequired?: boolean;
-  /** 插件类:插件页把该工具设为免问。 */
-  pluginToolExempt?: boolean;
-  /** 插件类:用户在本会话的审批卡上选过「此会话内总是允许该工具」。 */
+  /** MCP / 插件类:用户在本会话的审批卡上选过「此会话内总是允许该工具」。 */
   allowedForSession?: boolean;
 }
 
@@ -86,6 +89,12 @@ function workspaceDecision(req: PermissionRequest, workspace: WorkspacePolicy | 
   return isLexicallyOutsideRoot(resolved, workspace.root) ? pending(`Writes outside the workspace: ${resolved}`) : AUTO;
 }
 
+/** 工作区会话里的第三方工具。缺工作区按最严档(插件工具正常不会出现在没有工作区的会话里)。 */
+function thirdPartyDecision(policy: PermissionPolicy): PermissionDecision {
+  if (policy.allowedForSession) return AUTO;
+  return !policy.workspace || policy.workspace.preset === "confirm_each" ? pending() : AUTO;
+}
+
 /** 一次工具调用要不要先问用户。pending 的 reason 是给审批卡的缘由(英文,与工具错误文案同语言),
  *  缺省 = 档位或类别本身要求逐项确认。 */
 export function decidePermission(req: PermissionRequest, policy: PermissionPolicy): PermissionDecision {
@@ -97,8 +106,9 @@ export function decidePermission(req: PermissionRequest, policy: PermissionPolic
     case "ask":
       return pending();
     case "plugin":
-      return policy.pluginToolExempt || policy.allowedForSession ? AUTO : pending();
+      return thirdPartyDecision(policy);
     case "mcp":
+      if (policy.workspace) return thirdPartyDecision(policy);
       return policy.mcpApprovalRequired ? pending() : AUTO;
     case "write":
     case "execute":

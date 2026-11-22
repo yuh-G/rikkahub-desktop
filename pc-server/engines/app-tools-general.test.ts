@@ -3,8 +3,9 @@
 // 钉住三条语义:
 //   1) 工具面枚举与聊天引擎同源同开关:enableWebSearch 关 → search 对不声明;
 //      MCP 面跟随 assistant.mcpServers 选择 + 服务器/工具 enable;
-//   2) 审批语义与聊天引擎同口径:MCP 工具 needsApproval → pending 卡 → 拒绝回灌
-//      拒绝理由并抛错;auto 工具(save_memory)不产卡直通执行;
+//   2) 审批语义与聊天引擎同口径:对话模式里 MCP 工具 needsApproval → pending 卡 → 拒绝回灌
+//      拒绝理由并抛错;auto 工具(save_memory)不产卡直通执行;工作区会话里 MCP 工具看档位,
+//      卡上的「此会话内总是允许」经这里带的免问键生效(D32);
 //   3) 执行路由走 executeToolCall(真跑 save_memory:进待确认队列,单文本结果
 //      不带 display → 事件桥按 content 文本渲染)。
 import { afterAll, describe, expect, test } from "bun:test";
@@ -15,9 +16,11 @@ import { join } from "node:path";
 process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-generaltools-test-"));
 
 const { createAppToolCaller, generalToolSpecs } = await import("./app-tools");
-const { resolveToolApproval } = await import("../inference-engine/approval-gate");
+const { forgetSessionToolAllowances, resolveToolApproval } = await import("../inference-engine/approval-gate");
 const { defaultAssistant } = await import("../assistants");
 const { defaultState } = await import("../app-config/defaults");
+const conversations = await import("../conversations");
+const ws = await import("../workspace");
 // 注意:store.state 是 live binding,解构成局部 const 会拿到 import 时的旧值(undefined)。
 const store = await import("../persistence/json-store");
 
@@ -46,6 +49,7 @@ store.state.settings.mcpServers = [
     },
   },
 ] as State["settings"]["mcpServers"];
+conversations.openConversationsDb();
 afterAll(() => {
   store.setState(priorState);
 });
@@ -153,6 +157,25 @@ describe("审批语义(同聊天引擎口径)", () => {
     expect(textOf(result).length).toBeGreaterThan(0);
     // 单文本结果不带 display → 事件桥按 content 渲染
     expect(result.display).toBeUndefined();
+  });
+
+  test("工作区会话(询问批准):MCP 工具不论开关都挂卡;选「此会话内总是允许」后同会话不再挂卡(D32)", async () => {
+    const workspace = ws.createWorkspace({ type: "managed", name: "gt-confirm" });
+    ws.updateWorkspace(workspace.id, { permissionPreset: "confirm_each" });
+    const { ctx, conversation, events } = fixture();
+    conversation.workspaceId = workspace.id;
+    const call = callerFor(ctx);
+    // beta 没标「需要用户审核」,工作区里照样按档位询问;放行后执行失败(假服务器没有地址)不影响审批断言。
+    const first = call("call-ws-1", "mcp__beta", {}).catch(() => undefined);
+    await Bun.sleep(10);
+    expect(approvalEvents(events).map((event) => event.approvalState.type)).toEqual(["pending"]);
+    expect(resolveToolApproval(conversation.id, "call-ws-1", { approved: true, alwaysAllowInSession: true })).toBe(true);
+    await first;
+    expect(approvalEvents(events).map((event) => event.approvalState.type)).toEqual(["pending", "approved"]);
+
+    await call("call-ws-2", "mcp__beta", {}).catch(() => undefined);
+    expect(approvalEvents(events).map((event) => event.approvalState.type)).toEqual(["pending", "approved"]);
+    forgetSessionToolAllowances(conversation.id);
   });
 });
 

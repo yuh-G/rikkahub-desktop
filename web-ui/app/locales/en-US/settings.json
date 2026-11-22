@@ -817,7 +817,7 @@
       "headers_desc": "Attached to every connection and call, typically for API key auth.",
       "last_error": "Last error: {{error}}",
       "tools_title": "Tools",
-      "tools_count": "{{count}} tools — enable each one and choose whether it needs your approval.",
+      "tools_count": "{{count}} tools — enable each one and choose whether it needs your approval. \"Needs approval\" only applies in chat mode; in workspace conversations the permission preset decides.",
       "tools_empty": "Tools are synced automatically once enabled and saved.",
       "needs_approval": "Needs approval",
       "collapse": "Collapse",
@@ -1332,7 +1332,8 @@
     "mcp_tools": "{{enabled}}/{{total}} tools enabled",
     "mcp_no_tools": "No tools available",
     "follows_plugin": "Follows plugin",
-    "plugins_workspace_only": "Plugins only take effect in workspace conversations"
+    "plugins_workspace_only": "Plugins only take effect in workspace conversations",
+    "mcp_approval_chat_only": "\"Needs approval\" only applies in chat mode; in workspace conversations the permission preset decides"
   },
   "plugins": {
     "title": "Plugins",

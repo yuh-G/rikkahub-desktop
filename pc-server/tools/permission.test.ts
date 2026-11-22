@@ -1,4 +1,4 @@
-// tools/permission.test.ts — 按类别判定(纯函数层):类别、三档矩阵、下界与终局、单调性、免审前缀
+// tools/permission.test.ts — 按类别判定(纯函数层):类别、三档矩阵、第三方工具按模式分治、下界与终局、单调性、免审前缀
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -34,32 +34,50 @@ const decide = (category: ToolCategory, policy: PermissionPolicy, target?: Permi
   decidePermission(request(category, target), policy).type;
 
 describe("与工作区无关的类别", () => {
-  test("read / network / local 恒免审;ask 恒待审;plugin 在无免问设置时待审", () => {
+  test("read / network / local 恒免审;ask 恒待审", () => {
     for (const preset of ["confirm_each", "balanced", "full_access"] as const) {
       expect(decide("read", workspace(preset), { path: "/etc/passwd" })).toBe("auto");
       expect(decide("network", workspace(preset), { url: "https://example.com" })).toBe("auto");
       expect(decide("local", workspace(preset))).toBe("auto");
       expect(decide("ask", workspace(preset))).toBe("pending");
-      expect(decide("plugin", workspace(preset))).toBe("pending");
     }
-  });
-
-  test("plugin 默认询问;插件页免问或本会话已选「总是允许」则免问", () => {
-    expect(decide("plugin", {})).toBe("pending");
-    expect(decide("plugin", { pluginToolExempt: true })).toBe("auto");
-    expect(decide("plugin", { allowedForSession: true })).toBe("auto");
-    expect(decide("ask", { pluginToolExempt: true, allowedForSession: true })).toBe("pending");
-  });
-
-  test("mcp 只看逐工具设置", () => {
-    expect(decide("mcp", { mcpApprovalRequired: true })).toBe("pending");
-    expect(decide("mcp", { mcpApprovalRequired: false })).toBe("auto");
-    expect(decide("mcp", {})).toBe("auto");
+    expect(decide("ask", { allowedForSession: true })).toBe("pending");
   });
 
   test("会话没绑工作区:写入 / 执行不挂审批", () => {
     expect(decide("write", { workspace: null }, { path: "/x" })).toBe("auto");
     expect(decide("execute", {}, { command: "rm -rf /" })).toBe("auto");
+  });
+});
+
+describe("第三方工具(MCP / 插件):按模式分治(D32)", () => {
+  test("工作区会话只看档位:询问批准每次问,默认权限与完全访问不问;逐工具的「需要用户审核」不起作用", () => {
+    for (const category of ["mcp", "plugin"] as const) {
+      for (const mcpApprovalRequired of [true, false]) {
+        expect(decide(category, { ...workspace("confirm_each"), mcpApprovalRequired })).toBe("pending");
+        expect(decide(category, { ...workspace("balanced"), mcpApprovalRequired })).toBe("auto");
+        expect(decide(category, { ...workspace("full_access"), mcpApprovalRequired })).toBe("auto");
+      }
+    }
+  });
+
+  test("询问批准下待审卡不附缘由;本会话已选「总是允许」则免问", () => {
+    for (const category of ["mcp", "plugin"] as const) {
+      expect(decidePermission(request(category), workspace("confirm_each"))).toEqual({ type: "pending" });
+      expect(decide(category, { ...workspace("confirm_each"), allowedForSession: true })).toBe("auto");
+    }
+  });
+
+  test("对话模式(没有工作区):MCP 只看逐工具设置", () => {
+    expect(decide("mcp", { mcpApprovalRequired: true })).toBe("pending");
+    expect(decide("mcp", { workspace: null, mcpApprovalRequired: true })).toBe("pending");
+    expect(decide("mcp", { mcpApprovalRequired: false })).toBe("auto");
+    expect(decide("mcp", {})).toBe("auto");
+  });
+
+  test("插件工具缺工作区按最严档询问", () => {
+    expect(decide("plugin", {})).toBe("pending");
+    expect(decide("plugin", { workspace: null })).toBe("pending");
   });
 });
 

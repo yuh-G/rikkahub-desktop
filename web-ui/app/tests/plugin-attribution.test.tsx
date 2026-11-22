@@ -8,9 +8,11 @@ import { openPluginVetoSwitch, readToolAttribution } from "~/components/message/
 import { ToolPart as ToolStepPart, PendingToolAttentionCard } from "~/components/message/parts/tool-part";
 import { WorkspaceActionCard } from "~/components/message/parts/workspace-tool-part";
 import { EnginePluginPanel } from "~/components/workspace/engine-plugin-panel";
+import { PaneContainerProvider } from "~/components/workspace/pane-container-context";
 import { TooltipProvider } from "~/components/ui/tooltip";
 import i18n from "~/i18n";
 import { useAppStore } from "~/stores/app-store";
+import { CHAT_CONTAINER } from "~/stores/container-tabs-store";
 import { useConversationStore } from "~/stores/conversation-store";
 import { usePluginsViewStore } from "~/stores/plugins-view-store";
 import { useSettingsDialogStore } from "~/stores/settings-dialog-store";
@@ -78,7 +80,7 @@ describe("工具卡上的呈现", () => {
     expect(html).not.toContain("Blocked by plugin");
   });
 
-  test("插件工具的审批卡写明来源,多一个「此会话内总是允许」;别的工具没有", () => {
+  test("插件工具的审批卡写明来源,多一个「此会话内总是允许」;工作区会话里的 MCP 工具也有,对话模式的 MCP 工具没有(D32)", () => {
     const pending = { approvalState: { type: "pending" } as const };
     const plugin = render(
       React.createElement(PendingToolAttentionCard, {
@@ -88,8 +90,20 @@ describe("工具卡上的呈现", () => {
     );
     expect(plugin).toContain("来自插件 待办");
     expect(plugin).toContain("此会话内总是允许");
-    const mcp = render(React.createElement(PendingToolAttentionCard, { tool: tool("mcp__x__y", pending), onToolApproval: () => undefined }));
-    expect(mcp).not.toContain("此会话内总是允许");
+    const mcpCard = (container: string) =>
+      render(
+        React.createElement(
+          PaneContainerProvider,
+          { container },
+          React.createElement(PendingToolAttentionCard, { tool: tool("mcp__x__y", pending), onToolApproval: () => undefined }),
+        ),
+      );
+    expect(mcpCard(CHAT_CONTAINER)).not.toContain("此会话内总是允许");
+    expect(mcpCard("ws-1")).toContain("此会话内总是允许");
+    const other = render(
+      React.createElement(PaneContainerProvider, { container: "ws-1" }, React.createElement(PendingToolAttentionCard, { tool: tool("search_web", pending), onToolApproval: () => undefined })),
+    );
+    expect(other).not.toContain("此会话内总是允许");
   });
 
   test("「插件设置」跳到否决方的详情概览,并定位高级设置里的拦截开关", () => {
