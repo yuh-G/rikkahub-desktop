@@ -70,7 +70,7 @@ const PRESET_PROVIDER_RENAMES: ReadonlyArray<{ id: string; from: string; to: str
   { id: "3bc40dc1-b11a-46fa-863b-6306971223be", from: "智谱AI开放平台", to: "智谱" },
   { id: "386e0f29-8228-4512-affe-8fd8add82d88", from: "Vercel AI Gateway", to: "Vercel" },
   { id: OAUTH_PROVIDER_IDS["github-copilot"], from: "GitHub Copilot", to: "Copilot" },
-  // 2.0.0-preview-v7:ChatGPT 预置行拆成两轨(新版 Sign in with ChatGPT + 旧版 Codex),
+  // 2.0.0-preview-v6:ChatGPT 预置行拆成两轨(新版 Sign in with ChatGPT + 旧版 Codex),
   // 旧行改名 "ChatGPT"→"ChatGPT (Codex)" 让位新行;用户改过名的行不动(D7 纪律)。
   { id: OAUTH_PROVIDER_IDS["openai-codex"], from: "ChatGPT", to: "ChatGPT (Codex)" },
 ];
