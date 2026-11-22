@@ -1,4 +1,4 @@
-// search/index.ts — 搜索服务（19 种实现、连接测试、多 key failover、custom_js 脚本执行）
+// search/index.ts — 搜索服务（20 种实现、连接测试、多 key failover、custom_js 脚本执行）
 // 纪律：负责 search_web / scrape_web 工具的具体实现与搜索服务测试。
 // 不处理路由、不处理 SSE；请求日志暂经 ../server 的 addLog 记录（3.5 拆 api/ 时收敛）。
 
@@ -186,7 +186,7 @@ function maskSearchKey(key: string): string {
 function searchKeyFailCode(e: unknown): string {
   if (e instanceof SearchKeyError) {
     if (e.status === 401 || e.status === 403) return "auth_invalid";
-    if (e.status === 429) return "quota_exhausted";
+    if (e.status === 429 || e.status === 402) return "quota_exhausted";
     return "key_error";
   }
   // 非 SearchKeyError:网络断开 / DNS / 5xx / 响应解析失败等——换 key 解决不了,
@@ -346,6 +346,27 @@ function buildExaSearchBody(
   if (evidence.includeDomains) body.includeDomains = evidence.includeDomains;
   if (evidence.excludeDomains) body.excludeDomains = evidence.excludeDomains;
   return body;
+}
+
+// === DeepSeek 工具接口(/v1/tools/search、/v1/tools/fetch)===
+// 错误体是 {"error":{"message"}}。402 是这个 key 所在账号余额不足,换 key(可能是另一个账号)有用;
+// fetch 的 403 是目标网页被对方的安全策略拒抓,与 key 无关,不换 key。
+function throwDeepSeekStatus(kind: "search" | "fetch", status: number, text: string): never {
+  let message = text.slice(0, 500);
+  try {
+    const parsed = JSON.parse(text);
+    if (typeof parsed?.error?.message === "string" && parsed.error.message) message = parsed.error.message;
+  } catch {
+    // 错误体不是 JSON:用原文
+  }
+  const detail = `DeepSeek ${kind} failed: #${status} ${message}`;
+  const keyError = status === 402 || (isSearchKeyError(status) && !(kind === "fetch" && status === 403));
+  if (keyError) throw new SearchKeyError(status, detail);
+  throw new Error(detail);
+}
+
+function deepSeekSearchBody(query: string, count: number) {
+  return { query, count: Math.min(50, Math.max(1, count)) };
 }
 
 // === 豆包(火山 Search-Infinity)响应解析(DoubaoSearchService.parseResponse)===
@@ -599,6 +620,50 @@ export async function runSearchWeb(params: Record<string, JsonValue>) {
         answer,
         items: (raw.organic ?? []).slice(0, maxResults).map((item: any, index: number) =>
           searchResult(index, { title: item.title, url: item.link, text: item.snippet }),
+        ),
+      };
+    });
+  }
+
+  // DeepSeek(api.deepseek.com/v1/tools/search):summary 是给模型读的长摘要(600–800 字),空时退回界面用的 snippet。
+  if (type === "deepseek") {
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = requireServiceEndpoint(service);
+      const requestBody = deepSeekSearchBody(query, maxResults);
+      const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+      const response = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: endpoint,
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:search_web",
+        toolName: "search_web",
+        durationMs: Date.now() - started,
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody(requestBody),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwDeepSeekStatus("search", response.status, text);
+      const results = Array.isArray(raw.results) ? raw.results : [];
+      return {
+        query,
+        service: "DeepSeek",
+        items: results.slice(0, maxResults).map((item: any, index: number) =>
+          searchResult(index, {
+            title: item?.title,
+            url: item?.url,
+            text: String(item?.summary ?? "").trim() ? item.summary : item?.snippet,
+          }),
         ),
       };
     });
@@ -1242,6 +1307,45 @@ export async function runScrapeWeb(params: Record<string, JsonValue>) {
       };
     });
   }
+  if (type === "deepseek") {
+    // DeepSeek fetch:api.deepseek.com/v1/tools/fetch,返回 { title, content(Markdown) }。
+    return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
+      const endpoint = requireServiceEndpoint(service, "fetch");
+      const requestBody = { url: target };
+      const requestHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+      const response = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody),
+      });
+      const { text, raw } = await parseJsonResponse(response);
+      addLog({
+        providerId: String(service.id ?? "search"),
+        providerName: nameOfSearchService(service),
+        url: endpoint,
+        ok: response.ok,
+        status: response.status,
+        kind: "tool:scrape_web",
+        toolName: "scrape_web",
+        durationMs: Date.now() - started,
+        method: "POST",
+        requestHeaders,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+        requestBody: jsonBody(requestBody),
+        responseBody: textBody(text),
+        error: response.ok ? undefined : textBody(text),
+      });
+      if (!response.ok) throwDeepSeekStatus("fetch", response.status, text);
+      const title = String(raw?.title ?? "").trim();
+      return {
+        url: target,
+        title: title || undefined,
+        description: undefined,
+        language: undefined,
+        text: String(raw?.content ?? "").slice(0, 12000),
+      };
+    });
+  }
   if (type === "tinyfish") {
     return await withSearchKeyFailover(String(service.apiKey ?? ""), async (apiKey) => {
       const endpoint = requireServiceEndpoint(service, "fetch");
@@ -1375,6 +1479,19 @@ export async function testSearchService(service: SearchService) {
       });
       const text = await response.text();
       if (!response.ok) throwSearchStatus(response.status, `${response.status}: ${text.slice(0, 500)}`);
+      return text;
+    });
+  }
+  if (type === "deepseek") {
+    const endpoint = requireServiceEndpoint(service);
+    return runSearchKeyTestResult(name, endpoint, apiKey, async (k) => {
+      const response = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${k}` },
+        body: JSON.stringify(deepSeekSearchBody("RikkaHub", 1)),
+      });
+      const text = await response.text();
+      if (!response.ok) throwDeepSeekStatus("search", response.status, text);
       return text;
     });
   }

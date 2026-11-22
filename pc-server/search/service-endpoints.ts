@@ -24,7 +24,7 @@ export interface SearchServiceEndpointSpec {
   readonly base: string;
   /** search 端点规范路径;空串 = 基址即端点(Jina/Tinyfish 形态)。豆包按 mode 二选一,用 searchMode。 */
   readonly search: string;
-  /** scrape(fetch)端点规范路径;仅实现了 scrape 的服务登记(Exa/Ollama/Tinyfish)。 */
+  /** scrape(fetch)端点规范路径;仅实现了 scrape 的服务登记(Exa/Ollama/Tinyfish/DeepSeek)。 */
   readonly fetch?: string;
   /** fetch 与 search 不同主机时的官方基址(仅 Tinyfish:api.fetch.* vs api.search.*)。 */
   readonly fetchBase?: string;
@@ -40,6 +40,7 @@ export const SEARCH_SERVICE_ENDPOINTS: Readonly<Record<string, SearchServiceEndp
   rikkahub: { base: "https://api.rikka-ai.com", search: "/v1/search" },
   exa: { base: "https://api.exa.ai", search: "/search", fetch: "/contents" },
   serper: { base: "https://google.serper.dev", search: "/search" },
+  deepseek: { base: "https://api.deepseek.com", search: "/v1/tools/search", fetch: "/v1/tools/fetch" },
   doubao: { base: "https://open.feedcoopapi.com", search: "", searchMode: { custom: "/search_api/web_search", global: "/search_api/global_search" } },
   zhipu: { base: "https://open.bigmodel.cn", search: "/api/paas/v4/web_search" },
   brave: { base: "https://api.search.brave.com", search: "/res/v1/web/search" },

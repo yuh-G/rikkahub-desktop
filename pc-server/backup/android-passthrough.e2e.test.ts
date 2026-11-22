@@ -13,6 +13,7 @@ import { readZipEntries } from "../files/index";
 const serverEntry = join(import.meta.dir, "..", "server.ts");
 /** 出厂默认助手(两端共享的固定 id)。 */
 const SHARED_ASSISTANT_ID = "0950e2dc-9bd5-4801-afa3-aa887aa36b4e";
+const DEEPSEEK_SERVICE_ID = "9d5e0a1b-2c3d-4e5f-8a9b-0c1d2e3f4a5b";
 
 // ── 合法 zip 构造器(带真 CRC32;PowerShell/unzip 解压前校验,zip-structure 的 CRC=0 版不够)──
 const CRC_TABLE = (() => {
@@ -124,6 +125,12 @@ describe("安卓独有字段透传(产品决策②)", () => {
           name: "两端都有的助手",
         }],
         displaySetting: { showDateTimeInMessage: true },
+        // APP 选中的搜索服务是 DeepSeek(APP 3.0.0 起有):导入后可用、选中,导出原样带回。
+        searchServices: [
+          { type: "bing_local", id: "11111111-2222-3333-4444-555555555555" },
+          { type: "deepseek", id: DEEPSEEK_SERVICE_ID, apiKey: "sk-synthetic-app" },
+        ],
+        searchServiceSelected: 1,
       };
       const zip = buildStoredZip([
         { name: "settings.json", data: Buffer.from(JSON.stringify(androidSettings), "utf8") },
@@ -153,6 +160,11 @@ describe("安卓独有字段透传(产品决策②)", () => {
       expect(sharedAssistant?.name).toBe("两端都有的助手");
       expect(sharedAssistant?.enginePluginIds).toEqual([pluginId]);
       expect(importedAssistant?.enginePluginIds).toEqual([]);
+      const services = settings.searchServices as Array<Record<string, unknown>>;
+      expect(services.filter((service) => service.type === "deepseek")).toEqual([
+        { type: "deepseek", id: DEEPSEEK_SERVICE_ID, apiKey: "sk-synthetic-app" },
+      ]);
+      expect(services[settings.searchServiceSelected as number]?.id).toBe(DEEPSEEK_SERVICE_ID);
 
       // PC 导出 zip → settings.json 原样携带(APP 全量替换导入时不归零)
       const exportRes = await fetch(`${base}/api/data/export`);
@@ -173,6 +185,11 @@ describe("安卓独有字段透传(产品决策②)", () => {
       expect("devPiPluginPaths" in exported).toBe(false);
       expect("enginePlugins" in exported).toBe(false);
       expect((exported.assistants as Array<Record<string, unknown>>).every((a) => !("enginePluginIds" in a))).toBe(true);
+      const exportedServices = exported.searchServices as Array<Record<string, unknown>>;
+      expect(exportedServices.filter((service) => service.type === "deepseek")).toEqual([
+        { type: "deepseek", id: DEEPSEEK_SERVICE_ID, apiKey: "sk-synthetic-app" },
+      ]);
+      expect(exportedServices[exported.searchServiceSelected as number]?.id).toBe(DEEPSEEK_SERVICE_ID);
     } finally {
       proc.kill();
       await proc.exited;

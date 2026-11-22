@@ -36,6 +36,7 @@ describe("iconForName", () => {
     expect(iconForName("doubao")).toBe("doubao-color.svg");
     expect(iconForName("Ollama")).toBe("ollama.svg");
     expect(iconForName("Exa")).toBe("exa.png");
+    expect(iconForName("DeepSeek")).toBe("deepseek-color.svg");
   });
 
   test("预置供应商新类型:MiniMax/MIMO 图标命中(label 作图标键)", () => {

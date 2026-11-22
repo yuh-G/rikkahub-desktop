@@ -21,6 +21,7 @@ describe("R1-12 搜索服务删除墓碑", () => {
     expect(types).toContain("tinyfish");
     expect(types).toContain("firecrawl");
     expect(types).toContain("grok");
+    expect(types).toContain("deepseek");
   });
 
   test("有墓碑:删掉的内置 type 不复活,其余照补", () => {

@@ -17,7 +17,10 @@ import { listSkills } from "./skills";
  *  shouldUseExternalWebSearch(对齐安卓),聊天/pi/未来引擎同口消费,无需各自复刻。
  *  model 缺省视为无内置搜索(pi 引擎不接内置搜索,可不传),维持"只看全局开关"旧行为。 */
 export function openAiSearchTools(model?: Model | null) {
-  return openAiSearchToolsCore(shouldUseExternalWebSearch(state.settings.enableWebSearch, model));
+  // 与 search_web 执行时取服务的口径相同:下标无效时用第一个。
+  const { searchServices, searchServiceSelected } = state.settings;
+  const selected = (searchServices[searchServiceSelected] ?? searchServices[0]) as Record<string, unknown> | undefined;
+  return openAiSearchToolsCore(shouldUseExternalWebSearch(state.settings.enableWebSearch, model), String(selected?.type ?? ""));
 }
 
 export function openAiSkillTools(assistant: Assistant) {

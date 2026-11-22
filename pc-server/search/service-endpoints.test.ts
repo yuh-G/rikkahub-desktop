@@ -25,8 +25,8 @@ describe("注册表覆盖面", () => {
     expect(hasServiceEndpoint("bing_local")).toBe(false);
     expect(hasServiceEndpoint("custom_js")).toBe(false);
     expect(hasServiceEndpoint("unknown_type")).toBe(false);
-    // runSearchWeb 里每个带固定官方端点的类型都必须登记(共 17 家)
-    expect(Object.keys(SEARCH_SERVICE_ENDPOINTS).length).toBe(17);
+    // runSearchWeb 里每个带固定官方端点的类型都必须登记(共 18 家)
+    expect(Object.keys(SEARCH_SERVICE_ENDPOINTS).length).toBe(18);
   });
 
   test("官方基址单源:各类型登记的 base 与其真实服务地址一致", () => {
@@ -44,6 +44,8 @@ describe("resolveServiceEndpoint:base 语义", () => {
     expect(resolveServiceEndpoint(svc("exa"))).toBe("https://api.exa.ai/search");
     expect(resolveServiceEndpoint(svc("exa"), "fetch")).toBe("https://api.exa.ai/contents");
     expect(resolveServiceEndpoint(svc("ollama"), "fetch")).toBe("https://ollama.com/api/web_fetch");
+    expect(resolveServiceEndpoint(svc("deepseek"))).toBe("https://api.deepseek.com/v1/tools/search");
+    expect(resolveServiceEndpoint(svc("deepseek"), "fetch")).toBe("https://api.deepseek.com/v1/tools/fetch");
     expect(resolveServiceEndpoint(svc("grok"))).toBe("https://api.x.ai/v1/responses");
     expect(resolveServiceEndpoint(svc("firecrawl"))).toBe("https://api.firecrawl.dev/v2/search");
   });

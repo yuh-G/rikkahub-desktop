@@ -145,6 +145,7 @@ export function defaultSettings(): Settings {
       { type: "grok", id: id(), name: "Grok", apiKey: "", customUrl: "https://api.x.ai/v1/responses", model: "grok-4-fast" },
       { type: "tinyfish", id: id(), name: "Tinyfish", apiKey: "" },
       { type: "serper", id: id(), name: "Serper", apiKey: "" },
+      { type: "deepseek", id: id(), name: "DeepSeek", apiKey: "" },
     ],
     searchCommonOptions: { resultSize: 10 },
     searchServiceSelected: 0,

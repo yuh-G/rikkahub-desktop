@@ -50,6 +50,7 @@ const SEARCH_SERVICE_LABELS: Record<string, string> = {
   grok: "Grok",
   tinyfish: "Tinyfish",
   serper: "Serper",
+  deepseek: "DeepSeek",
   custom_js: "Custom JS",
 };
 

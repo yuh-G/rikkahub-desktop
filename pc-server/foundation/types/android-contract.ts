@@ -32,7 +32,7 @@ export { PC_KNOWN_ASR_TYPES } from "./index";
 export const ANDROID_SEARCH_SERVICE_TYPES: ReadonlySet<string> = new Set([
   "bing_local", "zhipu", "tavily", "exa", "searxng", "linkup", "brave", "metaso", "ollama",
   "perplexity", "firecrawl", "jina", "bocha", "rikkahub", "grok", "tinyfish", "serper", "custom_js",
-  "doubao",
+  "doubao", "deepseek",
 ]);
 
 /** 安卓 UIMessagePart 全判别符。含已 @Deprecated 但仍在 sealed 集合内的 search/tool_call/
