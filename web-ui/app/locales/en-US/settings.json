@@ -1442,6 +1442,59 @@
     "retry": "Retry",
     "not_found": "This plugin can't be found; it may have been uninstalled.",
     "back_home": "Back to plugins",
+    "guide_entry": "How plugins work",
+    "guide": {
+      "title": "How plugins work",
+      "intro": "Plugins are extension packages written for the pi engine. They add tools, commands and automated behaviors to workspace conversations. This page explains how they run in the app, which parts don't take effect, and where to look when something goes wrong.",
+      "trust": {
+        "title": "First: plugins are code running on your computer",
+        "code": "A plugin has the same permissions as the app: it can read and write your files, use the network, start other programs, and read the key of the model the conversation uses. The app doesn't check what plugins do and can't guarantee they work as described.",
+        "process": "Plugins run in a separate engine process, so one that hangs or crashes won't take the whole app down. That process is not a sandbox and won't stop a malicious plugin.",
+        "sources": "Only install from sources you trust, and look at a plugin's homepage and description before installing it."
+      },
+      "use": {
+        "title": "Using plugins",
+        "enable": "After installing, turn a plugin on for the current conversation in \"$t(input:integrations.title)\" → \"$t(settings:subnav.extensions.plugins)\" at the bottom left of the input box. To turn it on by default for an assistant's new conversations, go to \"Settings → $t(settings:nav.assistants) → $t(settings:assistants.extensions.title)\".",
+        "workspace_only": "Plugins only load in workspace conversations. They have no effect in chat mode.",
+        "changes": "Turning a plugin on or off for a conversation, disabling or uninstalling it, and changing its tool switches all take effect from the next message. A reply in progress isn't affected."
+      },
+      "overlap": {
+        "title": "What doesn't take effect",
+        "app_owned": "Parts the app handles itself don't take effect even if a plugin registers them: models and sign-in (adding providers, switching models, changing the thinking level), rewriting requests sent to the model, creating, forking or switching conversations, entry commands (/settings, /model, /new, /fork and so on; the app's own versions apply), and permission prompts before tool calls (see \"Approval\" below).",
+        "mcp": "MCP servers declared by a plugin don't run inside the plugin. They are added to \"Settings → $t(settings:nav.extensions) → $t(settings:subnav.extensions.mcp)\" and marked as from the plugin. They follow the plugin when it's enabled or disabled, and you can also turn them off on the MCP page.",
+        "terminal": "Parts that need a terminal interface aren't supported: themes, keyboard shortcuts, custom terminal components and message renderers.",
+        "background": "Background sub-tasks aren't supported: a task the plugin runs by starting a separate command-line process fails right away. Sub-tasks that run inside the current conversation work.",
+        "resources": "Skills, prompt templates and themes bundled in a plugin package aren't loaded. Manage skills in \"Settings → $t(settings:nav.extensions) → $t(settings:subnav.extensions.skills)\".",
+        "same_name": "A plugin tool with the same name as one of the app's tools isn't loaded (including the workspace tools that read and write files and run commands).",
+        "where": "The top of a plugin's detail page says how many features didn't take effect. Click \"$t(settings:plugins.view)\" to open \"$t(settings:plugins.tab_audit)\", which lists each part that didn't take effect and why. Activity appears only after the plugin has loaded with a conversation, and only covers the time since the app last started."
+      },
+      "search": {
+        "title": "Web search plugins",
+        "coexist": "Search and web-fetch tools from plugins are available alongside the app's own web search, and the model picks which to use. Plugin tools ask for approval by the rules under \"Approval\" below, and their results show as ordinary tool cards.",
+        "turn_off": "To use only one side: to turn off the app's, click the search button at the bottom left of the input box and switch off \"$t(input:search.web_title)\" in the \"$t(input:search.title)\" panel that opens (applies to all conversations). To turn off the plugin's, switch that tool off under \"$t(settings:plugins.tab_tools)\" on the plugin's detail page, or don't turn the plugin on for this conversation."
+      },
+      "approval": {
+        "title": "Approval",
+        "preset": "In workspace conversations, whether plugin tools and MCP tools ask depends only on the permission preset at the bottom left of the input box: \"$t(input:workspace_permission.confirm_each)\" asks every time; \"$t(input:workspace_permission.balanced)\" and \"$t(input:workspace_permission.full_access)\" don't ask. If you change the preset mid-conversation, the next call uses the new one.",
+        "always_allow": "On an approval card you can choose \"$t(message:tool_part.always_allow)\": that tool stops asking in this conversation, and asking resumes after the app restarts.",
+        "mcp_switch": "The \"$t(settings:mcp.server.needs_approval)\" switch on MCP tools only applies in chat mode.",
+        "sub_tasks": "When a plugin runs a sub-task inside the current conversation, file access and commands in the sub-task are judged by the preset too. These calls have no approval card, so any that need your confirmation are refused.",
+        "hook": "Some plugins show their own prompt before a tool call. Such prompts aren't shown; that interception is dropped and approval is left to the app. A plugin that refuses without a prompt still takes effect, and the tool card says \"Blocked by plugin …\". To stop a plugin from intercepting, switch off \"$t(settings:plugins.hook_tool_call)\" under \"$t(settings:plugins.tab_overview)\" → \"$t(settings:common.advanced)\" on its detail page."
+      },
+      "data": {
+        "title": "Plugin data",
+        "home": "Plugins that store settings the way pi expects keep them under engines/pi in the app's data folder. Many plugins also write to your home folder (for example ~/.pi-lens, ~/.context-mode). Uninstalling removes the plugin package and the MCP servers it registered. Data the plugin stored itself isn't cleaned up; delete it yourself if needed.",
+        "backup": "Backups between desktop installs include the plugin list but not the packages or the data plugins store themselves. After restoring on another computer, reinstall them on the plugins page. Backups for the mobile app don't include plugins."
+      },
+      "engine": {
+        "title": "The engine process and restart notices",
+        "process": "Plugins and workspace conversations run in a separate engine process. It starts when you open a workspace conversation, exits after 15 minutes idle, and starts again when needed.",
+        "unresponsive": "\"$t(page:conversations.engine_status.unresponsive)\": the engine process hasn't answered for 5 seconds. This is common the first time a batch of plugins loads, or when searching a very large folder. You can wait; clicking stop ends it at once and starts a new process. If it still hasn't answered after 60 seconds, it is ended and restarted automatically.",
+        "crashed": "Notices like \"$t(settings:app_errors.codes.engine_host_crashed)\": when the engine process crashes or is force-stopped, a new one starts right away. If a reply was in progress, it ends as failed and queued messages pause; you can regenerate.",
+        "gave_up": "\"…exited unexpectedly 3 times in a short period, so it will not be restarted\": after 3 failures within 5 minutes the app stops restarting it. The notice lists the plugins that are on, and one of them is the likely cause. Disable them and regenerate; changing plugins or regenerating makes the app try again.",
+        "where": "Restart notices, including the one about no longer restarting, are recorded under \"$t(settings:logs.filter_errors)\" in \"Settings → $t(settings:nav.stats) → $t(settings:subnav.stats.logs)\"."
+      }
+    },
     "audit": {
       "pi_plugin_removed": "{{subject}} wasn't loaded: the name is reserved by the app or used by another plugin",
       "pi_plugin_unsupported": "{{subject}} is registered but not supported by the app, so it has no effect",

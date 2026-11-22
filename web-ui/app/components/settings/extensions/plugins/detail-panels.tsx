@@ -14,6 +14,7 @@ import type { Settings } from "~/types";
 import type { EnginePluginDetailDto, EnginePluginRecord, EnginePluginViewDto, PluginAuditEntryDto } from "~/types/plugins";
 
 import { setPluginToolCallHook, setPluginToolSwitch } from "./actions";
+import { PluginGuideLink } from "./guide-dialog";
 import { parseAuditSubject, pluginSourceLabel, registeredPluginMcpServer, stripRelativeImages } from "./model";
 import { copyText, InfoRow, PanelSkeleton, ReadmeBlock, RelativeTime } from "./parts";
 
@@ -52,7 +53,9 @@ export function PluginOverviewPanel({
             <li>{t("settings:plugins.where_conversation")}</li>
             <li>{t("settings:plugins.where_assistant")}</li>
           </ul>
-          <p className="text-xs text-[var(--ds-text-tertiary)]">{t("settings:plugins.where_workspace")}</p>
+          <p className="text-xs text-[var(--ds-text-tertiary)]">
+            {t("settings:plugins.where_workspace")} <PluginGuideLink />
+          </p>
         </section>
         <SettingsAdvancedSection open={advancedOpen} onOpenChange={setAdvancedOpen}>
           <SettingsSwitchRow

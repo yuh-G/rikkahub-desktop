@@ -30,6 +30,7 @@ import {
 import type { Settings } from "~/types";
 
 import { reinstallPlugin, setPluginEnabled, uninstallPlugin, updatePlugin } from "./actions";
+import { PluginGuideLink } from "./guide-dialog";
 import { InstallDialog, type InstallDialogKind } from "./install-dialog";
 import {
   groupPlugins,
@@ -106,7 +107,9 @@ function HomeHeader() {
     >
       <div className="min-w-0">
         <h2 className="truncate text-base font-semibold text-[var(--ds-text-primary)]">{t("settings:plugins.title")}</h2>
-        <p className="mt-0.5 text-xs text-[var(--ds-text-secondary)]">{t("settings:plugins.description")}</p>
+        <p className="mt-0.5 text-xs text-[var(--ds-text-secondary)]">
+          {t("settings:plugins.description")} <PluginGuideLink />
+        </p>
       </div>
       <HomeToolbar />
     </div>

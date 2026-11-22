@@ -1442,6 +1442,59 @@
     "retry": "重试",
     "not_found": "找不到这个插件，可能已经卸载。",
     "back_home": "回到插件首页",
+    "guide_entry": "使用说明",
+    "guide": {
+      "title": "插件使用说明",
+      "intro": "插件是为 pi 引擎写的扩展包，可以给工作区会话增加工具、指令和自动化行为。下面说明它在应用里怎么运行、哪些部分不生效、出了问题去哪里看。",
+      "trust": {
+        "title": "先了解：插件是在你电脑上运行的代码",
+        "code": "插件和应用有同样的权限：能读写你的文件、联网、启动别的程序，也能拿到当前会话所用模型的密钥。应用不检查插件做什么，也无法保证它按描述工作。",
+        "process": "插件运行在单独的引擎进程里，一个插件卡死或崩溃不会拖垮整个应用；但这不是沙箱，挡不住恶意插件。",
+        "sources": "只安装你信任的来源，安装前看一下插件的主页和说明。"
+      },
+      "use": {
+        "title": "怎么用",
+        "enable": "装好后，在输入框左下角「$t(input:integrations.title)」→「$t(settings:subnav.extensions.plugins)」里为当前会话开启；想让某个助手的新会话默认开启，去「设置 → $t(settings:nav.assistants) → $t(settings:assistants.extensions.title)」。",
+        "workspace_only": "插件只在工作区会话里加载，对话模式里不生效。",
+        "changes": "为会话开启或关闭插件、停用或卸载插件、改插件的工具开关，都从下一条消息起生效，正在进行的回复不受影响。"
+      },
+      "overlap": {
+        "title": "哪些部分不会生效",
+        "app_owned": "应用自己负责的部分，插件登记了也不生效：模型与登录（添加供应商、切换模型、改思考档位），改写发给模型的请求，新建、分叉、切换会话，入口类指令（/settings、/model、/new、/fork 等，以应用的为准），工具调用前的权限询问（见下方「审批」）。",
+        "mcp": "插件声明的 MCP 服务不在插件里运行，而是登记进「设置 → $t(settings:nav.extensions) → $t(settings:subnav.extensions.mcp)」，标「来自插件」；它跟着插件启用、停用，也可以在 MCP 页单独关掉。",
+        "terminal": "依赖终端界面的部分不支持：主题、快捷键、自定义的终端组件与消息渲染。",
+        "background": "后台子任务不支持：插件另起一个命令行进程跑的任务会直接失败。在当前会话里跑的子任务可以用。",
+        "resources": "插件包里附带的技能、提示词模板和主题不会加载；技能在「设置 → $t(settings:nav.extensions) → $t(settings:subnav.extensions.skills)」里管理。",
+        "same_name": "与应用自带工具同名的插件工具不会加载（包括工作区的读写文件、执行命令等工具）。",
+        "where": "插件详情页顶部会提示有几项功能没有生效，点「$t(settings:plugins.view)」进「$t(settings:plugins.tab_audit)」，逐条写明哪部分没生效、为什么。运行记录在插件第一次随会话加载之后才有，只保留本次启动以来的。"
+      },
+      "search": {
+        "title": "联网搜索类插件",
+        "coexist": "搜索、抓取网页类的插件工具与应用自带的联网搜索同时可用，由模型自己挑。插件工具按下方「审批」的规则询问，结果显示成普通的工具卡。",
+        "turn_off": "只想用一边：关应用的，点输入框左下角的搜索按钮，在弹出的「$t(input:search.title)」面板里关掉「$t(input:search.web_title)」（对所有会话生效）；关插件的，在插件详情「$t(settings:plugins.tab_tools)」里关掉那个工具，或者不在这个会话里开启这个插件。"
+      },
+      "approval": {
+        "title": "审批",
+        "preset": "工作区会话里，插件工具和 MCP 工具问不问只看输入框左下角的权限档位：「$t(input:workspace_permission.confirm_each)」每次都问，「$t(input:workspace_permission.balanced)」和「$t(input:workspace_permission.full_access)」不问。档位中途改了，下一次调用就按新的来。",
+        "always_allow": "审批卡上可以选「$t(message:tool_part.always_allow)」：本会话里这个工具不再询问，重启应用后恢复询问。",
+        "mcp_switch": "MCP 工具的「$t(settings:mcp.server.needs_approval)」开关只在对话模式里起作用。",
+        "sub_tasks": "插件在当前会话里跑子任务时，子任务里的读写与命令也按档位判定；这些调用没有审批卡，需要你确认的会直接拒绝。",
+        "hook": "有的插件会在工具调用前自己弹窗询问，这类询问不会显示，那一次的拦截作废，审批交给应用；插件不弹窗直接拒绝的照常生效，工具卡上写「被插件 … 拒绝」。不想让某个插件拦截，在它的详情页「$t(settings:plugins.tab_overview)」→「$t(settings:common.advanced)」里关掉「$t(settings:plugins.hook_tool_call)」。"
+      },
+      "data": {
+        "title": "插件的数据",
+        "home": "按 pi 的约定保存配置的插件，数据在应用数据目录的 engines/pi 下；不少插件还会往你的用户主目录写东西（如 ~/.pi-lens、~/.context-mode）。卸载插件会移除插件包和它登记的 MCP 服务，插件自己存下的数据不会清理，需要的话自己删。",
+        "backup": "桌面端之间的备份会带上插件清单，不带插件包和插件自己存的数据；换一台电脑恢复后，到插件页重新安装。给 APP端的备份不带插件。"
+      },
+      "engine": {
+        "title": "引擎进程与重启提示",
+        "process": "插件和工作区会话跑在单独的引擎进程里：打开工作区会话时启动，闲置 15 分钟后自动退出，下次用到时再启动。",
+        "unresponsive": "「$t(page:conversations.engine_status.unresponsive)」：引擎进程 5 秒没有回应，常见于第一次加载一批插件，或在很大的目录里搜索。可以等一等；点停止会立即结束它、换一个新进程。60 秒仍没有回应，会自动结束并重启。",
+        "crashed": "「$t(settings:app_errors.codes.engine_host_crashed)」这类提示：引擎进程崩溃或被强制结束后会马上换一个新的。如果当时正在回复，这一轮以失败结束，排队的消息会暂停，可以点重新生成。",
+        "gave_up": "「……连续 3 次意外退出，已停止重启」：5 分钟内出事 3 次就不再自动重启，提示里会列出当前启用的插件，多半是其中一个造成的。先停用它们再重新生成；改动插件或重新生成都会让应用再试。",
+        "where": "重启与停止重启的提示都记在「设置 → $t(settings:nav.stats) → $t(settings:subnav.stats.logs)」的「$t(settings:logs.filter_errors)」里。"
+      }
+    },
     "audit": {
       "pi_plugin_removed": "{{subject}} 没有加载：与应用保留的名字或别的插件重名",
       "pi_plugin_unsupported": "{{subject}} 已登记，但应用不支持，不会生效",
