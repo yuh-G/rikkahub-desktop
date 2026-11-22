@@ -41,3 +41,8 @@ export function isToolPart(part: UIMessagePart): part is ToolPart {
 export function isDocumentPart(part: UIMessagePart): part is DocumentPart {
   return part.type === "document";
 }
+
+/** 只有 notice 的消息(APP 空闲时收到运行时通知开的那一轮):不是谁说的话,不当气泡显示。 */
+export function isNoticeOnly(parts: UIMessagePart[]): boolean {
+  return parts.length > 0 && parts.every((part) => part.type === "notice");
+}

@@ -8,6 +8,7 @@ import { ChainOfThought, type ChainOfThoughtProps } from "./chain-of-thought";
 import { AudioPart } from "./parts/audio-part";
 import { DocumentPart } from "./parts/document-part";
 import { ImagePart } from "./parts/image-part";
+import { NoticeStepPart } from "./parts/notice-part";
 import { ReasoningStepPart } from "./parts/reasoning-step-part";
 import { TextPart } from "./parts/text-part";
 import { ToolPart as ToolStepPart, PendingToolAttentionCard } from "./parts/tool-part";
@@ -105,6 +106,8 @@ function renderContentPart(
       );
     case "loading":
       return <TypingIndicator className="px-1 py-2" />;
+    case "notice":
+      return null;
   }
 }
 
@@ -206,6 +209,17 @@ export const MessageParts = React.memo(
                         key={stepKey}
                         reasoning={step.reasoning}
                         messageLoading={loading}
+                        isFirst={isFirst}
+                        isLast={isLast}
+                      />
+                    );
+                  }
+
+                  if (step.type === "notice") {
+                    return (
+                      <NoticeStepPart
+                        key={`notice-${step.partIndex}`}
+                        notice={step.notice}
                         isFirst={isFirst}
                         isLast={isLast}
                       />

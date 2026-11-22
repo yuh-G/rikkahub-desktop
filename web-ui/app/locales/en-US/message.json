@@ -183,6 +183,9 @@
     "ls": "List directory",
     "ls_title": "List directory: {{path}}"
   },
+  "notice": {
+    "retry": "Retry"
+  },
   "plugin": {
     "from": "From plugin {{plugin}}",
     "from_unknown": "From a plugin",

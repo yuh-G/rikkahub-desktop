@@ -11,6 +11,7 @@ export type {
   ReasoningPart,
   ToolPart,
   ToolCardAttribution,
+  NoticePart,
   LoadingPart,
   ToolErrorOutput,
   ToolPendingOutput,

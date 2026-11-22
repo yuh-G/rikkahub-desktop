@@ -304,6 +304,8 @@ function getQuickJumpPreview(
         : t("conversations.preview.tool_call");
     case "loading":
       return t("conversations.preview.thinking");
+    case "notice":
+      return truncatePreviewText(fallbackPart.title.trim().replace(/\s+/g, " "));
     case "text":
       return t("conversations.preview.empty_message");
   }

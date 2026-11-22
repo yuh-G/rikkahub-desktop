@@ -41,6 +41,7 @@ import { getConversation, persistConversation, selectedConversationMessages } fr
 import { reportError } from "../observability/app-errors";
 import { findAssistant, summaryAsText } from "./helpers";
 import { agentSummaryAsText, buildAgentCompactionContext, extractAgentActivity } from "../workspace/compaction";
+import { expandNotices } from "../inference-engine/notices";
 
 export function cleanAuxiliaryText(text: string, fallback = "") {
   const cleaned = text.replace(/^["“”'‘’]+|["“”'‘’]+$/g, "").trim();
@@ -558,7 +559,8 @@ export async function compressConversation(conversation: Conversation, additiona
       isAgent ? buildAgentCompactionContext(extractAgentActivity(chunk)) : "",
     ].filter(Boolean);
     const prompt = applyPlaceholders(state.settings.compressPrompt || DEFAULT_COMPRESS_PROMPT, {
-      content: chunk.map(summarize).join("\n\n"),
+      // notice 照 APP 在压缩输入里同样拆开,它的原文才会进摘要。
+      content: expandNotices(chunk).map(summarize).join("\n\n"),
       target_tokens: String(targetTokens),
       additional_context: contextSections.join("\n\n"),
       locale: localeDisplayName(),

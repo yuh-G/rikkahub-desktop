@@ -86,6 +86,7 @@ function visiblePart(part: MessagePart): JsonValue {
     case "audio": return [part.type, part.url];
     case "document": return ["document", part.url, part.fileName, part.mime];
     case "tool": return ["tool", part.toolCallId, part.toolName, part.input, part.output.map(visibleOutput)];
+    case "notice": return ["notice", part.text];
     case "loading": return null;
   }
 }

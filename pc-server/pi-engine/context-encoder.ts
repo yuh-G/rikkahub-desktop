@@ -311,14 +311,22 @@ function decodeWithFidelity(message: Message, fidelity: FidelityAnnotation): PiA
 
 /** legacy 路径:无注解(P2-P6 存量)或注解失配(编辑过)。剥 thinking(无签名不可复签,
  *  剥净是唯一合法重放),启发式分组:连续 tool part 段结束后遇到非 tool part 即断消息
- *  (provider 通例:toolCall 恒收尾 assistant 消息)。 */
+ *  (provider 通例:toolCall 恒收尾 assistant 消息)。notice 片段(APP 一轮中途到达的运行时通知)在原位置
+ *  断开,编成一条只带 text 的用户消息(与聊天引擎的 expandNotices 同一规则)。 */
 function decodeLegacy(message: Message, fallbackModelId: string): PiAgentMessage[] {
   const timestamp = timestampOf(message);
-  const groups: Array<{ texts: string[]; toolParts: ToolPartView[] }> = [];
+  const groups: Array<{ texts: string[]; toolParts: ToolPartView[] } | { notice: string }> = [];
   let current = { texts: [] as string[], toolParts: [] as ToolPartView[] };
   let sawTool = false;
   for (const part of message.parts) {
     if (!isRecord(part)) continue;
+    if (part.type === "notice") {
+      if (current.texts.length || current.toolParts.length) groups.push(current);
+      current = { texts: [], toolParts: [] };
+      sawTool = false;
+      groups.push({ notice: String(part.text ?? "") });
+      continue;
+    }
     if (part.type === "tool") {
       current.toolParts.push(part as ToolPartView);
       sawTool = true;
@@ -337,6 +345,10 @@ function decodeLegacy(message: Message, fallbackModelId: string): PiAgentMessage
 
   const out: PiAgentMessage[] = [];
   for (const group of groups) {
+    if ("notice" in group) {
+      if (group.notice) out.push({ role: "user", content: [{ type: "text", text: group.notice }], timestamp });
+      continue;
+    }
     const content: AssistantMessage["content"] = [];
     for (const text of group.texts) content.push({ type: "text", text });
     for (const toolPart of group.toolParts) {
@@ -389,7 +401,8 @@ export function encodeNeutralMessage(
     return { messages: encoded ? [encoded] : [], degraded: false };
   }
   if (message.role !== "ASSISTANT") return { messages: [], degraded: false };
-  const fidelity = fidelityOf(message);
+  // 保真注解只来自桌面端自己的生成,不认识 notice;带 notice 的行一律走 legacy,免得它被静默丢掉。
+  const fidelity = message.parts.some((part) => part.type === "notice") ? null : fidelityOf(message);
   const decoded = fidelity ? decodeWithFidelity(message, fidelity) : null;
   if (decoded) return { messages: decoded, degraded: false };
   const legacy = decodeLegacy(message, fallbackModelId);

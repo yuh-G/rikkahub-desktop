@@ -28,7 +28,7 @@ export function parseEngineCompactions(raw: JsonValue[] | null | undefined): Eng
   return records;
 }
 
-/** 该行能否编出 ≥1 个引擎条目。USER 行看模型可见输入,ASSISTANT 行看有无文本或工具卡,
+/** 该行能否编出 ≥1 个引擎条目。USER 行看模型可见输入,ASSISTANT 行看有无文本、工具卡或 notice,
  *  SYSTEM 行不进引擎上下文。 */
 function encodesToEntries(message: Message, model: Model): boolean {
   if (message.role === "USER") {
@@ -36,7 +36,7 @@ function encodesToEntries(message: Message, model: Model): boolean {
     return Boolean(input.text) || input.images.length > 0;
   }
   if (message.role === "ASSISTANT") {
-    return message.parts.some((part) => isRecord(part) && (part.type === "text" || part.type === "tool"));
+    return message.parts.some((part) => isRecord(part) && (part.type === "text" || part.type === "tool" || part.type === "notice"));
   }
   return false;
 }

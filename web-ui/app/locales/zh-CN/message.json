@@ -183,6 +183,9 @@
     "ls": "列出目录",
     "ls_title": "列出目录：{{path}}"
   },
+  "notice": {
+    "retry": "重试"
+  },
   "plugin": {
     "from": "来自插件 {{plugin}}",
     "from_unknown": "来自插件",

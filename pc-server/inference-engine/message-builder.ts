@@ -115,6 +115,11 @@ export function contentPartsForApi(parts: MessagePart[], targetModel?: Model) {
     } else if (part.type === "audio" || part.type === "video") {
       const url = String(part.url ?? "");
       if (url) result.push({ type: "text", text: `[${part.type}: ${url}]` });
+    } else if (part.type === "notice") {
+      // 只有 notice 的用户消息(APP 空闲时收到运行时通知开的那一轮):发 text,title 只给界面。聊天引擎在这之前已由
+      // expandNotices 拆开,走到这里的是工作区引擎的用户行与本轮输入。
+      const text = String(part.text ?? "");
+      if (text) result.push({ type: "text", text });
     }
   }
   return result;
