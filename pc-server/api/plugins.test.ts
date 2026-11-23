@@ -2,7 +2,8 @@
 // → 卸载删包并解除所有助手的绑定;不是 pi 插件的包装上后立即卸掉。安装走真实子进程(本程序以 bun 身份运行包管理器)。
 // npm 来源用 `bun pm pack` 打的压缩包:Windows 上 bun 1.4.2 装 file:<目录> 会在拷贝阶段报 EPERM(目录插件走本地来源)。
 // 上传(P6.2.3):三种格式各装通一次、同名 409 与 replace=1、存档丢失、搬动数据目录后安装根仍能再装别的包。
-import { afterAll, describe, expect, test } from "bun:test";
+// 打开所在文件夹:起文件管理器的那一下换成假的,只断言命令与闸门。
+import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -19,6 +20,7 @@ const { pluginAudit, recordPluginAudit } = await import("../engines/plugin-audit
 const { pluginMcpServerId } = await import("../engines/plugin-mcp");
 const { useInProcessPiDriver } = await import("../test-utils/in-process-pi");
 const { appClients } = await import("./sse");
+const { markRequestNetworkContext } = await import("./net-context");
 
 jsonStore.setState(defaultState());
 const lab = mkdtempSync(join(tmpdir(), "rkh-plugins-api-lab-"));
@@ -335,4 +337,43 @@ describe("插件管理端点", () => {
     expect((await upload("x.exe", new Uint8Array([1]))).body.errorCode).toBe("plugin_upload_invalid");
     expect((await upload("x.tgz", new Uint8Array([1]), { engine: "chat" })).body.errorCode).toBe("plugin_engine_unsupported");
   }, 180_000);
+
+  test("打开所在文件夹:只给本机直连;目录直接打开,单个脚本打开所在文件夹并选中;路径取自记录;文件不在时报错", async () => {
+    async function reveal(body: unknown, loopback = true) {
+      const url = new URL("http://127.0.0.1/api/plugins/reveal");
+      const request = new Request(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (loopback) markRequestNetworkContext(request, "127.0.0.1");
+      const response = await handlePluginRoutes(request, url, "plugins/reveal");
+      return { status: response!.status, body: (await response!.json()) as Record<string, any> };
+    }
+    const dir = writePackage("reveal-dir", { name: "reveal-dir" }, { "index.js": PLUGIN_SOURCE });
+    expect((await call("plugins/install", { source: { kind: "local", spec: dir } })).status).toBe(200);
+    const script = await upload("reveal-one.ts", new TextEncoder().encode(PLUGIN_SOURCE));
+    const scriptPath = script.body.plugin.path as string;
+    const spawn = spyOn(Bun, "spawn").mockImplementation((() => ({})) as never);
+    try {
+      expect((await reveal({ id: "pi:reveal-dir" }, false)).status).toBe(403);
+      expect((await reveal({ id: "pi:nope" })).status).toBe(404);
+      expect(spawn).not.toHaveBeenCalled();
+
+      expect((await reveal({ id: "pi:reveal-dir", path: "C:\\Windows" })).status).toBe(200);
+      expect((await reveal({ id: "pi:reveal-one" })).status).toBe(200);
+      const commands = spawn.mock.calls.map((args) => args[0] as unknown as string[]);
+      if (process.platform === "win32") {
+        expect(commands).toEqual([["explorer.exe", dir], ["explorer.exe", "/select,", scriptPath]]);
+      } else if (process.platform === "darwin") {
+        expect(commands).toEqual([["open", dir], ["open", "-R", scriptPath]]);
+      } else {
+        expect(commands).toEqual([["xdg-open", dir], ["xdg-open", dirname(scriptPath)]]);
+      }
+
+      renameSync(dir, `${dir}.gone`);
+      expect((await reveal({ id: "pi:reveal-dir" })).body.errorCode).toBe("plugin_not_installed");
+      renameSync(`${dir}.gone`, dir);
+      expect(spawn).toHaveBeenCalledTimes(2);
+    } finally {
+      spawn.mockRestore();
+    }
+    for (const id of ["pi:reveal-dir", "pi:reveal-one"]) expect((await call("plugins/uninstall", { id })).status).toBe(200);
+  }, 60_000);
 });

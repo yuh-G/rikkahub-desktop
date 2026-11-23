@@ -1381,6 +1381,8 @@
     "open_homepage": "Open homepage",
     "copy_name": "Copy package name",
     "copy_path": "Copy path",
+    "open_folder": "Open folder",
+    "reveal_failed": "Couldn't open the folder",
     "copied": "Copied",
     "action_failed": "Action failed",
     "updated": "Updated {{name}} to {{version}}",

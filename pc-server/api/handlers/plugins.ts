@@ -1,4 +1,4 @@
-// api/handlers/plugins.ts — 引擎插件管理(P5.8,方案 §5.9):列表 / 详情 / 审计 / 安装 / 重装 / 卸载 / 启停 / 开关
+// api/handlers/plugins.ts — 引擎插件管理(P5.8,方案 §5.9):列表 / 详情 / 审计 / 安装 / 重装 / 卸载 / 启停 / 开关 / 打开所在文件夹
 //
 // 插件记录住 settings.enginePlugins,助手绑定住 assistant.enginePluginIds(绑定的端点在 settings 路由)。
 // 安装:npm / git 来源经 engines/plugin-installer 装进 <数据目录>/engines/<engine>/npm,本地来源原地使用;
@@ -15,7 +15,7 @@
 // 重发即替换那一条。压缩包的重装用存档再装一次,脚本的重装重新试加载;卸载连上传的文件一起删。
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, extname, isAbsolute, join } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { updateSettings } from "../../app-config";
 import { reportEngineError } from "../../engines/host";
 import { enginePluginsChanged, inspectEnginePlugin } from "../../engines/index";
@@ -66,6 +66,7 @@ import { syncMcpServerTools } from "../../tools/mcp";
 import { ensureFreshMcpToken } from "../../tools/mcp-oauth";
 import { pluginMcpSource } from "../../tools/mcp-source";
 import { addLog } from "../logs";
+import { isLoopbackRequest } from "../net-context";
 import { error, json, readJson } from "../request";
 import { broadcastPluginInstallProgress } from "../sse";
 
@@ -264,6 +265,19 @@ function failure(err: unknown): Response {
   throw err;
 }
 
+/** 用系统文件管理器打开插件所在的位置:目录直接打开,单个脚本(上传的 .js / .ts)打开所在文件夹并选中它。
+ *  路径取自记录,不收界面传来的路径。 */
+function revealPluginLocation(target: string): void {
+  const isDir = statSync(target).isDirectory();
+  const command =
+    process.platform === "win32"
+      ? isDir ? ["explorer.exe", target] : ["explorer.exe", "/select,", target]
+      : process.platform === "darwin"
+        ? isDir ? ["open", target] : ["open", "-R", target]
+        : ["xdg-open", isDir ? target : dirname(target)];
+  Bun.spawn(command, { stdout: "ignore", stderr: "ignore" });
+}
+
 /** 上传的预检用 pi 的规则(目前只有 pi 有插件运行时):zip 解出的包根找入口,单个脚本试加载一次。 */
 const PI_UPLOAD_CHECKS: UploadChecks = {
   packageEntryError: (dir) => piPluginEntryError({ id: "upload", path: dir }),
@@ -342,6 +356,22 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
   if (path === "plugins/audit" && request.method === "GET") {
     const pluginId = url.searchParams.get("id") ?? "";
     return json({ audit: pluginAudit(pluginId) } satisfies EnginePluginAuditDto);
+  }
+  // 起的是服务端这台机器上的文件管理器,只给本机直连(远程浏览器访问时界面显示「复制路径」)。
+  if (path === "plugins/reveal" && request.method === "POST") {
+    if (!isLoopbackRequest(request)) return error("Forbidden: this endpoint is loopback-only", 403);
+    const body = await readJson<{ id?: unknown }>(request);
+    const record = findRecord(body.id);
+    if (!record) return error("Plugin not found", 404);
+    const target = resolve(locateEnginePlugin(record));
+    if (!existsSync(target)) return error("插件的文件不在了,可以重新安装", 400, "plugin_not_installed");
+    try {
+      revealPluginLocation(target);
+    } catch (err) {
+      // 起不来文件管理器(系统里没有 xdg-open 之类):原因回给界面,由界面 toast 报。
+      return error(err instanceof Error ? err.message : String(err), 500, "plugin_reveal_failed");
+    }
+    return json({ status: "ok" });
   }
   if (path === "plugins/install" && request.method === "POST") {
     const body = await readJson<{ engine?: unknown; source?: unknown; progressKey?: unknown }>(request);

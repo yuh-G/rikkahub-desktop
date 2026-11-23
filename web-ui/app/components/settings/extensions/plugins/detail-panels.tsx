@@ -1,19 +1,19 @@
 // 插件详情的三个页签内容(方案 P6.2「视图二」):概览(说明 + 在哪里用 + 高级设置 | 信息卡)、工具与指令、运行记录。
 import * as React from "react";
-import { ArrowUpRight, Copy } from "lucide-react";
+import { ArrowUpRight, Copy, FolderOpen } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { ExpandChevron, ToolSwitch } from "~/components/settings/extensions/common";
 import { SettingsAdvancedSection, SettingsEmpty, SettingsGroup, SettingsSwitchRow } from "~/components/settings/shared";
 import { Button } from "~/components/ui/button";
 import { StatusBadge } from "~/components/ui/status-badge";
-import { openExternal } from "~/lib/external-link";
+import { isDesktopShell, openExternal } from "~/lib/external-link";
 import { cn } from "~/lib/utils";
 import { openSettingsDialog } from "~/stores/settings-dialog-store";
 import type { Settings } from "~/types";
 import type { EnginePluginDetailDto, EnginePluginRecord, EnginePluginViewDto, PluginAuditEntryDto } from "~/types/plugins";
 
-import { setPluginToolCallHook, setPluginToolSwitch } from "./actions";
+import { revealPlugin, setPluginToolCallHook, setPluginToolSwitch } from "./actions";
 import { PluginGuideLink } from "./guide-dialog";
 import { parseAuditSubject, pluginSourceLabel, registeredPluginMcpServer, stripRelativeImages } from "./model";
 import { copyText, InfoRow, PanelSkeleton, ReadmeBlock, RelativeTime } from "./parts";
@@ -133,19 +133,29 @@ function InfoCard({
         ) : null}
         {view?.path ? (
           <InfoRow label={t("settings:plugins.info_location")}>
-            <button
-              type="button"
-              title={view.path}
-              className="inline-flex items-center gap-1 text-[var(--ds-text-secondary)] hover:text-[var(--ds-text-primary)]"
-              onClick={() => void copyText(view.path)}
-            >
-              <Copy className="size-3" />
-              {t("settings:plugins.copy_path")}
-            </button>
+            <PluginLocationButton record={record} view={view} />
           </InfoRow>
         ) : null}
       </dl>
     </aside>
+  );
+}
+
+/** 桌面端打开所在文件夹;浏览器访问时服务端不在你这台机器上,改为复制路径。文件不在(还没装好)也只能复制。 */
+function PluginLocationButton({ record, view }: { record: EnginePluginRecord; view: EnginePluginViewDto }) {
+  const { t } = useTranslation();
+  const reveal = isDesktopShell() && view.installed;
+  const Icon = reveal ? FolderOpen : Copy;
+  return (
+    <button
+      type="button"
+      title={view.path}
+      className="inline-flex items-center gap-1 text-[var(--ds-text-secondary)] hover:text-[var(--ds-text-primary)]"
+      onClick={() => void (reveal ? revealPlugin(record) : copyText(view.path))}
+    >
+      <Icon className="size-3" />
+      {t(reveal ? "settings:plugins.open_folder" : "settings:plugins.copy_path")}
+    </button>
   );
 }
 

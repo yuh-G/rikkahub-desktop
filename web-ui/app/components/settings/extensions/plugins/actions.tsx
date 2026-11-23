@@ -100,6 +100,15 @@ export async function uninstallPlugin(record: EnginePluginRecord, onRemoved?: ()
   toast.success(i18n.t("settings:plugins.uninstalled", { name: record.name }));
 }
 
+/** 用系统文件管理器打开插件所在的文件夹(单个脚本则选中它);只在桌面端用,失败用 toast 报。 */
+export async function revealPlugin(record: EnginePluginRecord): Promise<void> {
+  try {
+    await pluginsApi.reveal(record.id);
+  } catch (error) {
+    toast.error(extractErrorMessage(error, i18n.t("settings:plugins.reveal_failed")));
+  }
+}
+
 /** 详情「⋯」里的检查更新:绕过后端缓存查一次,结果用 toast 报。 */
 export async function checkPluginUpdate(record: EnginePluginRecord): Promise<void> {
   const updates = await busyWhile(record.id, () => refreshPluginUpdates(true));

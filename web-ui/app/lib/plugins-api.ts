@@ -35,6 +35,7 @@ export const pluginsApi = {
   reinstall: (id: string) => api.post<EnginePluginMutationDto>("plugins/reinstall", { id, progressKey: id }, LONG),
   update: (id: string) => api.post<EnginePluginMutationDto>("plugins/update", { id, progressKey: id }, LONG),
   uninstall: (id: string) => api.post<{ status: "ok" }>("plugins/uninstall", { id }, LONG),
+  reveal: (id: string) => api.post<{ status: "ok" }>("plugins/reveal", { id }),
   setEnabled: (id: string, enabled: boolean) => api.post<EnginePluginMutationDto>("plugins/enabled", { id, enabled }),
   setSwitches: (
     id: string,

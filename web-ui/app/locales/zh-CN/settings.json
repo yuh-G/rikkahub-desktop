@@ -1381,6 +1381,8 @@
     "open_homepage": "打开主页",
     "copy_name": "复制包名",
     "copy_path": "复制路径",
+    "open_folder": "打开文件夹",
+    "reveal_failed": "没能打开文件夹",
     "copied": "已复制",
     "action_failed": "操作失败",
     "updated": "已更新 {{name}} 到 {{version}}",
