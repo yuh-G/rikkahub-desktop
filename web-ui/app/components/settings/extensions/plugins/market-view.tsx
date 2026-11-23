@@ -142,7 +142,7 @@ function MarketHeader({
     // 吸顶同首页:滚离顶部后显出下缘细线。
     <div
       className={cn(
-        "sticky top-0 z-10 -mt-1 space-y-3 border-b bg-[var(--ds-surface-200)] pt-1 pb-3 transition-colors duration-(--ds-duration-fast)",
+        "sticky top-0 z-10 -mx-3 -mt-1 space-y-3 border-b bg-[var(--ds-surface-200)] px-3 pt-1 pb-3 transition-colors duration-(--ds-duration-fast)",
         scrolled ? "border-[var(--ds-divider)]" : "border-transparent",
       )}
     >

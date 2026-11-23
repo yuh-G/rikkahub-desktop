@@ -887,6 +887,7 @@ export function SettingsListRow({
   onMove,
   actions,
   badge,
+  trailing,
 }: {
   id: string;
   index: number;
@@ -898,6 +899,8 @@ export function SettingsListRow({
   actions?: readonly SettingsRowAction[];
   /** 行尾常驻徽标(与「⋯」同位互换);不供操作菜单时也可单独用作纯展示徽标。 */
   badge?: React.ReactNode;
+  /** 行尾槽左边的常驻控件(如开关):在选中按钮之外,点它不触发 onSelect。 */
+  trailing?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -957,6 +960,7 @@ export function SettingsListRow({
         <button type="button" className="min-w-0 flex-1" onClick={onSelect}>
           {children}
         </button>
+        {trailing != null ? <div className="flex shrink-0 items-center gap-3">{trailing}</div> : null}
 
         {/* 行尾槽:常驻徽标与「⋯」触发钮同位(grid 叠放),悬停/聚焦/菜单打开时互换。
             「⋯」后渲染,叠在上层(网格同位后出者压先出者),保证始终可点——不被徽标挡住。 */}

@@ -1374,7 +1374,6 @@
       "upload": "上传的文件"
     },
     "enable": "启用",
-    "disable": "停用",
     "update_to": "更新到 {{version}}",
     "updating": "正在更新…",
     "reinstall": "重新安装",

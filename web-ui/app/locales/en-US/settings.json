@@ -1374,7 +1374,6 @@
       "upload": "Uploaded file"
     },
     "enable": "Enable",
-    "disable": "Disable",
     "update_to": "Update to {{version}}",
     "updating": "Updating…",
     "reinstall": "Reinstall",

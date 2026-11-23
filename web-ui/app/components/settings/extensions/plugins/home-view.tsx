@@ -1,5 +1,5 @@
 // 插件页首页(方案 P6.2「视图一」):已安装的插件按引擎分组;右上是搜索 / 筛选 / 排序、去市场、添加。标题行吸顶,
-// 滚离顶部后显出下缘细线。行整行可点进详情,快速启停与更新、重装、卸载走行尾「⋯」(行上不放开关,与 MCP 页一致)。
+// 滚离顶部后显出下缘细线。行整行可点进详情;行尾是开关(启停最常用,一眼看得出开着没有),更新、重装、卸载走「⋯」。
 import * as React from "react";
 import { ArrowUpDown, ChevronDown, FolderCode, Package, Plus, Puzzle, SlidersHorizontal, Store, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -16,6 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
+import { Switch } from "~/components/ui/switch";
 import { cn } from "~/lib/utils";
 import {
   DEFAULT_PLUGIN_FILTERS,
@@ -101,7 +102,7 @@ function HomeHeader() {
     // 吸顶:底色同设置面板,滚离顶部后才显出下缘细线。内容区窄于 40rem 时工具栏折到标题下一行。
     <div
       className={cn(
-        "sticky top-0 z-10 -mt-1 flex flex-col gap-3 border-b bg-[var(--ds-surface-200)] pt-1 pb-3 transition-colors duration-(--ds-duration-fast) @min-[40rem]:flex-row @min-[40rem]:items-start @min-[40rem]:justify-between",
+        "sticky top-0 z-10 -mx-3 -mt-1 flex flex-col gap-3 border-b bg-[var(--ds-surface-200)] px-3 pt-1 pb-3 transition-colors duration-(--ds-duration-fast) @min-[40rem]:flex-row @min-[40rem]:items-start @min-[40rem]:justify-between",
         scrolled ? "border-[var(--ds-divider)]" : "border-transparent",
       )}
     >
@@ -217,11 +218,6 @@ function PluginRow({ row, index }: { row: PluginRowModel; index: number }) {
   const source = pluginSourceLabel(record.source);
   const subtitle = pluginSubtitle(record) ?? `${t(`settings:plugins.source.${source.kind}`)} · ${source.detail}`;
   const actions: SettingsRowAction[] = [
-    {
-      key: "enabled",
-      label: t(record.enabled ? "settings:plugins.disable" : "settings:plugins.enable"),
-      onSelect: () => setPluginEnabled(record, !record.enabled),
-    },
     ...(update?.hasUpdate && update.latest && row.view?.installed !== false
       ? [{ key: "update", label: t("settings:plugins.update_to", { version: update.latest }), onSelect: () => updatePlugin(record) }]
       : []),
@@ -245,9 +241,21 @@ function PluginRow({ row, index }: { row: PluginRowModel; index: number }) {
         id={record.id}
         index={index}
         onSelect={() => pushPluginView({ kind: "detail", pluginId: record.id })}
-        // 重装 / 更新进行中不给菜单(后端同一引擎的安装是串行的),行尾是进度环(卸载是转圈)。
+        // 行尾三格:时间(重装 / 更新进行中换成进度环,卸载是转圈)| 开关 |「⋯」。「⋯」不悬停时透明但占位,开关在各行对齐;
+        // 忙碌时不给菜单(后端同一引擎的安装是串行的),由空占位顶住同一格。
+        trailing={
+          <>
+            {busy ? <PluginBusyIndicator busyKey={record.id} className="size-6" /> : <RelativeTime at={record.installedAt} />}
+            <Switch
+              aria-label={t("settings:plugins.enable")}
+              checked={record.enabled}
+              disabled={busy}
+              onCheckedChange={(checked) => void setPluginEnabled(record, checked)}
+            />
+          </>
+        }
         actions={busy ? undefined : actions}
-        badge={busy ? <PluginBusyIndicator busyKey={record.id} className="size-6" /> : <RelativeTime at={record.installedAt} />}
+        badge={busy ? <span className="size-6" /> : undefined}
       >
         <div className="flex min-w-0 items-center gap-3 text-left">
           <PluginIconTile />

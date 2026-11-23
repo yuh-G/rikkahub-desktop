@@ -47,7 +47,8 @@ export function PluginsSection({ settings }: SectionProps) {
 
   return (
     // overflow-x-clip:滑入的 8px 不撑出横向滚动条(clip 不成为滚动容器,吸顶仍相对设置的内容面板)。
-    <div ref={rootRef} className="@container overflow-x-clip">
+    // 两侧各留 12px 再裁:列表行的悬停底色、返回键的底色向外伸出 8–10px,裁在内容边上会切掉圆角与左半截。
+    <div ref={rootRef} className="@container -mx-3 overflow-x-clip px-3">
       <div
         key={viewKey}
         className={cn(
