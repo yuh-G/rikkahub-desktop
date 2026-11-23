@@ -1,7 +1,8 @@
 // 插件管理接口(pc-server/api/handlers/plugins.ts)的调用;返回形状见 types/plugins.ts。安装 / 重装 / 更新 / 上传可能要
-// 几分钟(后端上限 5 分钟),这几个关掉客户端的 30 秒超时。
+// 几分钟(后端上限 5 分钟),这几个关掉客户端的 30 秒超时。这几个带上界面的忙碌键(progressKey),后端按它推进度。
 import api, { ApiError, appendWebAuthQuery, notifyWebAuthRequired } from "~/services/api";
-import { setMarketSources, setPluginList, setPluginUpdates } from "~/stores/plugins-view-store";
+import { onAppEvent } from "~/services/app-events";
+import { setMarketSources, setPluginInstallProgress, setPluginList, setPluginUpdates } from "~/stores/plugins-view-store";
 import type {
   EnginePluginAuditDto,
   EnginePluginDetailDto,
@@ -29,10 +30,10 @@ export const pluginsApi = {
   audit: (id: string) => api.get<EnginePluginAuditDto>("plugins/audit", { searchParams: { id } }),
   updates: (refresh = false) =>
     api.get<EnginePluginUpdatesDto>("plugins/updates", { searchParams: refresh ? { refresh: "1" } : {} }),
-  install: (source: EnginePluginSource, engine = "pi") =>
-    api.post<EnginePluginMutationDto>("plugins/install", { engine, source }, LONG),
-  reinstall: (id: string) => api.post<EnginePluginMutationDto>("plugins/reinstall", { id }, LONG),
-  update: (id: string) => api.post<EnginePluginMutationDto>("plugins/update", { id }, LONG),
+  install: (source: EnginePluginSource, engine = "pi", progressKey?: string) =>
+    api.post<EnginePluginMutationDto>("plugins/install", { engine, source, progressKey }, LONG),
+  reinstall: (id: string) => api.post<EnginePluginMutationDto>("plugins/reinstall", { id, progressKey: id }, LONG),
+  update: (id: string) => api.post<EnginePluginMutationDto>("plugins/update", { id, progressKey: id }, LONG),
   uninstall: (id: string) => api.post<{ status: "ok" }>("plugins/uninstall", { id }, LONG),
   setEnabled: (id: string, enabled: boolean) => api.post<EnginePluginMutationDto>("plugins/enabled", { id, enabled }),
   setSwitches: (
@@ -54,11 +55,12 @@ export const pluginsApi = {
 
   /** 409 同名不是错误:交回已装的那条,界面问过后带 replace 重发。其它失败抛 ApiError(带后端的错误码)。
    *  走原生 fetch:ky 的错误收口只留 message / code,丢掉 409 里的 existing。 */
-  async upload(file: File, options: { engine?: string; replace?: boolean } = {}): Promise<PluginUploadResult> {
+  async upload(file: File, options: { engine?: string; replace?: boolean; progressKey?: string } = {}): Promise<PluginUploadResult> {
     const form = new FormData();
     form.append("file", file);
     form.append("engine", options.engine ?? "pi");
     if (options.replace) form.append("replace", "1");
+    if (options.progressKey) form.append("progressKey", options.progressKey);
     let res: Response;
     try {
       res = await fetch(appendWebAuthQuery("/api/plugins/upload"), { method: "POST", body: form });
@@ -91,4 +93,11 @@ export async function refreshPluginUpdates(refresh = false): Promise<EnginePlugi
 /** 市场源表(内置 + 用户添加)。失败时抛出,由市场视图显示重试。 */
 export async function refreshMarketSources(): Promise<void> {
   setMarketSources((await pluginsApi.marketSources()).sources);
+}
+
+/** 忙碌期间收这个键的安装进度(后端经应用事件通道推);返回退订。 */
+export function followInstallProgress(key: string): () => void {
+  return onAppEvent("plugin_install_progress", ({ key: eventKey, ...progress }) => {
+    if (eventKey === key) setPluginInstallProgress(key, progress);
+  });
 }

@@ -31,6 +31,20 @@ export interface EnginePluginMutationDto {
   plugin: EnginePluginViewDto;
 }
 
+/** 安装的一段进度:download = 解析并下载依赖(总数边解析边涨),install = 把包放进插件目录,check = 加载一次插件
+ *  做检查(没有计数)。计数是包管理器自己报的,只在那一段里有意义。 */
+export interface PluginInstallProgressDto {
+  phase: "download" | "install" | "check";
+  done: number;
+  total: number;
+  /** 下载段正在取的包。 */
+  item?: string;
+}
+
+/** /api/events 的 plugin_install_progress:安装 / 重装 / 更新的请求带了 progressKey 时推送(不重放、不落盘)。
+ *  key = 请求里的 progressKey(界面的忙碌键)。 */
+export type PluginInstallProgressEventDto = PluginInstallProgressDto & { key: string };
+
 /** POST plugins/upload 的 409:包名(单个脚本是文件名)与已装的一条相同。界面问过后带 replace=1 重发即替换它,
  *  替换沿用它的 id、启停、开关与各处的选择。 */
 export interface EnginePluginUploadConflictDto {

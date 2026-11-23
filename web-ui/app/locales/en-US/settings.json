@@ -1524,6 +1524,15 @@
     "market_sources": "Market sources",
     "install": "Install",
     "installing": "Installing…",
+    "progress": {
+      "starting": "Getting ready",
+      "step": "Step {{step}} of {{total}}",
+      "download": "Downloading dependencies",
+      "download_count": "Downloading dependencies: {{done}} of {{total}} packages",
+      "install": "Adding to the plugins folder",
+      "install_count": "Adding to the plugins folder: {{done}} of {{total}} packages",
+      "check": "Checking the plugin"
+    },
     "manage": "Manage",
     "monthly_downloads": "{{value}}/mo",
     "no_more": "No more results",

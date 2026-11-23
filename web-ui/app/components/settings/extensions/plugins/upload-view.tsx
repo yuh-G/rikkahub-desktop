@@ -1,7 +1,7 @@
 // 上传本地文件(方案 P6.2「视图五」):信任提示、拖放区(可聚焦,回车打开文件选择)、格式说明、上传并安装。前端只查
 // 扩展名与大小,其余校验在后端。成功 → toast + 用新插件的详情替换栈顶(返回即回首页);409 同名 → 问过后带 replace 重发。
 import * as React from "react";
-import { FileArchive, Loader2, Upload, X } from "lucide-react";
+import { FileArchive, Upload, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { SettingsStack } from "~/components/settings/shared";
@@ -9,12 +9,13 @@ import { Button } from "~/components/ui/button";
 import { Notice } from "~/components/ui/notice";
 import i18n from "~/i18n";
 import { extractErrorMessage } from "~/lib/error";
-import { pluginsApi } from "~/lib/plugins-api";
+import { followInstallProgress, pluginsApi } from "~/lib/plugins-api";
 import { cn } from "~/lib/utils";
 import { confirmDialog } from "~/stores/confirm-store";
 import { backPluginView, replacePluginView, setPluginBusy, usePluginsViewStore } from "~/stores/plugins-view-store";
 
 import { afterInstalled } from "./actions";
+import { InstallProgressGlyph, InstallProgressTooltip } from "./install-progress";
 import { pluginSourceLabel } from "./model";
 import { BackLink } from "./parts";
 
@@ -59,8 +60,9 @@ export function PluginUploadView({ backLabel }: { backLabel: string }) {
     if (!file || problem || uploading) return;
     setError(null);
     setPluginBusy("upload", true);
+    const unfollow = followInstallProgress("upload");
     try {
-      let result = await pluginsApi.upload(file);
+      let result = await pluginsApi.upload(file, { progressKey: "upload" });
       if (result.kind === "conflict") {
         const origin = pluginSourceLabel(result.existing.source);
         const replace = await confirmDialog({
@@ -71,7 +73,7 @@ export function PluginUploadView({ backLabel }: { backLabel: string }) {
           confirmLabel: t("settings:plugins.replace"),
         });
         if (!replace) return;
-        result = await pluginsApi.upload(file, { replace: true });
+        result = await pluginsApi.upload(file, { replace: true, progressKey: "upload" });
         if (result.kind === "conflict") throw new Error(i18n.t("settings:plugins.action_failed"));
       }
       afterInstalled(result.plugin);
@@ -79,6 +81,7 @@ export function PluginUploadView({ backLabel }: { backLabel: string }) {
     } catch (err) {
       setError(extractErrorMessage(err, t("settings:plugins.action_failed")));
     } finally {
+      unfollow();
       setPluginBusy("upload", false);
     }
   };
@@ -149,10 +152,12 @@ export function PluginUploadView({ backLabel }: { backLabel: string }) {
       </section>
       {error ? <Notice tone="danger">{error}</Notice> : null}
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" disabled={!file || Boolean(problem) || uploading} onClick={() => void submit()}>
-          {uploading ? <Loader2 className="animate-spin" /> : <Upload />}
-          {t(uploading ? "settings:plugins.installing" : "settings:plugins.upload_submit")}
-        </Button>
+        <InstallProgressTooltip busyKey="upload" active={uploading}>
+          <Button type="button" disabled={!file || Boolean(problem) || uploading} onClick={() => void submit()}>
+            {uploading ? <InstallProgressGlyph busyKey="upload" /> : <Upload />}
+            {t(uploading ? "settings:plugins.installing" : "settings:plugins.upload_submit")}
+          </Button>
+        </InstallProgressTooltip>
         <Button type="button" variant="ghost" disabled={uploading} onClick={backPluginView}>
           {t("settings:plugins.cancel")}
         </Button>

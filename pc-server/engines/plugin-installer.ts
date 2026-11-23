@@ -13,6 +13,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CodedError } from "../foundation/errors";
+import { reportError } from "../observability/app-errors";
+import { type BunInstallProgress, createBunProgressReader } from "./bun-install-progress";
 import { enginePluginInstallRoot } from "./plugins";
 
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
@@ -87,13 +89,22 @@ export function normalizeGitSpec(spec: string): string {
   return /^https?:\/\//.test(trimmed) && !/\.(tgz|tar\.gz)$/i.test(trimmed) ? `git+${trimmed}` : trimmed;
 }
 
-async function runBun(args: string[], root: string, options: PluginInstallOptions): Promise<void> {
+async function runBun(args: string[], root: string, options: PluginInstallOptions, onProgress?: (progress: BunInstallProgress) => void): Promise<void> {
   const env: Record<string, string | undefined> = { ...process.env, BUN_BE_BUN: "1" };
   if (options.proxyUrl) {
     env.HTTPS_PROXY = options.proxyUrl;
     env.HTTP_PROXY = options.proxyUrl;
   }
-  const proc = Bun.spawn([process.execPath, ...args, "--cwd", root], {
+  const command = [process.execPath, ...args, "--cwd", root];
+  if (onProgress) {
+    try {
+      return await runBunInTerminal(command, root, env, onProgress);
+    } catch (err) {
+      if (!(err instanceof TerminalUnavailable)) throw err;
+      reportError("internal", "info", "插件安装拿不到进度(伪终端不可用),改为不带进度安装", err.cause);
+    }
+  }
+  const proc = Bun.spawn(command, {
     cwd: root,
     env,
     stdin: "ignore",
@@ -104,17 +115,55 @@ async function runBun(args: string[], root: string, options: PluginInstallOption
   });
   const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   if (code === 0) return;
-  const output = `${stderr}\n${stdout}`.trim().slice(-OUTPUT_TAIL_CHARS);
+  failed(proc, `${stderr}\n${stdout}`.trim().slice(-OUTPUT_TAIL_CHARS));
+}
+
+class TerminalUnavailable extends Error {}
+
+/** bun 只在终端里画进度条,所以要进度时经伪终端跑;输出(含报错)都从终端读。 */
+async function runBunInTerminal(
+  command: string[],
+  root: string,
+  env: Record<string, string | undefined>,
+  onProgress: (progress: BunInstallProgress) => void,
+): Promise<void> {
+  // CI 环境变量会让 bun 关掉进度条;NO_COLOR 下它不画下载段的计数。
+  const terminalEnv: Record<string, string | undefined> = { ...env, BUN_INSTALL_PROGRESS: "1" };
+  delete terminalEnv.NO_COLOR;
+  const reader = createBunProgressReader(onProgress);
+  const decoder = new TextDecoder();
+  let proc: Bun.Subprocess;
+  try {
+    proc = Bun.spawn(command, {
+      cwd: root,
+      env: terminalEnv,
+      windowsHide: true,
+      timeout: INSTALL_TIMEOUT_MS,
+      // 列数要放得下最长的包名,否则一帧折成两行就认不出计数。
+      terminal: { cols: 512, rows: 24, data: (_terminal, data) => reader.push(decoder.decode(data, { stream: true })) },
+    });
+  } catch (err) {
+    throw new TerminalUnavailable("terminal spawn failed", { cause: err });
+  }
+  const code = await proc.exited;
+  proc.terminal?.close();
+  reader.push(`${decoder.decode()}\n`);
+  if (code === 0) return;
+  failed(proc, reader.outputTail(OUTPUT_TAIL_CHARS));
+}
+
+function failed(proc: Bun.Subprocess, output: string): never {
   if (proc.signalCode) throw new CodedError(`安装超时或被中止(${proc.signalCode}):${output}`, "plugin_install_failed");
-  throw new CodedError(`包管理器退出码 ${code}:${output}`, "plugin_install_failed");
+  throw new CodedError(`包管理器退出码 ${proc.exitCode}:${output}`, "plugin_install_failed");
 }
 
 /** 装一个 npm / git 来源的包,返回装上的包名与版本。knownName = 重装已有记录时的包名(依赖表没有变化时据此认领);
- *  registry = 从非默认 registry 的市场源装时的地址(只影响这次安装,不写进安装根的配置)。 */
+ *  registry = 从非默认 registry 的市场源装时的地址(只影响这次安装,不写进安装根的配置);
+ *  onProgress = 要安装进度时给(经伪终端跑包管理器)。 */
 export function installEnginePluginPackage(
   engine: string,
   spec: string,
-  options: PluginInstallOptions & { knownName?: string; registry?: string } = {},
+  options: PluginInstallOptions & { knownName?: string; registry?: string; onProgress?: (progress: BunInstallProgress) => void } = {},
 ): Promise<{ name: string; version: string | null }> {
   return serialized(engine, async () => {
     const root = enginePluginInstallRoot(engine);
@@ -122,7 +171,7 @@ export function installEnginePluginPackage(
     const before = dependenciesOf(root);
     const snapshot = snapshotManifests(root);
     try {
-      await runBun(["add", spec, "--omit=peer", ...(options.registry ? [`--registry=${options.registry}`] : [])], root, options);
+      await runBun(["add", spec, "--omit=peer", ...(options.registry ? [`--registry=${options.registry}`] : [])], root, options, options.onProgress);
     } catch (err) {
       restoreManifests(snapshot);
       throw err;

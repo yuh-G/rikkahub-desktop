@@ -5,7 +5,7 @@ import { toast } from "sonner";
 
 import i18n from "~/i18n";
 import { extractErrorMessage } from "~/lib/error";
-import { pluginsApi, refreshPluginList, refreshPluginUpdates } from "~/lib/plugins-api";
+import { followInstallProgress, pluginsApi, refreshPluginList, refreshPluginUpdates } from "~/lib/plugins-api";
 import { patchSettingsLocal, upsertById } from "~/lib/settings-patch";
 import { confirmDialog } from "~/stores/confirm-store";
 import { marketBusyKey, pushPluginView, setPluginBusy, setPluginFlash } from "~/stores/plugins-view-store";
@@ -19,12 +19,14 @@ export function applyPluginView(plugin: EnginePluginViewDto): void {
 
 async function busyWhile<T>(pluginId: string, task: () => Promise<T>): Promise<T | null> {
   setPluginBusy(pluginId, true);
+  const unfollow = followInstallProgress(pluginId);
   try {
     return await task();
   } catch (error) {
     toast.error(extractErrorMessage(error, i18n.t("settings:plugins.action_failed")));
     return null;
   } finally {
+    unfollow();
     setPluginBusy(pluginId, false);
   }
 }
@@ -132,7 +134,8 @@ export async function installFromMarket(
     confirmLabel: i18n.t("settings:plugins.install"),
   });
   if (!confirmed) return null;
-  const result = await busyWhile(marketBusyKey(source.id, item.name), () => pluginsApi.install(item.source, source.engine));
+  const busyKey = marketBusyKey(source.id, item.name);
+  const result = await busyWhile(busyKey, () => pluginsApi.install(item.source, source.engine, busyKey));
   if (!result) return null;
   afterInstalled(result.plugin, { viewAction: true });
   return result.plugin;

@@ -7,6 +7,7 @@ import { initWorkingSetSseGuard, markConversationRowDirty, markMessageNodeDirty,
 import { initAppErrorBroadcast, reportError } from "../observability/app-errors";
 import { initProviderAuthBroadcast } from "../model-providers/auth";
 import type { Conversation, ConversationListInvalidateEventDto, ConversationNodeUpdateEventDto, ConversationSnapshotEventDto, ConversationTextDeltaEventDto, EngineStatusEventDto, EngineUiNotifyEventDto, EngineUiStateEventDto, JsonValue, MessageNode } from "../foundation/types";
+import type { PluginInstallProgressEventDto } from "../foundation/types/plugins";
 import { diffFingerprints, fingerprintNode, type NodeBroadcastFingerprint } from "./node-delta";
 import { conversationNegotiationToken } from "./snapshot-negotiation";
 import { stripAuthSecrets } from "./auth";
@@ -263,6 +264,10 @@ export function broadcastEngineUi(state: EngineUiStateEventDto) {
 
 export function broadcastEngineNotify(notice: EngineUiNotifyEventDto) {
   broadcastTo(conversationClients.get(notice.conversationId), sseFrame("engine-notify", notice));
+}
+
+export function broadcastPluginInstallProgress(event: PluginInstallProgressEventDto) {
+  broadcastTo(appClients, sseFrame("plugin_install_progress", event));
 }
 
 // ===== H-b(专题2):流式增量帧 =====

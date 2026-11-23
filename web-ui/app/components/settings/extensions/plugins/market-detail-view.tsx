@@ -7,7 +7,6 @@ import { useTranslation } from "react-i18next";
 import { SettingsStack } from "~/components/settings/shared";
 import { Button } from "~/components/ui/button";
 import { Notice } from "~/components/ui/notice";
-import { Spinner } from "~/components/ui/spinner";
 import { StatusBadge } from "~/components/ui/status-badge";
 import { extractErrorMessage } from "~/lib/error";
 import { openExternal } from "~/lib/external-link";
@@ -25,6 +24,7 @@ import type { Settings } from "~/types";
 import type { PluginMarketDetailDto, PluginMarketItemDto, PluginMarketSourceDto } from "~/types/plugins";
 
 import { installFromMarket } from "./actions";
+import { InstallProgressGlyph, InstallProgressTooltip } from "./install-progress";
 import { formatMonthlyDownloads } from "./market-card";
 import { marketInstalledRecord, stripRelativeImages } from "./model";
 import { BackLink, InfoRow, PanelSkeleton, PluginIconTile, ReadmeBlock } from "./parts";
@@ -152,15 +152,17 @@ function MarketDetailHeader({
             {t("settings:plugins.manage")}
           </Button>
         ) : (
-          <Button
-            type="button"
-            size="sm"
-            disabled={!item || !source || installing}
-            onClick={() => item && source && void installFromMarket(item, source)}
-          >
-            {installing ? <Spinner /> : <Plus />}
-            {t(installing ? "settings:plugins.installing" : "settings:plugins.install")}
-          </Button>
+          <InstallProgressTooltip busyKey={marketBusyKey(source?.id ?? "", name)} active={installing}>
+            <Button
+              type="button"
+              size="sm"
+              disabled={!item || !source || installing}
+              onClick={() => item && source && void installFromMarket(item, source)}
+            >
+              {installing ? <InstallProgressGlyph busyKey={marketBusyKey(source?.id ?? "", name)} /> : <Plus />}
+              {t(installing ? "settings:plugins.installing" : "settings:plugins.install")}
+            </Button>
+          </InstallProgressTooltip>
         )}
       </div>
     </div>

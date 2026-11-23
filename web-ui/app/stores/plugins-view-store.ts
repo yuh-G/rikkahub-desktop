@@ -10,6 +10,7 @@ import type {
   EnginePluginDetailDto,
   EnginePluginListDto,
   EnginePluginUpdatesDto,
+  PluginInstallProgressDto,
   PluginMarketDetailDto,
   PluginMarketItemDto,
   PluginMarketPageDto,
@@ -68,6 +69,8 @@ interface PluginsViewState {
   filters: PluginHomeFilters;
   /** 键 = 插件 id / market:<源>:<包名> / upload。 */
   busy: Record<string, true>;
+  /** 键同 busy:后端推来的安装进度(只在忙碌期间有)。 */
+  installProgress: Record<string, PluginInstallProgressDto>;
   list: EnginePluginListDto | null;
   updates: EnginePluginUpdatesDto["updates"];
   /** 键 = 插件 id + installedAt:重装后自然失效。 */
@@ -91,6 +94,7 @@ export const usePluginsViewStore = create<PluginsViewState>(() => ({
   scrolled: false,
   filters: DEFAULT_PLUGIN_FILTERS,
   busy: {},
+  installProgress: {},
   list: null,
   updates: {},
   detailCache: {},
@@ -182,8 +186,15 @@ export function setPluginBusy(key: string, busy: boolean): void {
     const next = { ...state.busy };
     if (busy) next[key] = true;
     else delete next[key];
-    return { busy: next };
+    if (busy || !state.installProgress[key]) return { busy: next };
+    const { [key]: _done, ...installProgress } = state.installProgress;
+    return { busy: next, installProgress };
   });
+}
+
+/** 后端推来的安装进度;键不在忙碌中(请求已经回来,或别的窗口发起的)就不记。 */
+export function setPluginInstallProgress(key: string, progress: PluginInstallProgressDto): void {
+  usePluginsViewStore.setState((state) => (state.busy[key] ? { installProgress: { ...state.installProgress, [key]: progress } } : state));
 }
 
 export function setPluginList(list: EnginePluginListDto): void {

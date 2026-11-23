@@ -1,14 +1,15 @@
-// 市场里的一张卡片(方案 P6.2「视图三」):整卡可点 → 市场条目;右上角的动作随状态变:未安装「+」→ 安装中转圈 →
-// 刚装好「✓」停约 1.2 秒 → 齿轮「管理」;已安装且有更新是向上箭头。悬停只变描边与底色,不位移不加阴影。
+// 市场里的一张卡片(方案 P6.2「视图三」):整卡可点 → 市场条目;右上角的动作随状态变:未安装「+」→ 安装进度环(每段
+// 各走一圈,悬停看是哪一段)→ 刚装好「✓」停约 1.2 秒 → 齿轮「管理」;已安装且有更新是向上箭头。悬停只变描边与底色,
+// 不位移不加阴影。
 import * as React from "react";
 import { Check, CircleArrowUp, Plus, Settings2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { Spinner } from "~/components/ui/spinner";
 import { marketBusyKey, pushPluginView, usePluginsViewStore } from "~/stores/plugins-view-store";
 import type { EnginePluginRecord, PluginMarketItemDto, PluginMarketSourceDto } from "~/types/plugins";
 
 import { installFromMarket, updatePlugin } from "./actions";
+import { InstallProgressRing } from "./install-progress";
 import { PluginIconTile, ToolbarIconButton } from "./parts";
 
 const JUST_INSTALLED_MS = 1200;
@@ -89,11 +90,7 @@ export function MarketCardAction({
 
   const stop = { onClick: (event: React.MouseEvent) => event.stopPropagation(), onKeyDown: (event: React.KeyboardEvent) => event.stopPropagation() };
   if (installing || updating) {
-    return (
-      <span className="flex size-8 shrink-0 items-center justify-center text-[var(--ds-text-tertiary)]" {...stop}>
-        <Spinner />
-      </span>
-    );
+    return <InstallProgressRing busyKey={installing ? marketBusyKey(source.id, item.name) : record!.id} />;
   }
   if (justInstalled) {
     return (

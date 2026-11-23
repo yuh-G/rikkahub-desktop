@@ -10,12 +10,13 @@ import { Input } from "~/components/ui/input";
 import { Notice } from "~/components/ui/notice";
 import { SegmentedControl } from "~/components/ui/segmented-tabs";
 import { extractErrorMessage } from "~/lib/error";
-import { pluginsApi } from "~/lib/plugins-api";
+import { followInstallProgress, pluginsApi } from "~/lib/plugins-api";
 import { isWindowsPlatform } from "~/lib/system-info";
 import { pushPluginView, setPluginBusy } from "~/stores/plugins-view-store";
 import type { EnginePluginSource } from "~/types/plugins";
 
 import { afterInstalled } from "./actions";
+import { InstallProgressGlyph, InstallProgressTooltip } from "./install-progress";
 
 export type InstallDialogKind = "package" | "local";
 
@@ -55,14 +56,16 @@ function InstallForm({ kind, initialSpec, onDone }: { kind: InstallDialogKind; i
     setError(null);
     // 忙碌键与上传共用:后端同一引擎的安装是串行的,首页的「添加」在这期间也显示进行中。
     setPluginBusy("upload", true);
+    const unfollow = followInstallProgress("upload");
     try {
-      const { plugin } = await pluginsApi.install(source);
+      const { plugin } = await pluginsApi.install(source, "pi", "upload");
       afterInstalled(plugin);
       onDone();
       pushPluginView({ kind: "detail", pluginId: plugin.id });
     } catch (err) {
       setError(extractErrorMessage(err, t("settings:plugins.action_failed")));
     } finally {
+      unfollow();
       setPluginBusy("upload", false);
       setSaving(false);
     }
@@ -120,12 +123,14 @@ function InstallForm({ kind, initialSpec, onDone }: { kind: InstallDialogKind; i
         <Button type="button" variant="outline" disabled={saving} onClick={onDone}>
           {t("settings:plugins.cancel")}
         </Button>
-        <Button type="submit" disabled={!spec.trim() || saving}>
-          {saving ? <Loader2 className="animate-spin" /> : null}
-          {local
-            ? t(saving ? "settings:plugins.linking" : "settings:plugins.link")
-            : t(saving ? "settings:plugins.installing" : "settings:plugins.install")}
-        </Button>
+        <InstallProgressTooltip busyKey="upload" active={saving && !local}>
+          <Button type="submit" disabled={!spec.trim() || saving}>
+            {saving ? local ? <Loader2 className="animate-spin" /> : <InstallProgressGlyph busyKey="upload" /> : null}
+            {local
+              ? t(saving ? "settings:plugins.linking" : "settings:plugins.link")
+              : t(saving ? "settings:plugins.installing" : "settings:plugins.install")}
+          </Button>
+        </InstallProgressTooltip>
       </DialogFooter>
     </form>
   );

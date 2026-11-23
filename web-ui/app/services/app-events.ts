@@ -24,6 +24,7 @@ import type {
   MemorySnapshot,
   Settings,
 } from "~/types";
+import type { PluginInstallProgressEventDto } from "~/types/plugins";
 
 export interface AppEventMap {
   settings: Settings;
@@ -33,6 +34,7 @@ export interface AppEventMap {
   invalidate: ConversationListInvalidateEventDto;
   mcp_health: McpHealthSnapshotDto;
   provider_auth: ProviderAuthEventDto;
+  plugin_install_progress: PluginInstallProgressEventDto;
 }
 
 /** 订阅供应商登录进度(方案 §4.3 三态卡片)。凭据永不下发——只载阶段/验证码/地址。 */

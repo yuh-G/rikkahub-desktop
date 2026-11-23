@@ -16,7 +16,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
-import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
 import {
   DEFAULT_PLUGIN_FILTERS,
@@ -32,6 +31,7 @@ import type { Settings } from "~/types";
 import { reinstallPlugin, setPluginEnabled, uninstallPlugin, updatePlugin } from "./actions";
 import { PluginGuideLink } from "./guide-dialog";
 import { InstallDialog, type InstallDialogKind } from "./install-dialog";
+import { InstallProgressGlyph, PluginBusyIndicator } from "./install-progress";
 import {
   groupPlugins,
   isPluginFilterActive,
@@ -183,7 +183,7 @@ function HomeToolbar() {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button type="button" size="sm">
-            {installing ? <Spinner /> : <Plus />}
+            {installing ? <InstallProgressGlyph busyKey="upload" /> : <Plus />}
             {t("settings:plugins.add")}
             <ChevronDown className="-mr-0.5 opacity-80" />
           </Button>
@@ -245,9 +245,9 @@ function PluginRow({ row, index }: { row: PluginRowModel; index: number }) {
         id={record.id}
         index={index}
         onSelect={() => pushPluginView({ kind: "detail", pluginId: record.id })}
-        // 重装 / 更新进行中不给菜单(后端同一引擎的安装是串行的),行尾转圈。
+        // 重装 / 更新进行中不给菜单(后端同一引擎的安装是串行的),行尾是进度环(卸载是转圈)。
         actions={busy ? undefined : actions}
-        badge={busy ? <Spinner className="size-3.5 text-[var(--ds-text-tertiary)]" /> : <RelativeTime at={record.installedAt} />}
+        badge={busy ? <PluginBusyIndicator busyKey={record.id} className="size-6" /> : <RelativeTime at={record.installedAt} />}
       >
         <div className="flex min-w-0 items-center gap-3 text-left">
           <PluginIconTile />

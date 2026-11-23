@@ -18,6 +18,7 @@ const { enginePluginInstallRoot, enginePluginsFor, enginePluginUploadsDir } = aw
 const { pluginAudit, recordPluginAudit } = await import("../engines/plugin-audit");
 const { pluginMcpServerId } = await import("../engines/plugin-mcp");
 const { useInProcessPiDriver } = await import("../test-utils/in-process-pi");
+const { appClients } = await import("./sse");
 
 jsonStore.setState(defaultState());
 const lab = mkdtempSync(join(tmpdir(), "rkh-plugins-api-lab-"));
@@ -166,6 +167,39 @@ describe("插件管理端点", () => {
     expect((await call("plugins/install", { source: { kind: "npm", spec: "--registry=x" } })).body.errorCode).toBe("plugin_source_invalid");
     expect((await call("plugins/install", { source: { kind: "npm", spec: "x", registry: "ftp://r" } })).body.errorCode).toBe("plugin_source_invalid");
     expect((await call("plugins/install", { engine: "chat", source: { kind: "npm", spec: "x" } })).body.errorCode).toBe("plugin_engine_unsupported");
+  }, 120_000);
+
+  test("带 progressKey 的安装把进度推到应用事件通道(段只前进,最后是检查段);失败时报错里没有进度帧", async () => {
+    const frames: Array<{ event: string; data: Record<string, any> }> = [];
+    const decoder = new TextDecoder();
+    const listener = {
+      desiredSize: 1,
+      enqueue(chunk: Uint8Array) {
+        const [eventLine, dataLine] = decoder.decode(chunk).split("\n");
+        frames.push({ event: eventLine!.slice(7), data: JSON.parse(dataLine!.slice(6)) });
+      },
+      close() {},
+    } as unknown as ReadableStreamDefaultController<Uint8Array>;
+    appClients.add(listener);
+    try {
+      const tarball = packTarball(writePackage("progress-pkg", { name: "progress-pkg", version: "1.0.0", pi: { extensions: ["./main.js"] } }, { "main.js": PLUGIN_SOURCE }));
+      const installed = await call("plugins/install", { source: { kind: "npm", spec: tarball }, progressKey: "market:test:progress-pkg" });
+      expect(installed.status).toBe(200);
+      const events = frames.filter((frame) => frame.event === "plugin_install_progress").map((frame) => frame.data);
+      // 本地小包几毫秒就装完,bun 来不及画进度条;段序与计数的认读由 engines/bun-install-progress.test.ts 锁。
+      expect(events.every((event) => event.key === "market:test:progress-pkg")).toBe(true);
+      const order = ["download", "install", "check"];
+      expect(events.map((event) => order.indexOf(event.phase))).toEqual(events.map((event) => order.indexOf(event.phase)).sort());
+      expect(events.at(-1)).toEqual({ key: "market:test:progress-pkg", phase: "check", done: 0, total: 0 });
+      expect((await call("plugins/uninstall", { id: installed.body.plugin.id })).status).toBe(200);
+
+      const missing = await call("plugins/install", { source: { kind: "npm", spec: join(lab, "missing.tgz") }, progressKey: "market:test:missing" });
+      expect(missing.body.errorCode).toBe("plugin_install_failed");
+      expect(missing.body.error).toContain("missing.tgz");
+      expect(missing.body.error).not.toMatch(/\[\d+\/\d+\]|\x1b/);
+    } finally {
+      appClients.delete(listener);
+    }
   }, 120_000);
 
   test("插件声明的 MCP 服务登记进应用的 MCP 列表:启停跟随、重装保留用户开关、卸载移除;不支持的写审计", async () => {

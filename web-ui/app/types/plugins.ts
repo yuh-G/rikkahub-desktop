@@ -11,6 +11,8 @@ export type {
   EnginePluginViewDto,
   PluginAuditEntryDto,
   PluginEngineDto,
+  PluginInstallProgressDto,
+  PluginInstallProgressEventDto,
   PluginMarketDetailDto,
   PluginMarketItemDto,
   PluginMarketPageDto,

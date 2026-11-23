@@ -52,6 +52,7 @@ import type {
   EnginePluginUpdatesDto,
   EnginePluginUploadConflictDto,
   EnginePluginViewDto,
+  PluginInstallProgressDto,
   PluginMarketDetailDto,
   PluginMarketPageDto,
   PluginMarketSourceDto,
@@ -66,10 +67,19 @@ import { ensureFreshMcpToken } from "../../tools/mcp-oauth";
 import { pluginMcpSource } from "../../tools/mcp-source";
 import { addLog } from "../logs";
 import { error, json, readJson } from "../request";
+import { broadcastPluginInstallProgress } from "../sse";
 
 function records(): EnginePluginRecord[] {
   return state.settings.enginePlugins ?? [];
 }
+
+/** 请求带了 progressKey(界面的忙碌键)就把进度推给界面;装完到存好记录之间是检查段(加载一次插件)。 */
+function progressReporter(key: unknown): ((progress: PluginInstallProgressDto) => void) | undefined {
+  if (typeof key !== "string" || !key || key.length > 300) return undefined;
+  return (progress) => broadcastPluginInstallProgress({ key, ...progress });
+}
+
+const CHECKING: PluginInstallProgressDto = { phase: "check", done: 0, total: 0 };
 
 function findRecord(pluginId: unknown): EnginePluginRecord | undefined {
   return typeof pluginId === "string" ? records().find((record) => record.id === pluginId) : undefined;
@@ -202,12 +212,13 @@ function freeId(base: string): string {
 }
 
 /** 装好(或定位好)来源,返回新的记录;existing = 重装 / 替换的那条;installSpec = 这次交给包管理器的写法(更新时是
- *  <包名>@latest),缺省即来源的写法(上传的压缩包是存档相对安装根的路径)。 */
+ *  <包名>@latest),缺省即来源的写法(上传的压缩包是存档相对安装根的路径);onProgress = 包管理器的进度。 */
 async function install(
   engine: string,
   source: EnginePluginSource,
   existing?: EnginePluginRecord,
   installSpec?: string,
+  onProgress?: (progress: PluginInstallProgressDto) => void,
 ): Promise<EnginePluginRecord> {
   const installedAt = new Date().toISOString();
   if (source.kind === "local" || isUploadedScript(source)) {
@@ -223,7 +234,9 @@ async function install(
     ...proxyOptions(),
     ...(existing ? { knownName: existing.name } : {}),
     ...(source.registry ? { registry: source.registry } : {}),
+    ...(onProgress ? { onProgress } : {}),
   });
+  onProgress?.(CHECKING);
   const same = existing ?? records().find((record) => record.engine === engine && isPackageSource(record.source) && record.name === name);
   const pluginId = same?.id ?? freeId(`${engine}:${name}`);
   const entryError = piPluginEntryError({ id: pluginId, path: locateEnginePlugin({ engine, name, source }) });
@@ -293,7 +306,7 @@ async function handleUpload(request: Request): Promise<Response> {
     const spec = saveUpload(engine, prepared);
     let record: EnginePluginRecord;
     try {
-      record = await install(engine, { kind: "upload", spec }, existing);
+      record = await install(engine, { kind: "upload", spec }, existing, undefined, progressReporter(form.get("progressKey")));
     } catch (err) {
       if (existing?.source.kind !== "upload" || existing.source.spec !== spec) removeUpload(engine, spec);
       throw err;
@@ -331,11 +344,11 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
     return json({ audit: pluginAudit(pluginId) } satisfies EnginePluginAuditDto);
   }
   if (path === "plugins/install" && request.method === "POST") {
-    const body = await readJson<{ engine?: unknown; source?: unknown }>(request);
+    const body = await readJson<{ engine?: unknown; source?: unknown; progressKey?: unknown }>(request);
     const engine = typeof body.engine === "string" && body.engine ? body.engine : "pi";
     if (!isPluginEngine(engine)) return error(`引擎 ${engine} 没有插件运行时`, 400, "plugin_engine_unsupported");
     try {
-      const record = await install(engine, parseSource(body.source));
+      const record = await install(engine, parseSource(body.source), undefined, undefined, progressReporter(body.progressKey));
       saveInstalled(record, await pluginMcpDeclarations(record));
       return json({ plugin: pluginView(record) } satisfies EnginePluginMutationDto);
     } catch (err) {
@@ -345,11 +358,11 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
   if (path === "plugins/upload" && request.method === "POST") return handleUpload(request);
   // 按记录里的来源再装一次(升级、换机恢复后补装、本地插件改过代码)。
   if (path === "plugins/reinstall" && request.method === "POST") {
-    const body = await readJson<{ id?: unknown }>(request);
+    const body = await readJson<{ id?: unknown; progressKey?: unknown }>(request);
     const record = findRecord(body.id);
     if (!record) return error("Plugin not found", 404);
     try {
-      const next = await install(record.engine, record.source, record);
+      const next = await install(record.engine, record.source, record, undefined, progressReporter(body.progressKey));
       if (isUploadedScript(next.source)) {
         const loadError = await PI_UPLOAD_CHECKS.scriptLoadError!(locateEnginePlugin(next));
         if (loadError) throw new CodedError(`这个文件不是可用的插件:${loadError}`, "plugin_upload_invalid");
@@ -366,13 +379,13 @@ export async function handlePluginRoutes(request: Request, url: URL, path: strin
   }
   // 装到 registry 上的最新版(来源写法不变,之后的重装仍按原写法)。
   if (path === "plugins/update" && request.method === "POST") {
-    const body = await readJson<{ id?: unknown }>(request);
+    const body = await readJson<{ id?: unknown; progressKey?: unknown }>(request);
     const record = findRecord(body.id);
     if (!record) return error("Plugin not found", 404);
     const name = updatablePackageName(record);
     if (!name) return error("这个插件的来源不检查更新,可以重新安装", 400, "plugin_update_unsupported");
     try {
-      const next = await install(record.engine, record.source, record, `${name}@latest`);
+      const next = await install(record.engine, record.source, record, `${name}@latest`, progressReporter(body.progressKey));
       saveInstalled(next, await pluginMcpDeclarations(next));
       forgetPluginUpdate(name, record.source.registry);
       return json({ plugin: pluginView(next) } satisfies EnginePluginMutationDto);

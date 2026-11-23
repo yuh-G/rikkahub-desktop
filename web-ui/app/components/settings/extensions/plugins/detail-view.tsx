@@ -17,7 +17,6 @@ import {
 } from "~/components/ui/dropdown-menu";
 import { Notice } from "~/components/ui/notice";
 import { SegmentedTabs } from "~/components/ui/segmented-tabs";
-import { Spinner } from "~/components/ui/spinner";
 import { StatusBadge } from "~/components/ui/status-badge";
 import { extractErrorMessage } from "~/lib/error";
 import { openExternal } from "~/lib/external-link";
@@ -36,6 +35,7 @@ import type { EnginePluginDetailDto, EnginePluginRecord } from "~/types/plugins"
 
 import { checkPluginUpdate, reinstallPlugin, setPluginEnabled, uninstallPlugin, updatePlugin } from "./actions";
 import { PluginAuditPanel, PluginOverviewPanel, PluginToolsPanel } from "./detail-panels";
+import { InstallProgressGlyph, InstallProgressTooltip, PluginBusyIndicator } from "./install-progress";
 import { joinPluginRows, pluginIssueCount, pluginSourceLabel, pluginStatuses, type PluginRowModel } from "./model";
 import { BackLink, copyText, PanelSkeleton, PluginIconTile, PluginStatusBadges, ToolbarIconButton } from "./parts";
 
@@ -185,12 +185,14 @@ function DetailHeader({ row }: { row: PluginRowModel }) {
       <div className="flex shrink-0 items-center gap-2">
         <DetailMenu row={row} disabled={busy} />
         {canUpdate ? (
-          <Button type="button" variant="tertiary" size="compact" disabled={busy} onClick={() => void updatePlugin(record)}>
-            {busy ? <Spinner /> : <CircleArrowUp />}
-            {t(busy ? "settings:plugins.updating" : "settings:plugins.update_to", { version: update!.latest })}
-          </Button>
+          <InstallProgressTooltip busyKey={record.id} active={busy}>
+            <Button type="button" variant="tertiary" size="compact" disabled={busy} onClick={() => void updatePlugin(record)}>
+              {busy ? <InstallProgressGlyph busyKey={record.id} /> : <CircleArrowUp />}
+              {t(busy ? "settings:plugins.updating" : "settings:plugins.update_to", { version: update!.latest })}
+            </Button>
+          </InstallProgressTooltip>
         ) : busy ? (
-          <Spinner className="size-4 text-[var(--ds-text-tertiary)]" />
+          <PluginBusyIndicator busyKey={record.id} />
         ) : null}
         <LabeledSwitch
           label={t("settings:plugins.enable")}
