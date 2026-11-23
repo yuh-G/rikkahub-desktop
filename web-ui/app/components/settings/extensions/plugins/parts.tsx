@@ -194,7 +194,7 @@ export function RelativeTime({ at, className }: { at: string | undefined; classN
   );
 }
 
-/** 包里的 README:默认收起到 320px、底部渐隐 +「展开全文」;内容不够高时原样显示。 */
+/** 包里的 README:默认收起到 320px、底部渐隐 +「展开全文」;内容不够高时原样显示。第一块不留上边距,与旁边的信息卡顶对齐。 */
 export function ReadmeBlock({ content }: { content: string }) {
   const { t } = useTranslation();
   const ref = React.useRef<HTMLDivElement>(null);
@@ -215,7 +215,8 @@ export function ReadmeBlock({ content }: { content: string }) {
       <div
         ref={ref}
         className={cn(
-          "overflow-hidden text-sm text-[var(--ds-text-primary)]",
+          // 正文的标题与配图段带着非分层的上边距(markdown.css),工具类要加 ! 才压得过。
+          "overflow-hidden text-sm text-[var(--ds-text-primary)] [&_.markdown>*>:first-child]:mt-0!",
           !expanded && "max-h-80",
           !expanded && overflows && "[mask-image:linear-gradient(to_bottom,black_70%,transparent)]",
         )}
@@ -228,6 +229,31 @@ export function ReadmeBlock({ content }: { content: string }) {
         </Button>
       ) : null}
     </div>
+  );
+}
+
+/** 「说明」:小标题占整宽一行,正文与信息卡在它下面并排、顶边对齐;内容区窄于 40rem 时上下排。 */
+export function ReadmeWithInfo({ info, children }: { info: React.ReactNode; children: React.ReactNode }) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-2">
+      <h3 className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:plugins.readme_title")}</h3>
+      <div className="flex flex-col gap-6 @min-[40rem]:flex-row @min-[40rem]:items-start">
+        <div className="min-w-0 flex-1 space-y-6">{children}</div>
+        <div className="w-full shrink-0 @min-[40rem]:w-64">{info}</div>
+      </div>
+    </div>
+  );
+}
+
+/** 信息卡的外框与标题;行用 InfoRow。 */
+export function InfoCard({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation();
+  return (
+    <aside className="rounded-[var(--ds-radius-md)] border border-[var(--ds-divider)] bg-[var(--ds-surface-100)] px-4 py-3">
+      <h3 className="pb-1 text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:plugins.info_title")}</h3>
+      <dl className="divide-y divide-[var(--ds-divider)]">{children}</dl>
+    </aside>
   );
 }
 

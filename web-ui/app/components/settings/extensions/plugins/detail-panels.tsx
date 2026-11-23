@@ -16,7 +16,7 @@ import type { EnginePluginDetailDto, EnginePluginRecord, EnginePluginViewDto, Pl
 import { revealPlugin, setPluginToolCallHook, setPluginToolSwitch } from "./actions";
 import { PluginGuideLink } from "./guide-dialog";
 import { parseAuditSubject, pluginSourceLabel, registeredPluginMcpServer, stripRelativeImages } from "./model";
-import { copyText, InfoRow, PanelSkeleton, ReadmeBlock, RelativeTime } from "./parts";
+import { copyText, InfoCard, InfoRow, PanelSkeleton, ReadmeBlock, ReadmeWithInfo, RelativeTime } from "./parts";
 
 export function PluginOverviewPanel({
   record,
@@ -35,43 +35,37 @@ export function PluginOverviewPanel({
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const readme = detail?.readme ? stripRelativeImages(detail.readme) : null;
   return (
-    <div className="flex flex-col gap-6 @min-[40rem]:flex-row @min-[40rem]:items-start">
-      <div className="min-w-0 flex-1 space-y-6">
-        <section className="space-y-2">
-          <h3 className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:plugins.readme_title")}</h3>
-          {readme ? (
-            <ReadmeBlock content={readme} />
-          ) : loading ? (
-            <PanelSkeleton />
-          ) : (
-            <p className="text-sm text-[var(--ds-text-secondary)]">{record.meta?.description ?? t("settings:plugins.no_readme")}</p>
-          )}
-        </section>
-        <section className="space-y-1.5">
-          <h3 className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:plugins.where_title")}</h3>
-          <ul className="space-y-1 text-sm text-[var(--ds-text-primary)]">
-            <li>{t("settings:plugins.where_conversation")}</li>
-            <li>{t("settings:plugins.where_assistant")}</li>
-          </ul>
-          <p className="text-xs text-[var(--ds-text-tertiary)]">
-            {t("settings:plugins.where_workspace")} <PluginGuideLink />
-          </p>
-        </section>
-        <SettingsAdvancedSection open={advancedOpen} onOpenChange={setAdvancedOpen}>
-          <SettingsSwitchRow
-            label={t("settings:plugins.hook_tool_call")}
-            description={t("settings:plugins.hook_tool_call_desc")}
-            checked={record.hookSwitches.toolCall}
-            onCheckedChange={(checked) => void setPluginToolCallHook(record, checked)}
-          />
-        </SettingsAdvancedSection>
-      </div>
-      <InfoCard record={record} view={view} detail={detail} onShowTools={onShowTools} />
-    </div>
+    <ReadmeWithInfo info={<PluginInfoCard record={record} view={view} detail={detail} onShowTools={onShowTools} />}>
+      {readme ? (
+        <ReadmeBlock content={readme} />
+      ) : loading ? (
+        <PanelSkeleton />
+      ) : (
+        <p className="text-sm text-[var(--ds-text-secondary)]">{record.meta?.description ?? t("settings:plugins.no_readme")}</p>
+      )}
+      <section className="space-y-1.5">
+        <h3 className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:plugins.where_title")}</h3>
+        <ul className="space-y-1 text-sm text-[var(--ds-text-primary)]">
+          <li>{t("settings:plugins.where_conversation")}</li>
+          <li>{t("settings:plugins.where_assistant")}</li>
+        </ul>
+        <p className="text-xs text-[var(--ds-text-tertiary)]">
+          {t("settings:plugins.where_workspace")} <PluginGuideLink />
+        </p>
+      </section>
+      <SettingsAdvancedSection open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <SettingsSwitchRow
+          label={t("settings:plugins.hook_tool_call")}
+          description={t("settings:plugins.hook_tool_call_desc")}
+          checked={record.hookSwitches.toolCall}
+          onCheckedChange={(checked) => void setPluginToolCallHook(record, checked)}
+        />
+      </SettingsAdvancedSection>
+    </ReadmeWithInfo>
   );
 }
 
-function InfoCard({
+function PluginInfoCard({
   record,
   view,
   detail,
@@ -98,46 +92,43 @@ function InfoCard({
       : null,
   ].filter((link): link is { key: "homepage" | "repository"; url: string } => link !== null);
   return (
-    <aside className="w-full shrink-0 rounded-[var(--ds-radius-md)] border border-[var(--ds-divider)] bg-[var(--ds-surface-100)] px-4 py-3 @min-[40rem]:w-64">
-      <h3 className="pb-1 text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:plugins.info_title")}</h3>
-      <dl className="divide-y divide-[var(--ds-divider)]">
-        {contains.length > 0 ? (
-          <InfoRow label={t("settings:plugins.info_contains")}>
-            <button type="button" className="text-left hover:text-[var(--ds-brand-primary)]" onClick={onShowTools}>
-              {contains.join(" · ")}
-            </button>
-          </InfoRow>
-        ) : null}
-        {record.version ? <InfoRow label={t("settings:plugins.info_version")}>{record.version}</InfoRow> : null}
-        <InfoRow label={t("settings:plugins.info_source")}>
-          {t(`settings:plugins.source.${source.kind}`)} · <span className="break-all">{source.detail}</span>
+    <InfoCard>
+      {contains.length > 0 ? (
+        <InfoRow label={t("settings:plugins.info_contains")}>
+          <button type="button" className="text-left hover:text-[var(--ds-brand-primary)]" onClick={onShowTools}>
+            {contains.join(" · ")}
+          </button>
         </InfoRow>
-        {record.meta?.license ? <InfoRow label={t("settings:plugins.info_license")}>{record.meta.license}</InfoRow> : null}
-        {links.length > 0 ? (
-          <InfoRow label={t("settings:plugins.info_links")}>
-            <span className="flex flex-wrap gap-x-3 gap-y-1">
-              {links.map((link) => (
-                <button
-                  key={link.key}
-                  type="button"
-                  title={link.url}
-                  className="inline-flex items-center gap-0.5 text-[var(--ds-brand-primary)] hover:underline"
-                  onClick={() => void openExternal(link.url)}
-                >
-                  {t(`settings:plugins.${link.key}`)}
-                  <ArrowUpRight className="size-3" />
-                </button>
-              ))}
-            </span>
-          </InfoRow>
-        ) : null}
-        {view?.path ? (
-          <InfoRow label={t("settings:plugins.info_location")}>
-            <PluginLocationButton record={record} view={view} />
-          </InfoRow>
-        ) : null}
-      </dl>
-    </aside>
+      ) : null}
+      {record.version ? <InfoRow label={t("settings:plugins.info_version")}>{record.version}</InfoRow> : null}
+      <InfoRow label={t("settings:plugins.info_source")}>
+        {t(`settings:plugins.source.${source.kind}`)} · <span className="break-all">{source.detail}</span>
+      </InfoRow>
+      {record.meta?.license ? <InfoRow label={t("settings:plugins.info_license")}>{record.meta.license}</InfoRow> : null}
+      {links.length > 0 ? (
+        <InfoRow label={t("settings:plugins.info_links")}>
+          <span className="flex flex-wrap gap-x-3 gap-y-1">
+            {links.map((link) => (
+              <button
+                key={link.key}
+                type="button"
+                title={link.url}
+                className="inline-flex items-center gap-0.5 text-[var(--ds-brand-primary)] hover:underline"
+                onClick={() => void openExternal(link.url)}
+              >
+                {t(`settings:plugins.${link.key}`)}
+                <ArrowUpRight className="size-3" />
+              </button>
+            ))}
+          </span>
+        </InfoRow>
+      ) : null}
+      {view?.path ? (
+        <InfoRow label={t("settings:plugins.info_location")}>
+          <PluginLocationButton record={record} view={view} />
+        </InfoRow>
+      ) : null}
+    </InfoCard>
   );
 }
 

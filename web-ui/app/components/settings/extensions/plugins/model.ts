@@ -164,11 +164,19 @@ export function parseAuditSubject(entry: Pick<PluginAuditEntryDto, "code" | "sub
   return match ? { kind: match[1] as AuditSubjectKind, name: match[2]! } : { kind: "other", name: entry.subject };
 }
 
-/** README 里的图片只留 https:// 绝对地址的(相对路径在应用里解析不到,渲染出来是裂图)。 */
+/** README 里的图片只留 https:// 绝对地址的(相对路径在应用里解析不到,渲染出来是裂图)。图片删掉后包着它的空壳
+ *  (`<p align="center">`、`<a>`、`<picture>`…)一并删掉:留着它,首个标题就不是第一块,带着正文中间的上边距离开顶部。 */
 export function stripRelativeImages(markdown: string): string {
-  return markdown
+  let text = markdown
     .replace(/!\[[^\]]*\]\((?!\s*<?https:\/\/)[^)]*\)/g, "")
-    .replace(/<img\b(?![^>]*\bsrc\s*=\s*["']?https:\/\/)[^>]*>/gi, "");
+    .replace(/<img\b(?![^>]*\bsrc\s*=\s*["']?https:\/\/)[^>]*>/gi, "")
+    .replace(/<source\b(?![^>]*\bsrcset\s*=\s*["']?https:\/\/)[^>]*>/gi, "")
+    .replace(/\[\s*\]\([^)]*\)/g, "");
+  for (let previous = ""; previous !== text; ) {
+    previous = text;
+    text = text.replace(/<(p|div|a|picture|span|center)\b[^>]*>\s*<\/\1\s*>/gi, "");
+  }
+  return text;
 }
 
 /** 插件声明的 MCP 服务在应用的 MCP 列表里对应的那一台(没登记上为 undefined)。 */

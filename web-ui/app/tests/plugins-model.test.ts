@@ -167,6 +167,20 @@ describe("详情用的取值", () => {
     expect(stripRelativeImages(md)).toBe("a  b ![ok](https://x.dev/a.png) c   <img src='https://x.dev/d.png'>");
   });
 
+  test("图片删掉后,包着它的空壳一并删掉,首个标题成为第一块", () => {
+    const banner = '<p>\n  <img src="banner.png" alt="x" width="1100">\n</p>\n\n# Title\n';
+    expect(stripRelativeImages(banner).trimStart()).toBe("# Title\n");
+    const nested = '<p align="center"><a href="https://x.dev"><img src="./logo.svg"></a></p>\n\n# T';
+    expect(stripRelativeImages(nested).trimStart()).toBe("# T");
+    const picture = '<picture><source srcset="dark.png" media="(prefers-color-scheme: dark)"><img src="light.png"></picture>\n# T';
+    expect(stripRelativeImages(picture).trimStart()).toBe("# T");
+    expect(stripRelativeImages("[![logo](./logo.png)](https://x.dev)\n\n# T").trimStart()).toBe("# T");
+    expect(stripRelativeImages("- [ ] todo")).toBe("- [ ] todo");
+    // 还剩 https 图片或文字的壳原样保留。
+    const kept = '<p align="center"><img src="https://x.dev/a.png"></p>\n<p>text</p>';
+    expect(stripRelativeImages(kept)).toBe(kept);
+  });
+
   test("插件声明的 MCP 服务按插件 id + 服务名对上应用 MCP 列表里的那一台", () => {
     const servers = [
       { id: "s1", source: { kind: "plugin", pluginId: "pi:a", name: "web", active: true } },

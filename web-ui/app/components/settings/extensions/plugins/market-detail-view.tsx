@@ -27,7 +27,7 @@ import { installFromMarket } from "./actions";
 import { InstallProgressGlyph, InstallProgressTooltip } from "./install-progress";
 import { formatMonthlyDownloads } from "./market-card";
 import { marketInstalledRecord, stripRelativeImages } from "./model";
-import { BackLink, InfoRow, PanelSkeleton, PluginIconTile, ReadmeBlock } from "./parts";
+import { BackLink, InfoCard, InfoRow, PanelSkeleton, PluginIconTile, ReadmeBlock, ReadmeWithInfo } from "./parts";
 
 export function PluginMarketDetailView({
   settings,
@@ -84,19 +84,15 @@ export function PluginMarketDetailView({
           {t("settings:plugins.market_error", { error })}
         </Notice>
       ) : null}
-      <div className="flex flex-col gap-6 @min-[40rem]:flex-row @min-[40rem]:items-start">
-        <section className="min-w-0 flex-1 space-y-2">
-          <h3 className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:plugins.readme_title")}</h3>
-          {readme ? (
-            <ReadmeBlock content={readme} />
-          ) : !detail && !error ? (
-            <PanelSkeleton />
-          ) : (
-            <p className="text-sm text-[var(--ds-text-secondary)]">{item?.description ?? t("settings:plugins.no_readme")}</p>
-          )}
-        </section>
-        <MarketInfoCard item={item} detail={detail} />
-      </div>
+      <ReadmeWithInfo info={<MarketInfoCard item={item} detail={detail} />}>
+        {readme ? (
+          <ReadmeBlock content={readme} />
+        ) : !detail && !error ? (
+          <PanelSkeleton />
+        ) : (
+          <p className="text-sm text-[var(--ds-text-secondary)]">{item?.description ?? t("settings:plugins.no_readme")}</p>
+        )}
+      </ReadmeWithInfo>
     </SettingsStack>
   );
 }
@@ -179,49 +175,46 @@ function MarketInfoCard({ item, detail }: { item: PluginMarketItemDto | undefine
     item?.links.npm ? { key: "npm_page", url: item.links.npm } : null,
   ].filter((link): link is { key: string; url: string } => link !== null);
   return (
-    <aside className="w-full shrink-0 rounded-[var(--ds-radius-md)] border border-[var(--ds-divider)] bg-[var(--ds-surface-100)] px-4 py-3 @min-[40rem]:w-64">
-      <h3 className="pb-1 text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:plugins.info_title")}</h3>
-      <dl className="divide-y divide-[var(--ds-divider)]">
-        <InfoRow label={t("settings:plugins.info_contains")}>
-          {detail ? (
-            kinds.length > 0 ? (
-              <>
-                {kinds.map((kind) => t(`settings:plugins.resources.${kind}`)).join(" · ")}
-                {kinds.some((kind) => kind !== "extensions") ? (
-                  <span className="mt-0.5 block text-[var(--ds-text-tertiary)]">{t("settings:plugins.resources_partial")}</span>
-                ) : null}
-              </>
-            ) : (
-              <span className="text-[var(--ds-text-tertiary)]">{t("settings:plugins.resources_unknown")}</span>
-            )
+    <InfoCard>
+      <InfoRow label={t("settings:plugins.info_contains")}>
+        {detail ? (
+          kinds.length > 0 ? (
+            <>
+              {kinds.map((kind) => t(`settings:plugins.resources.${kind}`)).join(" · ")}
+              {kinds.some((kind) => kind !== "extensions") ? (
+                <span className="mt-0.5 block text-[var(--ds-text-tertiary)]">{t("settings:plugins.resources_partial")}</span>
+              ) : null}
+            </>
           ) : (
-            <span className="text-[var(--ds-text-tertiary)]">…</span>
-          )}
+            <span className="text-[var(--ds-text-tertiary)]">{t("settings:plugins.resources_unknown")}</span>
+          )
+        ) : (
+          <span className="text-[var(--ds-text-tertiary)]">…</span>
+        )}
+      </InfoRow>
+      {item?.version ? <InfoRow label={t("settings:plugins.info_version")}>{item.version}</InfoRow> : null}
+      {detail?.license ? <InfoRow label={t("settings:plugins.info_license")}>{detail.license}</InfoRow> : null}
+      {item?.updatedAt && !Number.isNaN(Date.parse(item.updatedAt)) ? (
+        <InfoRow label={t("settings:plugins.info_published")}>{new Date(item.updatedAt).toLocaleDateString()}</InfoRow>
+      ) : null}
+      {links.length > 0 ? (
+        <InfoRow label={t("settings:plugins.info_links")}>
+          <span className="flex flex-wrap gap-x-3 gap-y-1">
+            {links.map((link) => (
+              <button
+                key={link.key}
+                type="button"
+                title={link.url}
+                className="inline-flex items-center gap-0.5 text-[var(--ds-brand-primary)] hover:underline"
+                onClick={() => void openExternal(link.url)}
+              >
+                {t(`settings:plugins.${link.key}`)}
+                <ArrowUpRight className="size-3" />
+              </button>
+            ))}
+          </span>
         </InfoRow>
-        {item?.version ? <InfoRow label={t("settings:plugins.info_version")}>{item.version}</InfoRow> : null}
-        {detail?.license ? <InfoRow label={t("settings:plugins.info_license")}>{detail.license}</InfoRow> : null}
-        {item?.updatedAt && !Number.isNaN(Date.parse(item.updatedAt)) ? (
-          <InfoRow label={t("settings:plugins.info_published")}>{new Date(item.updatedAt).toLocaleDateString()}</InfoRow>
-        ) : null}
-        {links.length > 0 ? (
-          <InfoRow label={t("settings:plugins.info_links")}>
-            <span className="flex flex-wrap gap-x-3 gap-y-1">
-              {links.map((link) => (
-                <button
-                  key={link.key}
-                  type="button"
-                  title={link.url}
-                  className="inline-flex items-center gap-0.5 text-[var(--ds-brand-primary)] hover:underline"
-                  onClick={() => void openExternal(link.url)}
-                >
-                  {t(`settings:plugins.${link.key}`)}
-                  <ArrowUpRight className="size-3" />
-                </button>
-              ))}
-            </span>
-          </InfoRow>
-        ) : null}
-      </dl>
-    </aside>
+      ) : null}
+    </InfoCard>
   );
 }
