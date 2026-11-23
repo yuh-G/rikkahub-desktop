@@ -7,6 +7,8 @@
 // 没复用 pi 的包管理实现:它按命令的文件名认包管理器(本程序的 exe 名认不出是 bun,会拿到 npm 的参数),
 // 子进程环境也只能取全局 process.env。安装目录的布局与它相同(<引擎数据目录>/npm 下一个私有 package.json)。
 // 代理:子进程按应用当前生效的代理设 HTTPS_PROXY / HTTP_PROXY(bun 只认环境变量)。
+// 下载缓存:子进程的 BUN_INSTALL_CACHE_DIR 指到数据目录里(engines/plugins 的 enginePluginCacheDir),不用 bun 在用户主目录下的
+// 默认缓存——那里删数据目录、卸载应用都清不掉,又是本机所有 bun 共用的,应用不能替用户删。
 // 同一引擎的安装与卸载串行(同一个 package.json 与 node_modules)。装失败时 bun 可能已把依赖写进清单,
 // 不还原的话之后每次安装都会连带重试这个坏包,所以失败即把清单与锁文件恢复成安装前的样子。
 
@@ -15,7 +17,7 @@ import { join } from "node:path";
 import { CodedError } from "../foundation/errors";
 import { reportError } from "../observability/app-errors";
 import { type BunInstallProgress, createBunProgressReader } from "./bun-install-progress";
-import { enginePluginInstallRoot } from "./plugins";
+import { enginePluginCacheDir, enginePluginInstallRoot } from "./plugins";
 
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
 const OUTPUT_TAIL_CHARS = 2000;
@@ -90,7 +92,7 @@ export function normalizeGitSpec(spec: string): string {
 }
 
 async function runBun(args: string[], root: string, options: PluginInstallOptions, onProgress?: (progress: BunInstallProgress) => void): Promise<void> {
-  const env: Record<string, string | undefined> = { ...process.env, BUN_BE_BUN: "1" };
+  const env: Record<string, string | undefined> = { ...process.env, BUN_BE_BUN: "1", BUN_INSTALL_CACHE_DIR: enginePluginCacheDir() };
   if (options.proxyUrl) {
     env.HTTPS_PROXY = options.proxyUrl;
     env.HTTP_PROXY = options.proxyUrl;

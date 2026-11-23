@@ -7,7 +7,7 @@
 // 插件集合、钩子开关、逐工具开关、安装时刻都在 EnginePlugin 里,变了即换长驻会话的配置键(引擎自行判定重建),
 // 所以改绑定、启停、重装都不必通知引擎。
 // 安装位置:npm / git 来源与上传的压缩包装在 <数据目录>/engines/<engine>/npm,上传的存档与单个脚本在同级的
-// uploads/(两处都不进任何备份);本地来源原地使用。
+// uploads/,包管理器的下载缓存在 <数据目录>/engines/install-cache(三处都不进任何备份);本地来源原地使用。
 
 import { basename, dirname, extname, join } from "node:path";
 import { dataDir } from "../foundation/paths";
@@ -26,6 +26,12 @@ export const UNSAFE_FILE_NAME = /[\\/<>:"|?*\u0000-\u001f]/;
 
 export function enginePluginUploadsDir(engine: string): string {
   return join(dataDir, "engines", engine, "uploads");
+}
+
+/** 包管理器的下载缓存,各引擎共用。放在数据目录里:删数据目录就清干净;与安装目录同盘时 bun 把包硬链接进安装目录,
+ *  不多存一份(bun 的默认位置在用户主目录下,数据目录在别的盘时每个包存两遍)。删掉它只是下次重新下载。 */
+export function enginePluginCacheDir(): string {
+  return join(dataDir, "engines", "install-cache");
 }
 
 /** 上传的单个脚本(不进安装目录,原地加载)。 */

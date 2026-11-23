@@ -15,7 +15,7 @@ const { defaultState } = await import("../app-config/defaults");
 const jsonStore = await import("../persistence/json-store");
 const { handlePluginRoutes } = await import("./handlers/plugins");
 const { handleSettingsRoutes } = await import("./handlers/settings");
-const { enginePluginInstallRoot, enginePluginsFor, enginePluginUploadsDir } = await import("../engines/plugins");
+const { enginePluginCacheDir, enginePluginInstallRoot, enginePluginsFor, enginePluginUploadsDir } = await import("../engines/plugins");
 const { pluginAudit, recordPluginAudit } = await import("../engines/plugin-audit");
 const { pluginMcpServerId } = await import("../engines/plugin-mcp");
 const { useInProcessPiDriver } = await import("../test-utils/in-process-pi");
@@ -108,7 +108,8 @@ describe("插件管理端点", () => {
       meta: { description: "看一眼的工具", author: "Ada", license: "MIT" },
     });
     expect(plugin.path).toBe(join(enginePluginInstallRoot("pi"), "node_modules", "@demo", "peek"));
-
+    // 下载缓存在数据目录里,不用 bun 在用户主目录下的默认缓存。
+    expect(readdirSync(enginePluginCacheDir()).length).toBeGreaterThan(0);
     const detail = await call("plugins/detail", undefined, `?id=${encodeURIComponent(plugin.id)}`);
     expect(detail.body.tools.map((tool: { name: string }) => tool.name)).toEqual(["peek"]);
     expect(detail.body.commands.map((command: { name: string }) => command.name)).toEqual(["todos"]);
