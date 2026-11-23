@@ -53,7 +53,8 @@ export function PluginOverviewPanel({
           {t("settings:plugins.where_workspace")} <PluginGuideLink />
         </p>
       </section>
-      <SettingsAdvancedSection open={advancedOpen} onOpenChange={setAdvancedOpen}>
+      {/* 上框线在信息卡旁边时不能伸到卡片底下。 */}
+      <SettingsAdvancedSection open={advancedOpen} onOpenChange={setAdvancedOpen} className="flow-root">
         <SettingsSwitchRow
           label={t("settings:plugins.hook_tool_call")}
           description={t("settings:plugins.hook_tool_call_desc")}

@@ -200,14 +200,17 @@ export function ReadmeBlock({ content }: { content: string }) {
   const ref = React.useRef<HTMLDivElement>(null);
   const [overflows, setOverflows] = React.useState(false);
   const [expanded, setExpanded] = React.useState(false);
-  // 收起态(限高)下量:内容比限高还高才算溢出;展开后不再量,按钮保持「收起」。
+  // 收起态(限高)下量:正文比限高还高才算溢出;展开后不再量,按钮保持「收起」。量的是里面正文的高度(overflow: clip 不是
+  // 滚动容器,不拿 scrollHeight);图片晚到会撑高正文,所以两层都盯。
   React.useLayoutEffect(() => {
     const node = ref.current;
-    if (!node || expanded) return;
-    const measure = () => setOverflows(node.scrollHeight > node.clientHeight + 1);
+    const body = node?.firstElementChild as HTMLElement | null | undefined;
+    if (!node || !body || expanded) return;
+    const measure = () => setOverflows(body.offsetHeight > node.clientHeight + 1);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
+    observer.observe(body);
     return () => observer.disconnect();
   }, [content, expanded]);
   return (
@@ -215,8 +218,13 @@ export function ReadmeBlock({ content }: { content: string }) {
       <div
         ref={ref}
         className={cn(
+          // overflow-clip 而不是 hidden:hidden 会自成格式化上下文,整块正文缩在信息卡左边一窄条,不绕排。
           // 正文的标题与配图段带着非分层的上边距(markdown.css),工具类要加 ! 才压得过。
-          "overflow-hidden text-sm text-[var(--ds-text-primary)] [&_.markdown>*>:first-child]:mt-0!",
+          // 带框线的块(二级标题的下划线、分隔线、脚注的上框)与配图段在卡片旁边时整体变窄让开,不伸到卡片底下;
+          // 配图段变窄后图片按变窄的宽度缩,不会因为放不下被挤到卡片下面、在左边留出一大块空白。代码块与表格本来就是独立的
+          // 格式化上下文,会自己让开;代码块带着 w-full,要改回 auto 才肯在卡片旁边变窄,不然整块被推到卡片下面。
+          "overflow-clip text-sm text-[var(--ds-text-primary)] [&_.markdown>*>:first-child]:mt-0!",
+          "[&_.markdown>*>:is(h2,hr,p:has(img),div:has(img),.footnotes)]:flow-root [&_.code-block]:w-auto",
           !expanded && "max-h-80",
           !expanded && overflows && "[mask-image:linear-gradient(to_bottom,black_70%,transparent)]",
         )}
@@ -232,15 +240,19 @@ export function ReadmeBlock({ content }: { content: string }) {
   );
 }
 
-/** 「说明」:小标题占整宽一行,正文与信息卡在它下面并排、顶边对齐;内容区窄于 40rem 时上下排。 */
+/**
+ * 「说明」:小标题占整宽一行;信息卡浮在右上,正文从它左边排起,过了卡片的高度铺满整宽。内容区窄于 40rem 时卡片在上、
+ * 正文在下。正文里各块怎么让开卡片见 ReadmeBlock;别的块要是带框线或底色,自己加 flow-root(整体变窄,不伸到卡片底下)。
+ */
 export function ReadmeWithInfo({ info, children }: { info: React.ReactNode; children: React.ReactNode }) {
   const { t } = useTranslation();
   return (
     <div className="space-y-2">
       <h3 className="text-xs font-semibold text-[var(--ds-text-secondary)]">{t("settings:plugins.readme_title")}</h3>
-      <div className="flex flex-col gap-6 @min-[40rem]:flex-row @min-[40rem]:items-start">
-        <div className="min-w-0 flex-1 space-y-6">{children}</div>
-        <div className="w-full shrink-0 @min-[40rem]:w-64">{info}</div>
+      <div className="flow-root">
+        {/* relative z-[1]:README 收起时的渐隐遮罩自成层叠上下文,它的盒子伸到卡片底下;卡片得压在上面,链接才点得到。 */}
+        <div className="relative z-[1] mb-6 @min-[40rem]:float-right @min-[40rem]:mb-4 @min-[40rem]:ml-6 @min-[40rem]:w-64">{info}</div>
+        <div className="space-y-6">{children}</div>
       </div>
     </div>
   );
@@ -267,10 +279,10 @@ export function InfoRow({ label, children }: { label: React.ReactNode; children:
   );
 }
 
-/** 页签内容回来前的三行骨架。 */
+/** 页签内容回来前的三行骨架。flow-root:放在信息卡旁边时整体变窄,骨架条不伸到卡片底下。 */
 export function PanelSkeleton() {
   return (
-    <div className="space-y-2.5 py-1" aria-hidden>
+    <div className="flow-root space-y-2.5 py-1" aria-hidden>
       <Skeleton className="h-4 w-3/4" />
       <Skeleton className="h-4 w-1/2" />
       <Skeleton className="h-4 w-2/3" />

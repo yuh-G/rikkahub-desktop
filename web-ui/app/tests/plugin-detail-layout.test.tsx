@@ -1,5 +1,5 @@
-// plugin-detail-layout.test.tsx — 插件详情概览的版式:「说明」小标题占整宽一行,正文与信息卡在它下面并排(顶边对齐);
-// README 第一块不留上边距;已安装与市场条目两处详情共用同一套版式,不各写一份。
+// plugin-detail-layout.test.tsx — 插件详情概览的版式:「说明」小标题占整宽一行;信息卡浮在右上,正文绕着它排、过了卡片铺满整宽;
+// README 第一块不留上边距(与卡片顶边对齐);已安装与市场条目两处详情共用同一套版式,不各写一份。
 import { beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -75,5 +75,24 @@ describe("插件详情概览的版式", () => {
       expect(source).toContain("<InfoCard>");
       expect(source).not.toContain('t("settings:plugins.readme_title")');
     }
+  });
+
+  // 绕排全靠 className(jsdom 不跑 Tailwind,也不排版),锁源码里的关键类。
+  test("绕排:卡片浮在右上,README 容器不自成格式化上下文,带框线的块让开卡片", () => {
+    const parts = readFileSync(join(PLUGINS_DIR, "parts.tsx"), "utf8");
+    expect(parts).toContain("@min-[40rem]:float-right");
+    // overflow: hidden 会让整块 README 缩在卡片左边,不绕排。
+    expect(parts).toContain('"overflow-clip text-sm');
+    expect(parts).not.toContain('"overflow-hidden text-sm');
+    expect(parts).toContain("[&_.markdown>*>:is(h2,hr,p:has(img),div:has(img),.footnotes)]:flow-root");
+    expect(parts).toContain("[&_.code-block]:w-auto");
+    // 收起时的渐隐遮罩盖在卡片上面会挡住链接,卡片要压在上面。
+    expect(parts).toContain('className="relative z-[1] mb-6');
+    expect(readFileSync(join(PLUGINS_DIR, "detail-panels.tsx"), "utf8")).toContain('className="flow-root"');
+  });
+
+  test("渲染顺序:卡片在正文之前(浮动要先出现;窄的时候卡片在上)", () => {
+    const html = render();
+    expect(html.indexOf(i18n.t("settings:plugins.info_title"))).toBeLessThan(html.indexOf("Demo Title"));
   });
 });
