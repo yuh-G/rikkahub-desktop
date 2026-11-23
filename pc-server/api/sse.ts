@@ -7,7 +7,7 @@ import { initWorkingSetSseGuard, markConversationRowDirty, markMessageNodeDirty,
 import { initAppErrorBroadcast, reportError } from "../observability/app-errors";
 import { initProviderAuthBroadcast } from "../model-providers/auth";
 import type { Conversation, ConversationListInvalidateEventDto, ConversationNodeUpdateEventDto, ConversationSnapshotEventDto, ConversationTextDeltaEventDto, EngineStatusEventDto, EngineUiNotifyEventDto, EngineUiStateEventDto, JsonValue, MessageNode } from "../foundation/types";
-import type { PluginInstallProgressEventDto } from "../foundation/types/plugins";
+import type { PluginInstallProgressEventDto, PluginReinstallStateEventDto } from "../foundation/types/plugins";
 import { diffFingerprints, fingerprintNode, type NodeBroadcastFingerprint } from "./node-delta";
 import { conversationNegotiationToken } from "./snapshot-negotiation";
 import { stripAuthSecrets } from "./auth";
@@ -268,6 +268,17 @@ export function broadcastEngineNotify(notice: EngineUiNotifyEventDto) {
 
 export function broadcastPluginInstallProgress(event: PluginInstallProgressEventDto) {
   broadcastTo(appClients, sseFrame("plugin_install_progress", event));
+}
+
+let pluginReinstallState: PluginReinstallStateEventDto = { pluginIds: [] };
+
+export function setPluginReinstallState(pluginIds: string[]) {
+  pluginReinstallState = { pluginIds };
+  broadcastTo(appClients, sseFrame("plugin_reinstall_state", pluginReinstallState));
+}
+
+export function pluginReinstallStateFrame(): [string, JsonValue | object] {
+  return ["plugin_reinstall_state", pluginReinstallState];
 }
 
 // ===== H-b(专题2):流式增量帧 =====

@@ -3,6 +3,7 @@
 // npm 来源用 `bun pm pack` 打的压缩包:Windows 上 bun 1.4.2 装 file:<目录> 会在拷贝阶段报 EPERM(目录插件走本地来源)。
 // 上传(P6.2.3):三种格式各装通一次、同名 409 与 replace=1、存档丢失、搬动数据目录后安装根仍能再装别的包。
 // 打开所在文件夹:起文件管理器的那一下换成假的,只断言命令与闸门。
+// 恢复备份后的补装:包不在的 npm 来源在后台重装且沿用设置,上传与本地来源只报给用户。
 import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +14,7 @@ process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-plugins-api-t
 
 const { defaultState } = await import("../app-config/defaults");
 const jsonStore = await import("../persistence/json-store");
-const { handlePluginRoutes } = await import("./handlers/plugins");
+const { handlePluginRoutes, reinstallMissingPlugins } = await import("./handlers/plugins");
 const { handleSettingsRoutes } = await import("./handlers/settings");
 const { enginePluginCacheDir, enginePluginInstallRoot, enginePluginsFor, enginePluginUploadsDir } = await import("../engines/plugins");
 const { pluginAudit, recordPluginAudit } = await import("../engines/plugin-audit");
@@ -21,6 +22,7 @@ const { pluginMcpServerId } = await import("../engines/plugin-mcp");
 const { useInProcessPiDriver } = await import("../test-utils/in-process-pi");
 const { appClients } = await import("./sse");
 const { markRequestNetworkContext } = await import("./net-context");
+const { recentAppErrors } = await import("../observability/app-errors");
 
 jsonStore.setState(defaultState());
 const lab = mkdtempSync(join(tmpdir(), "rkh-plugins-api-lab-"));
@@ -203,6 +205,64 @@ describe("插件管理端点", () => {
     } finally {
       appClients.delete(listener);
     }
+  }, 120_000);
+
+  test("恢复备份后补装:包不在的 npm 来源后台重装,沿用启停、开关与绑定;上传与本地来源只报给用户", async () => {
+    const frames: Array<{ event: string; data: Record<string, any> }> = [];
+    const decoder = new TextDecoder();
+    const listener = {
+      desiredSize: 1,
+      enqueue(chunk: Uint8Array) {
+        const [eventLine, dataLine] = decoder.decode(chunk).split("\n");
+        frames.push({ event: eventLine!.slice(7), data: JSON.parse(dataLine!.slice(6)) });
+      },
+      close() {},
+    } as unknown as ReadableStreamDefaultController<Uint8Array>;
+    const tarball = packTarball(writePackage("restore-pkg", { name: "restore-pkg", version: "2.0.0", pi: { extensions: ["./main.js"] } }, { "main.js": PLUGIN_SOURCE }));
+    const installed = await call("plugins/install", { source: { kind: "npm", spec: tarball } });
+    const plugin = installed.body.plugin;
+    const assistantId = jsonStore.state.settings.assistants[0]!.id;
+    expect((await call("settings/assistant/plugins", { assistantId, pluginIds: [plugin.id] })).status).toBe(200);
+    expect((await call("plugins/switches", { id: plugin.id, tools: { peek: { enabled: false } } })).status).toBe(200);
+    expect((await call("plugins/enabled", { id: plugin.id, enabled: false })).status).toBe(200);
+    // 换机恢复后的样子:记录在,包、上传的文件、链接的文件夹都不在。
+    rmSync(plugin.path, { recursive: true, force: true });
+    const manual = (id: string, source: { kind: "upload" | "local"; spec: string }) =>
+      ({ id, engine: "pi", name: id.slice(3), source, version: null, enabled: true, hookSwitches: { toolCall: true }, toolSwitches: {}, installedAt: "" });
+    jsonStore.state.settings.enginePlugins = [
+      ...jsonStore.state.settings.enginePlugins,
+      manual("pi:gone-script", { kind: "upload", spec: "scripts/gone-script.js" }),
+      manual("pi:gone-folder", { kind: "local", spec: join(lab, "gone-folder") }),
+    ];
+    const missingIds = ((await call("plugins")).body.plugins as Array<{ id: string; installed: boolean }>).filter((item) => !item.installed).map((item) => item.id);
+    expect(missingIds).toEqual([plugin.id, "pi:gone-script", "pi:gone-folder"]);
+
+    appClients.add(listener);
+    try {
+      await Promise.all([reinstallMissingPlugins(), reinstallMissingPlugins()]);
+    } finally {
+      appClients.delete(listener);
+    }
+    const view = (await call("plugins")).body.plugins.find((item: { id: string }) => item.id === plugin.id);
+    expect(view).toMatchObject({ installed: true, enabled: false, version: "2.0.0", toolSwitches: { peek: { enabled: false } } });
+    expect(jsonStore.state.settings.assistants[0]!.enginePluginIds).toEqual([plugin.id]);
+    const states = frames.filter((frame) => frame.event === "plugin_reinstall_state").map((frame) => frame.data.pluginIds);
+    expect(states).toEqual([[plugin.id], []]);
+    const progress = frames.filter((frame) => frame.event === "plugin_install_progress").map((frame) => frame.data);
+    expect(progress.at(-1)).toEqual({ key: plugin.id, phase: "check", done: 0, total: 0 });
+    const restoreErrors = recentAppErrors().filter((entry) => entry.code?.startsWith("plugin_restore_"));
+    expect(restoreErrors.map((entry) => [entry.code, entry.severity, entry.params])).toEqual([
+      ["plugin_restore_manual", "warn", { plugins: "gone-script、gone-folder" }],
+    ]);
+
+    // 没有缺的包:不再推状态,也不报。
+    frames.length = 0;
+    jsonStore.state.settings.enginePlugins = jsonStore.state.settings.enginePlugins.filter((record) => !record.id.startsWith("pi:gone-"));
+    appClients.add(listener);
+    await reinstallMissingPlugins();
+    appClients.delete(listener);
+    expect(frames).toEqual([]);
+    expect((await call("plugins/uninstall", { id: plugin.id })).status).toBe(200);
   }, 120_000);
 
   test("插件声明的 MCP 服务登记进应用的 MCP 列表:启停跟随、重装保留用户开关、卸载移除;不支持的写审计", async () => {

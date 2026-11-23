@@ -13,6 +13,8 @@
 // 市场(engines/plugin-market):内置 + 用户添加的市场源、检索与条目详情;从市场安装就是 plugins/install(npm 来源可带 registry)。
 // 上传(engines/plugin-upload,P6.2.3):校验过的文件存进 uploads/ 再装,来源 upload;同名先回 409 等界面确认,带 replace=1
 // 重发即替换那一条。压缩包的重装用存档再装一次,脚本的重装重新试加载;卸载连上传的文件一起删。
+// 恢复备份后(备份不带插件包):data 路由调 reinstallMissingPlugins,包不在的市场 / Git 来源插件在后台逐个重装;
+// 上传的文件与链接的本地文件夹没法自动补回,列出来报给用户。
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
@@ -68,7 +70,7 @@ import { pluginMcpSource } from "../../tools/mcp-source";
 import { addLog } from "../logs";
 import { isLoopbackRequest } from "../net-context";
 import { error, json, readJson } from "../request";
-import { broadcastPluginInstallProgress } from "../sse";
+import { broadcastPluginInstallProgress, setPluginReinstallState } from "../sse";
 
 function records(): EnginePluginRecord[] {
   return state.settings.enginePlugins ?? [];
@@ -330,6 +332,63 @@ async function handleUpload(request: Request): Promise<Response> {
     return json({ plugin: pluginView(record) } satisfies EnginePluginMutationDto);
   } catch (err) {
     return failure(err);
+  }
+}
+
+let reinstallRun: Promise<void> | null = null;
+let reinstallAgain = false;
+
+/** 恢复备份后补装插件:记录在、包不在的插件里,市场(npm)与 Git 来源在后台逐个重装,沿用记录的 id、启停、开关与绑定,
+ *  进度照常推给界面(键 = 插件 id,在补装的整份名单经 plugin_reinstall_state 推);别的来源报给用户自己处理。
+ *  补装中再调一次 = 这一轮完了再查一遍。不抛错。 */
+export function reinstallMissingPlugins(): Promise<void> {
+  if (reinstallRun) {
+    reinstallAgain = true;
+    return reinstallRun;
+  }
+  const run = async () => {
+    do {
+      reinstallAgain = false;
+      await reinstallMissingOnce();
+    } while (reinstallAgain);
+  };
+  reinstallRun = run().finally(() => {
+    reinstallRun = null;
+  });
+  return reinstallRun;
+}
+
+async function reinstallMissingOnce(): Promise<void> {
+  const missing = records().filter((record) => isPluginEngine(record.engine) && !existsSync(locateEnginePlugin(record)));
+  const auto = missing.filter((record) => record.source.kind === "npm" || record.source.kind === "git");
+  const manual = missing.filter((record) => !auto.includes(record));
+  if (manual.length > 0) {
+    const plugins = manual.map((record) => record.name).join("、");
+    reportError("backup", "warn", `这些插件没法自动装回:${plugins}`, undefined, "plugin_restore_manual", { plugins });
+  }
+  if (auto.length === 0) return;
+  const pending = auto.map((record) => record.id);
+  setPluginReinstallState([...pending]);
+  const failed: string[] = [];
+  const details: string[] = [];
+  for (const { id: pluginId } of auto) {
+    const record = findRecord(pluginId);
+    try {
+      // 排队期间可能已被再次恢复换掉,或已被手动装好。
+      if (record && !existsSync(locateEnginePlugin(record))) {
+        const next = await install(record.engine, record.source, record, undefined, progressReporter(pluginId));
+        if (findRecord(pluginId)) saveInstalled(next, await pluginMcpDeclarations(next));
+      }
+    } catch (err) {
+      failed.push(record?.name ?? pluginId);
+      details.push(`${record?.name ?? pluginId}:${err instanceof Error ? err.message : String(err)}`);
+    }
+    pending.splice(pending.indexOf(pluginId), 1);
+    setPluginReinstallState([...pending]);
+  }
+  if (failed.length > 0) {
+    const plugins = failed.join("、");
+    reportError("backup", "warn", `恢复备份后没能自动重新安装:${plugins}`, details.join("\n"), "plugin_restore_failed", { plugins });
   }
 }
 

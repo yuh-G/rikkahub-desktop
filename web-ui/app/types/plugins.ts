@@ -18,6 +18,7 @@ export type {
   PluginMarketPageDto,
   PluginMarketSourceDto,
   PluginMarketSourcesDto,
+  PluginReinstallStateEventDto,
 } from "@server/foundation/types/plugins";
 export type {
   EnginePluginMeta,

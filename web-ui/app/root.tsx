@@ -38,6 +38,7 @@ import { TitleBarOverlay } from "./components/titlebar-overlay";
 import { useAppErrorsStore } from "./stores/app-errors-store";
 import { startUsageActivityBeacon } from "./services/usage-activity";
 import { useApprovalNotifications } from "./lib/approval-notification";
+import { followPluginReinstalls } from "./lib/plugins-api";
 import api from "~/services/api";
 import {
   LEGACY_RELAY_KEYS,
@@ -220,6 +221,7 @@ function AppContent() {
   useMemorySubscription();
   useAppErrorsSubscription();
   useMcpHealthSubscription();
+  React.useEffect(() => followPluginReinstalls(), []);
   // 域4-1(交互审查 2A):审批等待的桌面通知(窗口不可见时),琥珀点外显在侧栏/标签条。
   useApprovalNotifications();
   useHotkeys();

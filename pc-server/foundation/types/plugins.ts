@@ -45,6 +45,12 @@ export interface PluginInstallProgressDto {
  *  key = 请求里的 progressKey(界面的忙碌键)。 */
 export type PluginInstallProgressEventDto = PluginInstallProgressDto & { key: string };
 
+/** /api/events 的 plugin_reinstall_state:恢复备份后正在后台补装的插件 id(整份状态,连接时补发;空 = 没在补装)。
+ *  补装每个插件的进度照常走 plugin_install_progress,key 即插件 id。 */
+export interface PluginReinstallStateEventDto {
+  pluginIds: string[];
+}
+
 /** POST plugins/upload 的 409:包名(单个脚本是文件名)与已装的一条相同。界面问过后带 replace=1 重发即替换它,
  *  替换沿用它的 id、启停、开关与各处的选择。 */
 export interface EnginePluginUploadConflictDto {

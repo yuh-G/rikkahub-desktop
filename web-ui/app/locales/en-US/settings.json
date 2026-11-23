@@ -1211,6 +1211,8 @@
       "engine_host_launch_failed": "The pi engine failed to start, retrying",
       "engine_host_gave_up": "The pi engine process exited unexpectedly {{count}} times in a short period, so it will not be restarted. Regenerating a reply or changing plugins will try again",
       "engine_host_gave_up_plugins": "The pi engine process exited unexpectedly {{count}} times in a short period, so it will not be restarted. Enabled plugins: {{plugins}}. Try disabling them first",
+      "plugin_restore_manual": "These plugins weren't installed from the plugin market or Git, and the backup doesn't include their files: {{plugins}}. Upload them again or relink their folders on the plugins page",
+      "plugin_restore_failed": "Couldn't reinstall these plugins automatically after the restore: {{plugins}}. Reinstall them on the plugins page",
       "system_proxy_probe_fallback": "The system proxy detection thread is unavailable, so detection now runs on the main thread. Following the system proxy still works, but requests may pause briefly before being sent",
       "voice_provider_preserved": "Detected voice services from the mobile app ({{types}}) that this desktop app doesn't support yet. Their configuration is preserved as-is for round-trip and won't be lost"
     }
@@ -1486,7 +1488,7 @@
       "data": {
         "title": "Plugin data",
         "home": "Plugins that store settings the way pi expects keep them under engines/pi in the app's data folder. Many plugins also write to your home folder (for example ~/.pi-lens, ~/.context-mode). Uninstalling removes the plugin package and the MCP servers it registered. Data the plugin stored itself isn't cleaned up; delete it yourself if needed.",
-        "backup": "Backups between desktop installs include the plugin list but not the packages or the data plugins store themselves. After restoring on another computer, reinstall them on the plugins page. Backups for the mobile app don't include plugins."
+        "backup": "Backups between desktop installs include the plugin list but not the packages or the data plugins store themselves. After a restore, plugins from the plugin market or Git are reinstalled in the background. Uploaded files and linked local folders have to be uploaded or relinked on the plugins page. Backups for the mobile app don't include plugins."
       },
       "engine": {
         "title": "The engine process and restart notices",

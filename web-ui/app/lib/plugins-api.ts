@@ -2,7 +2,7 @@
 // 几分钟(后端上限 5 分钟),这几个关掉客户端的 30 秒超时。这几个带上界面的忙碌键(progressKey),后端按它推进度。
 import api, { ApiError, appendWebAuthQuery, notifyWebAuthRequired } from "~/services/api";
 import { onAppEvent } from "~/services/app-events";
-import { setMarketSources, setPluginInstallProgress, setPluginList, setPluginUpdates } from "~/stores/plugins-view-store";
+import { setMarketSources, setPluginBusy, setPluginInstallProgress, setPluginList, setPluginUpdates } from "~/stores/plugins-view-store";
 import type {
   EnginePluginAuditDto,
   EnginePluginDetailDto,
@@ -101,4 +101,30 @@ export function followInstallProgress(key: string): () => void {
   return onAppEvent("plugin_install_progress", ({ key: eventKey, ...progress }) => {
     if (eventKey === key) setPluginInstallProgress(key, progress);
   });
+}
+
+/** 恢复备份后的后台补装(后端推整份名单):名单里的插件显示为忙碌并跟进度,有补装完的就重取列表。根组件调用一次。 */
+export function followPluginReinstalls(): () => void {
+  const following = new Map<string, () => void>();
+  const stop = onAppEvent("plugin_reinstall_state", ({ pluginIds }) => {
+    const current = new Set(pluginIds);
+    let finished = false;
+    for (const [pluginId, unfollow] of following) {
+      if (current.has(pluginId)) continue;
+      unfollow();
+      following.delete(pluginId);
+      setPluginBusy(pluginId, false);
+      finished = true;
+    }
+    for (const pluginId of current) {
+      if (following.has(pluginId)) continue;
+      setPluginBusy(pluginId, true);
+      following.set(pluginId, followInstallProgress(pluginId));
+    }
+    if (finished) void refreshPluginList();
+  });
+  return () => {
+    stop();
+    for (const unfollow of following.values()) unfollow();
+  };
 }
