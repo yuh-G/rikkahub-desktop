@@ -26,8 +26,8 @@ export type SlashCommandExecutor = (argument: string, composer: SlashCommandComp
 export interface ClientCommandDeps {
   /** 侧栏「新建对话」。 */
   newConversation: () => void;
-  /** 会话标题的手动编辑(重命名弹窗)。 */
-  renameConversation: () => void;
+  /** 会话标题的手动编辑(重命名弹窗);还没有会话时返回 false。 */
+  renameConversation: () => boolean | void;
   /** 打开设置(回到上次停留的位置)。 */
   openSettings: () => void;
   /** 最新一条回复下的「创建分叉」;没有回复可分叉、或没分成时返回 false。 */

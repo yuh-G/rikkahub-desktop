@@ -1834,7 +1834,14 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
   }, [compressAdditionalPrompt, compressKeepRecent, compressTargetTokens, performCompress]);
 
   // ── 斜杠指令:清单(服务端权威)+ 执行分发表(实现池前端部分;方案 §3.4 / §5.9) ──────
-  const availableSlashCommands = useAvailableCommands(activeId);
+  // 新对话页也列全部指令:按本列的工作区与左下角改过的插件选择取;作用对象还不在的(压缩、重命名、引擎指令)执行时报。
+  const draftEnginePluginIds = useChatInputStore((state) =>
+    !activeId && draftKey ? state.extensionDrafts[draftKey]?.enginePluginIds : undefined,
+  );
+  const availableSlashCommands = useAvailableCommands(activeId, {
+    workspaceId: container !== CHAT_CONTAINER ? container : null,
+    ...(draftEnginePluginIds ? { enginePluginIds: draftEnginePluginIds } : {}),
+  });
   // 「创建分叉」挂在每条回复下;指令分叉的是选中路径上最新的那条回复。
   const forkLatestReply = React.useCallback(async () => {
     const detail = activeId ? useConversationStore.getState().entries[activeId]?.detail : null;
@@ -1858,6 +1865,10 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
     () => ({
       // /compact [额外指示] → 既有压缩链路;进行中再触发提示占用(复用现有互斥)并告知未受理。
       compact: async (argument: string) => {
+        if (!activeId) {
+          toast.info(t("conversations.commands.compact_nothing"));
+          return false;
+        }
         if (compressing) {
           toast.error(t("conversations.compress.busy"));
           return false;
@@ -1871,6 +1882,10 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
           emitHotkeyAction("newConversation");
         },
         renameConversation: () => {
+          if (!activeId) {
+            toast.info(t("conversations.commands.needs_conversation", { command: "/name" }));
+            return false;
+          }
           focusSelf();
           emitHotkeyAction("renameConversation");
         },
@@ -1878,13 +1893,18 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
         forkLatestReply,
       }),
     }),
-    [compressing, focusSelf, forkLatestReply, navigate, performCompress, t],
+    [activeId, compressing, focusSelf, forkLatestReply, navigate, performCompress, t],
   );
   // 引擎特色指令(插件指令、引擎自带指令):交给引擎执行,执行中会话按生成中显示,停止键可中止。
   // 接口要等指令跑完才返回(中间可能弹插件对话框),所以不等它:输入框立刻放手,停止键才按得到。
   const runEngineCommand = React.useCallback(
     (command: SlashCommandDto, argument: string) => {
-      if (!activeId || !command.commandId) return false;
+      if (!command.commandId) return false;
+      // 引擎指令在引擎的会话里跑,第一条消息发出前还没有这个会话。
+      if (!activeId) {
+        toast.info(t("conversations.commands.needs_conversation", { command: `/${command.invocation}` }));
+        return false;
+      }
       // 生成中输入框本就不认指令;压缩中服务端会拒,先在这里拦下,原文回填不丢参数。
       if (compressing) {
         toast.info(t("conversations.commands.busy"));

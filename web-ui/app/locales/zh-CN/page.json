@@ -141,6 +141,8 @@
     "greeting_line": "{{greeting}}，有什么可以帮助你的？",
     "commands": {
       "fork_nothing": "还没有可以分叉的回复",
+      "compact_nothing": "还没有可以压缩的消息",
+      "needs_conversation": "{{command}} 要在会话里用：先发一条消息",
       "busy": "会话正在生成或压缩，稍后再执行指令",
       "aborted": "{{command}} 已中止",
       "failed": "{{command}} 执行失败：{{error}}"

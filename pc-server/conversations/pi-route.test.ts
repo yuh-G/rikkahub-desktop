@@ -468,6 +468,45 @@ export default function (pi) {
     assistant.enginePluginIds = [];
   }, 30_000);
 
+  test("新对话页(会话还不存在)也列全部指令:对话模式是通用指令;工作区按当前助手的插件,左下角改过的插件选择优先;不建会话", async () => {
+    await installUpstream([{ content: "未使用" }]);
+    const pluginPath = join(process.env.RIKKAHUB_PC_DATA_DIR!, "draft-plugin.js");
+    writeFileSync(pluginPath, `export default function (pi) { pi.registerCommand("hello", { handler: async () => {} }); }\n`);
+    jsonStore.state.settings.enginePlugins = [{
+      id: "pi:draft-plugin",
+      engine: "pi",
+      name: "draft-plugin",
+      source: { kind: "local", spec: pluginPath },
+      version: null,
+      enabled: true,
+      hookSwitches: { toolCall: true },
+      toolSwitches: {},
+      installedAt: "2026-11-23T00:00:00.000Z",
+    }];
+    const assistant = jsonStore.state.settings.assistants[0]!;
+    assistant.enginePluginIds = ["pi:draft-plugin"];
+    const workspace = ws.createWorkspace({ type: "managed", name: "route-draft-commands" });
+    const listed = async (query: string) => {
+      const url = new URL(`http://localhost/api/commands${query}`);
+      const body = (await (await handleCommandRoutes(new Request(url), url, "commands"))!.json()) as { commands: Array<{ source: string; invocation: string }> };
+      return body.commands.map((command) => `${command.source} /${command.invocation}`);
+    };
+    const general = ["compact", "new", "fork", "name", "model", "thinking", "mcp", "skill", "settings"].map((name) => `app /${name}`);
+    const stored = () => conversations.countPcConversations(conversations.getConversationsDb()!);
+    const before = stored();
+
+    expect(await listed("")).toEqual(general);
+    expect(await listed("?conversationId=no-such-conversation")).toEqual(general);
+    expect(await listed(`?workspaceId=${workspace.id}`)).toEqual([...general, "plugin:pi:draft-plugin /hello"]);
+    expect(await listed(`?workspaceId=${workspace.id}&enginePluginIds=${encodeURIComponent("[]")}`)).toEqual(general);
+    expect(await listed(`?workspaceId=${workspace.id}&enginePluginIds=not-json`)).toEqual([...general, "plugin:pi:draft-plugin /hello"]);
+    expect(stored()).toBe(before);
+    expect(conversations.getConversation("new-conversation")).toBeUndefined();
+
+    jsonStore.state.settings.enginePlugins = [];
+    assistant.enginePluginIds = [];
+  }, 30_000);
+
   test("非工作区会话走聊天引擎原路:零 pi 痕迹", async () => {
     const server = await installUpstream([{ content: "聊天回答" }]);
     const conversation = seedConversation(null);

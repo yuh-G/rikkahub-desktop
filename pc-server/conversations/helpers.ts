@@ -80,23 +80,7 @@ export function pinConversationSelection(conversation: Conversation): void {
 export function ensureConversation(idValue: string, init?: { workspaceId?: string | null; extensionSelection?: unknown }) {
   let conversation = getConversation(idValue);
   if (!conversation) {
-    const now = Date.now();
-    const assistant = findAssistant(state.settings.assistantId);
-    conversation = {
-      id: idValue,
-      assistantId: assistant.id,
-      systemPrompt: null,
-      title: "",
-      messages: presetMessageNodes(assistant),
-      chatSuggestions: [],
-      isPinned: false,
-      createAt: now,
-      updateAt: now,
-      workspaceId: init?.workspaceId ?? null,
-      workspaceCwd: null,
-      engineCompactions: null,
-      ...splitSelection(initialSelection(assistant, init?.extensionSelection)),
-    };
+    conversation = newConversationRecord(idValue, init);
     registerConversation(conversation); // 新建:内存即权威,防 checkout 从活库读空树反向覆盖
     // 1.2.6:新建会话 persist 进活库(建会话行),否则后续流式 upsert 该会话的节点时
     // FK 失败(pc_message_node.conversation_id 引用 pc_conversation.id),且流式中崩溃
@@ -104,6 +88,28 @@ export function ensureConversation(idValue: string, init?: { workspaceId?: strin
     persistConversation(conversation);
   }
   return conversation;
+}
+
+/** 按当前助手新建的一条会话(只在内存,不登记不落库):ensureConversation 建档用,新对话页的指令清单也按它判引擎、
+ *  取插件(第一条消息发出前会话还不存在)。 */
+export function newConversationRecord(idValue: string, init?: { workspaceId?: string | null; extensionSelection?: unknown }): Conversation {
+  const now = Date.now();
+  const assistant = findAssistant(state.settings.assistantId);
+  return {
+    id: idValue,
+    assistantId: assistant.id,
+    systemPrompt: null,
+    title: "",
+    messages: presetMessageNodes(assistant),
+    chatSuggestions: [],
+    isPinned: false,
+    createAt: now,
+    updateAt: now,
+    workspaceId: init?.workspaceId ?? null,
+    workspaceCwd: null,
+    engineCompactions: null,
+    ...splitSelection(initialSelection(assistant, init?.extensionSelection)),
+  };
 }
 
 export function roleFromPreset(value: unknown): Message["role"] {
