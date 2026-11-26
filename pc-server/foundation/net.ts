@@ -255,11 +255,11 @@ export function ipInCidr(ip: string, cidr: string): boolean {
   return ((ipInt & mask) >>> 0) === ((netInt & mask) >>> 0);
 }
 
-// Bun fetch 在进程首次网络请求时快照 HTTPS_PROXY/HTTP_PROXY/NO_PROXY env 并永久锁定
-// （实测 Bun 1.3.13；1.4.0 经 scripts/proxy-behavior-smoke.ts 复核锁仍在、direct/manual 分流
-// 与错误分类正则均未漂移）。本函数在 server 启动早期（首次 fetch 前）安装拦截：
-//   - 非容器部署：清空 env 防 Bun 锁定旧代理
-//   - 容器部署（mode=env）：保留 docker 注入的 HTTPS_PROXY，让 Bun 快照它
+// 不带 proxy 选项的 Bun fetch 按当前环境变量选代理（HTTP_PROXY / HTTPS_PROXY，都没有时 ALL_PROXY；NO_PROXY 豁免），
+// 运行时赋值与删除都即时生效（Bun 1.4.3 起；更早的版本删除不生效）。scripts/proxy-behavior-smoke.ts §A 锁这条。
+// 本函数在 server 启动早期（首次 fetch 前）安装拦截：
+//   - 非容器部署：删掉继承来的代理环境变量，出站代理只由应用设置决定
+//   - 容器部署（mode=env）：保留 docker 注入的变量，原生 fetch 照它走
 //   - 替换 globalThis.fetch，per-request 按当前代理状态显式传 proxy 选项
 export function installProxyFetchInterceptor(getProxyConfig: () => ProxyConfig): void {
   if (!RUNNING_IN_CONTAINER) {
@@ -267,6 +267,8 @@ export function installProxyFetchInterceptor(getProxyConfig: () => ProxyConfig):
     delete process.env.HTTP_PROXY;
     delete process.env.https_proxy;
     delete process.env.http_proxy;
+    delete process.env.ALL_PROXY;
+    delete process.env.all_proxy;
     delete process.env.NO_PROXY;
     delete process.env.no_proxy;
   }

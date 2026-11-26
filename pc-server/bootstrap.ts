@@ -27,8 +27,8 @@ export async function bootstrap(): Promise<void> {
   setState(await loadState());
   state.launchCount += 1;
 
-  // 2) 代理拦截器:必须在首次出站 fetch 之前安装,否则首个请求会触发 Bun 的 env 快照
-  //    锁定,之后改代理不生效。就绪前 /api 全部 503,不会有业务出站请求先行。
+  // 2) 代理拦截器:必须在首次出站 fetch 之前安装——之前的请求不过壳,走继承来的代理环境变量、不认应用的
+  //    代理设置。就绪前 /api 全部 503,不会有业务出站请求先行。
   installProxyFetchInterceptor(() => state.settings.proxyConfig);
   // 系统代理(reg query / gsettings)在探测线程里读,网络壳每个请求只读缓存(foundation/net.ts)。这里预热一次,
   // 保证首个业务出站请求就能拿到正确的系统代理;之后缓存过期时旧值照用、后台刷新。

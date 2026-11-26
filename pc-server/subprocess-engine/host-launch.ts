@@ -98,7 +98,9 @@ export async function launchEngineHost(options: LaunchEngineHostOptions): Promis
   // 退出后再等一小会儿把 stderr 读完;插件起的孙进程继承了 stderr 还活着时,管道不会结束,不能一直等
   const exited = child.exited.then(async (exitCode) => {
     await Promise.race([stderrDrained, Bun.sleep(300)]);
-    return { exitCode: child.signalCode ? null : exitCode, signal: child.signalCode, stderrTail: stderrTail.text() };
+    // 没有名字的信号(Linux 实时信号)Bun 给的是编号
+    const signal = child.signalCode === null ? null : String(child.signalCode);
+    return { exitCode: signal ? null : exitCode, signal, stderrTail: stderrTail.text() };
   });
 
   const fail = async (message: string): Promise<never> => {
