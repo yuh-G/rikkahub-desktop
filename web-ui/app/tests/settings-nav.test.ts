@@ -11,6 +11,7 @@ import {
   settingsSubItems,
 } from "~/components/settings/settings-nav";
 import { SETTINGS_PAGES } from "~/components/settings/settings-registry";
+import { EXTENSION_CATEGORIES } from "~/components/settings/extensions/categories";
 
 function allPageKeys(): string[] {
   return SETTINGS_NAV.flatMap((item) => {
@@ -38,6 +39,10 @@ describe("页键", () => {
     expect(settingsPageKey("network", null)).toBe("network/search");
     expect(settingsPageKey("network", "tts")).toBe("network/search");
     expect(settingsPageKey("memory", "anything")).toBe("memory");
+  });
+
+  test("拓展的二级清单与顺序就是拓展类别表", () => {
+    expect(settingsSubItems("extensions")).toEqual(EXTENSION_CATEGORIES);
   });
 });
 

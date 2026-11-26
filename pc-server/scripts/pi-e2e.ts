@@ -12,7 +12,8 @@ import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-
 import { installProxyFetchInterceptor, primeSystemProxyCache, applyEffectiveProxy } from "../foundation/net";
 import { statePath } from "../foundation/paths";
 import type { Model, Provider } from "../foundation/types";
-import { createPiModelRuntime, mapProviderModelToPi } from "../pi-engine/model-bridge";
+import { modelGrantFor } from "../engines/model-grant";
+import { createPiModelRuntime, mapGrantToPi } from "../pi-engine/model-bridge";
 
 // 与生产(bootstrap.ts)同款:出站 fetch 走用户代理配置 + 品牌 UA。不装的话 Google 等
 // 需代理端点在脚本里裸连超时,验证的不是真实链路。
@@ -66,7 +67,9 @@ async function main(): Promise<void> {
 	console.log(`[pi-e2e] provider: ${provider.name} (type=${provider.type}, baseUrl=${provider.baseUrl})`);
 	console.log(`[pi-e2e] model: ${model.modelId} (${model.displayName})`);
 
-	const mapped = mapProviderModelToPi(provider, model);
+	const grant = modelGrantFor(provider, model);
+	if (!grant) throw new Error(`未知的 provider 类型: ${provider.type}`);
+	const mapped = mapGrantToPi(grant);
 	if (!mapped.ok) throw new Error(`映射失败: ${mapped.reason}`);
 	if (mapped.mapping.kind === "registered") {
 		console.log(`[pi-e2e] pi api: ${mapped.mapping.config.api}, baseUrl: ${mapped.mapping.config.baseUrl}`);

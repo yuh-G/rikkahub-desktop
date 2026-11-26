@@ -4,8 +4,8 @@
 // 无广播),产出交给与聊天引擎同源的应用器(conversations/generation-apply.ts)——
 // parts 形状、touchStream 落库/合帧广播、幂等规则由那里统一保证,写入面零新增。
 //
-// 映射字典(方案 §4.5,对照 pi/packages/agent/src/types.ts:422 AgentEvent 与
-// coding-agent/src/core/agent-session.ts:139 AgentSessionEvent 全联合校准):
+// 映射字典(方案 §4.5,对照 pi/packages/agent/src/types.ts 的 AgentEvent 与
+// coding-agent/src/core/agent-session.ts 的 AgentSessionEvent 全联合校准):
 //   message_update.text_delta      → text_delta
 //   message_update.thinking_delta  → reasoning_delta
 //   message_update.toolcall_start/delta/end → tool_call_created(id/name 齐备即建卡,
@@ -15,14 +15,16 @@
 //     单 text 条目恰好命中 node-delta 的 isStreamableToolPart 快路,SSE 走 text_delta 帧)
 //   tool_execution_end             → tool_result(成功 → content 映射;失败 → {error} 载荷,
 //     与聊天引擎 toolExecutionErrorPayload 的历史契约形状一致)
-//   result.details.workspace       → 首个 text 条目的 metadata.workspace(P3:我们的
-//     customTools 打包的 diff/exitCode 等结构化细节,还原口径与聊天引擎
-//     runtime.toToolResult 逐字一致——前端渲染器与安卓导出适配层吃同一形状)
+//   插件工具(P5.4,不在本轮应用工具名里)→ 通用工具卡:建卡同上,结果只按 content 映射(details 归插件)
+//   署名(P6.1)→ 卡片 metadata.attribution:建卡带登记它的插件 id;插件钩子否决的调用在结束时补否决方与理由
+//   result.details.workspace       → 首个 text 条目的 metadata.workspace(pi 内建工作区工具在
+//     builtin-tools 打包的 diff/exitCode/bytes 等结构化细节,与应用工具时期落库的形状相同——
+//     前端渲染器与安卓导出适配层吃同一形状)
 //   bash_execution_update          → tool_result(增量累加;仅当该工具卡未被
 //     tool_execution_update 通道认领,防双写。P3 我们的 bash customTool 若经
 //     session.executeBash({id: toolCallId}) 流式输出,即由此通道回写)
-//   message_end(assistant)         → engine_fidelity(P7:块结构/签名注解,先发)
-//                                    + usage(pi Usage → 我们的 TokenUsage 口径,P5 精化)
+//   message_end(assistant)         → usage(pi Usage → 我们的 TokenUsage 口径,P5 精化)
+//     引擎消息的块结构与签名不经事件:pi 条目本身由 runner 经 host.session.append 落库(P3.4)
 //   agent_end                      → 无 part 操作;终局结果经 outcome() 由 runner 消费
 //   compaction_*/auto_retry_*/summarization_retry_* → P2 无 part 操作(P5 接会话状态 UI)
 //   其余生命周期/队列/条目事件      → 无 part 操作
@@ -38,12 +40,13 @@ import type {
   TextContent,
   Usage as PiUsage,
 } from "../../pi/packages/ai/src/types.ts";
-import type { EngineFidelityBlock, GenerationEvent } from "../inference-engine/events";
-import type { JsonValue, ToolOutputEntry } from "../foundation/types";
-import { reportError } from "../observability/app-errors";
+import type { GenerationEvent } from "../inference-engine/events";
+import type { JsonValue, ToolCardAttribution, ToolOutputEntry } from "../foundation/types";
+import type { EngineErrorReport } from "../engines/contract";
 
 /** pi Usage → 我们的 TokenUsage(conversations/helpers ensureUsage 同形)。
- *  口径:promptTokens 含缓存读写(对齐 OpenAI prompt_tokens 语义);cachedTokens=cacheRead。
+ *  口径:promptTokens 含缓存读写(对齐 OpenAI prompt_tokens 语义);cachedTokens=cacheRead;
+ *  cacheWriteTokens=cacheWrite,零值不发键(没有缓存写入的协议/轮次不多出恒 0 字段)。
  *  P5 统计对齐阶段按 provider 逐一精化(方案 §六 P5-2)。 */
 export function mapPiUsage(usage: PiUsage): Record<string, JsonValue> {
   const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
@@ -52,6 +55,7 @@ export function mapPiUsage(usage: PiUsage): Record<string, JsonValue> {
     completionTokens: usage.output,
     totalTokens: usage.totalTokens > 0 ? usage.totalTokens : promptTokens + usage.output,
     cachedTokens: usage.cacheRead,
+    ...(usage.cacheWrite > 0 ? { cacheWriteTokens: usage.cacheWrite } : {}),
   };
 }
 
@@ -88,7 +92,7 @@ function workspaceMetadataOf(details: unknown): Record<string, JsonValue> | null
   return { workspace: workspace as JsonValue };
 }
 
-/** 通用工具桥的 {app:{output}} 标记:general-tools 已把聊天引擎实体化产物
+/** 通用工具桥的 {app:{output}} 标记:应用侧(engines/app-tools)已把聊天引擎实体化产物
  *  (realizeToolResult,含 /api/files 图片 URL)原样打包,直接作为 part.output——
  *  UI 渲染契约与聊天引擎逐字一致,不经 pi content 往返(那会把文件 URL 图降级)。 */
 function appOutputOf(details: unknown): ToolOutputEntry[] | null {
@@ -153,8 +157,22 @@ interface ToolCardState {
 }
 
 /** 有状态映射桥:一次生成一个实例。状态只服务于关联(卡去重/参数累计/输出通道仲裁),
- *  不持有任何外部资源。 */
-export function createPiEventBridge() {
+ *  不持有任何外部资源。report 是诊断出口(生产 = host.report)。
+ *  appToolNames:本轮应用工具名。给了它,其余工具(插件工具)走通用工具卡——结果只按 content 映射,
+ *  details 是插件自己的数据(待办插件靠它重放状态),不按我们 customTools 的两种标记解读。
+ *  toolPlugin / takeVeto:工具卡署名的两个查询口(登记这个工具名的插件、这次调用有没有被插件否决)。 */
+export function createPiEventBridge(
+  options: {
+    report?: (report: EngineErrorReport) => void;
+    appToolNames?: ReadonlySet<string>;
+    toolPlugin?: (toolName: string) => string | undefined;
+    takeVeto?: (toolCallId: string) => { pluginId: string; reason: string } | undefined;
+  } = {},
+) {
+  const resultOf = (toolName: string, result: PiToolResultView | undefined): ToolOutputEntry[] =>
+    options.appToolNames && !options.appToolNames.has(toolName)
+      ? mapPiToolContent(result?.content ?? [])
+      : mapPiToolResult(result);
   const cards = new Map<string, ToolCardState>();
   /** message_update 流式工具块:contentIndex → toolCallId(建卡后参数增量寻址用)。 */
   const streamingToolByIndex = new Map<number, string>();
@@ -162,8 +180,6 @@ export function createPiEventBridge() {
    *  唯一在执行的工具即目标。 */
   const executing = new Set<string>();
   const outcome: PiBridgeOutcome = { stopReason: null, errorMessage: null, text: "" };
-  /** P7 保真:本轮引擎消息序号(每个 assistant message_end 递增,注解分组键)。 */
-  let engineMessageOrdinal = 0;
 
   function card(toolCallId: string): ToolCardState {
     let entry = cards.get(toolCallId);
@@ -174,10 +190,18 @@ export function createPiEventBridge() {
     return entry;
   }
 
+  function attribution(toolName: string, blockedBy?: { pluginId: string; reason: string }): Record<string, JsonValue> | undefined {
+    const pluginId = options.appToolNames?.has(toolName) ? undefined : options.toolPlugin?.(toolName);
+    if (!pluginId && !blockedBy) return undefined;
+    const value: ToolCardAttribution = { ...(pluginId ? { pluginId } : {}), ...(blockedBy ? { blockedBy } : {}) };
+    return { attribution: value };
+  }
+
   function createCardEvents(toolCallId: string, toolName: string, input: string): GenerationEvent[] {
     const entry = card(toolCallId);
     if (entry.created && !input) return [];
     entry.created = true;
+    const metadata = attribution(toolName);
     return [{
       kind: "tool_call_created",
       toolCallId,
@@ -186,6 +210,7 @@ export function createPiEventBridge() {
       // P2 语义:工具在 pi 会话进程内执行,无审批环节 → auto。P3 审批内化到
       // customTools.execute 后,pending/approved 生命周期由工具自身经 sink 驱动。
       approvalState: { type: "auto" },
+      ...(metadata ? { metadata } : {}),
     }];
   }
 
@@ -223,12 +248,14 @@ export function createPiEventBridge() {
         const input = JSON.stringify(ev.toolCall.arguments ?? {});
         const entry = card(ev.toolCall.id);
         entry.created = true;
+        const metadata = attribution(ev.toolCall.name);
         return [{
           kind: "tool_call_created",
           toolCallId: ev.toolCall.id,
           toolName: ev.toolCall.name,
           input,
           approvalState: { type: "auto" },
+          ...(metadata ? { metadata } : {}),
         }];
       }
       // start/end 帧不产生 part 操作:文本/思维链 part 由应用器随首个增量惰性创建,
@@ -244,28 +271,6 @@ export function createPiEventBridge() {
     }
   }
 
-  /** P7 保真:assistant 引擎消息 content → 块序列(len 供合并 part 文本切回原块;
-   *  sig/redacted 是思维链重放签名;toolCallId 对齐工具卡)。conditional spread
-   *  保证无 undefined 键(注解走 JSON 落库)。 */
-  function fidelityBlocks(message: AssistantMessage): EngineFidelityBlock[] {
-    const blocks: EngineFidelityBlock[] = [];
-    for (const item of message.content) {
-      if (item.type === "thinking") {
-        blocks.push({
-          type: "thinking",
-          len: item.thinking.length,
-          ...(item.thinkingSignature ? { sig: item.thinkingSignature } : {}),
-          ...(item.redacted ? { redacted: true } : {}),
-        });
-      } else if (item.type === "text") {
-        blocks.push({ type: "text", len: item.text.length });
-      } else if (item.type === "toolCall") {
-        blocks.push({ type: "toolCall", toolCallId: item.id });
-      }
-    }
-    return blocks;
-  }
-
   function recordAssistantEnd(message: AssistantMessage): GenerationEvent[] {
     outcome.stopReason = message.stopReason;
     outcome.errorMessage = message.errorMessage ?? null;
@@ -273,21 +278,7 @@ export function createPiEventBridge() {
       .filter((item): item is TextContent => item.type === "text")
       .map((item) => item.text)
       .reduce((sum, text) => (sum ? `${sum}\n${text}` : text), outcome.text);
-    // 保真注解先于 usage:结构事件与统计事件互不依赖,固定顺序便于契约测试断言。
-    const events: GenerationEvent[] = [
-      {
-        kind: "engine_fidelity",
-        message: {
-          msg: engineMessageOrdinal++,
-          api: String(message.api),
-          provider: String(message.provider),
-          model: message.model,
-          blocks: fidelityBlocks(message),
-        },
-      },
-    ];
-    if (message.usage) events.push({ kind: "usage", usage: mapPiUsage(message.usage) });
-    return events;
+    return message.usage ? [{ kind: "usage", usage: mapPiUsage(message.usage) }] : [];
   }
 
   function handle(event: AgentSessionEvent): GenerationEvent[] {
@@ -312,7 +303,7 @@ export function createPiEventBridge() {
         const partial = event.partialResult as PiToolResultView | undefined;
         if (!partial?.content?.length) return [];
         // partial 快照非终局:不落 toolFinishedAt(issue #59 每工具计时终点)。
-        return [{ kind: "tool_result", toolCallId: event.toolCallId, output: mapPiToolResult(partial), final: false }];
+        return [{ kind: "tool_result", toolCallId: event.toolCallId, output: resultOf(event.toolName, partial), final: false }];
       }
       case "tool_execution_end": {
         executing.delete(event.toolCallId);
@@ -321,9 +312,11 @@ export function createPiEventBridge() {
           // 历史契约:失败工具的 output 是 {error} 裸载荷(前端与消息回放层按此解析;
           // 与聊天引擎 toolExecutionErrorPayload 一致,失败不附 metadata)。
           const text = result?.content?.length ? contentText(result.content) : "Tool execution failed";
-          return [{ kind: "tool_result", toolCallId: event.toolCallId, output: [{ error: text }] }];
+          const veto = options.takeVeto?.(event.toolCallId);
+          const metadata = veto ? attribution(event.toolName, veto) : undefined;
+          return [{ kind: "tool_result", toolCallId: event.toolCallId, output: [{ error: text }], ...(metadata ? { metadata } : {}) }];
         }
-        return [{ kind: "tool_result", toolCallId: event.toolCallId, output: mapPiToolResult(result) }];
+        return [{ kind: "tool_result", toolCallId: event.toolCallId, output: resultOf(event.toolName, result) }];
       }
       case "bash_execution_update": {
         // 归属仲裁:显式 id 优先;无 id 时仅当恰有一个工具在执行。找不到归属或该卡已被
@@ -351,7 +344,12 @@ export function createPiEventBridge() {
         // 失败重复打扰;threshold/overflow = 生成期间自动压缩,用户不知情,失败必须上报
         // (压缩没发生=后续可能上下文溢出)。
         if (event.errorMessage && event.reason !== "manual") {
-          reportError("pi-engine", "error", "会话上下文压缩失败,继续对话可能超出模型上下文窗口", event.errorMessage);
+          options.report?.({
+            domain: "pi-engine",
+            severity: "error",
+            message: "会话上下文压缩失败,继续对话可能超出模型上下文窗口",
+            detail: event.errorMessage,
+          });
         }
         return [{ kind: "engine_status", status: { busy: false } }];
       }
@@ -392,13 +390,10 @@ export function createPiEventBridge() {
     }
   }
 
-  /** steer 边界分段:协调器已把落点换到新开的 continuation 节点,此后的终局文本与保真
-   *  注解都是"新气泡"的口径——累计文本清零(否则 runner 返回值把上一段整段回填进新气泡),
-   *  引擎消息序号归零(新节点的 pi-fidelity 记录必须从 0 连续,稀疏数组经 JSON 落库成
-   *  null 会让 context-encoder 的 fidelityOf 整条判废、退化 legacy 重建)。 */
+  /** steer 边界分段:协调器已把落点换到新开的 continuation 节点,此后的终局文本是"新气泡"的
+   *  口径——累计文本清零(否则 runner 返回值把上一段整段回填进新气泡)。 */
   function beginSegment(): void {
     outcome.text = "";
-    engineMessageOrdinal = 0;
   }
 
   return {

@@ -1,14 +1,11 @@
 // pi-engine/runner.test.ts — pi 会话驱动器集成测试(P2 骨架,P7 改 unified 语义)
 //
 // 真实链路:假 OpenAI SSE 服务器 → model-bridge 内存注册 → SessionManager.inMemory
-// (P7:上下文从 history 灌注,零 jsonl)→ 事件桥 → sink。覆盖:首轮生成、DB 历史
+// (上下文由会话视图装载,零 jsonl)→ 事件桥 → sink。覆盖:首轮生成、DB 历史
 // 灌注回放(硬证据:上游请求体携带灌注的历史)、既有压缩记录重放(pi 引擎上下文
-// 以摘要起头=编码器 appendCompaction 语义生效)、手动压缩捕获、预中止。
+// 以摘要起头=编码器 appendCompaction 语义生效)、手动压缩捕获、预中止,以及自动压缩
+// (小上下文窗口让灌注历史的体积估算越过阈值,开轮前触发)。
 //
-// 生产语义 + 零落盘契约:pi 自动压缩(threshold/overflow)由引擎按"本会话内真实
-// usage"判定,灌注存量消息 usage 恒 0(zeroUsage)不参与计量——自动压缩只在真实
-// 长会话里自然触发,测试环境不复现。该路径的正确性由 capturedCompactions 的捕获
-// 单元(context-encoder.test 的压缩记录重放 + 本文件手动压缩端到端)共同钉住;
 // inMemory 会话的零文件生命周期即 P7 契约本身。
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -17,10 +14,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { GenerationEvent } from "../inference-engine/events";
+import type { EngineCompactionRecord, EngineEntryInput } from "../engines/contract";
 import type { Message } from "../foundation/types";
 import { message } from "../foundation/utils";
 import { model, provider } from "../model-providers";
 import { runPiCompaction, runPiGeneration } from "./runner";
+import { modelGrantFor } from "../engines/model-grant";
+import { sessionViewOf } from "../test-utils/engine-session-view";
 import { startFakeOpenAiSse, type FakeOpenAiSseServer } from "../test-utils/fake-openai-sse";
 
 const PROVIDER_ID = "00000000-0000-4000-8000-000000000002";
@@ -47,21 +47,26 @@ afterAll(async () => {
   await server.close();
 });
 
-function testContext(conversationId: string, promptText: string, extras: Partial<Parameters<typeof runPiGeneration>[0]> = {}) {
+interface HistoryExtras {
+  history?: Message[];
+  syntheticIds?: Set<string>;
+  compactions?: EngineCompactionRecord[];
+}
+
+function testContext(conversationId: string, promptText: string, extras: HistoryExtras = {}) {
   const events: GenerationEvent[] = [];
   const ourProvider = provider({ id: PROVIDER_ID, name: "Runner Test Provider", baseUrl: server.baseUrl, apiKey: "sk-test" });
   const ourModel = model("fake-model", "Runner Test Model");
+  const { history = [], ...viewOptions } = extras;
   return {
     events,
     ctx: {
-      provider: ourProvider,
-      model: ourModel,
+      grant: modelGrantFor(ourProvider, ourModel, null, conversationId)!,
       conversationId,
       cwd,
-      history: [] as Message[],
+      view: sessionViewOf(history, { model: ourModel, ...viewOptions }),
       promptText,
       sink: (event: GenerationEvent) => events.push(event),
-      ...extras,
     },
   };
 }
@@ -112,11 +117,10 @@ describe("pi runner 集成(P7 统一会话数据)", () => {
     const ourProvider = provider({ id: PROVIDER_ID, name: "Runner Test Provider", baseUrl: server.baseUrl, apiKey: "sk-test" });
     const ourModel = model("fake-model", "Runner Test Model");
     const result = await runPiCompaction({
-      provider: ourProvider,
-      model: ourModel,
+      grant: modelGrantFor(ourProvider, ourModel, null, "conv-runner-manual")!,
       conversationId: "conv-runner-manual",
       cwd,
-      history: [user1, asst1],
+      view: sessionViewOf([user1, asst1], { model: ourModel }),
       sink: (event: GenerationEvent) => events.push(event),
     });
 
@@ -126,6 +130,9 @@ describe("pi runner 集成(P7 统一会话数据)", () => {
     expect(result.compaction.cutMessageId).not.toBeNull();
     expect([user1.id, asst1.id]).toContain(result.compaction.cutMessageId!);
     expect(result.compaction.summary).toBe(result.summary);
+    // P3.5:原生压缩条目随结果交回(应用锚定到尾消息),去掉系统提示词快照。
+    expect(result.native?.payload).toMatchObject({ type: "compaction", summary: result.summary, tokensBefore: result.tokensBefore });
+    expect(result.native?.payload).not.toHaveProperty("systemMessage");
     // 压缩期间状态条直通(engine_status)。
     expect(events.some((event) => event.kind === "engine_status")).toBe(true);
   }, 20_000);
@@ -163,7 +170,7 @@ describe("pi runner 集成(P7 统一会话数据)", () => {
   }, 20_000);
 
   test("P9 合成行灌注:富化全序列(含注入/提醒)进引擎,上游请求体可见", async () => {
-    // 复刻 orchestrator 生成路径的装配形状:history = 富化全序列,syntheticIds 标出
+    // 复刻 orchestrator 生成路径的装配形状:视图 = 富化全序列,合成行标出
     // 合成行;压缩切点作富化窗口锚(这里直接给一个已对齐的切点场景:切点=user2,
     // 切点前的真实行已被富化窗口挡在序列外——富化层职责,此处直接给结果)。
     const user2 = message("USER", [{ type: "text", text: "P9 新问" }]);
@@ -194,4 +201,49 @@ describe("pi runner 集成(P7 统一会话数据)", () => {
     // 合成行不污染退化诊断(legacy 是其设计路径,非编辑痕迹)。
     expect(result.degradedMessageIds).toEqual([asst2.id]);
   }, 20_000);
+});
+
+describe("pi 自动压缩(P3.5:原生压缩条目经写路径落库)", () => {
+  test("小上下文窗口 + 大历史:开轮前阈值压缩,捕获切点,压缩条目交给 appendEntries(无系统提示词快照,带文件清单)", async () => {
+    // 窗口 20000 → 阈值 20000-16384;灌注历史零用量,pi 按消息体积估算(chars/4)。答复带小用量,
+    // 轮末复查不再触发第二次压缩。切点可能落在轮中间(多一次前缀摘要),所以剧本全给同一段文本。
+    const turn = { content: "自动压缩摘要。", usage: { prompt_tokens: 100, completion_tokens: 5 } };
+    const upstream = await startFakeOpenAiSse([turn, turn, turn]);
+    try {
+      const filler = "很长的历史内容,".repeat(5000);
+      const history = [0, 1, 2].flatMap((round) => [
+        message("USER", [{ type: "text", text: `第${round}问${filler}` }]),
+        message("ASSISTANT", [{ type: "text", text: `第${round}答${filler}` }]),
+      ]);
+      const ourProvider = provider({ id: PROVIDER_ID, name: "Runner Test Provider", baseUrl: upstream.baseUrl, apiKey: "sk-test" });
+      const ourModel = model("fake-model", "Runner Test Model");
+      const grant = modelGrantFor(ourProvider, ourModel, null, "conv-runner-auto")!;
+      const appended: EngineEntryInput[] = [];
+      const result = await runPiGeneration({
+        grant: { ...grant, limits: { contextWindow: 20_000, maxTokens: 2_000 } },
+        conversationId: "conv-runner-auto",
+        cwd,
+        view: sessionViewOf(history, { model: ourModel }),
+        promptText: "继续",
+        sink: () => undefined,
+        appendEntries: async (entries) => void appended.push(...entries),
+      });
+
+      expect(result.capturedCompactions.length).toBe(1);
+      const captured = result.capturedCompactions[0]!;
+      expect(captured.summary).toContain("自动压缩摘要");
+      expect(history.map((item) => item.id)).toContain(captured.cutMessageId!);
+      const compactions = appended.filter((entry) => (entry.payload as { type?: string }).type === "compaction");
+      expect(compactions.length).toBe(1);
+      const payload = compactions[0]!.payload as Record<string, unknown>;
+      expect(payload).toMatchObject({ summary: captured.summary, tokensBefore: captured.tokensBefore, details: { readFiles: [], modifiedFiles: [] } });
+      expect(payload).not.toHaveProperty("systemMessage");
+      // 答复仍照常生成并交出(压缩后的上下文里没有被摘要吸收的最早一问)。
+      expect(appended.some((entry) => (entry.payload as { message?: { role?: string } }).message?.role === "assistant")).toBe(true);
+      const answerRequest = upstream.requests.at(-1) as { messages?: unknown[] };
+      expect(JSON.stringify(answerRequest.messages ?? [])).not.toContain("第0问");
+    } finally {
+      await upstream.close();
+    }
+  }, 30_000);
 });

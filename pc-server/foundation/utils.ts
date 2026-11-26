@@ -45,14 +45,6 @@ export function textFromParts(parts: ToolOutputEntry[]) {
     .trim();
 }
 
-export function formatLocalDate(date = new Date()) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "full" }).format(date);
-}
-
-export function formatLocalTime(date = new Date()) {
-  return new Intl.DateTimeFormat(undefined, { timeStyle: "medium" }).format(date);
-}
-
 export function renderTemplate(template: string, variables: Record<string, string>) {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, key) => variables[key] ?? match);
 }
@@ -92,6 +84,12 @@ export function getStringArray(value: unknown) {
 
 export function isRecord(value: unknown): value is Record<string, JsonValue> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+/** base64 data URL → { mime, data };其它形态返回 null。 */
+export function parseDataUrl(url: string) {
+  const match = url.match(/^data:([^;,]+);base64,(.+)$/);
+  return match ? { mime: match[1]!, data: match[2]! } : null;
 }
 
 export function mergeById<T extends { id: string }>(current: T[], defaults: T[]): T[] {

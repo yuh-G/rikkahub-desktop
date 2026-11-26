@@ -34,8 +34,8 @@ export interface CredentialStore {
 }
 
 // per-provider 串行队列。Value 是队尾 promise;新任务链接其上,严格 FIFO。
-// 键就用传入的 providerId。两条轨都用 pi 内置 id 作键(宿主聊天轨 resolve.ts 构造
-// { id: flow.piProviderId };pi 轨 getAuth 传 model.provider,同为 pi 内置 id),故同一
+// 键就用传入的 providerId。两条轨都用 pi 内置 id 作键(聊天轨 resolveProviderAuthForProvider
+// 与工作区取令牌 freshSubscriptionCredential 都按 flow.piProviderId 调用),故同一
 // 供应商的并发读-改-写天然走同一条队列。宿主 UUID 只在登录 commit 时被 findProvider
 // 直查命中,不参与并发收敛——不要依赖两种 id 各有一条队列来"隔离"。
 const tails = new Map<string, Promise<void>>();

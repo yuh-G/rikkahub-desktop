@@ -3,6 +3,7 @@
 // 纪律：纯搬迁自 server.ts routeApi()；settings 数据契约冻结。
 
 import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import type { Assistant, JsonValue, Provider, ProxyConfig, SearchService } from "../../foundation/types";
 import type { Settings } from "../../foundation/types/settings";
 import { getStringArray, id, isRecord } from "../../foundation/utils";
@@ -10,6 +11,7 @@ import { RUNNING_IN_CONTAINER } from "../../foundation/platform";
 import { searchSelectionAfterDelete } from "../../foundation/search-selection";
 import { handleSetWebPassword, handleWebAuthStatus, stripAuthSecrets } from "../auth";
 import { refreshShellAvailability } from "../../workspace/runtime";
+import { enginePluginsChanged } from "../../engines/index";
 import { shellStatusPayload } from "./workspaces";
 import {
   applyEffectiveProxy,
@@ -21,6 +23,7 @@ import {
 } from "../../foundation/net";
 import { state } from "../../persistence/json-store";
 import { defaultAssistant } from "../../assistants/index";
+import { selectionOf, withMcpServerSelected, withMcpToolOverride, type McpSelection } from "../../assistants/extension-selection";
 import { firstProviderModel } from "../../model-providers/index";
 import { loadModelsDev, modelsDevCache } from "../../inference-engine/providers";
 import { backfillModelDisplayNames } from "../../model-providers/display-names";
@@ -247,46 +250,12 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
       ...state.settings,
       assistants: state.settings.assistants.map((assistant) => {
         if (assistant.id !== body.assistantId) return assistant;
-        // Master-on transition for assistant-level MCP servers. Mirror the global server's
-        // behavior: when the user flips an assistant's MCP server master ON, if every tool
-        // in this server is currently disabled-by-override for THIS assistant (meaning
-        // there's no surviving user preference at the assistant scope), wipe the overrides
-        // so the freshly-enabled MCP exposes all globally-enabled tools. If even one tool
-        // override doesn't disable a tool, the user has expressed an intentional subset —
-        // leave overrides untouched.
-        const prevServers = new Set(getStringArray(assistant.mcpServers));
-        const newlyAdded: string[] = mcpServerIds.filter((sid) => !prevServers.has(sid));
-        const overrides = isRecord(assistant.mcpToolOverrides)
-          ? { ...assistant.mcpToolOverrides as Record<string, Record<string, { enable?: boolean; needsApproval?: boolean }>> }
-          : {};
-        for (const sid of newlyAdded) {
-          const globalServer = (state.settings.mcpServers as Array<Record<string, JsonValue>>).find((s) => String(s.id) === sid);
-          const globalCommon = globalServer && isRecord(globalServer.commonOptions) ? globalServer.commonOptions : null;
-          const globalTools = globalCommon && Array.isArray(globalCommon.tools) ? globalCommon.tools.filter(isRecord) : [];
-          const visibleTools = globalTools.filter((tool) => tool.enable !== false);
-          if (visibleTools.length === 0) continue;
-          const perServerOverride = overrides[sid] ?? {};
-          // Every visible tool effectively disabled by THIS assistant means the override
-          // map is the only thing standing in the way of these tools being exposed.
-          const allOverriddenOff = visibleTools.every((tool) => perServerOverride[String(tool.name ?? "")]?.enable === false);
-          if (allOverriddenOff) {
-            // Strip per-tool `enable` overrides for this server. Keep needsApproval entries —
-            // they're an independent dimension and shouldn't get wiped just because the
-            // user re-enabled the master switch.
-            const cleanedServerOverride: Record<string, { enable?: boolean; needsApproval?: boolean }> = {};
-            for (const [toolName, ov] of Object.entries(perServerOverride)) {
-              if (typeof ov?.needsApproval === "boolean") {
-                cleanedServerOverride[toolName] = { needsApproval: ov.needsApproval };
-              }
-            }
-            if (Object.keys(cleanedServerOverride).length === 0) {
-              delete overrides[sid];
-            } else {
-              overrides[sid] = cleanedServerOverride;
-            }
-          }
+        // 逐台走 withMcpServerSelected:新勾上的服务器套用「逐工具全关时重开即复活」规则。
+        let selection: McpSelection = selectionOf(assistant);
+        for (const serverId of mcpServerIds) {
+          selection = withMcpServerSelected(selection, serverId, true, state.settings.mcpServers);
         }
-        return { ...assistant, mcpServers: mcpServerIds, mcpToolOverrides: overrides };
+        return { ...assistant, mcpServers: mcpServerIds, mcpToolOverrides: selection.mcpToolOverrides };
       }),
     });
     return json({ status: "ok" });
@@ -320,43 +289,14 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
       ...state.settings,
       assistants: state.settings.assistants.map((assistant) => {
         if (assistant.id !== assistantId) return assistant;
-        const overrides = isRecord(assistant.mcpToolOverrides)
-          ? { ...assistant.mcpToolOverrides as Record<string, Record<string, { enable?: boolean; needsApproval?: boolean }>> }
-          : {};
-        const serverOverrides = isRecord(overrides[serverId])
-          ? { ...overrides[serverId] }
-          : {};
-        const next: { enable?: boolean; needsApproval?: boolean } = { ...(serverOverrides[toolName] ?? {}) };
-        if (body.enable === null) delete next.enable;
-        else if (typeof body.enable === "boolean") next.enable = body.enable;
-        if (body.needsApproval === null) delete next.needsApproval;
-        else if (typeof body.needsApproval === "boolean") next.needsApproval = body.needsApproval;
-        if (Object.keys(next).length === 0) {
-          delete serverOverrides[toolName];
-        } else {
-          serverOverrides[toolName] = next;
-        }
-        if (Object.keys(serverOverrides).length === 0) {
-          delete overrides[serverId];
-        } else {
-          overrides[serverId] = serverOverrides;
-        }
-        // Mirror the global server's "all tools off → master off" rule at the assistant
-        // scope: if every globally-enabled tool on this server is now disabled-by-override
-        // for this assistant, remove the server from assistant.mcpServers (auto master-off).
-        // This is the assistant-level counterpart of Transition 2 in settings/mcp-server/detail.
-        let mcpServers = assistant.mcpServers;
-        if (assistant.mcpServers.includes(serverId)) {
-          const globalServer = (state.settings.mcpServers as Array<Record<string, JsonValue>>).find((s) => String(s.id) === serverId);
-          const globalCommon = globalServer && isRecord(globalServer.commonOptions) ? globalServer.commonOptions : null;
-          const globalTools = globalCommon && Array.isArray(globalCommon.tools) ? globalCommon.tools.filter(isRecord) : [];
-          const visibleTools = globalTools.filter((tool) => tool.enable !== false);
-          const serverOverrideForCheck = overrides[serverId] ?? {};
-          if (visibleTools.length > 0 && visibleTools.every((tool) => serverOverrideForCheck[String(tool.name ?? "")]?.enable === false)) {
-            mcpServers = assistant.mcpServers.filter((sid) => sid !== serverId);
-          }
-        }
-        return { ...assistant, mcpServers, mcpToolOverrides: overrides };
+        const next = withMcpToolOverride(
+          selectionOf(assistant),
+          serverId,
+          toolName,
+          { enable: body.enable, needsApproval: body.needsApproval },
+          state.settings.mcpServers,
+        );
+        return { ...assistant, ...next };
       }),
     });
     return json({ status: "ok" });
@@ -383,6 +323,23 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
       ),
     });
     return json({ status: "ok" });
+  }
+  // 助手的引擎插件绑定(D16):整表替换,只认插件记录里有的 id。
+  if (path === "settings/assistant/plugins" && request.method === "POST") {
+    const body = await readJson<{ assistantId?: string; pluginIds?: unknown }>(request);
+    if (!state.settings.assistants.some((assistant) => assistant.id === body.assistantId)) return error("Assistant not found", 404);
+    if (!Array.isArray(body.pluginIds)) return error("pluginIds 必须是字符串数组", 400);
+    const known = new Set((state.settings.enginePlugins ?? []).map((record) => record.id));
+    const enginePluginIds = uniqueStrings(getStringArray(body.pluginIds));
+    const unknown = enginePluginIds.find((pluginId) => !known.has(pluginId));
+    if (unknown) return error(`pluginIds contains unknown plugin: ${unknown}`, 400);
+    updateSettings({
+      ...state.settings,
+      assistants: state.settings.assistants.map((assistant) =>
+        assistant.id === body.assistantId ? { ...assistant, enginePluginIds } : assistant,
+      ),
+    });
+    return json({ status: "ok", enginePluginIds });
   }
   if (path === "settings/assistant/skills" && request.method === "POST") {
     const body = await readJson<{ assistantId: string; enabledSkills: string[] }>(request);
@@ -493,6 +450,10 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
       if (isRecord(server.commonOptions)) {
         server.commonOptions = { ...server.commonOptions, oauth: liveOauth() };
       }
+      // 来源(插件带来的服务器,engines/plugin-mcp)只由服务端维护:取现值,不信页面回传的快照(启停镜像可能已过时)。
+      const liveSource = (state.settings.mcpServers as Array<Record<string, JsonValue>>).find((item) => String(item.id) === serverId)?.source;
+      delete server.source;
+      if (liveSource !== undefined) server.source = liveSource;
       const result = upsertById(state.settings.mcpServers as JsonValue[], server);
       updateSettings({ ...state.settings, mcpServers: result.items });
       return json({ status: "ok", server: result.item });
@@ -1143,9 +1104,22 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     refreshShellAvailability();
     return json({ status: "ok", shellPath, shell: shellStatusPayload() });
   }
+  // 开发者字段(P5a,无界面):工作区引擎插件的本机位置清单。整表替换;每项须是存在的绝对路径。
+  if (path === "settings/dev/pi-plugin-paths" && request.method === "POST") {
+    const body = await readJson<{ paths?: unknown }>(request).catch(() => ({}) as { paths?: unknown });
+    if (!Array.isArray(body?.paths)) return error("paths 必须是字符串数组", 400);
+    const paths = uniqueStrings(getStringArray(body.paths));
+    for (const item of paths) {
+      if (!isAbsolute(item)) return error(`插件路径必须是绝对路径: ${item}`, 400);
+      if (!existsSync(item)) return error(`路径不存在: ${item}`, 400);
+    }
+    updateSettings({ ...state.settings, devPiPluginPaths: paths });
+    // 改了插件:引擎宿主进程因连续失败停止重启的允许再起;在跑的那个空下来就换掉
+    enginePluginsChanged();
+    return json({ status: "ok", paths });
+  }
   if (path === "settings/proxy/detect" && request.method === "POST") {
-    // R1-7:探测函数已异步化;detectSystemProxy 按平台分发(Windows 注册表 / GNOME
-    // gsettings),此前只探 Windows,Linux 桌面点"检测"永远返回空。
+    // detectSystemProxy 按平台读 Windows 注册表 / GNOME gsettings,在探测线程里跑(foundation/system-proxy-probe.ts)。
     const detected = await detectSystemProxy();
     // 专题10-②:常规系统代理未检出时补测 PAC。只配了 PAC 的用户此前得到"未检测到系统
     // 代理"且毫无线索;现在前端据此提示去代理工具查 HTTP 端口手动填写。检出常规代理时

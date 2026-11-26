@@ -48,6 +48,8 @@ export function conversationNegotiationToken(conversation: Conversation): string
   }
   // 消息发送队列(内存态)不计入内容戳,但它的变化(入队/派发/暂停)必须让缓存令牌失效——
   // 否则切走再切回时 snapshot_meta 协商命中缓存,队列面板拿到陈旧快照。把队列签名并进令牌。
+  // 会话层的拓展选择(左下角改动不 bump updateAt,列表顺序不动)同理并进令牌,否则切回时左下角显示旧选择。
+  h = fnv1a(h, JSON.stringify([conversation.extensionSelection ?? null, conversation.modeInjectionIds ?? [], conversation.lorebookIds ?? []]));
   const queue = queueSnapshotFor(conversation.id);
   h = fnv1a(h, queue ? `${queue.items.length}|${queue.held ?? "-"}|${queue.items.map((i) => i.id).join(",")}` : "∅");
   return `${conversation.updateAt}:${h.toString(36)}`;

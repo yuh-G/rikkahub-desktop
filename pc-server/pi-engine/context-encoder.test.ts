@@ -1,22 +1,31 @@
-// pi-engine/context-encoder.test.ts — DB→pi 编码器单测(P7 会话数据统一)
+// pi-engine/context-encoder.test.ts — 中立消息→pi 编码单测(经会话视图装载,视图不带原生条目)
 //
 // 断言面刻意选 manager.buildSessionContext().messages:这是 createAgentSession 构造点
-// 真正消费的产物(sdk.ts:194),测"pi 将看到什么",不测编码器中间形。压缩用例同理,
-// 锁的是 pi buildContextEntries 对灌注 CompactionEntry 的真实语义。
+// 真正消费的产物(sdk.ts 的 buildSessionContext 调用),测"pi 将看到什么",不测编码器
+// 中间形。压缩用例同理,锁的是 pi buildContextEntries 对灌注 CompactionEntry 的真实语义。
+// USER 行输入按生产路径由应用侧物化(userInputsFor),编码器只消费契约数据。
 
 import { describe, expect, test } from "bun:test";
 
-import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
+import type { EngineCompactionRecord } from "../engines/contract";
 import type { JsonValue, Message, Model, ToolPart } from "../foundation/types";
 import { message } from "../foundation/utils";
-import { effectiveEngineCompaction, seedPiSessionFromHistory, type EngineCompactionRecord } from "./context-encoder";
+import { effectiveEngineCompaction } from "../conversations/engine-compactions";
+import { sessionViewOf } from "../test-utils/engine-session-view";
+import { createPiSessionFromView, injectSyntheticRows, planSyntheticRows } from "./session-view";
 
 const model = { modelId: "test-model", inputModalities: ["TEXT", "IMAGE"] } as unknown as Model;
 
 function seed(history: Message[], compactions?: EngineCompactionRecord[], syntheticIds?: Set<string>) {
-  const manager = SessionManager.inMemory(process.cwd());
-  const result = seedPiSessionFromHistory({ manager, history, model, compactions, syntheticIds });
-  return { manager, result, messages: manager.buildSessionContext().messages };
+  const result = createPiSessionFromView({
+    cwd: process.cwd(),
+    conversationId: "conv-encoder",
+    view: sessionViewOf(history, { model, syntheticIds, compactions }),
+    fallbackModelId: model.modelId,
+  });
+  // 模型看到的上下文 = 会话条目 + 逐请求注入的合成行(runner 每次请求前同一函数插入)。
+  const plan = planSyntheticRows(result.manager, result.syntheticRows, (messageId) => result.entryIdsByMessageId.get(messageId));
+  return { manager: result.manager, result, messages: injectSyntheticRows(result.manager.buildSessionContext().messages, plan) };
 }
 
 function toolPart(partial: Partial<ToolPart> & Pick<ToolPart, "toolCallId" | "toolName">): ToolPart {
@@ -240,7 +249,7 @@ describe("DB→pi 编码器:工具结果反向通道", () => {
         ],
       }),
     ]);
-    // app 通道:模型面 = openAiToolOutput(entries) 单 text(运行时 general-tools 同源口径)
+    // app 通道:模型面 = openAiToolOutput(entries) 单 text(运行时 engines/app-tools 同源口径)
     expect(app).toMatchObject({ isError: false, content: [{ type: "text", text: "1. Result" }] });
     // 逐字通道:空 text 载体条目跳过,data 图还原为 ImageContent
     expect(workspace).toMatchObject({
@@ -317,6 +326,8 @@ describe("DB→pi 编码器:P9 合成行灌注", () => {
     expect(flat).toContain("TOP_INJECTION");
     expect(flat).toContain("ASSISTANT_INJECTION");
     expect(flat).toContain("BOTTOM_INJECTION");
+    // 合成行逐请求注入,不进会话条目(会话跨轮复用时注入位置随对话变化不影响比对)。
+    expect(JSON.stringify(result.manager.getEntries())).not.toContain("_INJECTION");
     // 登记排除:切点映射只认真实行,退化名单不含合成行(legacy 是其设计路径)。
     expect([...result.entryIdsByMessageId.keys()]).toEqual([user2.id, asst2.id]);
     expect(result.degradedMessageIds).toEqual([asst2.id]);

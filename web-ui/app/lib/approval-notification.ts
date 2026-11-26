@@ -13,7 +13,9 @@
 // 只通知一次;新一次等待(startedAt 变)才再次评估。
 import * as React from "react";
 
+import { pluginDisplayName } from "~/components/settings/extensions/plugins/model";
 import i18n from "~/i18n";
+import { useAppStore } from "~/stores/app-store";
 import { useConversationStore } from "~/stores/conversation-store";
 
 function isTauri(): boolean {
@@ -104,10 +106,22 @@ export function useApprovalNotifications(): void {
           if (!(await windowNotVisible())) return;
           const conversationTitle =
             useConversationStore.getState().entries[id]?.detail?.title?.trim() || "";
-          const title = i18n.t("page:conversations.awaiting_approval.notification_title");
+          // 等的是插件的对话框(P6.3):标题写哪个插件在等,正文是对话框标题。
+          const plugin = status.dialog?.source
+            ? pluginDisplayName(useAppStore.getState().settings?.enginePlugins, status.dialog.source)
+            : "";
+          const title = status.dialog
+            ? plugin
+              ? i18n.t("page:conversations.awaiting_approval.plugin_status", { plugin })
+              : i18n.t("page:conversations.awaiting_approval.plugin_status_unknown")
+            : i18n.t("page:conversations.awaiting_approval.notification_title");
           const bodyParts = [
             conversationTitle,
-            status.summary ? i18n.t("page:conversations.awaiting_approval.notification_body", { summary: status.summary }) : null,
+            status.summary
+              ? status.dialog
+                ? i18n.t("page:conversations.awaiting_approval.plugin_notification_body", { summary: status.summary })
+                : i18n.t("page:conversations.awaiting_approval.notification_body", { summary: status.summary })
+              : null,
           ].filter(Boolean);
           await sendApprovalNotification(title, bodyParts.join(" · "));
         })();

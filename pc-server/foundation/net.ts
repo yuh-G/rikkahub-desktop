@@ -1,9 +1,13 @@
 // foundation/net.ts — 代理与网络工具
 // 纪律：纯函数，不直接读取 state；调用方通过参数传入 ProxyConfig。
 
+import http from "node:http";
+
+import { reportError } from "../observability/app-errors";
 import { isRecord } from "./utils";
-import { RUNNING_IN_CONTAINER, RUNTIME_PLATFORM } from "./platform";
+import { RUNNING_IN_CONTAINER } from "./platform";
 import { defaultPreferredPort } from "./port-binding";
+import { probeSystemSetting } from "./system-proxy-probe";
 import type { ProxyConfig , ProxyMode } from "./types";
 
 export let lastDetectedSystemProxy: string | undefined;
@@ -34,150 +38,113 @@ export function resolveUserAgent(cfg: ProxyConfig | undefined | null): string {
   return custom ? custom : getDefaultUserAgent();
 }
 
-export function parseProxyServerValue(value: string): string | undefined {
-  if (!value) return undefined;
-  // `ProxyServer` can be either a single endpoint ("127.0.0.1:7890") or per-protocol
-  // ("http=127.0.0.1:7890;https=127.0.0.1:7891;ftp=..."). Prefer the https= variant for
-  // outbound API calls; fall back to http= or the bare endpoint.
-  if (value.includes("=")) {
-    const map = new Map<string, string>();
-    for (const piece of value.split(";")) {
-      const [k, v] = piece.split("=");
-      if (k && v) map.set(k.trim().toLowerCase(), v.trim());
-    }
-    // P0-3: 不 fallback 到 socks=。Bun fetch 只支持 http/https 代理，把 SOCKS 端口当
-    // HTTP 代理用会导致 CONNECT 握手挂起。注册表只有 socks= 时返回 undefined（等同无系统代理）。
-    const target = map.get("https") ?? map.get("http");
-    if (!target) return undefined;
-    return /^https?:\/\//i.test(target) ? target : `http://${target}`;
-  }
-  return /^https?:\/\//i.test(value) ? value : `http://${value}`;
-}
+// ── 系统代理(「跟随系统代理」模式)────────────────────────────────────────────
+// 读系统设置要起子进程,在探测线程里做(system-proxy-probe.ts;起子进程这一步会挡住调用线程)。网络壳每个请求只读缓存:
+// 缓存 2 s,过期后照旧返回旧值、在后台刷新一次(一次只查一个)。
+// 只有主程序探测。引擎宿主进程的值由主程序推过去(useExternalSystemProxy / setExternalSystemProxy),它的缓存过期时
+// 不自己查,而是提醒主程序查(每 2 s 最多一次);主程序查到的值变了再推(onSystemProxyChange)。
 
-// R1-7:reg/gsettings 读取全部改异步(Bun.spawn),消灭"fetch 拦截器内同步 spawn 阻塞
-// 事件循环数十 ms"的病灶。运行期唯一热路径入口是缓存读(readSystemProxy);这两个函数
-// 只被启动预热、后台刷新和 settings/proxy/detect 端点调用。
-async function runCommandText(cmd: string[]): Promise<{ exitCode: number; stdout: string }> {
-  const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "ignore" });
-  const stdout = await new Response(proc.stdout).text();
-  const exitCode = await proc.exited;
-  return { exitCode, stdout };
-}
-
-export async function readWindowsSystemProxy(): Promise<string | undefined> {
-  if (process.platform !== "win32") return undefined;
-  try {
-    const key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
-    const enable = await runCommandText(["reg", "query", key, "/v", "ProxyEnable"]);
-    if (enable.exitCode !== 0) return undefined;
-    if (!/ProxyEnable\s+REG_DWORD\s+0x1/i.test(enable.stdout)) return undefined;
-    const server = await runCommandText(["reg", "query", key, "/v", "ProxyServer"]);
-    if (server.exitCode !== 0) return undefined;
-    const match = server.stdout.match(/ProxyServer\s+REG_SZ\s+([^\r\n]+)/i);
-    if (!match) return undefined;
-    return parseProxyServerValue(match[1].trim());
-  } catch {
-    return undefined;
-  }
-}
-
-// Linux 桌面 GNOME 代理读取（gsettings）。仅处理 mode='manual'（明确主机端口）；
-// 'none' 返回 undefined；'auto'（PAC）不支持（我们不实现 PAC 解析）。
-// KDE 暂不支持，用户可在 UI 手动填代理（mode=manual）。
-export async function readGnomeProxy(): Promise<string | undefined> {
-  if (process.platform !== "linux") return undefined;
-  try {
-    const get = async (args: string[]) => (await runCommandText(["gsettings", ...args])).stdout.trim();
-    const modeRaw = await get(["get", "org.gnome.system.proxy", "mode"]);
-    if (!modeRaw || modeRaw === "'none'") return undefined;
-    if (modeRaw !== "'manual'") return undefined; // 'auto'（PAC）未实现
-    const host = (await get(["get", "org.gnome.system.proxy.http", "host"])).replace(/^'|'$/g, "");
-    const port = await get(["get", "org.gnome.system.proxy.http", "port"]);
-    if (!host || !port || host === "''" || port === "0") return undefined;
-    return `http://${host}:${port}`;
-  } catch {
-    return undefined;
-  }
+/** 「检测系统代理」按钮与缓存刷新用:读一次当前生效的系统代理。 */
+export function detectSystemProxy(): Promise<string | undefined> {
+  return probeSystemSetting("proxy");
 }
 
 // 专题10-②:PAC(自动配置脚本)存在性探测。应用不解析 PAC(实现成本高、收益低),本函数
 // 仅供"检测系统代理"按钮的诊断提示:常规系统代理未检出但存在 PAC 配置时,告诉用户
 // 去代理工具查 HTTP 端口手动填写,而不是留下"未检测到系统代理"的死胡同。
 // 不进代理解析主链路(resolveEffectiveProxy),探测失败一律视作无 PAC。
-export async function detectSystemPacUrl(): Promise<string | undefined> {
-  try {
-    if (RUNTIME_PLATFORM === "win") {
-      const key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
-      const res = await runCommandText(["reg", "query", key, "/v", "AutoConfigURL"]);
-      if (res.exitCode !== 0) return undefined;
-      const match = res.stdout.match(/AutoConfigURL\s+REG_SZ\s+([^\r\n]+)/i);
-      return match?.[1]?.trim() || undefined;
-    }
-    if (RUNTIME_PLATFORM === "linux" && !RUNNING_IN_CONTAINER) {
-      const mode = (await runCommandText(["gsettings", "get", "org.gnome.system.proxy", "mode"])).stdout.trim();
-      if (mode !== "'auto'") return undefined;
-      const url = (await runCommandText(["gsettings", "get", "org.gnome.system.proxy", "autoconfig-url"])).stdout
-        .trim()
-        .replace(/^'|'$/g, "");
-      // GNOME mode='auto' 即 PAC 模式;url 可能为空(WPAD 自动发现),仍算存在 PAC。
-      return url || "wpad";
-    }
-  } catch {
-    // 纯诊断增强,探测异常绝不能影响检测主流程。
-  }
-  return undefined;
+export function detectSystemPacUrl(): Promise<string | undefined> {
+  return probeSystemSetting("pac");
 }
 
-export async function detectSystemProxy(): Promise<string | undefined> {
-  if (RUNTIME_PLATFORM === "win") return readWindowsSystemProxy();
-  if (RUNTIME_PLATFORM === "linux" && !RUNNING_IN_CONTAINER) return readGnomeProxy();
-  return undefined;
-}
-
+/** ts:主程序里是读到这个值的时刻;引擎宿主进程里是最近一次收到推送或发出提醒的时刻。 */
 let systemProxyCache: { value: string | undefined; ts: number } | null = null;
 export const SYSTEM_PROXY_TTL_MS = 2000;
-let systemProxyRefreshInFlight = false;
+let systemProxyRefresh: Promise<void> | null = null;
+/** 引擎宿主进程:值由主程序推来,过期时调它提醒主程序。 */
+let remindSystemProxySource: (() => void) | null = null;
+const systemProxyListeners = new Set<(value: string | undefined) => void>();
+
+function storeSystemProxy(value: string | undefined): void {
+  const previous = systemProxyCache;
+  systemProxyCache = { value, ts: Date.now() };
+  if (previous?.value === value) return;
+  for (const listener of systemProxyListeners) listener(value);
+}
 
 function scheduleSystemProxyRefresh(): void {
-  if (systemProxyRefreshInFlight) return;
-  systemProxyRefreshInFlight = true;
-  void detectSystemProxy()
-    .then((value) => { systemProxyCache = { value, ts: Date.now() }; })
-    .finally(() => { systemProxyRefreshInFlight = false; });
-}
-
-/** R1-7:启动时(首个业务出站 fetch 之前,见 bootstrap 第 2 步)预热一次缓存,
- *  之后 readSystemProxy 永不阻塞。 */
-export async function primeSystemProxyCache(): Promise<void> {
-  systemProxyCache = { value: await detectSystemProxy(), ts: Date.now() };
-}
-
-/** R1-7:同步读缓存(fetch 拦截器 per-request 调用,不能阻塞)。TTL 过期返回陈值并触发
- *  后台单飞刷新(stale-while-revalidate)——旧实现 TTL 过期后的首个出站 fetch 要同步
- *  spawn 两次 reg query,阻塞事件循环数十 ms,多路流式并发时表现为周期性微卡。
- *  冷缓存(未预热,常规启动流程不会发生)返回 undefined 并触发后台刷新,该次请求按直连走。 */
-export function readSystemProxy(): string | undefined {
-  if (!systemProxyCache) {
-    scheduleSystemProxyRefresh();
-    return undefined;
+  if (remindSystemProxySource) {
+    systemProxyCache = { value: systemProxyCache?.value, ts: Date.now() };
+    remindSystemProxySource();
+    return;
   }
-  if (Date.now() - systemProxyCache.ts >= SYSTEM_PROXY_TTL_MS) scheduleSystemProxyRefresh();
-  return systemProxyCache.value;
+  systemProxyRefresh ??= detectSystemProxy()
+    .then(storeSystemProxy)
+    .finally(() => {
+      systemProxyRefresh = null;
+    });
+}
+
+/** 启动时(首个业务出站 fetch 之前,见 bootstrap 第 2 步)预热一次缓存,首个请求就能拿到正确的系统代理。 */
+export async function primeSystemProxyCache(): Promise<void> {
+  storeSystemProxy(await detectSystemProxy());
+}
+
+/** 同步读缓存(网络壳每个请求调,不能阻塞)。过期返回旧值并触发后台刷新;冷缓存(未预热,常规启动流程不会发生)
+ *  返回 undefined,该次请求按直连走。 */
+export function readSystemProxy(): string | undefined {
+  if (!systemProxyCache || Date.now() - systemProxyCache.ts >= SYSTEM_PROXY_TTL_MS) scheduleSystemProxyRefresh();
+  return systemProxyCache?.value;
+}
+
+/** 主程序:引擎宿主进程提醒「该查了」时调,缓存过期才查。 */
+export function refreshSystemProxyIfStale(): void {
+  readSystemProxy();
+}
+
+/** 主程序:缓存里的系统代理变了时通知(推给引擎宿主进程)。返回取消订阅的函数。 */
+export function onSystemProxyChange(listener: (value: string | undefined) => void): () => void {
+  systemProxyListeners.add(listener);
+  return () => systemProxyListeners.delete(listener);
+}
+
+/** 引擎宿主进程:系统代理改由主程序给(启动行里那份),本进程不再自己查;缓存过期时调 remind。 */
+export function useExternalSystemProxy(value: string | undefined, remind: () => void): void {
+  remindSystemProxySource = remind;
+  systemProxyCache = { value, ts: Date.now() };
+}
+
+/** 引擎宿主进程:主程序推来新的系统代理。 */
+export function setExternalSystemProxy(value: string | undefined): void {
+  systemProxyCache = { value, ts: Date.now() };
+}
+
+/** 仅测试:等在途的后台刷新结束。 */
+export function settleSystemProxyRefreshForTests(): Promise<void> {
+  return systemProxyRefresh ?? Promise.resolve();
+}
+
+/** 仅测试:清空缓存,回到「本进程自己探测」。 */
+export function resetSystemProxyCacheForTests(): void {
+  systemProxyCache = null;
+  remindSystemProxySource = null;
 }
 
 export function composeProxyUrl(base: string, username: string, password: string): string {
   const trimmed = base.trim();
   if (!trimmed) return "";
-  if (!username && !password) return trimmed;
+  // 设置页允许只填「主机:端口」。Bun fetch 的 proxy 选项、node:http 的代理环境变量都要求带协议,不补就整条通道失败
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  if (!username && !password) return withScheme;
   try {
-    const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`);
+    const url = new URL(withScheme);
     // The WHATWG URL setter encodes the value itself — don't pre-encode or we end up
     // double-escaping characters like "@" in `user@example.com` into "user%2540example.com".
     if (username) url.username = username;
     if (password) url.password = password;
     return url.toString();
   } catch {
-    return trimmed;
+    return withScheme;
   }
 }
 
@@ -225,7 +192,8 @@ export function applyEffectiveProxy(cfg: ProxyConfig) {
 
 // bypassRules 匹配（逻辑移植自 opencode proxy-from-env 的 shouldProxy + kelivo CIDR）。
 // localhost/127.0.0.1/::1 永远 bypass（硬编码，即使没配 rules）；用户 rules 支持精确域名 /
-// 通配（*.example.com / .example.com）/ host:port 端口限定 / IPv4 CIDR 网段（10.0.0.0/8）。
+// 通配（*.example.com / .example.com）/ host:port 端口限定 / IPv4 CIDR 网段（10.0.0.0/8）/
+// IPv6 字面量（::1，带端口写成 [::1]:8080）。
 // CIDR 仅当 target 是 IP 字面量时生效（域名请求时拿到的是域名不是 IP，CIDR 没法判断）。
 export function shouldBypassProxy(targetUrl: string, userRules: string): boolean {
   let hostname: string;
@@ -241,9 +209,20 @@ export function shouldBypassProxy(targetUrl: string, userRules: string): boolean
   for (const rule of noProxy.split(/[,\s]/)) {
     const trimmed = rule.trim();
     if (!trimmed) continue;
-    const parsed = trimmed.match(/^(.+):(\d+)$/);
-    const rh = parsed ? parsed[1] : trimmed;
-    const rp = parsed ? parseInt(parsed[2], 10) : 0;
+    let rh = trimmed;
+    let rp = 0;
+    const bracketed = trimmed.match(/^\[([^\]]+)\](?::(\d+))?$/);
+    if (bracketed) {
+      rh = bracketed[1];
+      rp = bracketed[2] ? parseInt(bracketed[2], 10) : 0;
+    } else if (!/:[^:]*:/.test(trimmed)) {
+      // 不止一个冒号的裸条目是 IPv6 字面量,末段不是端口(「::1」按 host:port 拆会变成主机「:」端口 1)
+      const parsed = trimmed.match(/^(.+):(\d+)$/);
+      if (parsed) {
+        rh = parsed[1];
+        rp = parseInt(parsed[2], 10);
+      }
+    }
     if (rp && rp !== port) continue; // 端口限定的规则，端口不匹配跳过
     if (rh === "*") return true; // 全 bypass
     if (rh.includes("/")) {
@@ -293,11 +272,11 @@ export function ipInCidr(ip: string, cidr: string): boolean {
   return ((ipInt & mask) >>> 0) === ((netInt & mask) >>> 0);
 }
 
-// Bun fetch 在进程首次网络请求时快照 HTTPS_PROXY/HTTP_PROXY/NO_PROXY env 并永久锁定
-// （实测 Bun 1.3.13；1.4.0 经 scripts/proxy-behavior-smoke.ts 复核锁仍在、direct/manual 分流
-// 与错误分类正则均未漂移）。本函数在 server 启动早期（首次 fetch 前）安装拦截：
-//   - 非容器部署：清空 env 防 Bun 锁定旧代理
-//   - 容器部署（mode=env）：保留 docker 注入的 HTTPS_PROXY，让 Bun 快照它
+// 不带 proxy 选项的 Bun fetch 按当前环境变量选代理（HTTP_PROXY / HTTPS_PROXY，都没有时 ALL_PROXY；NO_PROXY 豁免），
+// 运行时赋值与删除都即时生效（Bun 1.4.3 起；更早的版本删除不生效）。scripts/proxy-behavior-smoke.ts §A 锁这条。
+// 本函数在 server 启动早期（首次 fetch 前）安装拦截：
+//   - 非容器部署：删掉继承来的代理环境变量，出站代理只由应用设置决定
+//   - 容器部署（mode=env）：保留 docker 注入的变量，原生 fetch 照它走
 //   - 替换 globalThis.fetch，per-request 按当前代理状态显式传 proxy 选项
 export function installProxyFetchInterceptor(getProxyConfig: () => ProxyConfig): void {
   if (!RUNNING_IN_CONTAINER) {
@@ -305,6 +284,8 @@ export function installProxyFetchInterceptor(getProxyConfig: () => ProxyConfig):
     delete process.env.HTTP_PROXY;
     delete process.env.https_proxy;
     delete process.env.http_proxy;
+    delete process.env.ALL_PROXY;
+    delete process.env.all_proxy;
     delete process.env.NO_PROXY;
     delete process.env.no_proxy;
   }
@@ -371,20 +352,87 @@ export function installProxyFetchInterceptor(getProxyConfig: () => ProxyConfig):
     else if (input instanceof Request) target = input.url;
     const cfg = getProxyConfig();
     const mode = cfg?.mode ?? "auto";
+    // env 模式（Docker）：不注入，原生 fetch 照当前环境变量走。
+    if (mode === "env") return originalFetch(input, effectiveInit);
+    // 其余模式每个请求都把决定说全：引擎宿主进程把生效代理镜像进了环境变量(syncProxyEnvToProcess),不带 proxy 选项
+    // 的请求会被环境变量接管。走代理时关掉 Bun 自己的 NO_PROXY 判定——名单由 shouldBypassProxy 判,口径与 Bun 不同。
     let proxy: string | undefined;
-    // env 模式（Docker）：不注入，让 Bun 用启动时快照的 docker env。
-    // direct：强制直连。其余（auto/manual）：按当前 resolveEffectiveProxy + bypass 决定。
-    if (mode !== "env" && mode !== "direct") {
+    if (mode !== "direct") {
       const { url } = resolveEffectiveProxy(cfg);
       if (url && !shouldBypassProxy(target, cfg?.bypassRules ?? "")) {
         proxy = url;
       }
     }
-    if (proxy) {
-      return originalFetch(input, { ...(effectiveInit as RequestInit), proxy } as RequestInit & { proxy: string });
-    }
-    return originalFetch(input, effectiveInit);
+    return originalFetch(input, {
+      ...(effectiveInit as RequestInit),
+      proxy: proxy ? { url: proxy, respectNoProxy: false } : false,
+    });
   } as typeof fetch;
+}
+
+// ── 引擎宿主进程:把生效代理镜像进环境变量 ──────────────────────────────────────
+// 进程里只有 fetch 过壳。其余联网通道只认 HTTP_PROXY 这组环境变量:pi 的 Codex WebSocket 构造器(每次 new 时读)、插件起的
+// 子进程与工作区命令(git / npm / curl)、自己读环境变量的插件;node:http / node:https 还要换上按环境变量走代理的全局 Agent。
+// 只给引擎宿主进程用:主程序没有这类通道,保持启动删净(方案 D-PR2)。代价(方案 D-PR5):代理带账号密码时,模型执行的
+// 命令能从环境变量里看到它;NO_PROXY 由各工具按自己的口径解释;已经在跑的子进程不跟着变。
+const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"] as const;
+// 第一次镜像前环境里原有的代理变量。桌面上装壳时已删净,全是空;容器里是 docker 注入的,env 模式的事实源。切回 env 模式时
+// 恢复成这份:容器里 manual→env 来回切不能把 docker 的值弄丢。其余模式先全部删掉再按设置写。
+let inheritedProxyEnv: Partial<Record<(typeof PROXY_ENV_KEYS)[number], string>> | null = null;
+let restoreGlobalProxyAgents: (() => void) | null = null;
+
+/** 按当前代理配置写本进程的代理环境变量,并换 node:http/https 的全局 Agent;幂等。返回写进去的代理地址(直连 / env 模式为 undefined)。 */
+export function syncProxyEnvToProcess(cfg: ProxyConfig): string | undefined {
+  inheritedProxyEnv ??= Object.fromEntries(
+    PROXY_ENV_KEYS.flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]])),
+  );
+  // setGlobalProxyFromEnv 在构造 Agent 时读一次环境,换配置前先还原上一次的
+  restoreGlobalProxyAgents?.();
+  restoreGlobalProxyAgents = null;
+  const envMode = (cfg?.mode ?? "auto") === "env";
+  for (const key of PROXY_ENV_KEYS) {
+    const value = envMode ? inheritedProxyEnv[key] : undefined;
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  if (envMode) {
+    // 环境变量本身就是事实源:fetch、子进程、pi 的 WebSocket 都自己读它,只有 node:http 要换上 Agent 才认
+    useEnvProxyForNodeHttp();
+    return undefined;
+  }
+  const { url } = resolveEffectiveProxy(cfg);
+  if (!url) return undefined; // 直连:环境里不留任何代理变量(容器注入的也不留,否则子进程会绕过「直连」)
+
+  for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const) process.env[key] = url;
+  delete process.env.ALL_PROXY;
+  delete process.env.all_proxy;
+  // 只用逗号:curl / git / pi 不认空白分隔
+  const rules = (cfg?.bypassRules ?? "").split(/[,\s]+/).filter(Boolean);
+  process.env.NO_PROXY = process.env.no_proxy = ["localhost", "127.0.0.1", "::1", ...rules].join(",");
+  useEnvProxyForNodeHttp();
+  return url;
+}
+
+/** 给 node:http / node:https 换上按当前环境变量走代理的全局 Agent(环境里没有代理变量时不换),记下还原函数。 */
+function useEnvProxyForNodeHttp(): void {
+  const setGlobal = (http as { setGlobalProxyFromEnv?: (env: NodeJS.ProcessEnv) => () => void }).setGlobalProxyFromEnv;
+  if (typeof setGlobal !== "function") {
+    reportError("network", "info", "运行时缺 http.setGlobalProxyFromEnv,插件经 node:http 的请求不走代理");
+    return;
+  }
+  try {
+    restoreGlobalProxyAgents = setGlobal(process.env);
+  } catch (err) {
+    // 地址 fetch 认、node:http 不认(ERR_PROXY_INVALID_CONFIG):只有 node:http 这条通道直连,其余照常
+    reportError("network", "warn", "代理地址不被 node:http 接受,插件经 node:http 的请求将直连", err);
+  }
+}
+
+/** 测试用:忘掉第一次镜像前的环境快照、还原全局 Agent,下一次调用重新拍快照。 */
+export function resetProxyEnvMirrorForTests(): void {
+  restoreGlobalProxyAgents?.();
+  restoreGlobalProxyAgents = null;
+  inheritedProxyEnv = null;
 }
 
 export function redactProxyForLog(url: string): string {

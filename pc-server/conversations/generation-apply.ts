@@ -114,8 +114,12 @@ export function createGenerationEventApplier(target: GenerationApplyTarget): Gen
         touchStream(streamHooks as StreamHooksWithSink);
         break;
       case "tool_result":
-        currentMessage.parts = currentMessage.parts.map((part) => {
-          if (!isRecord(part) || part.type !== "tool" || part.toolCallId !== event.toolCallId) return part;
+        currentMessage.parts = currentMessage.parts.map((original) => {
+          if (!isRecord(original) || original.type !== "tool" || original.toolCallId !== event.toolCallId) return original;
+          // 结果附带的卡片信息(如插件否决的署名)与建卡时一样只合并不删。
+          const part = event.metadata
+            ? { ...original, metadata: { ...(isRecord(original.metadata) ? original.metadata : {}), ...event.metadata } }
+            : original;
           // issue #59:终局结果(final 缺省视为终局)落每工具计时终点;partial 中间帧
           // 只刷新 output 不动戳,流式输出期间秒数继续走表。只补不覆盖——已定格的
           // 终点不因后续同 id 帧回退(审批恢复重发终局时保首次定格)。
@@ -142,26 +146,6 @@ export function createGenerationEventApplier(target: GenerationApplyTarget): Gen
         // contextLimit(分母);已填则内部跳过,chat 路径幂等。
         fillContextLimit(currentMessage);
         break;
-      case "engine_fidelity": {
-        // P7 保真注解:引擎消息块结构落 assistant 消息 annotations(type:"pi-fidelity",
-        // 按 msg 序号幂等覆盖)。不产 part;安卓导出被 PC_ONLY_ANNOTATION_TYPES 拦截;
-        // DB→pi 重建时据此把合并 parts 切回引擎消息与原块(签名随 sig 回填)。
-        let record = currentMessage.annotations.find(
-          (a): a is { type: string; v: number; api: string; provider: string; model: string; messages: JsonValue[] } =>
-            isRecord(a) && a.type === "pi-fidelity" && Array.isArray(a.messages),
-        );
-        if (!record) {
-          record = { type: "pi-fidelity", v: 1, api: "", provider: "", model: "", messages: [] };
-          currentMessage.annotations.push(record);
-        }
-        // api/provider/model 同轮恒定,记录级存一份(后到覆盖,幂等)。
-        record.api = event.message.api;
-        record.provider = event.message.provider;
-        record.model = event.message.model;
-        record.messages[event.message.msg] = event.message.blocks as unknown as JsonValue;
-        touchStream(streamHooks as StreamHooksWithSink);
-        break;
-      }
       // engine_status:瞬态状态不落库不产 part,由协调器 sink 包装直通 SSE(P5)。
       case "engine_status":
         break;

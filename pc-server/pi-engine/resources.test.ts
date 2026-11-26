@@ -1,6 +1,6 @@
 // pi-engine/resources.test.ts — P4 资源装配的统一管理不变式
 //
-// 钉住方案 §三 的四条硬边界:
+// 钉住方案 §三 的四条硬边界(装配输入经应用侧 buildEngineInstructions,与生产路径同):
 //   1) 技能:唯一技能库 + enabledSkills 白名单;工作区 .pi/skills 项目技能永不加载;
 //   2) AGENTS.md:工作区边界内的才进提示词,祖先链/agentDir 全局件被滤;
 //   3) 注入面:.pi/settings.json 与 .pi/SYSTEM.md 全部失效(inMemory + projectTrusted:false);
@@ -9,11 +9,13 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isInstallTelemetryEnabled } from "../../pi/packages/coding-agent/src/core/telemetry.ts";
 
 process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-piresources-test-"));
 
 const { skillsDir, piAgentDir, dataDir } = await import("../foundation/paths");
-const { buildPiAppendSystemPrompt, createPiSessionResources, invalidatePiPersonaSnapshots } = await import("./resources");
+const { createPiSessionResources } = await import("./resources");
+const { buildAppendSystemPrompt, buildEngineInstructions, invalidatePersonaSnapshots } = await import("../engines/instructions");
 const { defaultAssistant } = await import("../assistants");
 const { defaultState } = await import("../app-config/defaults");
 const { setState, state } = await import("../persistence/json-store");
@@ -24,7 +26,7 @@ const priorState = state;
 setState(defaultState() as State);
 afterAll(() => {
   setState(priorState);
-  invalidatePiPersonaSnapshots();
+  invalidatePersonaSnapshots();
 });
 
 function makeSkill(root: string, dirName: string, frontmatter: string): void {
@@ -61,26 +63,26 @@ describe("P4 资源装配", () => {
     makeSkill(join(root, ".pi", "skills"), "evil-skill", 'name: evil-skill\ndescription: Project-scoped skill must never load');
 
     const { assistant, conversation } = fixture({ enabledSkills: ["alpha-skill"] });
-    const { resourceLoader } = await createPiSessionResources({ conversation, assistant, model: fakeModel, cwd: root, root });
+    const { resourceLoader } = await createPiSessionResources({ cwd: root, root, instructions: buildEngineInstructions(conversation, assistant, fakeModel) });
     const names = resourceLoader.getSkills().skills.map((skill) => skill.name);
     expect(names).toEqual(["alpha-skill"]);
   });
 
-  test("AGENTS.md 面:全局层经原生上下文件通道注入(首位),项目层按边界过滤,客房文件忽略", async () => {
+  test("AGENTS.md 面:全局层经原生上下文件通道注入(首位),项目层按边界过滤,pi 数据目录里的文件忽略", async () => {
     const parent = mkdtempSync(join(tmpdir(), "rkh-res-agents-"));
     const root = join(parent, "ws");
     mkdirSync(root, { recursive: true });
     writeFileSync(join(parent, "AGENTS.md"), "ANCESTOR-INSTRUCTIONS", "utf-8");
     writeFileSync(join(root, "AGENTS.md"), "WORKSPACE-INSTRUCTIONS", "utf-8");
-    // 全局层:pc-data/AGENTS.md(引擎中立,本测试数据目录直系)。写进 pi-agent/ 的
-    // 任何文件都必须被忽略——客房纯空置,agentDir 直系件天然被边界过滤。
+    // 全局层:pc-data/AGENTS.md(引擎中立,本测试数据目录直系)。写进 pi 数据目录的
+    // 任何文件都必须被忽略——它不在工作区内,天然被边界过滤。
     mkdirSync(piAgentDir, { recursive: true });
     writeFileSync(join(piAgentDir, "AGENTS.md"), "STALE-AGENTDIR-GLOBAL", "utf-8");
     mkdirSync(dataDir, { recursive: true });
     writeFileSync(join(dataDir, "AGENTS.md"), "GLOBAL-INSTRUCTIONS", "utf-8");
 
     const { assistant, conversation } = fixture();
-    const { resourceLoader } = await createPiSessionResources({ conversation, assistant, model: fakeModel, cwd: root, root });
+    const { resourceLoader } = await createPiSessionResources({ cwd: root, root, instructions: buildEngineInstructions(conversation, assistant, fakeModel) });
     const files = resourceLoader.getAgentsFiles().agentsFiles;
     // 全局 virtual file 在首位(与 pi 原生 agentDir 全局件的序一致),项目面只剩 root 内的
     expect(files.map((file) => file.content)).toEqual(["GLOBAL-INSTRUCTIONS", "WORKSPACE-INSTRUCTIONS"]);
@@ -89,7 +91,7 @@ describe("P4 资源装配", () => {
     const append = resourceLoader.getAppendSystemPrompt().join("\n\n");
     expect(append).not.toContain("GLOBAL-INSTRUCTIONS");
     expect(append).not.toContain("STALE-AGENTDIR-GLOBAL");
-    // 清扫本测试在共享路径上的落笔:客房目录必须回到不存在(model-bridge 的零落盘
+    // 清扫本测试在共享路径上的落笔:pi 数据目录必须回到不存在(model-bridge 的零落盘
     // 断言看整个目录;Bun 单进程跑全部文件,这里不删就会跨文件污染)。
     rmSync(piAgentDir, { recursive: true, force: true });
     rmSync(join(dataDir, "AGENTS.md"), { force: true });
@@ -99,7 +101,7 @@ describe("P4 资源装配", () => {
     const root = mkdtempSync(join(tmpdir(), "rkh-res-agents-none-"));
     writeFileSync(join(root, "AGENTS.md"), "WORKSPACE-INSTRUCTIONS", "utf-8");
     const { assistant, conversation } = fixture();
-    const { resourceLoader } = await createPiSessionResources({ conversation, assistant, model: fakeModel, cwd: root, root });
+    const { resourceLoader } = await createPiSessionResources({ cwd: root, root, instructions: buildEngineInstructions(conversation, assistant, fakeModel) });
     expect(resourceLoader.getAgentsFiles().agentsFiles.map((file) => file.content)).toEqual(["WORKSPACE-INSTRUCTIONS"]);
   });
 
@@ -110,7 +112,7 @@ describe("P4 资源装配", () => {
     writeFileSync(join(root, ".pi", "SYSTEM.md"), "HIJACKED SYSTEM PROMPT", "utf-8");
 
     const { assistant, conversation } = fixture();
-    const { resourceLoader, settingsManager } = await createPiSessionResources({ conversation, assistant, model: fakeModel, cwd: root, root });
+    const { resourceLoader, settingsManager } = await createPiSessionResources({ cwd: root, root, instructions: buildEngineInstructions(conversation, assistant, fakeModel) });
     expect(settingsManager.getDefaultModel()).toBeUndefined();
     expect(settingsManager.isProjectTrusted()).toBe(false);
     // systemPrompt 未被项目文件接管 → pi 走内建默认(loader 返回 undefined)。
@@ -118,31 +120,46 @@ describe("P4 资源装配", () => {
     expect(resourceLoader.getAppendSystemPrompt().join("\n")).not.toContain("HIJACKED");
   });
 
+  test("受控设置显式钉住 pi 1.5.1 改了默认值的项:预热按授权给 streaming 或 off(从不 idle)、不带 pi 归属头", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rkh-res-defaults-"));
+    const { assistant, conversation } = fixture();
+    const instructions = buildEngineInstructions(conversation, assistant, fakeModel);
+    const { settingsManager } = await createPiSessionResources({ cwd: root, root, instructions });
+    // pi 1.5.1 默认 idle(两轮之间也续期,最长 30 分钟);我们只在一轮之内续期(方案 §5.17,D31)。
+    expect(settingsManager.getCacheWarmingMode()).toBe("off");
+    const warming = await createPiSessionResources({ cwd: root, root, instructions, cacheWarming: true });
+    expect(warming.settingsManager.getCacheWarmingMode()).toBe("streaming");
+    // 关闭后 SDK 的 client identity 不带 attribution(OpenRouter/NVIDIA/opencode 归属头)。
+    // 第二参显式传 undefined:不让测试机的 PI_TELEMETRY 环境变量左右断言。
+    expect(isInstallTelemetryEnabled(settingsManager, undefined)).toBe(false);
+    expect(settingsManager.getImageAutoResize()).toBe(false);
+  });
+
   test("appendSystemPrompt 冻结:时间模板变量同会话字节稳定;人设原文变更立即生效", async () => {
     const { assistant, conversation } = fixture({ systemPrompt: "You are {{char}}. Now: {{cur_datetime}}" });
-    const first = buildPiAppendSystemPrompt(conversation, assistant, fakeModel);
+    const first = buildAppendSystemPrompt(conversation, assistant, fakeModel);
     await new Promise((resolve) => setTimeout(resolve, 25));
-    const second = buildPiAppendSystemPrompt(conversation, assistant, fakeModel);
+    const second = buildAppendSystemPrompt(conversation, assistant, fakeModel);
     expect(second).toEqual(first);
     expect(first.join("\n")).not.toContain("{{cur_datetime}}"); // 变量确实被渲染过
 
     // 原文变更 → 指纹换 → 重渲染(与聊天引擎"改人设立即生效"同语义)。
     const edited: Assistant = { ...assistant, systemPrompt: "You are someone else entirely." };
-    const third = buildPiAppendSystemPrompt(conversation, edited, fakeModel);
+    const third = buildAppendSystemPrompt(conversation, edited, fakeModel);
     expect(third.join("\n")).toContain("someone else entirely");
   });
 
   test("appendSystemPrompt 内容面:含技能安装教学与审批披露,会话级人设按开关覆盖", async () => {
     const base = fixture({ systemPrompt: "assistant-persona", conversationPrompt: "conversation-persona" });
     // 开关关(默认):助手人设生效,会话级被忽略——与聊天引擎 effectiveSystemPrompt 同规则。
-    const closed = buildPiAppendSystemPrompt(base.conversation, base.assistant, fakeModel).join("\n\n");
+    const closed = buildAppendSystemPrompt(base.conversation, base.assistant, fakeModel).join("\n\n");
     expect(closed).toContain("assistant-persona");
     expect(closed).not.toContain("conversation-persona");
     expect(closed).toContain("To install a new skill");
     expect(closed).toContain("require explicit user approval");
     // 开关开:会话级覆盖助手人设。
     const allowed = { ...base.assistant, allowConversationSystemPrompt: true };
-    const open = buildPiAppendSystemPrompt(base.conversation, allowed, fakeModel).join("\n\n");
+    const open = buildAppendSystemPrompt(base.conversation, allowed, fakeModel).join("\n\n");
     expect(open).toContain("conversation-persona");
     expect(open).not.toContain("assistant-persona");
   });
@@ -151,7 +168,7 @@ describe("P4 资源装配", () => {
     makeSkill(skillsDir, "broken-skill", "name: broken-skill");
     const root = mkdtempSync(join(tmpdir(), "rkh-res-diag-"));
     const { assistant, conversation } = fixture({ enabledSkills: ["broken-skill"] });
-    const { resourceLoader } = await createPiSessionResources({ conversation, assistant, model: fakeModel, cwd: root, root });
+    const { resourceLoader } = await createPiSessionResources({ cwd: root, root, instructions: buildEngineInstructions(conversation, assistant, fakeModel) });
     expect(resourceLoader.getSkills().skills).toEqual([]);
     expect(resourceLoader.getSkills().diagnostics.some((d) => d.message.includes("description is required"))).toBe(true);
   });

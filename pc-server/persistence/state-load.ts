@@ -7,6 +7,9 @@ import type { AssistantMemoryFile, Conversation, GlobalMemoryFile, JsonValue, Pr
 import { getStringArray, id, isRecord, mergeById, uniqueStrings } from "../foundation/utils";
 import { assistantMemoryPath, dataDir, filesDir, globalMemoryPath, pendingMemoryPath, skillsDir, statePath } from "../foundation/paths";
 import { normalizeProxyConfig, normalizePreferredPort } from "../foundation/net";
+import { reconcilePluginMcpServers } from "../engines/plugin-mcp";
+import { normalizePluginMarketSources } from "../engines/plugin-market";
+import { normalizeEnginePluginRecords } from "../engines/plugins";
 import {
   CONVERSATIONS_SQLITE_MIGRATION,
   MEMORY_FILE_SPLIT_MIGRATION,
@@ -24,6 +27,7 @@ import { countConversations } from "../conversations/read-queries";
 import { GLOBAL_MEMORY_ID, memoryStore } from "../memory";
 import { DEFAULT_AUTO_MODEL_ID, NA_API_PRESET_MODELS, NA_API_PROVIDER_ID, OAUTH_PROVIDER_IDS, SUNSET_PROVIDER_IDS, TENCENT_PROVIDER_ID, builtinProviderRank, enrichModel, inferModelAbilities, model, placeOAuthProvidersAfterAnchors } from "../model-providers";
 import { isPresetOAuthProviderId } from "../model-providers/auth/flows";
+import { claudePromptCachingDefault } from "../model-providers/prompt-cache-defaults";
 import { normalizeTtsProviders } from "../media/tts";
 import { normalizeAsrProviders } from "../media/asr";
 import { normalizeS3Config, normalizeWebDavConfig } from "../app-config/backup-config";
@@ -51,6 +55,14 @@ export const PROVIDER_REORDER_MIGRATION = "provider-reorder-1.1.1";
 // 紧随、MiniMax/MIMO 贴腾讯混元、硅基流动下架)。同样登记进 import.ts 的恢复保证清单。
 export const PROVIDER_REORDER_MIGRATION_V2 = "provider-reorder-2.0.0-preview-v4";
 
+// 「Claude 提示缓存」改成三态、官方端点默认开(方案 §5.17.3,D31)。此前加载时把不填压成 false,官方端点上存着的
+// false 分不出是用户关的还是默认值,用户定统一改成开。迁移之后存下的 false 都是用户自己关的,所以标记随桌面端备份
+// 带走(BACKUP_CARRIED_MIGRATIONS):恢复新备份不再改用户的选择;旧备份没带标记,恢复后与升级同口径再跑一次。
+export const PROMPT_CACHE_OFFICIAL_DEFAULT_MIGRATION = "prompt-cache-official-default-2.0.0-preview-v6";
+
+// 描述设置数据形状(而非本机安装史)的迁移标记:写进 pc-backup.json,恢复时随设置一起回来(backup/export.ts)。
+export const BACKUP_CARRIED_MIGRATIONS: readonly string[] = [PROMPT_CACHE_OFFICIAL_DEFAULT_MIGRATION];
+
 // 2026-09-26 预置供应商改名(显示名精简)。仅当存量行的 name 与旧默认逐字相等才替换
 // (D7/R1-11 纪律:用户改过一个字都不动)。不走迁移标记——幂等(改名后旧名不再相等),
 // 且备份恢复带回的旧名行下次启动同样自愈。
@@ -58,7 +70,7 @@ const PRESET_PROVIDER_RENAMES: ReadonlyArray<{ id: string; from: string; to: str
   { id: "3bc40dc1-b11a-46fa-863b-6306971223be", from: "智谱AI开放平台", to: "智谱" },
   { id: "386e0f29-8228-4512-affe-8fd8add82d88", from: "Vercel AI Gateway", to: "Vercel" },
   { id: OAUTH_PROVIDER_IDS["github-copilot"], from: "GitHub Copilot", to: "Copilot" },
-  // 2.0.0-preview-v7:ChatGPT 预置行拆成两轨(新版 Sign in with ChatGPT + 旧版 Codex),
+  // 2.0.0-preview-v6:ChatGPT 预置行拆成两轨(新版 Sign in with ChatGPT + 旧版 Codex),
   // 旧行改名 "ChatGPT"→"ChatGPT (Codex)" 让位新行;用户改过名的行不动(D7 纪律)。
   { id: OAUTH_PROVIDER_IDS["openai-codex"], from: "ChatGPT", to: "ChatGPT (Codex)" },
 ];
@@ -119,9 +131,11 @@ export function normalizeState(input: Partial<State>): State {
   // 订阅供应商「贴同家 API」邻接归位(方案 §6.1):新补插的 OAuth 预置被 mergeById 追加到
   // 尾部,这里把它们移到同家 API 锚点之后。幂等——只在不在正确邻位时动,不推翻用户手动排序。
   normalized.settings.providers = placeOAuthProvidersAfterAnchors(normalized.settings.providers);
-  normalized.settings.providers = normalized.settings.providers.map((providerItem) => ({
+  normalized.settings.providers = normalized.settings.providers.map(({ promptCaching, promptCacheWarming, ...providerItem }) => ({
     ...providerItem,
-    promptCaching: providerItem.type === "claude" ? providerItem.promptCaching === true : providerItem.promptCaching,
+    // 「Claude 提示缓存」「缓存预热」都是三态,不填 = 按端点取默认(model-providers/prompt-cache-defaults.ts),这里只丢掉非布尔的脏值。
+    ...(typeof promptCaching === "boolean" ? { promptCaching } : {}),
+    ...(typeof promptCacheWarming === "boolean" ? { promptCacheWarming } : {}),
     promptCacheTtl: providerItem.promptCacheTtl === "1h" ? "1h" : "5m",
     models: (providerItem.models ?? []).map((item) => enrichModel(item)),
   }));
@@ -155,8 +169,11 @@ export function normalizeState(input: Partial<State>): State {
       mcpToolOverrides: isRecord(assistant.mcpToolOverrides)
         ? assistant.mcpToolOverrides as Record<string, Record<string, { enable?: boolean; needsApproval?: boolean }>>
         : {},
+      enginePluginIds: uniqueStrings(getStringArray(assistant.enginePluginIds)),
     };
   });
+  normalized.settings.enginePlugins = normalizeEnginePluginRecords(normalized.settings.enginePlugins);
+  normalized.settings.pluginMarketSources = normalizePluginMarketSources(normalized.settings.pluginMarketSources);
   // memorySettings 规范化 + M1 迁移推断:老用户首次升级(settings 无 memorySettings)时,
   // 若所有助手 enableMemory=false,globalEnabled 默认 false(避免被动注入全局,违背用户意愿);
   // 否则默认 true。用户设过 memorySettings(存在)则保留,仅校验 writeStrategy 合法性。
@@ -286,6 +303,16 @@ export function normalizeState(input: Partial<State>): State {
     );
     normalized.appliedMigrations = [...migrationsBeforeV2Reorder, PROVIDER_REORDER_MIGRATION_V2];
   }
+  // 「Claude 提示缓存」改成按端点取默认(常量头注):官方端点上存着的 false 分不出是用户关的还是旧默认值,一律改成不填(= 开)。
+  const migrationsBeforePromptCache = Array.isArray(normalized.appliedMigrations) ? normalized.appliedMigrations : [];
+  if (!migrationsBeforePromptCache.includes(PROMPT_CACHE_OFFICIAL_DEFAULT_MIGRATION)) {
+    normalized.settings.providers = normalized.settings.providers.map((providerItem) => {
+      if (providerItem.promptCaching !== false || !claudePromptCachingDefault(providerItem)) return providerItem;
+      const { promptCaching: _legacyOff, ...rest } = providerItem;
+      return rest;
+    });
+    normalized.appliedMigrations = [...migrationsBeforePromptCache, PROMPT_CACHE_OFFICIAL_DEFAULT_MIGRATION];
+  }
   // 专题3 H-1 存量自愈:历史版本的安卓 zip 导入只改写消息里的 file:///…/upload/<name>
   // 引用,settings(助手/用户头像等)漏改,安卓私有路径在 PC 上永远无法解析(头像丢失)。
   // file ledger 的 fileName 保留安卓原始文件名,可精确回链成 /api/files/<id>/content。
@@ -329,6 +356,7 @@ export function normalizeState(input: Partial<State>): State {
   const backfillSearchPresets: Array<Record<string, JsonValue>> = [
     { type: "doubao", id: id(), name: "豆包", apiKey: "", mode: "custom" },
     { type: "serper", id: id(), name: "Serper", apiKey: "" },
+    { type: "deepseek", id: id(), name: "DeepSeek", apiKey: "" },
     { type: "tinyfish", id: id(), name: "Tinyfish", apiKey: "" },
     { type: "firecrawl", id: id(), name: "Firecrawl", apiKey: "" },
     { type: "grok", id: id(), name: "Grok", apiKey: "", customUrl: "https://api.x.ai/v1/responses", model: "grok-4-fast" },
@@ -377,6 +405,8 @@ export function normalizeState(input: Partial<State>): State {
       delete clone.ssePostEndpoint;
       return clone as JsonValue;
     });
+    // 插件带来的 MCP 服务器跟插件记录对齐(记录没了的移除、启停镜像校正),覆盖备份恢复与手改设置文件。
+    normalized.settings.mcpServers = reconcilePluginMcpServers(normalized.settings.mcpServers, normalized.settings.enginePlugins);
   }
   return normalized;
 }

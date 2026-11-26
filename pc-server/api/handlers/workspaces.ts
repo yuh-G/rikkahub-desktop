@@ -5,12 +5,13 @@ import type { Workspace } from "../../foundation/types";
 import type { WorkspaceDto } from "../../foundation/types/dto";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, trustWorkspace, updateWorkspace, workspaceStatus } from "../../workspace";
 import { deleteWorkspaceEntry, listWorkspaceDir, previewWorkspaceFile, readWorkspaceAgentsFile, renameWorkspaceEntry, revealWorkspaceEntry, writeWorkspaceAgentsFile } from "../../workspace/files";
-import { mountedWorkspaceToolNames, refreshShellAvailability, shellAvailability } from "../../workspace/runtime";
+import { refreshShellAvailability, shellAvailability } from "../../workspace/runtime";
+import { piBuiltinToolNames } from "../../pi-engine/builtin-tools";
 import { error, json, readJson } from "../request";
 
 export function shellStatusPayload(): { available: boolean; error: string | null; mountedTools: string[] } {
   const shell = shellAvailability();
-  return { available: shell.available, error: shell.error ?? null, mountedTools: [...mountedWorkspaceToolNames()] };
+  return { available: shell.available, error: shell.error ?? null, mountedTools: piBuiltinToolNames(shell.shell) };
 }
 
 function toDto(workspace: Workspace): WorkspaceDto {

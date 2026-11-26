@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { Check, Database, ExternalLink, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { AIIcon } from "~/components/ui/ai-icon";
+import { claudePromptCachingDefault, claudePromptCachingEnabled } from "@server/model-providers/prompt-cache-defaults";
 import { Button } from "~/components/ui/button";
 import {
   DropdownMenu,
@@ -54,6 +55,7 @@ import {
 import {
   applyAutoModelType,
   balanceOptionOf,
+  cacheWarmingRowOf,
   createProvider,
   defaultPathForKind,
   endpointPreview,
@@ -296,13 +298,17 @@ export function ProvidersSection({
   };
 
   const isOauth = draft.authMode === "oauth";
+  const claudeCaching = claudePromptCachingEnabled(draft);
+  const warming = cacheWarmingRowOf(draft);
   // 收起时高级区里有非默认配置就亮小圆点,免得默认折叠把用户自己的配置藏起来。
+  // 「Claude 提示缓存」「缓存预热」按端点取默认,官方端点开着不算非默认。
   const advancedAttention =
     providerHeaders.some((header) => header.key.trim() !== "") ||
     (!isOauth &&
       kind === "openai" &&
       (hasCustomEndpointPath(draft) || draft.includeHistoryReasoning === false || draft.promptCacheKey === true)) ||
-    (!isOauth && kind === "claude" && draft.promptCaching === true) ||
+    (!isOauth && kind === "claude" && claudeCaching !== claudePromptCachingDefault(draft)) ||
+    warming.nonDefault ||
     (!isOauth && kind === "google" && draft.useInteractionsApi === true) ||
     balanceOption.enabled === true;
   const getKeyUrl = providerGetKeyUrl(textValue(draft.baseUrl));
@@ -589,10 +595,10 @@ export function ProvidersSection({
                 <SettingsSwitchRow
                   label={t("settings:providers.prompt_cache_title")}
                   description={t("settings:providers.prompt_cache_desc")}
-                  checked={draft.promptCaching === true}
+                  checked={claudeCaching}
                   onCheckedChange={(promptCaching) => patchDraft({ promptCaching })}
                 >
-                  {draft.promptCaching === true ? (
+                  {claudeCaching ? (
                     <SettingsField label={t("settings:providers.cache_ttl")}>
                       <Select
                         value={textValue(draft.promptCacheTtl) || "5m"}
@@ -609,6 +615,14 @@ export function ProvidersSection({
                     </SettingsField>
                   ) : null}
                 </SettingsSwitchRow>
+              ) : null}
+              {warming.visible ? (
+                <SettingsSwitchRow
+                  label={t("settings:providers.prompt_cache_warming_title")}
+                  description={t(warming.descriptionKey)}
+                  checked={warming.checked}
+                  onCheckedChange={(promptCacheWarming) => patchDraft({ promptCacheWarming })}
+                />
               ) : null}
               <SettingsSwitchRow
                 label={t("settings:providers.balance_title")}

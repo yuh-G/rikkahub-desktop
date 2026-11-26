@@ -780,6 +780,7 @@ export function SettingsDetailHeader({
   description,
   action,
   leading,
+  titleAddon,
   onTitleCommit,
   titlePlaceholder,
   titleLabel,
@@ -788,6 +789,8 @@ export function SettingsDetailHeader({
   description?: React.ReactNode;
   action?: React.ReactNode;
   leading?: React.ReactNode;
+  /** 紧跟标题的小件(来源徽标等)。 */
+  titleAddon?: React.ReactNode;
   onTitleCommit?: (next: string) => void;
   titlePlaceholder?: string;
   /** 可编辑标题的无障碍名(「名称」)。 */
@@ -798,20 +801,23 @@ export function SettingsDetailHeader({
       <div className="flex min-w-0 items-center gap-3">
         {leading}
         <div className="min-w-0">
-          {onTitleCommit ? (
-            <h2 className="flex min-w-0">
-              <InlineEditText
-                value={typeof title === "string" ? title : ""}
-                placeholder={titlePlaceholder}
-                ariaLabel={titleLabel ?? titlePlaceholder ?? ""}
-                className="text-base font-semibold"
-                inputClassName="w-72 text-base"
-                onCommit={onTitleCommit}
-              />
-            </h2>
-          ) : (
-            <h2 className="truncate text-base font-semibold text-[var(--ds-text-primary)]">{title}</h2>
-          )}
+          <div className="flex min-w-0 items-center gap-2">
+            {onTitleCommit ? (
+              <h2 className="flex min-w-0">
+                <InlineEditText
+                  value={typeof title === "string" ? title : ""}
+                  placeholder={titlePlaceholder}
+                  ariaLabel={titleLabel ?? titlePlaceholder ?? ""}
+                  className="text-base font-semibold"
+                  inputClassName="w-72 text-base"
+                  onCommit={onTitleCommit}
+                />
+              </h2>
+            ) : (
+              <h2 className="truncate text-base font-semibold text-[var(--ds-text-primary)]">{title}</h2>
+            )}
+            {titleAddon}
+          </div>
           {description != null ? (
             <p className="mt-0.5 text-xs text-[var(--ds-text-secondary)]">{description}</p>
           ) : null}
@@ -881,6 +887,7 @@ export function SettingsListRow({
   onMove,
   actions,
   badge,
+  trailing,
 }: {
   id: string;
   index: number;
@@ -892,6 +899,8 @@ export function SettingsListRow({
   actions?: readonly SettingsRowAction[];
   /** 行尾常驻徽标(与「⋯」同位互换);不供操作菜单时也可单独用作纯展示徽标。 */
   badge?: React.ReactNode;
+  /** 行尾槽左边的常驻控件(如开关):在选中按钮之外,点它不触发 onSelect。 */
+  trailing?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -951,6 +960,7 @@ export function SettingsListRow({
         <button type="button" className="min-w-0 flex-1" onClick={onSelect}>
           {children}
         </button>
+        {trailing != null ? <div className="flex shrink-0 items-center gap-3">{trailing}</div> : null}
 
         {/* 行尾槽:常驻徽标与「⋯」触发钮同位(grid 叠放),悬停/聚焦/菜单打开时互换。
             「⋯」后渲染,叠在上层(网格同位后出者压先出者),保证始终可点——不被徽标挡住。 */}

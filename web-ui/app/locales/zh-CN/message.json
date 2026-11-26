@@ -137,6 +137,8 @@
     "pending_approval_desc": "AI 想要调用工具「{{toolName}}」继续完成任务。在你点击\"同意\"或\"拒绝\"之前，生成会暂停。",
     "pending_approve": "同意",
     "pending_deny": "拒绝",
+    "always_allow": "此会话内总是允许",
+    "always_allow_hint": "同意这一次，本会话里这个工具不再询问；重启应用后恢复询问",
     "deny_dialog_title": "拒绝工具调用",
     "deny_dialog_desc": "可以填写拒绝原因（可选），会一并反馈给 AI，帮助它调整后续做法。",
     "deny_dialog_placeholder": "拒绝原因（可选）",
@@ -182,5 +184,17 @@
     "find_title": "查找文件：{{pattern}}",
     "ls": "列出目录",
     "ls_title": "列出目录：{{path}}"
+  },
+  "notice": {
+    "retry": "重试"
+  },
+  "plugin": {
+    "from": "来自插件 {{plugin}}",
+    "from_unknown": "来自插件",
+    "open": "打开插件详情",
+    "blocked": "被插件 {{plugin}} 拒绝：{{reason}}",
+    "blocked_no_reason": "被插件 {{plugin}} 拒绝",
+    "settings": "插件设置",
+    "settings_hint": "打开这个插件的设置，可以关掉它拦截工具调用"
   }
 }

@@ -4,9 +4,10 @@
 
 import type { EngineStatus, StreamHooksWithSink } from "../inference-engine/events";
 import { initWorkingSetSseGuard, markConversationRowDirty, markMessageNodeDirty, scheduleThrottledConvFlush } from "../conversations";
-import { initAppErrorBroadcast } from "../observability/app-errors";
+import { initAppErrorBroadcast, reportError } from "../observability/app-errors";
 import { initProviderAuthBroadcast } from "../model-providers/auth";
-import type { Conversation, ConversationListInvalidateEventDto, ConversationNodeUpdateEventDto, ConversationSnapshotEventDto, ConversationTextDeltaEventDto, EngineStatusEventDto, JsonValue, MessageNode } from "../foundation/types";
+import type { Conversation, ConversationListInvalidateEventDto, ConversationNodeUpdateEventDto, ConversationSnapshotEventDto, ConversationTextDeltaEventDto, EngineStatusEventDto, EngineUiNotifyEventDto, EngineUiStateEventDto, JsonValue, MessageNode } from "../foundation/types";
+import type { PluginInstallProgressEventDto, PluginReinstallStateEventDto } from "../foundation/types/plugins";
 import { diffFingerprints, fingerprintNode, type NodeBroadcastFingerprint } from "./node-delta";
 import { conversationNegotiationToken } from "./snapshot-negotiation";
 import { stripAuthSecrets } from "./auth";
@@ -53,6 +54,12 @@ export function scheduleNodeBroadcast(conversation: Conversation, node: MessageN
   }
   if (existing.timer) return;
   existing.timer = setTimeout(() => flushNodeBroadcast(key), STREAM_BROADCAST_INTERVAL_MS - elapsed);
+}
+/** 立刻发掉这个节点挂在合帧定时器里的帧,没有挂着的就什么都不做;发增量还是关键帧照旧由指纹判定。
+ *  一轮收尾之前用(PF.5,见 orchestrator generateAnswer)。 */
+export function flushPendingNodeBroadcast(conversation: Conversation, node: MessageNode) {
+  const key = `${conversation.id}::${node.id}`;
+  if (pendingBroadcasts.get(key)?.timer) flushNodeBroadcast(key);
 }
 function clearNodeBroadcast(conversation: Conversation, node: MessageNode) {
   const key = `${conversation.id}::${node.id}`;
@@ -188,6 +195,18 @@ export function openSse(
 export function broadcastSettings() {
   // 剥认证敏感字段(webPasswordHash):SSE 是下发前端的暴露面,与 settings GET 同一净化纪律。
   broadcastTo(appClients, sseFrame("settings", stripAuthSecrets(state.settings)));
+  // P7.2.6:设置的每条变更路径(设置页、备份恢复)都经这里,引擎宿主进程的代理配置在这里跟上。钩子由 bootstrap()
+  // 注入(sse 不反向依赖 engines/);它自己不该抛,抛了也不能连累设置广播
+  try {
+    settingsChangedHook?.(state.settings);
+  } catch (err) {
+    reportError("internal", "info", "设置变更的后续处理失败", err);
+  }
+}
+
+let settingsChangedHook: ((settings: typeof state.settings) => void) | null = null;
+export function initSettingsChangedHook(hook: (settings: typeof state.settings) => void): void {
+  settingsChangedHook = hook;
 }
 
 // memory 事件(1.3.2):推送 MemorySnapshot 给前端记忆管理 UI + 待确认徽章。与 settings
@@ -236,6 +255,30 @@ export function broadcastConversation(conversation: Conversation, event = "snaps
 export function broadcastEngineStatus(conversationId: string, status: EngineStatus) {
   const payload: EngineStatusEventDto = status; // 编译期契约:EngineStatus ≡ 线上 DTO
   broadcastTo(conversationClients.get(conversationId), sseFrame("engine-status", payload));
+}
+
+// P5.5:插件界面(对话框 / 状态条目 / 挂件 / 进行中提示)的整份状态与单发通知。瞬态,连接时补发见会话流端点。
+export function broadcastEngineUi(state: EngineUiStateEventDto) {
+  broadcastTo(conversationClients.get(state.conversationId), sseFrame("engine-ui", state));
+}
+
+export function broadcastEngineNotify(notice: EngineUiNotifyEventDto) {
+  broadcastTo(conversationClients.get(notice.conversationId), sseFrame("engine-notify", notice));
+}
+
+export function broadcastPluginInstallProgress(event: PluginInstallProgressEventDto) {
+  broadcastTo(appClients, sseFrame("plugin_install_progress", event));
+}
+
+let pluginReinstallState: PluginReinstallStateEventDto = { pluginIds: [] };
+
+export function setPluginReinstallState(pluginIds: string[]) {
+  pluginReinstallState = { pluginIds };
+  broadcastTo(appClients, sseFrame("plugin_reinstall_state", pluginReinstallState));
+}
+
+export function pluginReinstallStateFrame(): [string, JsonValue | object] {
+  return ["plugin_reinstall_state", pluginReinstallState];
 }
 
 // ===== H-b(专题2):流式增量帧 =====

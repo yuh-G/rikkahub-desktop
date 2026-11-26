@@ -839,6 +839,13 @@ function renderQuality(d) {
     null, hasQuality ? '<div class="chart-wrap"><canvas id="err-chart"></canvas></div>' : emptyState(waitNote));
   html += '</div>';
 
+  // 引擎进程重启(D24):工作区引擎与插件跑在独立进程里,意外退出后应用自动重启它。老客户端不上报,全 0 时显示等待提示
+  const hasRestarts = qt.some(x=>(x.restarts||0)>0);
+  html += '<div class="grid full">';
+  html += card('引擎进程重启', '每日工作区引擎进程意外退出后的自动重启次数' + info('重启=崩溃、卡死被强杀、停止生成时不响应被强杀、启动失败后的自动重启。多半由插件引起;抬头时去看新上架或新版本的插件。只有工作区会话会起引擎进程,普通聊天不计。'),
+    null, hasRestarts ? '<div class="chart-wrap"><canvas id="restart-chart"></canvas></div>' : emptyState('近期没有重启,或客户端版本还不上报'));
+  html += '</div>';
+
   html += '</div>';
   return html;
 }
@@ -1110,6 +1117,12 @@ function drawCharts(d) {
         options:{ ...base,
           scales:{ ...base.scales, y:{ ...base.scales.y, ticks:{ ...base.scales.y.ticks, callback:v=>v+'%' } } },
           plugins:{ ...base.plugins, tooltip:{ ...base.plugins.tooltip, callbacks:{ label: ctx => '失败率 ' + ctx.parsed.y + '% · 失败 ' + (qt[ctx.dataIndex].errs||0) + ' 次 / 消息 ' + fmt(qt[ctx.dataIndex].msgs||0) + ' 条' } } } } });
+    }
+    const restartC = document.getElementById('restart-chart');
+    if (restartC && qt.length) {
+      new Chart(restartC, { type:'bar', data:{ labels: qLabels, datasets:[{ label:'重启次数', data: qt.map(x=>x.restarts||0), backgroundColor:'rgba(251,146,60,0.75)', borderRadius:3, barPercentage:0.7 }] },
+        options:{ ...base,
+          plugins:{ ...base.plugins, tooltip:{ ...base.plugins.tooltip, callbacks:{ label: ctx => '重启 ' + ctx.parsed.y + ' 次 · 涉及 ' + (qt[ctx.dataIndex].restart_devices||0) + ' 台设备' } } } } });
     }
   }
 }

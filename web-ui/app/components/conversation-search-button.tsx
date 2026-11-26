@@ -1,6 +1,5 @@
 import * as React from "react";
 
-import dayjs from "dayjs";
 import { Circle, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -9,6 +8,7 @@ import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "~/components/
 import { ScrollArea } from "~/components/ui/scroll-area";
 import api from "~/services/api";
 import { onHotkeyAction } from "~/lib/hotkey-events";
+import { formatRelativeTime } from "~/lib/relative-time";
 import type { MessageSearchResultDto } from "~/types";
 
 export interface ConversationSearchButtonProps {
@@ -42,21 +42,6 @@ function SnippetText({ snippet }: { snippet: string }) {
     index = end + 1;
   }
   return <>{parts}</>;
-}
-
-function formatRelativeTime(updateAt: number, t: (key: string) => string): string {
-  const date = dayjs(updateAt);
-  const today = dayjs().startOf("day");
-  const yesterday = today.subtract(1, "day");
-  if (date.isSame(today, "day")) return t("conversation_sidebar.today");
-  if (date.isSame(yesterday, "day")) return t("conversation_sidebar.yesterday");
-  const sameYear = date.year() === today.year();
-  const native = date.toDate();
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    ...(sameYear ? {} : { year: "numeric" }),
-  }).format(native);
 }
 
 export function ConversationSearchButton({ onSelect }: ConversationSearchButtonProps) {

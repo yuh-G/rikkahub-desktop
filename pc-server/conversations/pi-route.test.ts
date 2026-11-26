@@ -1,13 +1,13 @@
 // conversations/pi-route.test.ts — generateAnswer 路由切换端到端(P3;P7 改 unified 断言)
 //
 // 钉住编排器的三条 P3 不变式(方案 §六),P7 起观测点从 jsonl 换成会话行数据:
-//   1) 工作区会话 → pi 引擎:回答落 parts、保真注解(pi-fidelity)落消息、上下文从
+//   1) 工作区会话 → pi 引擎:回答落 parts、pi 原生条目落私有表并封存(P3.4)、上下文从
 //      DB 历史灌注回放(上游请求体携带历史即硬证据)、压缩记录字段就位;
 //   2) 非工作区会话 → 聊天引擎原路(同一编排器入口,零 pi 痕迹);
 //   3) 审批 API 全链路:pending 时生成保持在跑,POST tool-approval 原地放行,
 //      不重触发生成(上游请求数不涨即硬证据)。
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -28,7 +28,10 @@ const jsonStore = await import("../persistence/json-store");
 const { model, provider } = await import("../model-providers");
 const { pendingToolApprovalCount } = await import("../inference-engine/approval-gate");
 const { handleConversationRoutes } = await import("../api/handlers/conversations");
+const { handleCommandRoutes } = await import("../api/handlers/commands");
 const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
+const { useInProcessPiDriver } = await import("../test-utils/in-process-pi");
+const { appendEngineEntries, engineVisibleDigest, loadEngineEntries, readEngineSessionHeader, writeEngineSessionHeader } = await import("./engine-entries");
 
 import type { Conversation, State } from "../foundation/types";
 import type { FakeOpenAiSseServer, FakeSseTurn } from "../test-utils/fake-openai-sse";
@@ -49,7 +52,9 @@ configureWorkingSet({
 });
 
 const servers: FakeOpenAiSseServer[] = [];
+const restorePiDriver = useInProcessPiDriver();
 afterAll(async () => {
+  restorePiDriver();
   setState(priorState);
   await Promise.all(servers.map((server) => server.close()));
 });
@@ -162,7 +167,7 @@ async function waitUntil(cond: () => boolean, timeoutMs = 10_000): Promise<void>
 }
 
 describe("generateAnswer P3 路由", () => {
-  test("工作区会话走 pi 引擎:回答落 parts,保真注解落消息,上下文从 DB 灌注回放", async () => {
+  test("工作区会话走 pi 引擎:回答落 parts,原生条目落私有表并封存,下一轮原样取用", async () => {
     const server = await installUpstream([{ content: "工作区回答" }, { content: "第二轮工作区回答" }]);
     const workspace = ws.createWorkspace({ type: "managed", name: "route-pi" });
     const conversation = seedConversation(workspace.id);
@@ -171,18 +176,23 @@ describe("generateAnswer P3 路由", () => {
     const answer = lastAssistantMessage(conversation);
     expect(partsText(conversation)).toContain("工作区回答");
     expect(answer.finishedAt).not.toBeNull();
-    // P7:引擎保真注解(P7 桥捕获)落在回答消息上——下一轮编码器靠它无损重建引擎消息。
-    const fidelity = (answer.annotations ?? []).find(
+    // P3.4:pi 条目经 host.session.append 锚定到回答消息,轮末封存;保真注解不再写入。
+    expect((answer.annotations ?? []).some(
       (item) => typeof item === "object" && item !== null && (item as { type?: unknown }).type === "pi-fidelity",
-    ) as { messages?: unknown } | undefined;
-    expect(Array.isArray(fidelity?.messages)).toBe(true);
+    )).toBe(false);
+    const groups = loadEngineEntries(db, conversation.id, "pi");
+    expect(groups.map((group) => group.anchorMessageId)).toEqual([answer.id]);
+    expect(groups[0]!.digest).toBe(engineVisibleDigest([answer]));
+    const payloads = groups[0]!.entries.map((entry) => entry.payload as { type: string; message?: { role: string } });
+    // 每轮重建的条目(用户消息、模型/档位变更)不写。
+    expect(payloads.map((payload) => payload.message?.role ?? payload.type)).toEqual(["assistant"]);
     // P7/T3:压缩记录字段就位(未触发自动压缩时保持 null——语义即"无压缩记录")。
     expect(conversation.engineCompactions ?? null).toBeNull();
     expect(getConversationMeta(db, conversation.id)?.engineCompactions ?? null).toBeNull();
     expect(generating.has(conversation.id)).toBe(false);
 
-    // P7 灌注回放硬证据:追加第二轮用户消息再生成,上游第二请求必须携带
-    // 第一轮的 prompt 与回答(历史从 DB 重建进引擎上下文,而不是靠 jsonl)。
+    // 灌注回放硬证据:追加第二轮用户消息再生成,上游第二请求必须携带第一轮的 prompt 与回答。
+    // 回答这次来自原生条目(视图给出、session-view 原样取用),不再走回退编码。
     appendUserNode(conversation, "接着干活");
     await generateAnswer(conversation);
     expect(partsText(conversation)).toContain("第二轮工作区回答");
@@ -191,6 +201,60 @@ describe("generateAnswer P3 路由", () => {
     expect(serialized).toContain("请干活");
     expect(serialized).toContain("工作区回答");
     expect(serialized).toContain("接着干活");
+    expect(loadEngineEntries(db, conversation.id, "pi").map((group) => group.anchorMessageId)).toEqual([
+      answer.id,
+      lastAssistantMessage(conversation).id,
+    ]);
+  }, 30_000);
+
+  test("分叉(P3.6):被复制消息的私有条目随分支进新会话并保持封存,分叉点之后的不带,源会话不动", async () => {
+    await installUpstream([{ content: "第一轮回答" }, { content: "第二轮回答" }]);
+    const workspace = ws.createWorkspace({ type: "managed", name: "route-fork" });
+    const conversation = seedConversation(workspace.id);
+    await generateAnswer(conversation);
+    const firstAnswer = lastAssistantMessage(conversation);
+    appendUserNode(conversation, "第二问");
+    await generateAnswer(conversation);
+    const sourceGroups = loadEngineEntries(db, conversation.id, "pi");
+    expect(sourceGroups.length).toBe(2);
+
+    const fork = async (messageId: string) => {
+      const url = new URL(`http://localhost/api/conversations/${conversation.id}/fork`);
+      const response = await handleConversationRoutes(
+        new Request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ messageId }) }),
+        url,
+        `conversations/${conversation.id}/fork`,
+      );
+      return ((await response!.json()) as { conversationId: string }).conversationId;
+    };
+    const forkId = await fork(firstAnswer.id);
+    expect(loadEngineEntries(db, forkId, "pi")).toEqual([sourceGroups[0]!]);
+    expect(loadEngineEntries(db, forkId, "pi")[0]!.digest).toBe(engineVisibleDigest([firstAnswer]));
+    expect(loadEngineEntries(db, conversation.id, "pi")).toEqual(sourceGroups);
+    // 分叉在第一条用户消息上:没有被复制的条目。
+    expect(loadEngineEntries(db, await fork(conversation.messages[0]!.messages[0]!.id), "pi")).toEqual([]);
+  }, 30_000);
+
+  test("删除(P3.7):经路由删消息 → 锚定在它上面的条目随落库清掉;删会话 → 条目与会话头级联删除", async () => {
+    await installUpstream([]);
+    const conversation = seedConversation(null);
+    const user = conversation.messages[0]!.messages[0]!;
+    const answer = { ...user, id: `piroute-del-ai-${seq}`, role: "ASSISTANT", parts: [{ type: "text", text: "答" }] } as typeof user;
+    conversation.messages.push({ id: `piroute-del-n-${seq}`, selectIndex: 0, messages: [answer] } as never);
+    conversations.persistConversation(conversation);
+    appendEngineEntries(db, conversation.id, "pi", user.id, [{ format: "f", payload: 1 }]);
+    appendEngineEntries(db, conversation.id, "pi", answer.id, [{ format: "f", payload: 2 }]);
+    writeEngineSessionHeader(db, conversation.id, "pi", { format: "f", header: {} });
+
+    const route = (subPath: string) => {
+      const url = new URL(`http://localhost/api/conversations/${conversation.id}${subPath}`);
+      return handleConversationRoutes(new Request(url, { method: "DELETE" }), url, `conversations/${conversation.id}${subPath}`);
+    };
+    expect((await route(`/messages/${answer.id}`))?.status).toBe(200);
+    expect(loadEngineEntries(db, conversation.id, "pi").map((group) => group.anchorMessageId)).toEqual([user.id]);
+    expect((await route(""))?.status).toBe(204);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM pc_engine_entry WHERE conversation_id = ?").get(conversation.id)).toEqual({ n: 0 });
+    expect(readEngineSessionHeader(db, conversation.id, "pi")).toBeNull();
   }, 30_000);
 
   test("推理模型的工作区请求:系统提示词恒 system 角色 + 上限恒 max_tokens(2.0.0 内测缺陷回归)", async () => {
@@ -280,6 +344,169 @@ describe("generateAnswer P3 路由", () => {
     expect(request.max_completion_tokens).toBeUndefined();
   }, 30_000);
 
+  test("引擎发起的轮次(P5.6):插件在轮次之间要求再答 → 应用另起回答节点开轮,插件的消息进请求", async () => {
+    const server = await installUpstream([{ content: "第一轮回答" }, { content: "插件轮回答" }]);
+    const pluginPath = join(process.env.RIKKAHUB_PC_DATA_DIR!, "trigger-plugin.js");
+    writeFileSync(pluginPath, "export default function (pi) { globalThis.__rkhRoutePi = pi; }\n");
+    jsonStore.state.settings.devPiPluginPaths = [pluginPath];
+    const workspace = ws.createWorkspace({ type: "managed", name: "route-trigger" });
+    const conversation = seedConversation(workspace.id);
+    await generateAnswer(conversation);
+    expect(partsText(conversation)).toContain("第一轮回答");
+    const first = lastAssistantMessage(conversation);
+
+    const pi = (globalThis as Record<string, unknown>).__rkhRoutePi as { sendMessage: (message: unknown, options?: unknown) => void };
+    pi.sendMessage({ customType: "bg-result", content: "后台任务完成", display: true }, { triggerTurn: true });
+    await waitUntil(() => server.requests.length === 2 && !generating.has(conversation.id));
+
+    expect(conversation.messages).toHaveLength(3);
+    expect(lastAssistantMessage(conversation).id).not.toBe(first.id);
+    expect(partsText(conversation)).toContain("插件轮回答");
+    const sent = JSON.stringify((server.requests[1] as { messages?: unknown }).messages ?? []);
+    expect(sent.indexOf("第一轮回答")).toBeGreaterThan(-1);
+    expect(sent.indexOf("后台任务完成")).toBeGreaterThan(sent.indexOf("第一轮回答"));
+    jsonStore.state.settings.devPiPluginPaths = [];
+  }, 30_000);
+
+  test("插件指令(P5.7):清单合并通用与插件指令;经 API 执行零模型请求,处理函数要的那一轮在指令结束后开;忙时 409", async () => {
+    const server = await installUpstream([{ content: "第一轮回答" }, { content: "指令要的回答" }]);
+    const pluginPath = join(process.env.RIKKAHUB_PC_DATA_DIR!, "cmd-plugin.js");
+    writeFileSync(
+      pluginPath,
+      `const log = (globalThis.__rkhRouteCommands ??= []);
+export default function (pi) {
+  pi.registerCommand("compact", { description: "按待办压缩", handler: async () => {} });
+  pi.registerCommand("model", { handler: async () => {} });
+  pi.registerCommand("todos", { handler: async (args) => { log.push(args); } });
+  pi.registerCommand("again", { handler: async () => {
+    pi.sendMessage({ customType: "todo-nudge", content: "继续处理待办", display: true }, { triggerTurn: true });
+  } });
+}
+`,
+    );
+    jsonStore.state.settings.devPiPluginPaths = [pluginPath];
+    const workspace = ws.createWorkspace({ type: "managed", name: "route-commands" });
+    const conversation = seedConversation(workspace.id);
+    await generateAnswer(conversation);
+    const nodesBefore = conversation.messages.length;
+
+    const listUrl = new URL(`http://localhost/api/commands?conversationId=${conversation.id}`);
+    const listed = (await (await handleCommandRoutes(new Request(listUrl), listUrl, "commands"))!.json()) as {
+      commands: Array<{ name: string; source: string; invocation: string; executionTarget: string; commandId?: string }>;
+    };
+    expect(listed.commands.map((command) => `${command.source} /${command.invocation}`)).toEqual([
+      "app /compact",
+      ...["new", "fork", "name", "model", "thinking", "mcp", "skill", "settings"].map((name) => `app /${name}`),
+      "plugin:dev:cmd-plugin /compact:cmd-plugin",
+      "plugin:dev:cmd-plugin /todos",
+      "plugin:dev:cmd-plugin /again",
+    ]);
+    const idOf = (name: string) => listed.commands.find((command) => command.source !== "app" && command.name === name)!.commandId!;
+
+    const runUrl = new URL("http://localhost/api/commands/run");
+    const run = (commandId: string, args?: string) =>
+      handleCommandRoutes(
+        new Request(runUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ conversationId: conversation.id, commandId, args }) }),
+        runUrl,
+        "commands/run",
+      );
+    const done = await run(idOf("todos"), "  本周 ");
+    expect(done?.status).toBe(200);
+    expect(await done?.json()).toEqual({ status: "done" });
+    expect((globalThis as Record<string, unknown>).__rkhRouteCommands).toEqual(["本周"]);
+    expect(server.requests).toHaveLength(1);
+    expect(conversation.messages).toHaveLength(nodesBefore);
+
+    // 处理函数要模型再答:指令结束后应用另起回答节点开轮,插件的消息进请求。
+    expect((await run(idOf("again")))?.status).toBe(200);
+    await waitUntil(() => server.requests.length === 2 && !generating.has(conversation.id));
+    expect(conversation.messages).toHaveLength(nodesBefore + 1);
+    expect(partsText(conversation)).toContain("指令要的回答");
+    expect(JSON.stringify((server.requests[1] as { messages?: unknown }).messages ?? [])).toContain("继续处理待办");
+
+    // 生成中不执行指令。
+    generating.set(conversation.id, new AbortController());
+    const busy = await run(idOf("todos"));
+    expect(busy?.status).toBe(409);
+    expect(await busy?.json()).toMatchObject({ errorCode: "command_busy" });
+    generating.delete(conversation.id);
+    jsonStore.state.settings.devPiPluginPaths = [];
+  }, 30_000);
+
+  test("插件记录(P5.8):会话只加载全局已启用且会话助手已绑定的插件;解绑、停用后下一次装配即不再加载", async () => {
+    await installUpstream([{ content: "第一轮回答" }]);
+    const pluginPath = join(process.env.RIKKAHUB_PC_DATA_DIR!, "record-plugin.js");
+    writeFileSync(pluginPath, `export default function (pi) { pi.registerCommand("hello", { handler: async () => {} }); }\n`);
+    jsonStore.state.settings.enginePlugins = [{
+      id: "pi:record-plugin",
+      engine: "pi",
+      name: "record-plugin",
+      source: { kind: "local", spec: pluginPath },
+      version: null,
+      enabled: true,
+      hookSwitches: { toolCall: true },
+      toolSwitches: {},
+      installedAt: "2026-11-16T00:00:00.000Z",
+    }];
+    const workspace = ws.createWorkspace({ type: "managed", name: "route-records" });
+    const conversation = seedConversation(workspace.id);
+    const listUrl = new URL(`http://localhost/api/commands?conversationId=${conversation.id}`);
+    const pluginCommands = async () => {
+      const listed = (await (await handleCommandRoutes(new Request(listUrl), listUrl, "commands"))!.json()) as {
+        commands: Array<{ source: string; invocation: string }>;
+      };
+      return listed.commands.filter((command) => command.source !== "app").map((command) => `${command.source} /${command.invocation}`);
+    };
+    const assistant = jsonStore.state.settings.assistants[0]!;
+
+    expect(await pluginCommands()).toEqual([]);
+    assistant.enginePluginIds = ["pi:record-plugin"];
+    expect(await pluginCommands()).toEqual(["plugin:pi:record-plugin /hello"]);
+    jsonStore.state.settings.enginePlugins[0]!.enabled = false;
+    expect(await pluginCommands()).toEqual([]);
+    jsonStore.state.settings.enginePlugins = [];
+    assistant.enginePluginIds = [];
+  }, 30_000);
+
+  test("新对话页(会话还不存在)也列全部指令:对话模式是通用指令;工作区按当前助手的插件,左下角改过的插件选择优先;不建会话", async () => {
+    await installUpstream([{ content: "未使用" }]);
+    const pluginPath = join(process.env.RIKKAHUB_PC_DATA_DIR!, "draft-plugin.js");
+    writeFileSync(pluginPath, `export default function (pi) { pi.registerCommand("hello", { handler: async () => {} }); }\n`);
+    jsonStore.state.settings.enginePlugins = [{
+      id: "pi:draft-plugin",
+      engine: "pi",
+      name: "draft-plugin",
+      source: { kind: "local", spec: pluginPath },
+      version: null,
+      enabled: true,
+      hookSwitches: { toolCall: true },
+      toolSwitches: {},
+      installedAt: "2026-11-23T00:00:00.000Z",
+    }];
+    const assistant = jsonStore.state.settings.assistants[0]!;
+    assistant.enginePluginIds = ["pi:draft-plugin"];
+    const workspace = ws.createWorkspace({ type: "managed", name: "route-draft-commands" });
+    const listed = async (query: string) => {
+      const url = new URL(`http://localhost/api/commands${query}`);
+      const body = (await (await handleCommandRoutes(new Request(url), url, "commands"))!.json()) as { commands: Array<{ source: string; invocation: string }> };
+      return body.commands.map((command) => `${command.source} /${command.invocation}`);
+    };
+    const general = ["compact", "new", "fork", "name", "model", "thinking", "mcp", "skill", "settings"].map((name) => `app /${name}`);
+    const stored = () => conversations.countPcConversations(conversations.getConversationsDb()!);
+    const before = stored();
+
+    expect(await listed("")).toEqual(general);
+    expect(await listed("?conversationId=no-such-conversation")).toEqual(general);
+    expect(await listed(`?workspaceId=${workspace.id}`)).toEqual([...general, "plugin:pi:draft-plugin /hello"]);
+    expect(await listed(`?workspaceId=${workspace.id}&enginePluginIds=${encodeURIComponent("[]")}`)).toEqual(general);
+    expect(await listed(`?workspaceId=${workspace.id}&enginePluginIds=not-json`)).toEqual([...general, "plugin:pi:draft-plugin /hello"]);
+    expect(stored()).toBe(before);
+    expect(conversations.getConversation("new-conversation")).toBeUndefined();
+
+    jsonStore.state.settings.enginePlugins = [];
+    assistant.enginePluginIds = [];
+  }, 30_000);
+
   test("非工作区会话走聊天引擎原路:零 pi 痕迹", async () => {
     const server = await installUpstream([{ content: "聊天回答" }]);
     const conversation = seedConversation(null);
@@ -342,21 +569,23 @@ describe("引擎判定单源(审批旁路/压缩路由收编)", () => {
     const workspace = ws.createWorkspace({ type: "managed", name: "route-resolve" });
 
     // 审批端点(tool-approval)据 resumeSemantics 决定"记录状态"还是"重触发续跑",
-    // 压缩端点据 compact 有无决定"引擎压缩"还是"回落 UI 历史压缩"——这里锁死两个
-    // 引擎的声明,防止 adapter 改动悄悄改变端点行为。
-    const piAdapter = resolveEngineForConversation(seedConversation(workspace.id));
-    expect(piAdapter.kind).toBe("pi");
-    expect(piAdapter.resumeSemantics).toBe("run-and-suspend");
-    expect(typeof piAdapter.compact).toBe("function");
+    // 压缩端点据 nativeCompaction 决定"引擎压缩"还是"回落 UI 历史压缩"——这里锁死两个
+    // 引擎的声明,防止驱动改动悄悄改变端点行为。
+    const piDriver = resolveEngineForConversation(seedConversation(workspace.id));
+    expect(piDriver.kind).toBe("pi");
+    expect(piDriver.capabilities.resumeSemantics).toBe("run-and-suspend");
+    expect(piDriver.capabilities.nativeCompaction).toBe(true);
+    expect(typeof piDriver.compact).toBe("function");
     // steering 能力声明:两个引擎都在真边界调 onSteerBoundary(pi=turn_end,chat=工具轮/最终轮),
     // 协调器据此下发回调;声明改成 "none" 会让编排层不再下发,补发退化为收尾派发。
-    expect(piAdapter.steering).toBe("boundary");
+    expect(piDriver.capabilities.steering).toBe("boundary");
 
-    const chatAdapter = resolveEngineForConversation(seedConversation(null));
-    expect(chatAdapter.kind).toBe("chat");
-    expect(chatAdapter.resumeSemantics).toBe("pause-resume");
-    expect(chatAdapter.compact).toBeUndefined();
-    expect(chatAdapter.steering).toBe("boundary");
+    const chatDriver = resolveEngineForConversation(seedConversation(null));
+    expect(chatDriver.kind).toBe("chat");
+    expect(chatDriver.capabilities.resumeSemantics).toBe("pause-resume");
+    expect(chatDriver.capabilities.nativeCompaction).toBe(false);
+    expect(chatDriver.compact).toBeUndefined();
+    expect(chatDriver.capabilities.steering).toBe("boundary");
   }, 30_000);
 
   test("compactEngineConversation:普通会话回落(null),工作区会话穿透到 pi 压缩驱动", async () => {
@@ -364,7 +593,7 @@ describe("引擎判定单源(审批旁路/压缩路由收编)", () => {
     // chat 无 compact 能力 → null,调用方(compress 端点)回落 UI 历史压缩。
     expect(await compactEngineConversation(seedConversation(null), "")).toBeNull();
 
-    // 工作区会话:注册表命中 pi adapter → runtime 透传 → 压缩装配(富化/资源)→
+    // 工作区会话:路由命中 pi 驱动 → 工作区运行时随路由带出 → 压缩装配(富化/资源)→
     // pi session.compact。小会话在发起任何模型请求前抛"上下文过短"(runner 映射成
     // CodedError 人话)——该错误文本即"路由穿透到引擎压缩驱动"的硬证据,且全程无上游请求。
     const workspace = ws.createWorkspace({ type: "managed", name: "route-compact" });
@@ -433,6 +662,14 @@ describe("引擎判定单源(审批旁路/压缩路由收编)", () => {
     // 压缩发生点注解落在"当时的最新一条消息"(工作区路径经 applyCapturedEngineCompactions)。
     const tail = conversation.messages.at(-1)!;
     expect(tail.messages[tail.selectIndex].annotations).toContainEqual({ type: "compaction_boundary" });
+    // P3.5:pi 的原生压缩条目锚定到同一条尾消息并当场封存(去掉系统提示词快照,带文件操作清单)。
+    const tailMessage = tail.messages[tail.selectIndex]!;
+    const groups = loadEngineEntries(db, conversation.id, "pi");
+    expect(groups.map((group) => [group.anchorMessageId, group.digest])).toEqual([[tailMessage.id, engineVisibleDigest([tailMessage])]]);
+    const payload = groups[0]!.entries[0]!.payload as Record<string, unknown>;
+    expect(payload).toMatchObject({ type: "compaction", summary: result!.summary, tokensBefore: result!.tokensBefore });
+    expect(payload.details).toMatchObject({ readFiles: [], modifiedFiles: [] });
+    expect(payload).not.toHaveProperty("systemMessage");
   }, 60_000);
 });
 

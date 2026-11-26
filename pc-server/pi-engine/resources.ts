@@ -1,123 +1,56 @@
-// pi-engine/resources.ts — pi 会话资源装配(P4,方案 §三/§4.2 的落点)
+// pi-engine/resources.ts — pi 会话资源装配(P4,方案 §三/§4.2 的落点;P2 起输入是契约数据)
 //
-// 统一管理模型的执行层:每类资源只有一个"家",pi 每次会话由此注满——
-// - 技能:唯一技能库 pc-data/skills/(additionalSkillPaths)+ noSkills:true 在路径层
+// 统一管理模型的执行层:每类资源只有一个"家",由应用侧组装成契约 EngineInstructions
+// (engines/instructions.ts),pi 每次会话由此注满——
+// - 技能:唯一技能库(instructions.skills.dir,additionalSkillPaths)+ noSkills:true 在路径层
 //   封死 pi 默认目录(agentDir/skills 与 cwd/.pi/skills,"不搞项目级"落实在源头);
-//   skillsOverride 再做 assistant.enabledSkills 白名单 + 滤 project 来源(防御纵深)。
+//   skillsOverride 再做启用名单白名单 + 滤 project 来源(防御纵深)。
 // - 设置:SettingsManager.inMemory + projectTrusted:false——零文件 I/O,工作区里的
 //   .pi/settings.json 与 .pi/SYSTEM.md(resource-loader.discoverSystemPromptFile 按
 //   projectTrusted 门控)两个不可信注入面一并封死(P1 纪要遗留项)。
 // - AGENTS.md(全局+项目两层,全部走 pi 原生上下文件通道):
-//   全局层(引擎中立的家 pc-data/AGENTS.md,见 agents/global-agents.ts)经
+//   全局层(引擎中立的家,内容由应用读好放在 instructions.globalAgentsFile)经
 //   agentsFilesOverride 以 virtual file 注入(SDK 官方宿主姿势,examples/sdk/
 //   07-context-files.ts 同款)——渲染进 pi 原生 <project_context>/<project_instructions>
 //   管线,与项目层同格式;上游对上下文件的任何改进(渲染/去重/权重)自动继承。
 //   项目层走 pi 原生 loadProjectContextFiles(cwd 祖先链),同一 override 里做
 //   词法过滤(越出工作区边界的祖先滤掉,提示词层与工具层同一边界纪律)。
 //   排序:全局件 unshift 在 override 输出首位 = pi 原生 agentDir 全局件的既有序。
-// - 人设+记忆:appendSystemPrompt 单一插槽(§3.4,只放我们自己的域:人设/记忆/
-//   搜索指引/教学行/注入面),内容会话级冻结(见下)。
-// - 扩展/prompt 模板/主题:v1 全关(noExtensions/noPromptTemplates/noThemes),
-//   pi 的资源面只开技能与上下文文件两类。
+// - 人设+记忆:appendSystemPrompt 单一插槽(§3.4,只放应用自己的域:人设/记忆/
+//   搜索指引/教学行/注入面),内容由应用侧冻结(同会话逐字节稳定)。
+// - 插件(P5.2/P5.3):契约给的插件清单 → plugins/entries 展开成入口文件 → additionalExtensionPaths,
+//   加载结果经 extensionsOverride 交裁决层(plugins/arbiter,策略含本轮应用工具名、手动停用的钩子与插件工具的审批口;
+//   加载期审计在 reload 后上报);noExtensions:true 不变(只加载清单里的,
+//   不读 pi 设置里的包与默认扩展目录),内建扩展(mcp / llama / codemode / tool-search)只经
+//   extensionFactories 进入,我们不传,恒不加载。清单为空时这两项都不传,加载器配置与此前逐项相同。
+// - prompt 模板/主题:全关(noPromptTemplates/noThemes)。
 //
-// 冻结纪律(§4.8/§9.2):appendSystemPrompt 同会话内必须逐字节稳定;上下文件
-// 在 ResourceLoader.reload 时点定格(每轮生成装配一次,用户编辑下轮生效——与
-// 技能开关同语义)。
-// - 人设:renderTemplate 含时间类模板变量,渲染结果按 会话+助手+原文指纹 冻结——
-//   原文中途被改 → 指纹变 → 重渲染(与聊天引擎"改人设立即生效"同语义,破一次缓存);
-//   原文不变 → 时间变量定格在首轮。
-// - 记忆/最近会话:直接复用聊天引擎的 frozenContextBlocks(同一冻结生命周期与
-//   失效面:设置页手动改记忆 → invalidateContextSnapshots → 两个引擎同时重建)。
-// - 搜索指引/教学行:内容只随设置变(服务名/技能库路径),天然稳定。
+// 上下文件、技能清单与插件集合在 ResourceLoader.reload 时点定格(每轮生成装配一次,用户编辑下轮
+// 生效——与技能开关同语义)。
 
-import { mkdirSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
 import { DefaultResourceLoader } from "../../pi/packages/coding-agent/src/core/resource-loader.ts";
+import type { LoadExtensionsResult } from "../../pi/packages/coding-agent/src/core/extensions/types.ts";
 import { SettingsManager } from "../../pi/packages/coding-agent/src/core/settings-manager.ts";
-import type { Assistant, Conversation, Model } from "../foundation/types";
-import { getStringArray, renderTemplate } from "../foundation/utils";
-import { piAgentDir, skillsDir, globalAgentsPath } from "../foundation/paths";
-import { readGlobalAgentsFile } from "../agents/global-agents";
-import { frozenContextBlocks } from "../inference-engine/context-snapshots";
+import type { EngineErrorReport, EngineInstructions, EnginePlugin } from "../engines/contract";
+import { piAgentDir } from "../foundation/paths";
 import { PI_THINKING_BUDGETS } from "./model-bridge";
-import { templateVariables } from "../inference-engine/message-enrichment";
-import { buildSearchContext } from "../search";
-import { reportError } from "../observability/app-errors";
+import {
+  arbitratePiExtensions,
+  piPluginAuditReport,
+  type PiPluginAuditRecord,
+  type PiPluginPolicy,
+  type PiPluginToolApprover,
+} from "./plugins/arbiter";
+import { pluginIdForExtensionPath, resolvePiPluginEntries, type PiPluginEntry } from "./plugins/entries";
 
 export interface PiSessionResources {
   resourceLoader: DefaultResourceLoader;
   settingsManager: SettingsManager;
-}
-
-// ---- 人设冻结快照(LRU,套路同 inference-engine/context-snapshots) ----
-
-const MAX_SNAPSHOTS = 200;
-const personaSnapshots = new Map<string, string>();
-
-/** 生效人设原文:会话级 systemPrompt(助手允许时)优先,否则助手人设——
- *  与聊天引擎 conversationTransformedMessages 的 effectiveSystemPrompt 同一规则。 */
-function personaSource(conversation: Conversation, assistant: Assistant): string {
-  const conversationPrompt = assistant.allowConversationSystemPrompt
-    ? String(conversation.systemPrompt ?? "").trim()
-    : "";
-  return conversationPrompt || assistant.systemPrompt.trim();
-}
-
-function frozenPersona(conversation: Conversation, assistant: Assistant, model: Model): string {
-  const source = personaSource(conversation, assistant);
-  if (!source) return "";
-  const key = `${conversation.id}|${assistant.id}|${Bun.hash(source).toString(16)}`;
-  const hit = personaSnapshots.get(key);
-  if (hit !== undefined) {
-    personaSnapshots.delete(key);
-    personaSnapshots.set(key, hit);
-    return hit;
-  }
-  const rendered = renderTemplate(source, templateVariables("", "system", assistant, model));
-  personaSnapshots.set(key, rendered);
-  if (personaSnapshots.size > MAX_SNAPSHOTS) {
-    const oldest = personaSnapshots.keys().next().value;
-    if (oldest !== undefined) personaSnapshots.delete(oldest);
-  }
-  return rendered;
-}
-
-/** 单测隔离用。 */
-export function invalidatePiPersonaSnapshots(): void {
-  personaSnapshots.clear();
-}
-
-// ---- appendSystemPrompt 组装 ----
-
-/** 技能安装落点教学(§3.1:模型自装资源必须落到我们的家;<available_skills> 的
- *  location 自带自举,这行把"装新技能装到哪"说死)+ 审批语义披露(§3.4 安全披露:
- *  工具可能要用户批准,被拒就调整,别原样重试)。 */
-function stableGuidanceLines(): string {
-  const dir = skillsDir.replace(/\\/g, "/");
-  return [
-    `To install a new skill for the user, create \`${dir}/<skill-name>/SKILL.md\` (with name and description frontmatter). It becomes available once enabled in the app settings.`,
-    "Some tool calls require explicit user approval before they run. A denied call returns an error with the reason — respect the decision and adjust your approach instead of retrying the same call.",
-  ].join("\n");
-}
-
-/** pi 会话的 appendSystemPrompt 条目(有序;pi 侧以 \n\n join 追加在引擎 Guidelines 之后、
- *  <project_context> 之前,system-prompt.ts:163 addendum section 实证)。分段各有恰当冻结源,拼接结果
- *  同会话内字节稳定。导出仅供测试断言冻结性。 */
-export function buildPiAppendSystemPrompt(
-  conversation: Conversation,
-  assistant: Assistant,
-  model: Model,
-  extra?: string[],
-): string[] {
-  const [memoryBlock, recentChatsBlock] = frozenContextBlocks(assistant, conversation.id);
-  return [
-    frozenPersona(conversation, assistant, model),
-    buildSearchContext(),
-    memoryBlock,
-    recentChatsBlock,
-    ...(extra ?? []),
-    stableGuidanceLines(),
-  ].filter(Boolean);
+  /** 本轮加载的插件入口(入口文件 → 插件 id);空 = 无插件,runner 不做插件绑定。 */
+  plugins: PiPluginEntry[];
+  /** 裁决策略(会话建好后的运行期裁决也用它);无插件时为 null。 */
+  pluginPolicy: PiPluginPolicy | null;
 }
 
 // ---- 边界过滤 ----
@@ -142,26 +75,30 @@ export function invalidateReportedSkillDiagnostics(): void {
 
 // ---- 装配入口 ----
 
-/** 每轮生成装配一次(与 createAgentSession 一次一会话同频)。技能清单/AGENTS.md 随
- *  装配时点定格(pi ResourceLoader 加载一次),会话中途改技能开关下轮生效——与聊天
- *  引擎 tools 逐轮重建同语义。 */
+/** 每轮生成装配一次(与 createAgentSession 一次一会话同频)。 */
 export async function createPiSessionResources(options: {
-  conversation: Conversation;
-  assistant: Assistant;
-  model: Model;
   /** 会话工作目录(pi cwd,AGENTS.md 祖先链起点)。 */
   cwd: string;
   /** 工作区边界根(AGENTS.md 过滤基准)。 */
   root: string;
-  /** P8 注入面统一:lorebook/模式注入的系统位文本(before/after_system_prompt),
-   *  追加在人设/记忆之后、stableGuidanceLines 之前——与聊天引擎 systemParts 同位。 */
-  extraAppendSystemPrompt?: string[];
+  instructions: EngineInstructions;
+  /** 本轮插件清单(契约 TurnInput.plugins / CompactRequest.plugins);不传 = 无插件。 */
+  plugins?: EnginePlugin[];
+  /** 本轮应用工具名(插件工具与之同名即拿掉);不传 = 本轮没有应用工具。 */
+  appToolNames?: readonly string[];
+  /** 插件工具执行前的应用审批(生产 = host.permission.check)。不传 = 插件工具不进会话(压缩)。 */
+  approvePluginTool?: PiPluginToolApprover;
   /** 压缩保留窗口覆盖(pi chars/4 估算口径)。手动压缩装配点传
    *  MANUAL_COMPACT_KEEP_RECENT_TOKENS(门槛/保留都调低,rationale 见 runner.ts 常量);
    *  不传 = pi 默认 20000(生成会话的 threshold/overflow 自动压缩用)。 */
   compactionKeepRecentTokens?: number;
+  /** 技能加载诊断的上报出口(生产 = host.report)。 */
+  report?: (report: EngineErrorReport) => void;
+  /** 本会话是否预热提示缓存(授权的 promptCache.warming)。不传 = 不预热(压缩用的一次性会话)。 */
+  cacheWarming?: boolean;
 }): Promise<PiSessionResources> {
-  const { conversation, assistant, model, cwd, root, extraAppendSystemPrompt, compactionKeepRecentTokens } = options;
+  const { cwd, root, instructions, plugins = [], appToolNames = [], approvePluginTool, compactionKeepRecentTokens, report, cacheWarming = false } =
+    options;
   // inMemory:零文件 I/O(不读不写任何 settings.json);projectTrusted:false 是给
   // resource-loader 的发现逻辑看的(.pi/SYSTEM.md 门控)。压缩面 P5 接管:threshold/
   // overflow 自动压缩显式开启(数值与 pi 默认一致,但不再依赖库默认值漂移),
@@ -171,6 +108,12 @@ export async function createPiSessionResources(options: {
   // 而我们的引擎上下文每轮由 context-encoder 从 SQLite 原图重建——本轮「缩放图+说明」
   // 下轮「原图无说明」,模型前后所见不一致且该轮缓存失效。关闭后两轮逐字节一致
   // (代价:工具结果图片也不缩放,与我们聊天引擎的图片直发口径对齐)。
+  // cacheWarming:应用决定、pi 执行(方案 §5.17,D31)。授权的 promptCache.warming 为真给 "streaming"(一轮运行期间
+  // 在缓存到期前重发续期,agent_settled 即停),否则 "off"。不用 pi 1.5.1 默认的 idle(两轮之间也续,最长 30 分钟):
+  // 多会话界面里回复完没接着问,多半是去做别的了。设置每个会话一份,授权进长驻会话的配置键,改开关下一轮换会话。
+  // enableInstallTelemetry:false:SDK 路径下它只决定 pi 的归属头(client-identity.ts:关闭则
+  // attribution 为 null,OpenRouter/NVIDIA/opencode 不再收到 pi 的归属头);pi 的版本 ping
+  // 只在 CLI 交互模式跑,与我们无关。
   const settingsManager = SettingsManager.inMemory(
     {
       compaction: {
@@ -179,23 +122,47 @@ export async function createPiSessionResources(options: {
       },
       thinkingBudgets: { ...PI_THINKING_BUDGETS },
       images: { autoResize: false },
+      cacheWarming: cacheWarming ? "streaming" : "off",
+      enableInstallTelemetry: false,
     },
     { projectTrusted: false },
   );
-  const enabledSkills = new Set(getStringArray(assistant.enabledSkills));
-  // 技能库目录是我们的家,确保存在(与 tools/skills.listSkills 同款自愈)——否则冷启动
-  // 未开过技能页时,pi 每轮 reload 都会对 additionalSkillPaths 报"path does not exist"。
-  mkdirSync(skillsDir, { recursive: true });
+  const enabledSkills = new Set(instructions.skills.enabled);
+  const globalFile = instructions.globalAgentsFile;
+  const pluginEntries = resolvePiPluginEntries(plugins);
+  const pluginPolicy: PiPluginPolicy | null =
+    pluginEntries.entries.length > 0
+      ? {
+          entries: pluginEntries.entries,
+          appToolNames: new Set(appToolNames),
+          toolCallHooksDisabled: new Set(plugins.filter((plugin) => plugin.toolCallHookDisabled).map((plugin) => plugin.id)),
+          toolsDisabled: new Map(plugins.map((plugin) => [plugin.id, new Set(plugin.disabledTools ?? [])])),
+          ...(approvePluginTool ? { approveTool: approvePluginTool } : {}),
+          // 运行期审计(否决 / 作废 / 运行期登记)逐次上报,错误中心按码 + 参数合并风暴。
+          onAudit: (record) => report?.(piPluginAuditReport(record)),
+        }
+      : null;
+  let loadAudit: PiPluginAuditRecord[] = [];
 
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: piAgentDir,
     settingsManager,
     noExtensions: true,
+    ...(pluginPolicy
+      ? {
+          additionalExtensionPaths: pluginEntries.entries.map((entry) => entry.file),
+          extensionsOverride: (base: LoadExtensionsResult) => {
+            const arbitrated = arbitratePiExtensions(base, pluginPolicy);
+            loadAudit = arbitrated.audit;
+            return arbitrated.result;
+          },
+        }
+      : {}),
     noPromptTemplates: true,
     noThemes: true,
     noSkills: true,
-    additionalSkillPaths: [skillsDir],
+    additionalSkillPaths: [instructions.skills.dir],
     skillsOverride: ({ skills, diagnostics }) => ({
       skills: skills.filter((skill) => skill.sourceInfo?.scope !== "project" && enabledSkills.has(skill.name)),
       diagnostics,
@@ -204,18 +171,12 @@ export async function createPiSessionResources(options: {
       // 项目层:词法边界过滤(pi 默认 agentDir 全局件不在工作区内,天然被滤)。
       const project = agentsFiles.filter((file) => isAbsolute(file.path) && isWithinRoot(file.path, root));
       // 全局层:virtual file 注入首位(SDK 官方宿主姿势)——渲染走 pi 原生
-      // <project_instructions> 管线,与项目层同格式;reload 时点定格,内容只在
-      // 每轮生成装配时读(用户编辑下轮生效,与技能开关同语义)。
-      const globalFile = readGlobalAgentsFile();
-      return {
-        agentsFiles: globalFile.exists
-          ? [{ path: globalAgentsPath, content: globalFile.content }, ...project]
-          : project,
-      };
+      // <project_instructions> 管线,与项目层同格式。
+      return { agentsFiles: globalFile ? [{ path: globalFile.path, content: globalFile.content }, ...project] : project };
     },
-    appendSystemPrompt: buildPiAppendSystemPrompt(conversation, assistant, model, extraAppendSystemPrompt),
+    appendSystemPrompt: instructions.appendSystemPrompt,
   });
-  // sdk 只对自建 loader 调 reload(sdk.ts:182-186),外部传入的必须自己加载。
+  // sdk 只对自建 loader 调 reload(sdk.ts createAgentSession),外部传入的必须自己加载。
   await resourceLoader.reload();
 
   // 技能校验告警面向用户在设置页内联展示(api/handlers/skills 的独立校验);这里只把
@@ -224,15 +185,45 @@ export async function createPiSessionResources(options: {
     const key = `${diagnostic.path ?? ""}|${diagnostic.message}`;
     if (reportedDiagnostics.has(key)) continue;
     reportedDiagnostics.add(key);
-    reportError(
-      "pi-engine",
-      "warn",
-      `技能资源诊断:${diagnostic.message}${diagnostic.path ? `(${diagnostic.path})` : ""}`,
-      undefined,
-      "pi_skill_diagnostic",
-      { path: diagnostic.path ?? "", message: diagnostic.message },
-    );
+    report?.({
+      domain: "pi-engine",
+      severity: "warn",
+      message: `技能资源诊断:${diagnostic.message}${diagnostic.path ? `(${diagnostic.path})` : ""}`,
+      code: "pi_skill_diagnostic",
+      params: { path: diagnostic.path ?? "", message: diagnostic.message },
+    });
   }
 
-  return { resourceLoader, settingsManager };
+  // 插件加载失败(路径/入口问题 + pi 加载器报的模块错误、同名冲突)逐条进错误中心;其余插件照常加载。
+  const pluginErrors = [
+    ...pluginEntries.errors,
+    ...resourceLoader.getExtensions().errors.map((item) => ({
+      pluginId: pluginIdForExtensionPath(pluginEntries.entries, item.path) ?? "",
+      path: item.path,
+      error: item.error,
+    })),
+  ];
+  for (const item of pluginErrors) {
+    const key = `plugin|${item.pluginId}|${item.path}|${item.error}`;
+    if (reportedDiagnostics.has(key)) continue;
+    reportedDiagnostics.add(key);
+    report?.({
+      domain: "pi-engine",
+      severity: "warn",
+      message: `插件加载失败:${item.pluginId || item.path}:${item.error}`,
+      code: "pi_plugin_load_failed",
+      params: { plugin: item.pluginId || item.path, error: item.error },
+    });
+  }
+
+  // 加载期裁决的审计每轮相同,与加载失败同一去重口径(内容变了复报)。
+  for (const record of loadAudit) {
+    const audit = piPluginAuditReport(record);
+    const key = `plugin-audit|${audit.message}`;
+    if (reportedDiagnostics.has(key)) continue;
+    reportedDiagnostics.add(key);
+    report?.(audit);
+  }
+
+  return { resourceLoader, settingsManager, plugins: pluginEntries.entries, pluginPolicy };
 }

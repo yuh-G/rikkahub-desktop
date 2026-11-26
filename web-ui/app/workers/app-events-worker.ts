@@ -17,7 +17,7 @@
 //
 // 快照重放:与页内 app-events 一致,快照类事件缓存最新一帧;新页面(或 bfcache 复活的
 // 页面)接入时立即补发,消除"晚接入错过首帧"的时序耦合。
-const REPLAY_EVENTS = new Set(["settings", "memory", "app_errors_snapshot", "invalidate", "mcp_health"]);
+const REPLAY_EVENTS = new Set(["settings", "memory", "app_errors_snapshot", "invalidate", "mcp_health", "plugin_reinstall_state"]);
 /** 页面判死阈值。真实死页(崩溃/被杀,pagehide 没来得及发 bye)靠它摘除;必须显著
  *  大于 Chromium 后台节流后的最坏心跳间隔:intensive throttling(页面隐藏且静默 ≥5min,
  *  恰是登录时用户切去浏览器授权的形态)把 15s 心跳压到 1/min——45s 阈值会把活着的

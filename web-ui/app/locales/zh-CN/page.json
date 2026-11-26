@@ -84,6 +84,7 @@
       "compacting_auto": "上下文接近上限，正在自动压缩…",
       "compacting_progress": "正在压缩上下文（{{current}}/{{total}}）",
       "retrying": "上游响应异常，正在自动重试（第 {{attempt}}/{{max}} 次）…",
+      "unresponsive": "引擎无响应，正在等待恢复…",
       "elapsed_seconds": "已处理 {{seconds}}秒",
       "elapsed_minutes": "已处理 {{minutes}}分{{seconds}}秒",
       "interrupt": "中止 (Esc)"
@@ -93,7 +94,20 @@
       "elapsed_seconds": "已等待 {{seconds}}秒",
       "elapsed_minutes": "已等待 {{minutes}}分{{seconds}}秒",
       "notification_title": "AI 正在等待你的审批",
-      "notification_body": "「{{summary}}」等待你审批"
+      "notification_body": "「{{summary}}」等待你审批",
+      "plugin_status": "插件 {{plugin}} 在等你回答",
+      "plugin_status_unknown": "插件在等你回答",
+      "plugin_notification_body": "「{{summary}}」等你回答"
+    },
+    "plugin_dialog": {
+      "cancel": "取消",
+      "yes": "是",
+      "no": "否",
+      "submit": "提交",
+      "send_failed": "回答没有送达，请重试",
+      "save": "保存",
+      "save_hint": "{{shortcut}} 保存 · Esc 取消",
+      "queued": "还有 {{count}} 个"
     },
     "translate": {
       "dialog_title": "选择翻译语言",
@@ -124,7 +138,15 @@
       "evening": "晚上好",
       "night": "夜深了"
     },
-    "greeting_line": "{{greeting}}，有什么可以帮助你的？"
+    "greeting_line": "{{greeting}}，有什么可以帮助你的？",
+    "commands": {
+      "fork_nothing": "还没有可以分叉的回复",
+      "compact_nothing": "还没有可以压缩的消息",
+      "needs_conversation": "{{command}} 要在会话里用：先发一条消息",
+      "busy": "会话正在生成或压缩，稍后再执行指令",
+      "aborted": "{{command}} 已中止",
+      "failed": "{{command}} 执行失败：{{error}}"
+    }
   },
   "workspace": {
     "tabs": {

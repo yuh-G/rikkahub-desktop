@@ -8,6 +8,7 @@ import { useCurrentAssistant } from "~/hooks/use-current-assistant";
 import { ReasoningSubmenu, useCurrentReasoningLabel } from "~/components/input/reasoning-picker";
 import { usePaneContainer } from "~/components/workspace/pane-container-context";
 import { CHAT_CONTAINER } from "~/stores/container-tabs-store";
+import type { ComposerPickerRequest } from "~/lib/client-commands";
 import { getModelDisplayName } from "~/lib/display";
 import { refreshSettingsStore } from "~/lib/settings-sync";
 import { cn } from "~/lib/utils";
@@ -34,6 +35,8 @@ export interface ModelListProps {
   disabled?: boolean;
   className?: string;
   onChanged?: (model: ProviderModel) => void;
+  /** /model、/thinking 指令打开菜单的请求(thinking 顺带展开思考强度子菜单)。 */
+  openRequest?: ComposerPickerRequest | null;
 }
 
 interface ModelSection {
@@ -110,13 +113,29 @@ function ModelMenuItem({
   );
 }
 
-export function ModelListImpl({ disabled = false, className, onChanged }: ModelListProps) {
+export function ModelListImpl({ disabled = false, className, onChanged, openRequest }: ModelListProps) {
   const { t } = useTranslation("input");
   const { settings, currentAssistant } = useCurrentAssistant();
   // 模型胶囊尾缀展示当前思考强度(参考项目形态);菜单末尾是思考强度子菜单。
   const reasoningLabel = useCurrentReasoningLabel();
 
   const [updatingModelId, setUpdatingModelId] = React.useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const [reasoningOpen, setReasoningOpen] = React.useState(false);
+  // 只认新来的请求:挂载时已有的请求视为处理过,重挂载不会把菜单再弹一次。
+  const handledRequest = React.useRef(openRequest?.seq ?? 0);
+  React.useEffect(() => {
+    if (!openRequest || openRequest.seq === handledRequest.current) return;
+    handledRequest.current = openRequest.seq;
+    if (openRequest.picker !== "model" && openRequest.picker !== "thinking") return;
+    if (disabled || !currentAssistant) return;
+    setMenuOpen(true);
+    setReasoningOpen(openRequest.picker === "thinking");
+  }, [currentAssistant, disabled, openRequest]);
+  const handleMenuOpenChange = React.useCallback((open: boolean) => {
+    setMenuOpen(open);
+    if (!open) setReasoningOpen(false);
+  }, []);
 
   const currentModelId = currentAssistant?.chatModelId ?? settings?.chatModelId ?? null;
   // Claude 订阅(Pro/Max,chatCapable=false)仅工作区可选:聊天列的选择器隐藏该供应商
@@ -243,7 +262,7 @@ export function ModelListImpl({ disabled = false, className, onChanged }: ModelL
     ));
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={menuOpen} onOpenChange={handleMenuOpenChange}>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -308,7 +327,7 @@ export function ModelListImpl({ disabled = false, className, onChanged }: ModelL
             ))}
           </>
         )}
-        <ReasoningSubmenu disabled={disabled} />
+        <ReasoningSubmenu disabled={disabled} open={reasoningOpen} onOpenChange={setReasoningOpen} />
       </DropdownMenuContent>
     </DropdownMenu>
   );

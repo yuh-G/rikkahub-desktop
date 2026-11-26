@@ -19,6 +19,10 @@ export interface AppConfig {
    *  空串 = 未指定,getShellConfig 走自动探测(系统 Git Bash → 内嵌兜底)。
    *  机器级绝对路径,导出备份时剥离(PC→APP/跨机无意义,见 backup/export.ts stripPcOnly)。 */
   shellPath?: string;
+  /** PC-only 开发者字段:工作区引擎(pi)额外加载的插件位置(入口文件或包目录的绝对路径),不经插件记录与
+   *  助手绑定,对所有工作区会话生效(插件开发与验收用,无界面;正式入口是 enginePlugins)。空数组 = 不加载。
+   *  机器级路径,导出给 APP 时剥离,APP→桌面端导入保留桌面端的值。 */
+  devPiPluginPaths?: string[];
   /** PC-only:最近一次云端(WebDAV/S3)恢复的结构化降级报告(B2)。流式恢复路径无导入
    *  汇总卡,把跳过/降级计数暂存于此,经设置 SSE 推到前端数据页展示。仅记录、不参与导出。 */
   lastRestoreReport?: {

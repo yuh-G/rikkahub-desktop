@@ -2,23 +2,20 @@
 // 前端 fps(5MB 会话流式 ≥45fps)必须真机测,不在此伪造;此处锁住两条决定前端流畅度的
 // 后端不变量,它们是"大会话不卡"的根:
 //   1) 长输出内存有界 + 全量落盘:20MB bash 输出下,进程常驻内存维持在 KB 量级,
-//      完整输出进工作区 tmp/ 文件而非内存;
+//      完整输出进临时文件而非内存(累积器是 pi 内建 bash 工具自带的;落盘目录由 pi 定在系统临时目录);
 //   2) 流式传输 O(N) 而非 O(N²):工具单文本输出逐块增长时,增量协议每帧只发新增字节,
 //      累计传输量恰等于最终长度(线性),远低于"每帧重发整节点"的二次量。
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { statSync } from "node:fs";
 
-import { OutputAccumulator } from "./tools/output-accumulator";
-import { DEFAULT_MAX_BYTES } from "./tools/truncate";
+import { OutputAccumulator } from "../../pi/packages/coding-agent/src/core/tools/output-accumulator.ts";
+import { DEFAULT_MAX_BYTES } from "../../pi/packages/coding-agent/src/core/tools/truncate.ts";
 import { diffFingerprints, fingerprintNode } from "../api/node-delta";
 import type { MessageNode } from "../foundation/types";
 
 describe("长输出内存有界 + 落盘(bash 流式)", () => {
   test("20MB 输出:显示截断 ≤ 50KB,常驻内存 < 1MB,完整输出落盘", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "rkh-perf-"));
-    const acc = new OutputAccumulator({ tempFileDir: dir, tempFilePrefix: "perf" });
+    const acc = new OutputAccumulator({ tempFilePrefix: "rkh-perf" });
 
     const oneMb = Buffer.alloc(1024 * 1024, 0x61); // 'a' * 1MB
     const totalMb = 20;

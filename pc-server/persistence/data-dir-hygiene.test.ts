@@ -6,13 +6,27 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { sweepCorruptQuarantineIn, sweepMemorySplitFossilIn, sweepStaleInstallersIn } from "./data-dir-hygiene";
+import { sweepCorruptQuarantineIn, sweepLegacyPiAgentDirIn, sweepMemorySplitFossilIn, sweepStaleInstallersIn } from "./data-dir-hygiene";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function freshDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
+
+describe("sweepLegacyPiAgentDirIn(旧版 pi 数据目录 pi-agent/ 退役)", () => {
+  test("pi-agent/ 整目录删除;新位置 engines/pi/ 不碰;不存在时返回 false", () => {
+    const dir = freshDir("rikka-pi-agent-");
+    mkdirSync(join(dir, "pi-agent", "sessions"), { recursive: true });
+    writeFileSync(join(dir, "pi-agent", "sessions", "a.jsonl"), "{}");
+    mkdirSync(join(dir, "engines", "pi"), { recursive: true });
+    writeFileSync(join(dir, "engines", "pi", "plugin-state.json"), "{}");
+    expect(sweepLegacyPiAgentDirIn(dir)).toBe(true);
+    expect(existsSync(join(dir, "pi-agent"))).toBe(false);
+    expect(existsSync(join(dir, "engines", "pi", "plugin-state.json"))).toBe(true);
+    expect(sweepLegacyPiAgentDirIn(dir)).toBe(false);
+  });
+});
 
 describe("sweepCorruptQuarantineIn(损坏隔离:同族保最新,其余超龄清)", () => {
   test("最新一份无论多老都保留;更旧的超龄即删;非 corrupt 文件不碰", () => {

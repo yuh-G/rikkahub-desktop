@@ -19,6 +19,7 @@ import { getModelDisplayName } from "~/lib/display";
 import { AIIcon } from "~/components/ui/ai-icon";
 import { UIAvatar } from "~/components/ui/ui-avatar";
 import { useSettingsStore } from "~/stores";
+import { isNoticeOnly } from "~/types";
 import type {
   AssistantAvatar,
   MessageDto,
@@ -326,6 +327,8 @@ function ExportedMessage({
   const parts = message.parts
     .filter(isExportable)
     .filter((part) => includeReasoning || part.type !== "reasoning");
+  // 只有 notice 的用户消息(运行时通知)不是对话内容,导出图片里不画;助手消息里的 notice 已被 isExportable 滤掉。
+  if (isNoticeOnly(message.parts)) return null;
   // 助手在"紧跟用户提问"时显示模型名(对齐 APP showModelIcon 逻辑),连续多条助手回复只在第一条带名。
   const showModelHeader = !isUser && (!prevMessage || prevMessage.role === "USER");
   const modelName = getModelDisplayName(model?.displayName, model?.modelId) || t("chat_message.md_role_assistant");

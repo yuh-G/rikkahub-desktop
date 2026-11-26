@@ -45,6 +45,28 @@ export function openAiToolOutput(parts: ToolOutputEntry[]): string {
   return parts.length ? JSON.stringify(parts) : "";
 }
 
+/** 工作区工具的结构化细节(diff / exitCode 等)进工具卡前的截断口径:整文件 diff 之类的长文本截断,
+ *  保护消息体与前端渲染(§4.5 有界渲染);不可序列化的字段丢弃(details 只服务渲染与导出)。 */
+const DETAILS_TEXT_CAP = 100_000;
+
+export function jsonSafeDetails(details: unknown): Record<string, JsonValue> | null {
+  if (details == null || typeof details !== "object") return null;
+  const out: Record<string, JsonValue> = {};
+  for (const [key, value] of Object.entries(details as Record<string, unknown>)) {
+    if (value === undefined) continue;
+    if (typeof value === "string" && value.length > DETAILS_TEXT_CAP) {
+      out[key] = `${value.slice(0, DETAILS_TEXT_CAP)}\n[... truncated]`;
+      continue;
+    }
+    try {
+      out[key] = JSON.parse(JSON.stringify(value)) as JsonValue;
+    } catch {
+      // 不可序列化的字段直接丢弃(details 只服务渲染/导出,非正确性数据)
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 export function toolOutputForApproval(part: Record<string, unknown>): string {
   const approvalState = isRecord(part.approvalState) ? part.approvalState : { type: "auto" };
   const type = String(approvalState.type ?? "auto");

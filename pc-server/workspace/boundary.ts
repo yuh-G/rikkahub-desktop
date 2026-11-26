@@ -22,17 +22,28 @@ import { constants } from "node:fs";
 import { access as fsAccess, mkdir as fsMkdir, readdir as fsReaddir, readFile as fsReadFile, stat as fsStat, writeFile as fsWriteFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { isWindowsReservedName } from "../foundation/windows-names";
-import type { ReadOperations } from "./tools/read";
-import type { WriteOperations } from "./tools/write";
-import type { EditOperations } from "./tools/edit";
+import type {
+  EditOperations,
+  FindOperations,
+  LsOperations,
+  ReadOperations,
+  WriteOperations,
+} from "../../pi/packages/coding-agent/src/core/tools/index.ts";
+import { formatSize } from "../../pi/packages/coding-agent/src/core/tools/truncate.ts";
 import type { GrepOperations } from "./tools/grep";
-import type { FindOperations } from "./tools/find";
-import type { LsOperations } from "./tools/ls";
 import { detectSupportedImageMimeTypeFromFile } from "./tools/mime";
-import { formatSize } from "./tools/truncate";
 
 export const READ_HARD_LIMIT_BYTES = 512 * 1024; // 安卓口径:读 512KB
 export const WRITE_HARD_LIMIT_BYTES = 2 * 1024 * 1024; // 安卓口径:写 2MB
+
+/** bash 超时硬上限(秒,§5.1):pi 无默认 timeout,应用加 30min 保护罩——
+ *  模型没传或传了无效值 → 取硬上限;传了 → 夹到硬上限以内。 */
+export const BASH_HARD_TIMEOUT_SECONDS = 30 * 60;
+
+export function clampBashTimeoutSeconds(timeout: number | undefined): number {
+  if (timeout === undefined || !Number.isFinite(timeout) || timeout <= 0) return BASH_HARD_TIMEOUT_SECONDS;
+  return Math.min(timeout, BASH_HARD_TIMEOUT_SECONDS);
+}
 
 /** realpath 化;目标不存在时取最深存在祖先的 realpath 拼回剩余段(write 新文件场景)。 */
 function canonicalizeWithNonexistentTail(path: string): string {
@@ -231,8 +242,8 @@ export function createBoundedLsOperations(root: string): LsOperations {
   };
 }
 
-/** find 工具的有界 Operations:搜索根过边界断言即可(遍历自持在界内)。 */
-export function createBoundedFindOperations(root: string): FindOperations {
+/** find 工具的有界 Operations:搜索根过边界断言即可(遍历自持在界内);glob 由调用方接应用的纯 TS 实现。 */
+export function createBoundedFindOperations(root: string): Pick<FindOperations, "exists"> {
   return {
     exists: (absolutePath) => boundedExists(absolutePath, root),
   };

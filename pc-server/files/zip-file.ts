@@ -15,6 +15,8 @@ export interface ZipEntryMeta {
   compressedSize: number;
   uncompressedSize: number;
   localHeaderOffset: number;
+  /** 建档系统是 unix 时外部属性高 16 位里的文件类型与权限(符号链接 = 0o120000);其它系统为 0。 */
+  unixMode: number;
 }
 
 const EOCD_SIG = 0x06054b50;
@@ -82,12 +84,14 @@ export class ZipFileReader {
     let off = 0;
     for (let i = 0; i < count && off + 46 <= cd.length; i += 1) {
       if (cd.readUInt32LE(off) !== CEN_SIG) break;
+      const madeBy = cd.readUInt16LE(off + 4);
       const compression = cd.readUInt16LE(off + 10);
       let compressedSize: number = cd.readUInt32LE(off + 20);
       let uncompressedSize: number = cd.readUInt32LE(off + 24);
       const nameLen = cd.readUInt16LE(off + 28);
       const extraLen = cd.readUInt16LE(off + 30);
       const commentLen = cd.readUInt16LE(off + 32);
+      const externalAttributes = cd.readUInt32LE(off + 38);
       let localHeaderOffset: number = cd.readUInt32LE(off + 42);
       const name = cd.subarray(off + 46, off + 46 + nameLen).toString("utf8");
       // zip64 扩展字段(id 0x0001):只有饱和(0xFFFFFFFF)的字段才出现,固定按
@@ -110,7 +114,8 @@ export class ZipFileReader {
       }
       off += 46 + nameLen + extraLen + commentLen;
       if (!name || name.endsWith("/")) continue;
-      const meta: ZipEntryMeta = { name, compression, compressedSize, uncompressedSize, localHeaderOffset };
+      const unixMode = madeBy >> 8 === 3 ? externalAttributes >>> 16 : 0;
+      const meta: ZipEntryMeta = { name, compression, compressedSize, uncompressedSize, localHeaderOffset, unixMode };
       this.list.push(meta);
       if (!this.byName.has(name)) this.byName.set(name, meta);
     }
@@ -137,7 +142,8 @@ export class ZipFileReader {
       const raw = this.readAt(meta.localHeaderOffset + 30 + nameLen + extraLen, meta.compressedSize);
       if (raw.length !== meta.compressedSize) return null;
       if (meta.compression === 0) return raw;
-      if (meta.compression === 8) return inflateRawSync(raw);
+      // 中央目录登记的解压大小即上限:谎报大小的条目按损坏处理(防解压炸弹撑爆内存)。
+      if (meta.compression === 8) return inflateRawSync(raw, { maxOutputLength: Math.max(1, meta.uncompressedSize) });
       return null;
     } catch {
       return null;

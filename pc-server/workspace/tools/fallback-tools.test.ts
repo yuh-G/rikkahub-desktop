@@ -1,23 +1,15 @@
-// workspace/tools/fallback-tools.test.ts — grep/find/ls 兜底工具回归(K3)
-// 这三个工具仅在 bash 不可用时挂载(runtime.mountedWorkspaceToolNames),
-// 引擎是 PC 自建(fs-walk + Bun.Glob + JS RegExp),不是 pi 的 rg/fd 外包——
-// 因此这里要测引擎本身:gitignore 子集、输出格式锚点、上限提示、边界断言。
+// workspace/tools/fallback-tools.test.ts — grep/find/ls 兜底工具回归(K3,P4b 起是 pi 内建定义 + 应用的纯 TS 后端)
+// 这三个工具仅在 bash 不可用时挂载(pi-engine/builtin-tools.ts 的 piBuiltinToolNames)。名称 / 描述 / 参数 / 输出
+// 收尾文案是 pi 的;搜索后端是应用自建(fs-walk + Bun.Glob + JS RegExp),不调用 pi 默认的外部程序 rg / fd——
+// 因此这里经生产同款装配(createPiBuiltinTools,无 bash)测后端本身:gitignore 子集、输出格式锚点、上限提示、边界断言。
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createGrepTool } from "./grep";
-import { createFindTool } from "./find";
-import { createLsTool } from "./ls";
-import {
-  createBoundedFindOperations,
-  createBoundedGrepOperations,
-  createBoundedLsOperations,
-  WorkspaceBoundaryError,
-} from "../boundary";
-import { workspaceToolNeedsApproval } from "../approval";
-import type { ToolTextContent } from "./types";
+process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-fallback-data-"));
+
+const { createPiBuiltinTools } = await import("../../pi-engine/builtin-tools");
 
 // ----- 共享目录树 -----
 // root/
@@ -43,15 +35,23 @@ writeFileSync(join(root, "src", "util.js"), "// util\n");
 mkdirSync(join(root, "ignored-dir"));
 writeFileSync(join(root, "ignored-dir", "secret.txt"), "alpha secret\n");
 
-function textOf(result: { content: Array<{ type: string }> }): string {
-  return (result.content.filter((c) => c.type === "text") as ToolTextContent[]).map((c) => c.text).join("\n");
+type Result = { content: Array<{ type: string; text?: string }>; details?: { workspace?: { details: Record<string, unknown> } } };
+const tools = createPiBuiltinTools({ cwd: root, root, approve: async () => ({ scope: "default" }) });
+
+function tool(name: "grep" | "find" | "ls") {
+  const found = tools.find((candidate) => candidate.name === name)!;
+  return (params: Record<string, unknown>) => (found.execute as unknown as (id: string, p: unknown) => Promise<Result>)(`call-${name}`, params);
 }
+const grep = tool("grep");
+const find = tool("find");
+const ls = tool("ls");
+
+const textOf = (result: Result) => result.content.map((c) => c.text ?? "").join("\n");
+const detailsOf = (result: Result) => result.details?.workspace?.details ?? {};
 
 describe("ls(兜底)", () => {
   test("字典序排序 + 目录尾 / + 含 dotfile", async () => {
-    const tool = createLsTool(root);
-    const text = textOf(await tool.execute({}));
-    const lines = text.split("\n");
+    const lines = textOf(await ls({})).split("\n");
     expect(lines).toContain("src/");
     expect(lines).toContain(".hidden.txt");
     expect(lines).toContain("data.log"); // ls 不看 gitignore(pi 语义)
@@ -59,53 +59,44 @@ describe("ls(兜底)", () => {
   });
 
   test("条目上限提示文案", async () => {
-    const tool = createLsTool(root);
-    const result = await tool.execute({ limit: 2 });
+    const result = await ls({ limit: 2 });
     expect(textOf(result)).toContain("2 entries limit reached. Use limit=4 for more");
-    expect(result.details?.entryLimitReached).toBe(2);
+    expect(detailsOf(result).entryLimitReached).toBe(2);
   });
 
   test("非目录/不存在路径报错", async () => {
-    const tool = createLsTool(root);
-    await expect(tool.execute({ path: "notes.md" })).rejects.toThrow("Not a directory");
-    await expect(tool.execute({ path: "missing-dir" })).rejects.toThrow("Path not found");
+    await expect(ls({ path: "notes.md" })).rejects.toThrow("Not a directory");
+    await expect(ls({ path: "missing-dir" })).rejects.toThrow("Path not found");
   });
 });
 
 describe("find(兜底)", () => {
   test("basename 模式任意深度匹配", async () => {
-    const tool = createFindTool(root);
-    const text = textOf(await tool.execute({ pattern: "*.ts" }));
-    expect(text).toBe("src/app.ts");
+    expect(textOf(await find({ pattern: "*.ts" }))).toBe("src/app.ts");
   });
 
   test("含 / 的模式全路径匹配", async () => {
-    const tool = createFindTool(root);
-    const text = textOf(await tool.execute({ pattern: "src/*.js" }));
-    expect(text).toBe("src/util.js");
+    expect(textOf(await find({ pattern: "src/*.js" }))).toBe("src/util.js");
   });
 
   test("gitignore:忽略与取反", async () => {
-    const tool = createFindTool(root);
-    const text = textOf(await tool.execute({ pattern: "*.log" }));
+    const text = textOf(await find({ pattern: "*.log" }));
     expect(text).toContain("keep.log");
     expect(text).not.toContain("data.log");
-    const dirText = textOf(await tool.execute({ pattern: "secret*" }));
-    expect(dirText).toBe("No files found matching pattern");
+    expect(textOf(await find({ pattern: "secret*" }))).toBe("No files found matching pattern");
   });
 
   test("目录命中带尾 / + 结果上限提示", async () => {
-    const tool = createFindTool(root);
-    expect(textOf(await tool.execute({ pattern: "src" }))).toBe("src/");
-    const limited = await tool.execute({ pattern: "*", limit: 3 });
-    expect(textOf(limited)).toContain("3 results limit reached. Use limit=6 for more");
+    expect(textOf(await find({ pattern: "src" }))).toBe("src/");
+    const limited = await find({ pattern: "*", limit: 3 });
+    expect(textOf(limited)).toContain("3 results limit reached");
+    expect(detailsOf(limited).resultLimitReached).toBe(3);
   });
 });
 
 describe("grep(兜底)", () => {
   test("匹配行格式 path:line: text + gitignore 生效 + 二进制跳过", async () => {
-    const tool = createGrepTool(root);
-    const text = textOf(await tool.execute({ pattern: "alpha" }));
+    const text = textOf(await grep({ pattern: "alpha" }));
     expect(text).toContain("src/app.ts:1: const alpha = 1;");
     expect(text).toContain("keep.log:1: alpha in kept log");
     expect(text).not.toContain("secret");
@@ -114,63 +105,42 @@ describe("grep(兜底)", () => {
   });
 
   test("context 上下文行格式 path-line- text", async () => {
-    const tool = createGrepTool(root);
-    const text = textOf(await tool.execute({ pattern: "alpha", path: "src", context: 1 }));
+    const text = textOf(await grep({ pattern: "alpha", path: "src", context: 1 }));
     expect(text).toContain("app.ts:1: const alpha = 1;");
     expect(text).toContain("app.ts-2- const beta = 2;");
   });
 
   test("literal/ignoreCase/glob 过滤", async () => {
-    const tool = createGrepTool(root);
-    expect(textOf(await tool.execute({ pattern: "ALPHA NOTE", ignoreCase: true }))).toContain("notes.md:1:");
-    expect(textOf(await tool.execute({ pattern: "alpha = 1;", literal: true }))).toContain("src/app.ts:1:");
-    const filtered = textOf(await tool.execute({ pattern: "alpha", glob: "*.md" }));
+    expect(textOf(await grep({ pattern: "ALPHA NOTE", ignoreCase: true }))).toContain("notes.md:1:");
+    expect(textOf(await grep({ pattern: "alpha = 1;", literal: true }))).toContain("src/app.ts:1:");
+    const filtered = textOf(await grep({ pattern: "alpha", glob: "*.md" }));
     expect(filtered).toContain("notes.md:1:");
     expect(filtered).not.toContain("app.ts");
   });
 
   test("无匹配/非法正则/上限提示", async () => {
-    const tool = createGrepTool(root);
-    expect(textOf(await tool.execute({ pattern: "zzz-nothing" }))).toBe("No matches found");
-    await expect(tool.execute({ pattern: "([" })).rejects.toThrow("Invalid regex pattern");
-    const limited = await tool.execute({ pattern: "alpha", limit: 1 });
+    expect(textOf(await grep({ pattern: "zzz-nothing" }))).toBe("No matches found");
+    await expect(grep({ pattern: "([" })).rejects.toThrow("Invalid regex pattern");
+    const limited = await grep({ pattern: "alpha", limit: 1 });
     expect(textOf(limited)).toContain("1 matches limit reached");
-    expect(limited.details?.matchLimitReached).toBe(1);
+    expect(detailsOf(limited).matchLimitReached).toBe(1);
   });
 
   test("单文件搜索(path 指向文件)", async () => {
-    const tool = createGrepTool(root);
-    const text = textOf(await tool.execute({ pattern: "beta", path: "src/app.ts" }));
-    expect(text).toBe("app.ts:2: const beta = 2;");
+    expect(textOf(await grep({ pattern: "beta", path: "src/app.ts" }))).toBe("app.ts:2: const beta = 2;");
   });
 });
 
 describe("有界 Operations(边界断言)", () => {
-  test("grep/find/ls 的 path 参数越界 → WorkspaceBoundaryError", async () => {
+  test("grep/find/ls 的 path 参数越界 → 边界错误", async () => {
     const outside = join(root, "..");
-    const grep = createGrepTool(root, { operations: createBoundedGrepOperations(root) });
-    await expect(grep.execute({ pattern: "x", path: outside })).rejects.toThrow(WorkspaceBoundaryError);
-    const find = createFindTool(root, { operations: createBoundedFindOperations(root) });
-    await expect(find.execute({ pattern: "*", path: outside })).rejects.toThrow(WorkspaceBoundaryError);
-    const ls = createLsTool(root, { operations: createBoundedLsOperations(root) });
-    await expect(ls.execute({ path: outside })).rejects.toThrow(WorkspaceBoundaryError);
+    await expect(grep({ pattern: "x", path: outside })).rejects.toThrow("outside the workspace boundary");
+    await expect(find({ pattern: "*", path: outside })).rejects.toThrow("outside the workspace boundary");
+    await expect(ls({ path: outside })).rejects.toThrow("outside the workspace boundary");
   });
 
   test("有界 ops 下区内操作正常", async () => {
-    const grep = createGrepTool(root, { operations: createBoundedGrepOperations(root) });
-    expect(textOf(await grep.execute({ pattern: "beta", path: "src" }))).toContain("app.ts:2:");
-    const ls = createLsTool(root, { operations: createBoundedLsOperations(root) });
-    expect(textOf(await ls.execute({ path: "src" }))).toContain("app.ts");
-  });
-});
-
-describe("审批矩阵(只读工具恒免审)", () => {
-  test("grep/find/ls 任何档位都不需要审批", () => {
-    for (const tool of ["grep", "find", "ls"] as const) {
-      for (const preset of ["confirm_each", "balanced", "full_access"] as const) {
-        expect(workspaceToolNeedsApproval(tool, preset)).toBe(false);
-      }
-    }
-    expect(workspaceToolNeedsApproval("bash", "confirm_each")).toBe(true);
+    expect(textOf(await grep({ pattern: "beta", path: "src" }))).toContain("app.ts:2:");
+    expect(textOf(await ls({ path: "src" }))).toContain("app.ts");
   });
 });

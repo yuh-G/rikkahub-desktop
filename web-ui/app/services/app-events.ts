@@ -24,6 +24,7 @@ import type {
   MemorySnapshot,
   Settings,
 } from "~/types";
+import type { PluginInstallProgressEventDto, PluginReinstallStateEventDto } from "~/types/plugins";
 
 export interface AppEventMap {
   settings: Settings;
@@ -33,6 +34,8 @@ export interface AppEventMap {
   invalidate: ConversationListInvalidateEventDto;
   mcp_health: McpHealthSnapshotDto;
   provider_auth: ProviderAuthEventDto;
+  plugin_install_progress: PluginInstallProgressEventDto;
+  plugin_reinstall_state: PluginReinstallStateEventDto;
 }
 
 /** 订阅供应商登录进度(方案 §4.3 三态卡片)。凭据永不下发——只载阶段/验证码/地址。 */
@@ -56,6 +59,7 @@ const REPLAY_EVENTS: ReadonlySet<AppEventName> = new Set([
   "app_errors_snapshot",
   "invalidate",
   "mcp_health",
+  "plugin_reinstall_state",
 ]);
 
 /** 与 worker 心跳判活(PORT_STALE_MS = 120s,已容住 Chromium 后台节流 1/min 的心跳,

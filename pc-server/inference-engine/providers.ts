@@ -7,7 +7,7 @@ import type { Assistant, JsonValue, Message, Provider, ApiMessage, ClaudeStreamR
 import { id, isRecord, reasoningFromParts, safeJsonParse, visibleReasoningFromMessage, visibleTextFromMessage } from "../foundation/utils";
 import { MODELS_DEV_CACHE_PATH } from "../foundation/paths";
 import { fetchWithTimeout, readWithIdleTimeout } from "../foundation/net";
-import { initialApprovalState, toolNeedsApproval } from "../tools/approval";
+import { decideAppToolPermission } from "../tools/approval";
 import { toolArgumentsJson, toolExecutionErrorPayload, toolResultTextForApi } from "../tools/format";
 import {
   claudeBlocksFromUiParts,
@@ -16,7 +16,6 @@ import { ensureReasoningPart, finishReasoningParts, normalizeGeneratedImageUrl }
 import type { StreamHooksWithSink, ToolCall, ToolResult } from "./events";
 import {
   findModel,
-  jsonBody,
   textBody,
 } from "../model-providers";
 import { contextWindowFor } from "../model-providers/model-limits";
@@ -168,7 +167,9 @@ export async function fetchText(
   signal?: AbortSignal,
 ) {
   const started = Date.now();
-  const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
+  // 日志与请求共用发出去的这份字符串:长会话的请求体随上下文变长,不为日志再序列化一遍
+  const requestText = JSON.stringify(body);
+  const response = await fetch(url, { method: "POST", headers, body: requestText, signal });
   const rawText = await response.text();
   let raw: any = {};
   try {
@@ -187,7 +188,7 @@ export async function fetchText(
     method: "POST",
     requestHeaders: headers,
     responseHeaders: Object.fromEntries(response.headers.entries()),
-    requestBody: jsonBody(body),
+    requestBody: requestText,
     responseBody: textBody(rawText),
     error: response.ok ? undefined : textBody(rawText),
   });
@@ -299,7 +300,7 @@ export async function readClaudeStreamingRound(
             toolCallId: String(block.id ?? ""),
             toolName: String(block.name ?? ""),
             input: "",
-            approvalState: initialApprovalState(String(block.name ?? ""), assistant, hooks.conversation),
+            approvalState: decideAppToolPermission(String(block.name ?? ""), assistant, hooks.conversation),
           });
           touchStream(hooks);
         }
@@ -451,7 +452,7 @@ export async function readClaudeJsonRound(
         toolCallId: String(block.id ?? id()),
         toolName: name,
         input: inputJson,
-        approvalState: initialApprovalState(name, assistant, hooks.conversation, inputJson),
+        approvalState: decideAppToolPermission(name, assistant, hooks.conversation, inputJson),
       });
       touchStream(hooks);
     }
@@ -483,10 +484,10 @@ export async function streamClaudeChatWithTools(
     providerItem,
     logUrl: url,
     logHeaders: headers,
-    fetchRound: (requestBody, _round, sig, nonStream) => fetch(url, {
+    fetchRound: (_requestBody, _round, sig, nonStream, bodyText) => fetch(url, {
       method: "POST",
       headers: nonStream ? headers : { ...headers, Accept: "text/event-stream" },
-      body: JSON.stringify(requestBody),
+      body: bodyText,
       signal: sig,
       // 注意:无需在此传 Bun timeout 键。net.ts 的 fetch 拦截器已对所有走 globalThis.fetch
       // 的调用统一注入 timeout:0(禁用 Bun 300s socket 空闲定时器),计时权归 headerTimeoutMs。
@@ -591,7 +592,8 @@ export async function fetchClaudeTextWithTools(
     // R3-4:非流式路径同样每轮首查停止。
     if (signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     const started = Date.now();
-    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(currentBody), signal });
+    const requestText = JSON.stringify(currentBody);
+    const response = await fetch(url, { method: "POST", headers, body: requestText, signal });
     const rawText = await response.text();
     let raw: any = {};
     try {
@@ -610,7 +612,7 @@ export async function fetchClaudeTextWithTools(
       method: "POST",
       requestHeaders: headers,
       responseHeaders: Object.fromEntries(response.headers.entries()),
-      requestBody: jsonBody(currentBody),
+      requestBody: requestText,
       responseBody: textBody(rawText),
       error: response.ok ? undefined : textBody(rawText),
     });
@@ -630,7 +632,7 @@ export async function fetchClaudeTextWithTools(
     // Same rationale as the stream path: bail out of the turn if any tool needs approval so
     // we don't end up sending an unanswered tool_use to Anthropic on the next turn.
     const hasPendingInBatch = toolUses.some((toolUse) =>
-      toolNeedsApproval(String(toolUse.name ?? ""), assistant, hooks?.conversation, JSON.stringify(isRecord(toolUse.input) ? toolUse.input : {})),
+      decideAppToolPermission(String(toolUse.name ?? ""), assistant, hooks?.conversation, JSON.stringify(isRecord(toolUse.input) ? toolUse.input : {})).type === "pending",
     );
     for (const toolUse of toolUses) {
       // R3-4:停止后剩余工具不再执行。
@@ -649,7 +651,7 @@ export async function fetchClaudeTextWithTools(
         toolName: toolCall.function.name,
         input: toolCall.function.arguments,
         output: [],
-        approvalState: initialApprovalState(toolCall.function.name, assistant, hooks?.conversation, toolCall.function.arguments),
+        approvalState: decideAppToolPermission(toolCall.function.name, assistant, hooks?.conversation, toolCall.function.arguments),
       };
       if (hooks?.message) {
         finishReasoningParts(hooks.message);
@@ -773,7 +775,7 @@ function applyGoogleRoundChunk(
           toolName: name,
           input: JSON.stringify(args),
           // Gemini 函数调用整体到达，建卡即参数齐备的终局审批态
-          approvalState: initialApprovalState(name, assistant, hooks.conversation, JSON.stringify(args)),
+          approvalState: decideAppToolPermission(name, assistant, hooks.conversation, JSON.stringify(args)),
         });
         touchStream(hooks);
       }
@@ -890,10 +892,10 @@ export async function streamGoogleChatWithTools(
     providerItem,
     logUrl: streamUrl,
     logHeaders: headers,
-    fetchRound: (requestBody, _round, sig, nonStream) => fetch(nonStream ? jsonUrl : streamUrl, {
+    fetchRound: (_requestBody, _round, sig, nonStream, bodyText) => fetch(nonStream ? jsonUrl : streamUrl, {
       method: "POST",
       headers: nonStream ? headers : { ...headers, Accept: "text/event-stream" },
-      body: JSON.stringify(requestBody),
+      body: bodyText,
       signal: sig,
       // Bun timeout 由 net.ts fetch 拦截器统一注入 timeout:0(见 Claude 适配器处注释)。
     }),
@@ -974,7 +976,8 @@ export async function fetchOpenAiText(
     // R3-4:非流式路径同样每轮首查停止。
     if (signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     const started = Date.now();
-    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(currentBody), signal });
+    const requestText = JSON.stringify(currentBody);
+    const response = await fetch(url, { method: "POST", headers, body: requestText, signal });
     const rawText = await response.text();
     let raw: any = {};
     try {
@@ -993,7 +996,7 @@ export async function fetchOpenAiText(
       method: "POST",
       requestHeaders: headers,
       responseHeaders: Object.fromEntries(response.headers.entries()),
-      requestBody: jsonBody(currentBody),
+      requestBody: requestText,
       responseBody: textBody(rawText),
       error: response.ok ? undefined : textBody(rawText),
     });
@@ -1010,7 +1013,7 @@ export async function fetchOpenAiText(
 
     const toolMessages = [];
     const hasPendingInBatch = toolCalls.some((toolCall: any) =>
-      toolNeedsApproval(String(toolCall?.function?.name ?? ""), assistant, hooks?.conversation, toolArgumentsJson(toolCall?.function?.arguments)),
+      decideAppToolPermission(String(toolCall?.function?.name ?? ""), assistant, hooks?.conversation, toolArgumentsJson(toolCall?.function?.arguments)).type === "pending",
     );
     const dispatchCtx = toolCallContext(hooks);
     for (const toolCall of toolCalls) {
@@ -1025,7 +1028,7 @@ export async function fetchOpenAiText(
         toolName: String(toolCall.function?.name ?? ""),
         input: toolArguments,
         output: [],
-        approvalState: initialApprovalState(String(toolCall.function?.name ?? ""), assistant, hooks?.conversation, toolArguments),
+        approvalState: decideAppToolPermission(String(toolCall.function?.name ?? ""), assistant, hooks?.conversation, toolArguments),
       };
       if (hooks?.message) {
         finishReasoningParts(hooks.message);
@@ -1403,7 +1406,7 @@ export function applyOpenAiDelta(
             toolName: callName,
             input: args,
             approvalState: assistant
-              ? initialApprovalState(callName, assistant, hooks.conversation)
+              ? decideAppToolPermission(callName, assistant, hooks.conversation)
               : { type: "auto" },
           });
         } else if (args) {
@@ -1424,7 +1427,8 @@ export async function fetchOpenAiAuxiliaryStream(
   signal?: AbortSignal,
 ) {
   const started = Date.now();
-  const response = await fetchWithTimeout(url, { method: "POST", headers: { ...headers, Accept: "text/event-stream" }, body: JSON.stringify(body), timeoutMs: AUX_STREAM_TIMEOUT_MS, signal });
+  const requestText = JSON.stringify(body);
+  const response = await fetchWithTimeout(url, { method: "POST", headers: { ...headers, Accept: "text/event-stream" }, body: requestText, timeoutMs: AUX_STREAM_TIMEOUT_MS, signal });
   let text = "";
   if (response.ok) {
     text = await readOpenAiStream(response, (delta) => {
@@ -1446,7 +1450,7 @@ export async function fetchOpenAiAuxiliaryStream(
     method: "POST",
     requestHeaders: headers,
     responseHeaders: Object.fromEntries(response.headers.entries()),
-    requestBody: jsonBody(body),
+    requestBody: requestText,
     responseBody: textBody(text),
     error: response.ok ? undefined : textBody(text),
   });
@@ -1463,7 +1467,8 @@ export async function fetchClaudeAuxiliaryStream(
   signal?: AbortSignal,
 ) {
   const started = Date.now();
-  const response = await fetchWithTimeout(url, { method: "POST", headers: { ...headers, Accept: "text/event-stream" }, body: JSON.stringify(body), timeoutMs: AUX_STREAM_TIMEOUT_MS, signal });
+  const requestText = JSON.stringify(body);
+  const response = await fetchWithTimeout(url, { method: "POST", headers: { ...headers, Accept: "text/event-stream" }, body: requestText, timeoutMs: AUX_STREAM_TIMEOUT_MS, signal });
   if (!response.ok) {
     const text = await response.text();
     addLog({
@@ -1477,7 +1482,7 @@ export async function fetchClaudeAuxiliaryStream(
       method: "POST",
       requestHeaders: headers,
       responseHeaders: Object.fromEntries(response.headers.entries()),
-      requestBody: jsonBody(body),
+      requestBody: requestText,
       responseBody: textBody(text),
       error: textBody(text),
     });
@@ -1497,7 +1502,7 @@ export async function fetchClaudeAuxiliaryStream(
     method: "POST",
     requestHeaders: headers,
     responseHeaders: Object.fromEntries(response.headers.entries()),
-    requestBody: jsonBody(body),
+    requestBody: requestText,
     responseBody: textBody(text),
   });
   return text.trim() || "(empty response)";
@@ -1569,7 +1574,8 @@ export async function fetchGoogleAuxiliaryStream(
   signal?: AbortSignal,
 ) {
   const started = Date.now();
-  const response = await fetchWithTimeout(url, { method: "POST", headers: { ...headers, Accept: "text/event-stream" }, body: JSON.stringify(body), timeoutMs: AUX_STREAM_TIMEOUT_MS, signal });
+  const requestText = JSON.stringify(body);
+  const response = await fetchWithTimeout(url, { method: "POST", headers: { ...headers, Accept: "text/event-stream" }, body: requestText, timeoutMs: AUX_STREAM_TIMEOUT_MS, signal });
   const rawText = await response.text();
   addLog({
     providerId: providerItem.id,
@@ -1582,7 +1588,7 @@ export async function fetchGoogleAuxiliaryStream(
     method: "POST",
     requestHeaders: headers,
     responseHeaders: Object.fromEntries(response.headers.entries()),
-    requestBody: jsonBody(body),
+    requestBody: requestText,
     responseBody: textBody(rawText),
     error: response.ok ? undefined : textBody(rawText),
   });
@@ -1820,10 +1826,10 @@ export async function fetchOpenAiTextStreaming(
     providerItem,
     logUrl: url,
     logHeaders: headers,
-    fetchRound: (requestBody, _round, sig) => fetch(url, {
+    fetchRound: (requestBody, _round, sig, _nonStream, bodyText) => fetch(url, {
       method: "POST",
       headers: requestBody.stream === false ? headers : { ...headers, Accept: "text/event-stream" },
-      body: JSON.stringify(requestBody),
+      body: bodyText,
       signal: sig,
       // Bun timeout 由 net.ts fetch 拦截器统一注入 timeout:0(见 Claude 适配器处注释)。
     }),
@@ -1864,7 +1870,7 @@ export async function fetchOpenAiTextStreaming(
           toolName: call.name,
           input: call.arguments,
           output,
-          approvalState: initialApprovalState(call.name, assistant, hooks.conversation),
+          approvalState: decideAppToolPermission(call.name, assistant, hooks.conversation),
         };
         return useResponseInput
           ? { type: "function_call_output", call_id: call.id, output: toolResultTextForApi(toolPart) }

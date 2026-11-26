@@ -80,6 +80,8 @@ async function performStateSave(): Promise<void> {
   const content = JSON.stringify({
     ...state,
     logs: undefined,
+    // 导入暂存的引擎私有条目可能很大,只在 finalize 前的内存里活一会儿,不落盘。
+    pcEngineTables: undefined,
     ...(convSqliteMigrated ? { conversations: undefined } : {}),
     ...(memoryFileSplit ? { memories: undefined, nextMemoryId: undefined } : {}),
   });

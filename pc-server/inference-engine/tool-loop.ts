@@ -15,12 +15,12 @@
 //     冻结点——此前 Claude/Google 停止后本轮工具仍会执行,违背用户"停止"心智)。
 // 其余仍为纯参数化差异(文案/编码格式等),不做无谓统一。
 import type { Assistant, Message, Provider } from "../foundation/types";
-import { initialApprovalState } from "../tools/approval";
+import { decideAppToolPermission } from "../tools/approval";
 import { toolExecutionErrorPayload } from "../tools/format";
 import { finishReasoningParts } from "./parts";
 import type { StreamHooksWithSink, ToolCall, ToolDispatchContext, ToolResult } from "./events";
 import type { ToolOutputEntry, ToolPart } from "../foundation/types";
-import { jsonBody, textBody } from "../model-providers";
+import { textBody } from "../model-providers";
 import { addLog } from "../api/logs";
 import { touchStream } from "../api/sse";
 import { isRecord } from "../foundation/utils";
@@ -41,11 +41,14 @@ export function mergeTokenUsage(prev: Message["usage"], next: Message["usage"]):
   const contextLimit = nextRec.contextLimit !== undefined ? nextRec.contextLimit : prevRec.contextLimit;
   // generationMs 单调累计(骨架每轮发的都是至今总和),新值>0 覆盖语义天然正确。
   const generationMs = pick("generationMs");
+  // 可选键:两侧都没有时不虚构(不回报写入量的路径与旧数据形状不变)。
+  const cacheWriteTokens = pick("cacheWriteTokens");
   return {
     promptTokens: pick("promptTokens"),
     completionTokens: pick("completionTokens"),
     totalTokens: pick("totalTokens"),
     cachedTokens: pick("cachedTokens"),
+    ...(cacheWriteTokens > 0 ? { cacheWriteTokens } : {}),
     ...(contextLimit !== undefined ? { contextLimit: contextLimit as number | null } : {}),
     ...(generationMs > 0 ? { generationMs } : {}),
   };
@@ -65,12 +68,13 @@ export const STREAM_IDLE_TIMEOUT_MS = 120_000;
 async function fetchRoundWithHeaderTimeout(
   adapter: ProviderRoundAdapter,
   requestBody: Record<string, unknown>,
+  requestText: string,
   round: number,
   externalSignal: AbortSignal | undefined,
   nonStream: boolean,
 ): Promise<Response> {
   const timeoutMs = adapter.headerTimeoutMs(requestBody, nonStream);
-  if (timeoutMs <= 0) return adapter.fetchRound(requestBody, round, externalSignal, nonStream);
+  if (timeoutMs <= 0) return adapter.fetchRound(requestBody, round, externalSignal, nonStream, requestText);
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | null = null;
   let abortHandler: (() => void) | null = null;
@@ -87,7 +91,7 @@ async function fetchRoundWithHeaderTimeout(
     () => controller.abort(new Error(`响应头超时:${Math.round(timeoutMs / 1000)}s 内未收到上游响应`)),
     timeoutMs,
   );
-  return adapter.fetchRound(requestBody, round, controller.signal, nonStream).finally(cleanup);
+  return adapter.fetchRound(requestBody, round, controller.signal, nonStream, requestText).finally(cleanup);
 }
 
 export function toolCallContext(hooks?: StreamHooksWithSink): ToolDispatchContext | undefined {
@@ -129,8 +133,9 @@ export interface ProviderRoundAdapter {
   /** 请求日志的 requestHeaders 字段。 */
   logHeaders: Record<string, string>;
   /** 发起单轮请求。骨架统一负责"头超时 + 外部 signal 桥接"(R3-1),传入桥接后的 signal;
-   *  adapter 只管拼 url/headers/body 并把 signal 透传给 fetch。 */
-  fetchRound(requestBody: Record<string, unknown>, round: number, signal: AbortSignal | undefined, nonStream?: boolean): Promise<Response>;
+   *  adapter 只管拼 url/headers/body 并把 signal 透传给 fetch。bodyText 是骨架序列化好的
+   *  requestBody(请求日志用的也是它),请求体原样发出时直接用,不要再序列化一遍。 */
+  fetchRound(requestBody: Record<string, unknown>, round: number, signal: AbortSignal | undefined, nonStream: boolean | undefined, bodyText: string): Promise<Response>;
   /** 本轮"响应头超时"预算(ms):上游 TCP 通但迟迟不回响应头时的看门狗;返回 0 表示禁用。
    *  下沉自 OpenAI,三家统一后 Claude/Google 主链路不再无超时裸奔;现三家流式/非流式
    *  均取 600s(2026-08-01 非流式对齐流式)。 */
@@ -173,7 +178,7 @@ function logRound(
   adapter: ProviderRoundAdapter,
   round: number,
   startedAt: number,
-  requestBody: Record<string, unknown>,
+  requestText: string,
   fields: { ok: boolean; status: number; responseHeaders?: Record<string, string>; responseBody: string; error?: string },
 ): void {
   addLog({
@@ -187,7 +192,7 @@ function logRound(
     method: "POST",
     requestHeaders: adapter.logHeaders,
     ...(fields.responseHeaders ? { responseHeaders: fields.responseHeaders } : {}),
-    requestBody: jsonBody(requestBody),
+    requestBody: requestText,
     responseBody: fields.responseBody,
     ...(fields.error !== undefined ? { error: fields.error } : {}),
   });
@@ -237,13 +242,15 @@ export async function runStreamingToolLoop(
       : forceNonStream && adapter.nonStreamFallback
         ? adapter.nonStreamFallback.makeBody(currentBody)
         : currentBody;
+    // 发出去与记日志共用一份序列化结果(长会话的请求体随上下文变长)
+    const requestText = JSON.stringify(requestBody);
 
     let response: Response;
     try {
-      response = await fetchRoundWithHeaderTimeout(adapter, requestBody, round, signal, nonStreamRound);
+      response = await fetchRoundWithHeaderTimeout(adapter, requestBody, requestText, round, signal, nonStreamRound);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      logRound(adapter, round, roundStarted, requestBody, { ok: false, status: 0, responseBody: "", error: detail });
+      logRound(adapter, round, roundStarted, requestText, { ok: false, status: 0, responseBody: "", error: detail });
       if (adapter.nonStreamFallback && !forceNonStream && !userNonStream && !signal?.aborted) {
         forceNonStream = true;
         hooks.sink?.({ kind: "reasoning_delta", text: `${adapter.nonStreamFallback.connectHint} ${detail}` });
@@ -255,7 +262,7 @@ export async function runStreamingToolLoop(
 
     if (!response.ok) {
       const text = await response.text();
-      logRound(adapter, round, roundStarted, requestBody, {
+      logRound(adapter, round, roundStarted, requestText, {
         ok: false,
         status: response.status,
         responseHeaders: Object.fromEntries(response.headers.entries()),
@@ -269,7 +276,7 @@ export async function runStreamingToolLoop(
     try {
       result = await adapter.readRound(response, signal, nonStreamRound);
     } catch (err) {
-      logRound(adapter, round, roundStarted, requestBody, {
+      logRound(adapter, round, roundStarted, requestText, {
         ok: false,
         status: response.status,
         responseHeaders: Object.fromEntries(response.headers.entries()),
@@ -302,7 +309,7 @@ export async function runStreamingToolLoop(
       else hooks.message.usage = mergeTokenUsage(hooks.message.usage, usagePayload);
     }
 
-    logRound(adapter, round, roundStarted, requestBody, {
+    logRound(adapter, round, roundStarted, requestText, {
       ok: true,
       status: response.status,
       responseHeaders: Object.fromEntries(response.headers.entries()),
@@ -337,7 +344,7 @@ export async function runStreamingToolLoop(
     // balanced 档依赖参数：危险命令/区外写入才审批）。generateAnswer 看到
     // hasPendingToolApproval 会暂停等用户决定。
     const approvalByCall = new Map(
-      result.toolCalls.map((call) => [call.id, initialApprovalState(call.name, assistant, hooks.conversation, call.arguments)] as const),
+      result.toolCalls.map((call) => [call.id, decideAppToolPermission(call.name, assistant, hooks.conversation, call.arguments)] as const),
     );
     const hasPendingInBatch = [...approvalByCall.values()].some((state) => state.type === "pending");
     // 流内建卡的 provider（Claude）在参数未到时用无参数下界建卡；终局若上调为
@@ -375,7 +382,7 @@ export async function runStreamingToolLoop(
           input: call.arguments,
           output: [],
           // 循环层建卡时参数已齐，直接用终局审批态（含缘由）
-          approvalState: approvalByCall.get(call.id) ?? initialApprovalState(call.name, assistant, hooks.conversation, call.arguments),
+          approvalState: approvalByCall.get(call.id) ?? decideAppToolPermission(call.name, assistant, hooks.conversation, call.arguments),
         };
         finishReasoningParts(hooks.message);
         hooks.sink?.({

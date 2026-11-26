@@ -5,8 +5,6 @@
 import type { Assistant, JsonValue, Message, MessagePart, Model, TextPart } from "../foundation/types";
 import {
   cloneJson,
-  formatLocalDate,
-  formatLocalTime,
   getStringArray,
   isRecord,
   message,
@@ -49,6 +47,7 @@ export function defaultAssistant(): Assistant {
     modeInjectionIds: [],
     lorebookIds: [],
     enabledSkills: [],
+    enginePluginIds: [],
     enableTimeReminder: false,
     allowConversationSystemPrompt: false,
     allowConversationPromptInjection: false,
@@ -59,6 +58,41 @@ export function findAssistant(assistants: Assistant[], idValue: string): Assista
   return assistants.find((assistant) => assistant.id === idValue) ?? assistants[0];
 }
 
+const DATE_FULL: Intl.DateTimeFormatOptions = { dateStyle: "full" };
+const TIME_MEDIUM: Intl.DateTimeFormatOptions = { timeStyle: "medium" };
+const DATETIME_FULL: Intl.DateTimeFormatOptions = { dateStyle: "full", timeStyle: "medium" };
+
+/** 一次请求的模板渲染上下文(PF.3):日期格式化器按 options 各建一次、时区与语言只取一次,整个请求里的
+ *  所有消息共用,而且都是用到才建——默认消息模板 {{ message }} 一个都不建。新建 Intl.DateTimeFormat
+ *  比格式化本身贵得多,原先每条历史消息、每段文字都要建好几个,开销随会话长度增长。不做进程级缓存:
+ *  用户改了系统时区或语言,下一次请求自然用新的。不传上下文的调用方各自得到一个新的,结果相同。 */
+export interface TemplateContext {
+  /** options 传模块级常量,按对象身份缓存格式化器。 */
+  format(options: Intl.DateTimeFormatOptions, date: Date): string;
+  readonly timezone: string;
+  readonly locale: string;
+}
+
+export function createTemplateContext(): TemplateContext {
+  const formatters = new Map<Intl.DateTimeFormatOptions, Intl.DateTimeFormat>();
+  let resolved: Intl.ResolvedDateTimeFormatOptions | null = null;
+  const resolvedOptions = () => (resolved ??= Intl.DateTimeFormat().resolvedOptions());
+  return {
+    format(options, date) {
+      let formatter = formatters.get(options);
+      if (!formatter) formatters.set(options, (formatter = new Intl.DateTimeFormat(undefined, options)));
+      return formatter.format(date);
+    },
+    get timezone() {
+      return resolvedOptions().timeZone;
+    },
+    get locale() {
+      return resolvedOptions().locale;
+    },
+  };
+}
+
+/** 时间、时区、语言几项是取值时才算的 getter(模板里用到才格式化);调用方只按键取值,不展开、不序列化。 */
 export function templateVariables(
   messageText: string,
   role: string,
@@ -70,21 +104,34 @@ export function templateVariables(
   // 语义错误(昨天的消息声称今天的时间)且从该消息起前缀缓存全部失效。
   // 不传 at(系统提示词/辅助调用)保持“此刻”。
   at?: Date,
+  context: TemplateContext = createTemplateContext(),
 ): Record<string, string> {
   const now = at ?? new Date();
   const user = userNickname.trim() || "User";
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const locale = Intl.DateTimeFormat().resolvedOptions().locale;
   return {
     message: messageText,
     role,
-    time: formatLocalTime(now),
-    date: formatLocalDate(now),
-    cur_time: formatLocalTime(now),
-    cur_date: formatLocalDate(now),
-    cur_datetime: new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "medium" }).format(now),
-    timezone,
-    locale,
+    get time() {
+      return context.format(TIME_MEDIUM, now);
+    },
+    get date() {
+      return context.format(DATE_FULL, now);
+    },
+    get cur_time() {
+      return context.format(TIME_MEDIUM, now);
+    },
+    get cur_date() {
+      return context.format(DATE_FULL, now);
+    },
+    get cur_datetime() {
+      return context.format(DATETIME_FULL, now);
+    },
+    get timezone() {
+      return context.timezone;
+    },
+    get locale() {
+      return context.locale;
+    },
     user,
     nickname: user,
     char: assistant.name?.trim() || "Assistant",
@@ -96,13 +143,17 @@ export function templateVariables(
   };
 }
 
-export function renderAssistantMessageTemplate(template: string, messageText: string, role: string, at?: Date) {
+export function renderAssistantMessageTemplate(template: string, messageText: string, role: string, at?: Date, context: TemplateContext = createTemplateContext()) {
   const now = at ?? new Date();
   const variables = {
     message: messageText,
     role: role.toLowerCase(),
-    time: formatLocalTime(now),
-    date: formatLocalDate(now),
+    get time() {
+      return context.format(TIME_MEDIUM, now);
+    },
+    get date() {
+      return context.format(DATE_FULL, now);
+    },
   };
   return renderTemplate(template || "{{ message }}", variables);
 }
@@ -111,10 +162,10 @@ function transformedTextPart(part: TextPart, text: string): TextPart {
   return { ...part, text };
 }
 
-export function applyMessageTemplateToParts(parts: MessagePart[], role: string, template: string, at?: Date) {
+export function applyMessageTemplateToParts(parts: MessagePart[], role: string, template: string, at?: Date, context: TemplateContext = createTemplateContext()) {
   return parts.map((part) => {
     if (!isRecord(part) || part.type !== "text") return part;
-    return transformedTextPart(part, renderAssistantMessageTemplate(template, String(part.text ?? ""), role, at));
+    return transformedTextPart(part, renderAssistantMessageTemplate(template, String(part.text ?? ""), role, at, context));
   });
 }
 
@@ -242,22 +293,15 @@ function contextForMatchingMessages(messages: Message[], scanDepth: number) {
     .join("\n");
 }
 
-/** 专题9:会话级注入绑定(对齐安卓 collectInjections 的 effective ids)。助手开启
- *  allowConversationPromptInjection 时,生效 id 集来自会话(完全取代助手级,包括空集)。 */
-export interface ConversationInjectionOverride {
-  modeInjectionIds: string[];
-  lorebookIds: string[];
-}
-
-export function activeModeInjections(assistant: Assistant, modeInjections: JsonValue[], override?: ConversationInjectionOverride) {
-  const selected = new Set(override ? override.modeInjectionIds : getStringArray(assistant.modeInjectionIds));
+export function activeModeInjections(assistant: Assistant, modeInjections: JsonValue[]) {
+  const selected = new Set(getStringArray(assistant.modeInjectionIds));
   return (modeInjections as Array<Record<string, JsonValue>>)
     .filter((item) => item.enabled !== false && selected.has(String(item.id ?? "")))
     .sort((left, right) => Number(right.priority ?? 0) - Number(left.priority ?? 0));
 }
 
-export function activeLorebookInjections(assistant: Assistant, messages: Message[], lorebooks: JsonValue[], override?: ConversationInjectionOverride) {
-  const selected = new Set(override ? override.lorebookIds : getStringArray(assistant.lorebookIds));
+export function activeLorebookInjections(assistant: Assistant, messages: Message[], lorebooks: JsonValue[]) {
+  const selected = new Set(getStringArray(assistant.lorebookIds));
   return (lorebooks as Array<Record<string, JsonValue>>)
     .filter((book) => book.enabled !== false && selected.has(String(book.id ?? "")))
     .flatMap((book) => (Array.isArray(book.entries) ? book.entries : []))
@@ -271,9 +315,8 @@ export function activePromptInjections(
   messages: Message[],
   lorebooks: JsonValue[],
   modeInjections: JsonValue[],
-  override?: ConversationInjectionOverride,
 ) {
-  return [...activeModeInjections(assistant, modeInjections, override), ...activeLorebookInjections(assistant, messages, lorebooks, override)]
+  return [...activeModeInjections(assistant, modeInjections), ...activeLorebookInjections(assistant, messages, lorebooks)]
     .filter((item) => item.enabled !== false)
     .sort((left, right) => Number(right.priority ?? 0) - Number(left.priority ?? 0));
 }

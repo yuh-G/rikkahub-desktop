@@ -1,7 +1,7 @@
-// inference-engine/approval-flow.ts — 审批内化生命周期(P3 内联于 workspace-tools,P4 抽取共用,T2 迁出 pi-engine)
+// inference-engine/approval-flow.ts — 审批内化生命周期(P3 内联于 pi 工作区工具,P4 抽取共用,T2 迁出 pi-engine)
 //
 // 单一事实源:pending 卡 → approval-gate 等待 → 放行/拒绝/中止收敛的完整状态机。
-// 消费者:pi 引擎的 workspace-tools(七个工作区工具)与 general-tools(MCP 桥/通用工具)。
+// 消费者:engines/app-tools(应用工具的应用侧执行面:七个工作区工具与 MCP 桥/通用工具)。
 // 两边的差异只在"审批判定"(工作区三档矩阵 vs MCP 档位规则),判定结果作为参数传入,
 // 生命周期本身零分叉——审批语义改版(如 §4.4 回退面)只动这一处。
 //
@@ -14,7 +14,7 @@
 
 import type { ToolApprovalState } from "../foundation/types";
 import type { GenerationEventSink } from "./events";
-import { waitForToolApproval } from "./approval-gate";
+import { allowToolForSession, waitForToolApproval, type ToolApprovalDecision } from "./approval-gate";
 import { awaitingApproval } from "../conversations/generation-state";
 
 export interface ApprovalFlowContext {
@@ -25,6 +25,10 @@ export interface ApprovalFlowContext {
   /** 域4-1:通知/状态摘要用的工具名与审批对象摘要(命令/路径,截断后)。 */
   toolName?: string;
   summary?: string;
+  /** 会话级免问键(P4.3):带了它,用户批准时选「此会话内总是允许」才会被记下,同会话之后
+   *  判定为免问。插件工具与工作区会话里的 MCP 工具带(D32);写入 / 执行类与对话模式的 MCP 工具不带,
+   *  沿用档位与逐工具设置。 */
+  sessionAllowKey?: string;
 }
 
 /** 走完审批生命周期。approval 为非 pending(auto 等)时立即返回 false(免审执行);
@@ -54,7 +58,7 @@ export async function gateToolApproval(approval: ToolApprovalState, ctx: Approva
       ...(ctx.summary ? { summary: ctx.summary } : {}),
     },
   });
-  let decision: { approved: boolean; reason?: string };
+  let decision: ToolApprovalDecision;
   try {
     decision = await waitForToolApproval(ctx.conversationId, ctx.toolCallId, ctx.signal);
   } catch (err) {
@@ -78,6 +82,7 @@ export async function gateToolApproval(approval: ToolApprovalState, ctx: Approva
     const reason = (decision.reason ?? "").trim() || "No reason provided";
     throw new Error(`Tool execution denied by user. Reason: ${reason}`);
   }
+  if (decision.alwaysAllowInSession && ctx.sessionAllowKey) allowToolForSession(ctx.conversationId, ctx.sessionAllowKey);
   ctx.sink({ kind: "tool_approval_updated", toolCallId: ctx.toolCallId, approvalState: { type: "approved" } });
   return true;
 }

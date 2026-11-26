@@ -1,7 +1,8 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { FoldVertical, Loader2, ShieldAlert } from "lucide-react";
+import { FoldVertical, Loader2, Puzzle, ShieldAlert, TriangleAlert } from "lucide-react";
 
+import { usePluginName } from "~/components/message/parts/plugin-attribution";
 import { useConversationEngineStatus } from "~/stores/conversation-store";
 import { useCompressStore, useConversationCompressing } from "~/stores/compress-store";
 
@@ -35,6 +36,9 @@ export function EngineStatusBar({ conversationId }: { conversationId: string | n
   // AbortController)。pi 自动压缩(threshold/overflow)发生在生成流内、无本端句柄,
   // 天然不显示中止钮也不响应 Esc——自动维护动作不该被误按打断。
   const cancellable = useConversationCompressing(conversationId);
+  // 等的是插件的对话框(P6.3):写「插件 X 在等你回答」,不说「审批」。
+  const dialog = status?.phase === "awaiting_approval" ? status.dialog : undefined;
+  const dialogPlugin = usePluginName(dialog?.source ?? "");
   const canInterrupt = status?.phase === "compacting" && cancellable;
 
   // Esc 中止(Codex 语义:Esc to interrupt):bubble 阶段监听 + defaultPrevented 检查,
@@ -54,13 +58,19 @@ export function EngineStatusBar({ conversationId }: { conversationId: string | n
   if (!status) return null;
 
   const text =
-    status.phase === "retrying"
+    status.phase === "unresponsive"
+      ? t("conversations.engine_status.unresponsive")
+      : status.phase === "retrying"
       ? t("conversations.engine_status.retrying", {
           attempt: status.attempt ?? 1,
           max: status.maxAttempts ?? 1,
         })
       : status.phase === "awaiting_approval"
-        ? t("conversations.awaiting_approval.status")
+        ? dialog
+          ? dialogPlugin
+            ? t("conversations.awaiting_approval.plugin_status", { plugin: dialogPlugin })
+            : t("conversations.awaiting_approval.plugin_status_unknown")
+          : t("conversations.awaiting_approval.status")
         : status.reason === "threshold" || status.reason === "overflow"
           ? t("conversations.engine_status.compacting_auto")
           : status.progress
@@ -87,10 +97,16 @@ export function EngineStatusBar({ conversationId }: { conversationId: string | n
   // 压缩相用折叠图标+文字呼吸(pulse),重试相保留 spinner(旋转更贴"重试中"语义)。
   return (
     <div className="mx-auto mb-2 flex w-full max-w-3xl items-center gap-2 px-4 text-muted-foreground text-xs">
-      {status.phase === "retrying" ? (
+      {status.phase === "unresponsive" ? (
+        <TriangleAlert className="size-3.5 shrink-0 text-warning" />
+      ) : status.phase === "retrying" ? (
         <Loader2 className="size-3.5 shrink-0 animate-spin" />
       ) : status.phase === "awaiting_approval" ? (
-        <ShieldAlert className="size-3.5 shrink-0 text-warning" />
+        dialog ? (
+          <Puzzle className="size-3.5 shrink-0 text-primary" />
+        ) : (
+          <ShieldAlert className="size-3.5 shrink-0 text-warning" />
+        )
       ) : (
         <FoldVertical className="size-3.5 shrink-0" />
       )}

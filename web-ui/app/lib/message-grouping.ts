@@ -8,7 +8,7 @@
 //   * 失败的工作区动作(被拒/错误/bash 非零退出——失败就该大声,例行成功保持安静);
 // - 正文(text/媒体/loading)是切卡分界:模型"说一句话"即结束当前思考链。
 
-import type { ReasoningPart, ToolPart, UIMessagePart } from "~/types";
+import type { NoticePart, ReasoningPart, ToolPart, UIMessagePart } from "~/types";
 
 import { isFailedWorkspaceAction } from "./workspace-tool-model";
 
@@ -22,6 +22,12 @@ export type ThinkingStep =
   | {
       type: "tool";
       tool: ToolPart;
+      partIndex: number;
+    }
+  | {
+      // 运行时通知(APP 一轮中途到达的,如后台命令退出):不是正文,与工具调用同列为一步。
+      type: "notice";
+      notice: NoticePart;
       partIndex: number;
     };
 
@@ -88,6 +94,11 @@ export function groupMessageParts(parts: UIMessagePart[]): MessagePartBlock[] {
 
     if (part.type === "reasoning") {
       pushThinkingStep({ type: "reasoning", reasoning: part, partIndex: index }, index);
+      return;
+    }
+
+    if (part.type === "notice") {
+      pushThinkingStep({ type: "notice", notice: part, partIndex: index }, index);
       return;
     }
 

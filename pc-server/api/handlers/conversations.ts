@@ -1,7 +1,7 @@
 // api/handlers/conversations.ts — 会话路由（stream、batch-delete、列表/分页/搜索、单会话子路由）
 // 纪律：纯搬迁自 server.ts routeApi()；生成编排（generateAnswer 等）仍在 server.ts，经导入使用。
 
-import type { Conversation, ConversationSnapshotEventDto, ConversationSnapshotMetaEventDto, EngineStatusEventDto, JsonValue, MessageNode, MessagePart } from "../../foundation/types";
+import type { Conversation, ConversationSnapshotEventDto, ConversationSnapshotMetaEventDto, EngineStatusEventDto, EngineUiResponseDto, JsonValue, MessageNode, MessagePart } from "../../foundation/types";
 import type { ConversationListDto, ConversationNodesPageDto, MessageSearchResultDto, PagedResult } from "../../foundation/types";
 import { applyPlaceholders, id, message, textFromParts } from "../../foundation/utils";
 import { CodedError } from "../../foundation/errors";
@@ -9,15 +9,18 @@ import { state } from "../../persistence/json-store";
 import {
   getConversation,
   persistConversation,
+  persistForkedConversation,
   toListDto,
   toMessageNodeDtos,
   truncateConversationForRegenerate,
 } from "../../conversations";
 import { getConversationsDb } from "../../conversations";
+import { prewarmEngineFor, resetEngineHosts } from "../../engines";
 import { checkoutConversation, registerConversation, releaseConversation } from "../../conversations/working-set";
 import { searchMessageFts } from "../../conversations/fts";
 import { listConversationMetas, pagedConversationMetas } from "../../conversations/read-queries";
 import { applyInputRegexTransformParts } from "../../assistants/index";
+import { patchedSelection, splitSelection } from "../../assistants/extension-selection";
 import { findModel } from "../../model-providers/index";
 import { error, json, readJson } from "../request";
 import { conversationNegotiationToken } from "../snapshot-negotiation";
@@ -38,9 +41,11 @@ import { deleteConversationsById, ensureConversation, findAssistant, finishInter
 import { forkConversationTitle } from "../../conversations/fork-title";
 import { editQueuedMessage, enqueueMessage, holdMessageQueue, pauseMessageQueue, releaseMessageQueueHold, removeQueuedMessage, resumeMessageQueue, waitForQueuedReply } from "../../conversations/message-queue";
 import { pushSteeringMessage, removeSteeringMessage } from "../../conversations/steering-channel";
-import { abortGeneration, awaitingApproval, compressing, generating } from "../../conversations/generation-state";
+import { abortGeneration, compressing, generating, standingEngineStatuses } from "../../conversations/generation-state";
 import { getWorkspace } from "../../workspace";
-import { resolveToolApproval } from "../../inference-engine/approval-gate";
+import { allowToolForSession, resolveToolApproval } from "../../inference-engine/approval-gate";
+import { appToolSessionAllowKey } from "../../tools/approval";
+import { engineDialogDecision, engineUiSnapshot, pendingEngineDialogKind } from "../../conversations/engine-interaction";
 import { finishToolParts, stripLoadingPlaceholder } from "../../inference-engine/parts";
 
 export async function handleConversationRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
@@ -111,6 +116,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
   if (conversationStream) {
     const conversation = getConversation(conversationStream[1]);
     if (!conversation) return error("Conversation not found", 404);
+    // P7.2.6:打开会话即预热它要用的引擎宿主进程(工作区会话),首轮不必等启动。
+    prewarmEngineFor(conversation);
     // I-1(专题2)快照协商:客户端带上缓存快照的令牌,与当前令牌一致 → 首帧只发轻量
     // snapshot_meta(客户端继续用缓存),大会话"切走再切回"不再整体重传。令牌不一致或
     // 未携带 → 照常全量快照。令牌语义见 api/snapshot-negotiation.ts。
@@ -120,27 +127,15 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       clientToken && clientToken === currentToken
         ? ["snapshot_meta", { type: "snapshot_meta", seq: Date.now(), conversationId: conversation.id, updateAt: conversation.updateAt, isGenerating: generating.has(conversation.id), negotiationToken: currentToken, serverTime: Date.now() } satisfies ConversationSnapshotMetaEventDto]
         : ["snapshot", { type: "snapshot", seq: Date.now(), conversation: toSnapshotConversationDto(conversation, generating.has(conversation.id)), serverTime: Date.now(), negotiationToken: currentToken } satisfies ConversationSnapshotEventDto];
-    // engine-status 帧是瞬态语义(重连即重置),压缩跨页/重连存活靠这份连接期快照:
-    // 压缩进行中(compressing 注册表,服务端权威)则补发状态条帧(含 startedAt,
-    // "已处理 xx秒"计时跨重连连续),切页回来即恢复显示。
-    const compressStartedAt = compressing.get(conversation.id);
-    // 域4-1:审批等待同哲学——等待中(awaitingApproval 注册表)补发琥珀态帧,侧栏/
-    // 标签双态点与"已等待 xx秒"跨切页/重连续存。压缩与审批互斥(压缩时无工具执行),
-    // 但快照逻辑各自独立判定,不互斥假设。
-    const pendingApproval = awaitingApproval.get(conversation.id);
-    const statusFrames: [string, JsonValue | object][] = [];
-    if (compressStartedAt) {
-      statusFrames.push(["engine-status", { busy: true, phase: "compacting", startedAt: compressStartedAt } satisfies EngineStatusEventDto]);
-    }
-    if (pendingApproval) {
-      statusFrames.push(["engine-status", {
-        busy: true,
-        phase: "awaiting_approval",
-        startedAt: pendingApproval.startedAt,
-        ...(pendingApproval.toolName ? { toolName: pendingApproval.toolName } : {}),
-        ...(pendingApproval.summary ? { summary: pendingApproval.summary } : {}),
-      } satisfies EngineStatusEventDto]);
-    }
+    // engine-status 帧是瞬态语义(重连即重置),压缩、审批等待、引擎无响应跨页/重连存活靠这份连接期快照
+    // (generation-state 的注册表,服务端权威;含 startedAt,"已处理/已等待 xx秒"计时跨重连连续),切页回来即恢复显示。
+    // 压缩与审批互斥(压缩时无工具执行),但快照逻辑各自独立判定,不互斥假设。
+    const statusFrames: [string, JsonValue | object][] = standingEngineStatuses(conversation.id).map(
+      (status) => ["engine-status", status satisfies EngineStatusEventDto],
+    );
+    // 插件界面(P5.5):开着的对话框、状态条目、挂件同样跨切页 / 重连恢复。
+    const engineUi = engineUiSnapshot(conversation.id);
+    if (engineUi) statusFrames.push(["engine-ui", engineUi]);
     const initialFrames: [string, JsonValue | object][] = [initialFrame, ...statusFrames];
     return openSse(
       () => initialFrames,
@@ -162,18 +157,21 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       deleteConversationsById(new Set([conversationId]));
       return new Response(null, { status: 204 });
     }
-    // messages POST 的 body 在 ensureConversation 之前读:工作区绑定是创建期属性,
-    // 必须随建档请求生效(会话首条消息才建档,事后无绑定时机)。body 只读这一次,
-    // 下方 messages 分支复用。绑定前校验工作区存在,防悬空引用。
-    let messagesBody: { parts?: JsonValue[]; workspaceId?: string } | null = null;
+    // messages POST 的 body 在 ensureConversation 之前读:工作区绑定与新会话草稿里的拓展选择是创建期
+    // 属性,必须随建档请求生效(会话首条消息才建档)。body 只读这一次,下方 messages 分支复用。
+    // 绑定前校验工作区存在,防悬空引用。
+    let messagesBody: { parts?: JsonValue[]; workspaceId?: string; extensionSelection?: unknown } | null = null;
     if (sub === "messages" && request.method === "POST") {
-      messagesBody = await readJson<{ parts?: JsonValue[]; workspaceId?: string }>(request);
+      messagesBody = await readJson<{ parts?: JsonValue[]; workspaceId?: string; extensionSelection?: unknown }>(request);
       if (messagesBody.workspaceId && !getWorkspace(String(messagesBody.workspaceId))) {
         return error("Workspace not found", 404);
       }
     }
     const conversation = (sub === "messages" || sub === "system-prompt") && request.method === "POST"
-      ? ensureConversation(conversationId, messagesBody?.workspaceId ? { workspaceId: String(messagesBody.workspaceId) } : undefined)
+      ? ensureConversation(conversationId, {
+          workspaceId: messagesBody?.workspaceId ? String(messagesBody.workspaceId) : null,
+          extensionSelection: messagesBody?.extensionSelection,
+        })
       : getConversation(conversationId);
     if (!conversation) return error("Conversation not found", 404);
     // DB-first:整个子路由块持有引用——translate/OCR 等长 await 期间实例不得被 sweep
@@ -301,16 +299,12 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       broadcastConversation(conversation);
       return json({ status: "updated" });
     }
-    if (sub === "injections" && request.method === "POST") {
-      // 专题9:会话级注入/世界书绑定(仅当助手开启 allowConversationPromptInjection 时
-      // 前端才会调用;后端不强校验开关——存下无害,生成侧只在开关开时消费)。
-      const body = await readJson<{ modeInjectionIds?: unknown; lorebookIds?: unknown }>(request);
-      const toIds = (value: unknown) => (Array.isArray(value) ? value.map((v) => String(v)) : undefined);
-      const modeIds = toIds(body.modeInjectionIds);
-      const lorebookIds = toIds(body.lorebookIds);
-      if (modeIds) conversation.modeInjectionIds = modeIds;
-      if (lorebookIds) conversation.lorebookIds = lorebookIds;
-      conversation.updateAt = Date.now();
+    if (sub === "extension-selection" && request.method === "POST") {
+      // 左下角「拓展」只写这个会话(D19):body 是改了的那几项(形状同助手字段),叠在会话此刻的
+      // 实际选择上整组写回。id 不校验存在性——取数时与「全局可用」取交集,失效的 id 自然不生效。
+      // 不改 updateAt:换个拓展不算会话有新内容,列表顺序不动。
+      const body = await readJson<unknown>(request);
+      Object.assign(conversation, splitSelection(patchedSelection(conversation, findAssistant(conversation.assistantId), body)));
       persistConversation(conversation);
       broadcastConversation(conversation);
       return json({ status: "updated" });
@@ -471,6 +465,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         return error("已有压缩正在进行，请稍候", 409, "compress_in_progress");
       }
       const body = await readJson<{ messageId?: string }>(request);
+      // P7.2.6:重新生成是用户的手动重试——引擎宿主进程因连续失败停止重启的,允许再起。
+      resetEngineHosts();
       // 2-1:对齐 send 入口——先中止进行中的旧流。否则 generateAnswer 的 generating.set
       // 直接顶掉旧 controller,旧流成为无主流:与新流同写一个节点,或对已摘除节点持续
       // touchStream 广播幽灵帧。UI 虽屏蔽流式中的按钮,但 API 层必须自带守卫。
@@ -776,18 +772,27 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         // "切点在场"自校验自动跳过,fork 无需感知压缩语义(P5 的 jsonl 副本复制随层退役)。
       };
       registerConversation(fork); // fork 树复制自内存源会话,内存即权威
-      persistConversation(fork);
+      // 引擎私有条目随被复制的消息一起进新会话(P3.6),分支续聊仍能原样取用。
+      persistForkedConversation(fork, conversation.id);
       broadcastList();
       return json({ conversationId: fork.id });
     }
     if (sub === "tool-approval" && request.method === "POST") {
-      const body = await readJson<{ toolCallId?: string; approved?: boolean; reason?: string; answer?: string }>(request);
+      const body = await readJson<{
+        toolCallId?: string;
+        approved?: boolean;
+        reason?: string;
+        answer?: string;
+        alwaysAllowInSession?: boolean;
+      }>(request);
       let changed = false;
+      let approvedToolName = "";
       for (const node of conversation.messages) {
         for (const msg of node.messages) {
           msg.parts = msg.parts.map((part) => {
             if (!part || typeof part !== "object" || Array.isArray(part) || part.type !== "tool" || part.toolCallId !== body.toolCallId) return part;
             changed = true;
+            approvedToolName = part.toolName;
             return {
               ...part,
               approvalState: body.approved
@@ -814,8 +819,15 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         ...(body.reason ? { reason: String(body.reason) } : {}),
         // ask_user:把答复载荷一并送达在途等待者(pi 引擎 execute 据此把答案回灌模型)。
         ...(body.answer != null ? { answer: String(body.answer) } : {}),
+        // 「此会话内总是允许该工具」:只对带免问键的审批(插件工具、工作区会话里的 MCP 工具)生效,见 approval-flow。
+        ...(body.approved === true && body.alwaysAllowInSession === true ? { alwaysAllowInSession: true } : {}),
       });
-      if (consumed || resolveEngineForConversation(conversation).resumeSemantics === "run-and-suspend") {
+      // 没有在途等待者(工作区不可用时由聊天引擎兜底,走暂停→续跑):「此会话内总是允许」在这里记,卡上的按钮照样生效。
+      if (!consumed && body.approved === true && body.alwaysAllowInSession === true) {
+        const sessionAllowKey = appToolSessionAllowKey(approvedToolName, conversation);
+        if (sessionAllowKey) allowToolForSession(conversation.id, sessionAllowKey);
+      }
+      if (consumed || resolveEngineForConversation(conversation).capabilities.resumeSemantics === "run-and-suspend") {
         return json({ status: "accepted" }, { status: 202 });
       }
       const hasPendingTools = conversation.messages.some((node) =>
@@ -826,6 +838,24 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
         return json({ status: "accepted" }, { status: 202 });
       }
       return json({ status: "updated" });
+    }
+    // 插件对话框的回答(P5.5)。对话框不是工具卡,不改会话数据,只唤醒在等的引擎侧调用。
+    if (sub === "ui-response" && request.method === "POST") {
+      const body = await readJson<Partial<EngineUiResponseDto>>(request);
+      const requestId = String(body.requestId ?? "");
+      const kind = pendingEngineDialogKind(conversation.id, requestId);
+      if (!kind) return error("Dialog not found", 404);
+      let decision;
+      if (body.cancelled === true) {
+        decision = engineDialogDecision({ cancelled: true });
+      } else {
+        const value = (body as { value?: unknown }).value;
+        const valid = kind === "confirm" ? typeof value === "boolean" : typeof value === "string";
+        if (!valid) return error("Invalid dialog answer", 400);
+        decision = engineDialogDecision({ cancelled: false, value: value as string | boolean });
+      }
+      resolveToolApproval(conversation.id, requestId, decision);
+      return json({ status: "accepted" }, { status: 202 });
     }
     } finally {
       releaseConversation(conversation.id);

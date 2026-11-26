@@ -84,6 +84,7 @@
       "compacting_auto": "Context near limit, auto-compacting…",
       "compacting_progress": "Compacting context ({{current}}/{{total}})",
       "retrying": "Upstream error, retrying automatically ({{attempt}}/{{max}})…",
+      "unresponsive": "Engine not responding, waiting for it to recover…",
       "elapsed_seconds": "Elapsed {{seconds}}s",
       "elapsed_minutes": "Elapsed {{minutes}}m {{seconds}}s",
       "interrupt": "Interrupt (Esc)"
@@ -93,7 +94,20 @@
       "elapsed_seconds": "Waiting {{seconds}}s",
       "elapsed_minutes": "Waiting {{minutes}}m {{seconds}}s",
       "notification_title": "AI is waiting for your approval",
-      "notification_body": "\"{{summary}}\" awaits your approval"
+      "notification_body": "\"{{summary}}\" awaits your approval",
+      "plugin_status": "Plugin {{plugin}} is waiting for your answer",
+      "plugin_status_unknown": "A plugin is waiting for your answer",
+      "plugin_notification_body": "\"{{summary}}\" needs your answer"
+    },
+    "plugin_dialog": {
+      "cancel": "Cancel",
+      "yes": "Yes",
+      "no": "No",
+      "submit": "Submit",
+      "send_failed": "The answer wasn't delivered. Please try again.",
+      "save": "Save",
+      "save_hint": "{{shortcut}} to save · Esc to cancel",
+      "queued": "{{count}} more"
     },
     "translate": {
       "dialog_title": "Select translation language",
@@ -124,7 +138,15 @@
       "evening": "Good evening",
       "night": "Up late"
     },
-    "greeting_line": "{{greeting}} — how can I help?"
+    "greeting_line": "{{greeting}} — how can I help?",
+    "commands": {
+      "fork_nothing": "There is no reply to fork yet",
+      "compact_nothing": "There are no messages to compact yet",
+      "needs_conversation": "{{command}} works inside a conversation: send a message first",
+      "busy": "The conversation is generating or compacting; run the command once it finishes",
+      "aborted": "{{command}} was stopped",
+      "failed": "{{command}} failed: {{error}}"
+    }
   },
   "workspace": {
     "tabs": {

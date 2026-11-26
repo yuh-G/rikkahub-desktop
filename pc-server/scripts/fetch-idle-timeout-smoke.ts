@@ -6,7 +6,7 @@
 // 在某阈值被 Bun 内部 TimeoutError 杀掉。对照组(裸 fetch)与 timeout:0 组「并行」打
 // 同一服务器同延迟 —— 一次 delayMs 跑完两组,省一半时间且条件完全一致更严谨。
 //
-// 服务器显式 idleTimeout:0!Bun.serve 默认 10s 就放弃空闲请求(server.ts:174 我们生产
+// 服务器显式 idleTimeout:0!Bun.serve 默认 10s 就放弃空闲请求(server-main.ts 里我们生产
 // 服务器同样显式 idleTimeout:0),不设它服务器会先于客户端在 10s 关连接,测出的就是服务器
 // idleTimeout 而非客户端 fetch 的 300s —— 首版 305s 实验正是这样作废的(ECONNRESET@12s)。
 //

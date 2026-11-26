@@ -1,17 +1,15 @@
-// 日志问题 1:工作区 LLM 请求接入统一日志管线——ALS 上下文圈定 + origin 精准匹配 +
-// 流式/错误两种记录口径。离线测试:先把 globalThis.fetch 换成 fake,再装拦截器
-// (fake 即拦截器的 inner),全程零真实网络。
-// 注意:bun 的 mock.module 全局生效,展开真实模块只覆盖 addLog(tool-loop.test 同款纪律)。
-import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+// pi google 轨请求日志壳(P2.5 收窄):只为拒收自定义 fetch 的轨开上下文;上下文内 + origin 匹配才记,
+// 记录语义与模型出口共用 recordModelResponse。离线测试:先把 globalThis.fetch 换成 fake,再装壳
+// (fake 即壳的 inner),全程零真实网络。
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
-import * as actualLogs from "../api/logs";
+import type { ModelRequestRecord } from "../engines/contract";
+import { googleRequestLogContextFor, installGoogleRequestLogShell, runWithGoogleRequestLog } from "./llm-request-log";
 
-const logged: Array<Record<string, unknown>> = [];
-mock.module("../api/logs", () => ({ ...actualLogs, addLog: (entry: Record<string, unknown>) => logged.push(entry) }));
+const logged: ModelRequestRecord[] = [];
+const log = (record: ModelRequestRecord) => void logged.push(record);
 
-const { installLlmRequestLogInterceptor, llmLogContextFor, runWithLlmRequestLog } = await import("./llm-request-log");
-
-// fake inner fetch:按 URL 决定响应形态。装拦截器前替换,拦截器闭包捕获它为 inner。
+// fake inner fetch:按 URL 决定响应形态。装壳前替换,壳的闭包捕获它为 inner。
 let fakeResponder: (url: string) => Response | Promise<Response> = () => new Response("ok", { status: 200 });
 // async 包装:responder 的 throw 变 rejection(真实 fetch 从不同步抛,fake 保持同语义)。
 const fakeFetch = (async (input: string | URL | Request) => {
@@ -26,59 +24,60 @@ let realFetch: typeof fetch;
 beforeAll(() => {
   realFetch = globalThis.fetch;
   globalThis.fetch = fakeFetch;
-  installLlmRequestLogInterceptor(); // 闭包捕获 fakeFetch 为 inner(幂等,进程内一次)
+  installGoogleRequestLogShell(); // 闭包捕获 fakeFetch 为 inner(幂等,进程内一次)
 });
 afterAll(() => {
   globalThis.fetch = realFetch;
 });
 
-const CTX = { providerId: "p1", providerName: "测试供应商", origin: "https://api.example.com" };
+const GRANT = { providerId: "p1", providerName: "测试供应商", baseUrl: "https://generativelanguage.example.com/v1beta" };
+const CTX = googleRequestLogContextFor("google-generative-ai", GRANT, log);
+const ENDPOINT = "https://generativelanguage.example.com/v1beta/models/g:streamGenerateContent?alt=sse";
 
 async function flushLogs(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
-describe("工作区 LLM 请求日志壳", () => {
-  test("llmLogContextFor:提取 origin;非法 baseUrl 返回 null(该轮不记不炸)", () => {
-    expect(llmLogContextFor({ id: "a", name: "n", baseUrl: "https://api.moonshot.cn/v1" })).toEqual({
-      providerId: "a",
-      providerName: "n",
-      origin: "https://api.moonshot.cn",
-    });
-    expect(llmLogContextFor({ id: "a", name: "n", baseUrl: "not-a-url" })).toBeNull();
+describe("pi google 轨请求日志壳", () => {
+  test("上下文只为 google 两条轨开;其余轨与非法 baseUrl 返回 null(由模型出口记 / 不记不炸)", () => {
+    expect(CTX).toMatchObject({ identity: { providerId: "p1", providerName: "测试供应商" }, origin: "https://generativelanguage.example.com" });
+    expect(googleRequestLogContextFor("google-vertex", GRANT, log)).not.toBeNull();
+    expect(googleRequestLogContextFor("openai-completions", GRANT, log)).toBeNull();
+    expect(googleRequestLogContextFor("anthropic-messages", GRANT, log)).toBeNull();
+    expect(googleRequestLogContextFor("google-generative-ai", { ...GRANT, baseUrl: "not-a-url" }, log)).toBeNull();
+    expect(googleRequestLogContextFor("google-generative-ai", GRANT, undefined)).toBeNull();
   });
 
-  test("上下文内 + origin 匹配:LLM 请求记入管线(kind=provider:agent,含请求体与时长)", async () => {
+  test("上下文内 + origin 匹配:记入(含请求体与时长,流式不读响应体)", async () => {
     logged.length = 0;
-    fakeResponder = () => new Response("stream...", { status: 200 });
-    await runWithLlmRequestLog(CTX, () =>
-      fetch("https://api.example.com/v1/chat/completions", { method: "POST", body: '{"model":"m1"}' }),
-    );
+    fakeResponder = () => new Response("data: ...", { status: 200 });
+    await runWithGoogleRequestLog(CTX, () => fetch(ENDPOINT, { method: "POST", body: '{"contents":[]}' }));
     await flushLogs();
     expect(logged.length).toBe(1);
     expect(logged[0]).toMatchObject({
       providerId: "p1",
       providerName: "测试供应商",
-      url: "https://api.example.com/v1/chat/completions",
+      url: ENDPOINT,
       ok: true,
       status: 200,
-      kind: "provider:agent",
       method: "POST",
-      requestBody: '{"model":"m1"}',
+      requestBody: '{"contents":[]}',
     });
-    expect(typeof logged[0].durationMs).toBe("number");
+    expect(typeof logged[0]!.durationMs).toBe("number");
+    expect(logged[0]!.responseBody).toBeUndefined();
   });
 
   test("上下文内但 origin 不匹配(工具的搜索/抓取请求):透传不记,零双记", async () => {
     logged.length = 0;
-    await runWithLlmRequestLog(CTX, () => fetch("https://search.other.com/api"));
+    await runWithGoogleRequestLog(CTX, () => fetch("https://search.other.com/api"));
     await flushLogs();
     expect(logged.length).toBe(0);
   });
 
-  test("无上下文(聊天引擎路径):透传不记(它有自己的调用点日志)", async () => {
+  test("无上下文(其余轨/聊天引擎):透传不记", async () => {
     logged.length = 0;
-    await fetch("https://api.example.com/v1/chat/completions");
+    await fetch(ENDPOINT);
+    await runWithGoogleRequestLog(null, () => fetch(ENDPOINT));
     await flushLogs();
     expect(logged.length).toBe(0);
   });
@@ -86,12 +85,12 @@ describe("工作区 LLM 请求日志壳", () => {
   test("非 2xx:记录错误体(截断)与 error 字段", async () => {
     logged.length = 0;
     fakeResponder = () => new Response('{"error":{"message":"quota exceeded"}}', { status: 429 });
-    await runWithLlmRequestLog(CTX, () => fetch("https://api.example.com/v1/chat/completions", { method: "POST" }));
+    await runWithGoogleRequestLog(CTX, () => fetch(ENDPOINT, { method: "POST" }));
     await flushLogs();
     expect(logged.length).toBe(1);
     expect(logged[0]).toMatchObject({ ok: false, status: 429 });
-    expect(String(logged[0].responseBody)).toContain("quota exceeded");
-    expect(String(logged[0].error)).toContain("quota exceeded");
+    expect(String(logged[0]!.responseBody)).toContain("quota exceeded");
+    expect(String(logged[0]!.error)).toContain("quota exceeded");
   });
 
   test("网络异常(reject):ok=false status=0,错误摘要入档,promise 语义不变(照常抛给 pi)", async () => {
@@ -99,24 +98,22 @@ describe("工作区 LLM 请求日志壳", () => {
     fakeResponder = () => {
       throw new Error("connect ECONNREFUSED");
     };
-    await expect(runWithLlmRequestLog(CTX, () => fetch("https://api.example.com/v1/x"))).rejects.toThrow(
-      "ECONNREFUSED",
-    );
+    await expect(runWithGoogleRequestLog(CTX, () => fetch(ENDPOINT))).rejects.toThrow("ECONNREFUSED");
     await flushLogs();
     expect(logged.length).toBe(1);
     expect(logged[0]).toMatchObject({ ok: false, status: 0 });
-    expect(String(logged[0].error)).toContain("ECONNREFUSED");
+    expect(String(logged[0]!.error)).toContain("ECONNREFUSED");
   });
 
   test("嵌套异步(pi SDK 内部多层 await):ALS 上下文穿透", async () => {
     logged.length = 0;
     fakeResponder = () => new Response("ok", { status: 200 });
-    await runWithLlmRequestLog(CTX, async () => {
+    await runWithGoogleRequestLog(CTX, async () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
-      await fetch("https://api.example.com/v1/messages");
+      await fetch(ENDPOINT);
     });
     await flushLogs();
     expect(logged.length).toBe(1);
-    expect(logged[0].url).toBe("https://api.example.com/v1/messages");
+    expect(logged[0]!.url).toBe(ENDPOINT);
   });
 });

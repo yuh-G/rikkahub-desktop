@@ -1,4 +1,5 @@
 import type { Settings, UIMessagePart } from "~/types";
+import type { ExtensionSelection } from "@server/assistants/extension-selection";
 
 export interface Draft {
   text: string;
@@ -12,6 +13,11 @@ export interface SettingsSlice {
 
 export interface ChatInputSlice {
   drafts: Record<string, Draft>;
+  /** 还没落库的新会话在左下角「拓展」里改过的几项(D19),键同 drafts;随第一条消息带给建会话的
+   *  请求,没改过的类别按助手的默认。与文字草稿分开存:编辑回填会整份替换文字草稿。 */
+  extensionDrafts: Record<string, Partial<ExtensionSelection>>;
+  patchExtensionDraft: (draftKey: string, patch: Partial<ExtensionSelection>) => void;
+  clearExtensionDraft: (draftKey: string) => void;
   // 是否正在上传文件。放在全局 store 而非组件本地,是为了让输入框和全窗口投放区
   // 共享同一份 busy 状态:任一入口触发上传时,另一处的 UI(转圈、禁用按钮)同步响应,
   // 并在并发上传时互斥。

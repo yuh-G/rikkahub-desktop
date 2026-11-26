@@ -33,6 +33,12 @@ import { isLoopbackRequest } from "../net-context";
 import { sseFrame } from "../sse";
 import { updateSettings } from "../../app-config";
 import { recoverMissingAssistants, scanMissingAssistants } from "../../assistants/recovery";
+import { reinstallMissingPlugins } from "./plugins";
+
+/** 备份不带插件包:恢复完把包不在的市场 / Git 来源插件放到后台重装(不等它,结果进错误中心)。 */
+function afterRestore(): void {
+  void reinstallMissingPlugins();
+}
 
 export async function handleDataRoutes(request: Request, _url: URL, path: string): Promise<Response | null> {
   // 数据恢复(对齐 APP b9c0d3b7,PC 落在备份与恢复页):会话引用了已删助手的,
@@ -81,6 +87,7 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
     if (!fileName || fileName.includes("/") || fileName.includes("\\")) return error("Invalid WebDAV backup file name", 400);
     try {
       await webDavRestore(state.settings.webDavConfig, fileName);
+      afterRestore();
       // 恢复后 state.settings 含刚落盘的 webPasswordHash/OAuth 凭证,响应走与
       // settings GET/SSE 同一净化纪律(auth.ts stripAuthSecrets),绝不原样出站。
       return json({ status: "restored", settings: stripAuthSecrets(state.settings) });
@@ -129,6 +136,7 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
           await webDavRestore(state.settings.webDavConfig, fileName, (message, percent) => {
             send("progress", { message, percent: percent ?? 0 });
           });
+          afterRestore();
           send("done", { status: "restored", settings: stripAuthSecrets(state.settings) });
         } catch (err) {
           send("error", { error: friendlyRequestError(err, state.settings.proxyConfig) });
@@ -177,6 +185,7 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
     if (!fileName || fileName.includes("\\")) return error("Invalid S3 backup file name", 400);
     try {
       await s3Restore(state.settings.s3Config, fileName);
+      afterRestore();
       // 同 WebDAV restore:恢复后的 settings 必须经 stripAuthSecrets 才能回传前端。
       return json({ status: "restored", settings: stripAuthSecrets(state.settings) });
     } catch (err) {
@@ -224,6 +233,7 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
           await s3Restore(state.settings.s3Config, fileName, (message, percent) => {
             send("progress", { message, percent: percent ?? 0 });
           });
+          afterRestore();
           send("done", { status: "restored", settings: stripAuthSecrets(state.settings) });
         } catch (err) {
           send("error", { error: friendlyRequestError(err, state.settings.proxyConfig) });
@@ -457,6 +467,7 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
 
       if (isZip) {
         const summary = applyAndroidZipBackupFromPath(onDiskPath);
+        afterRestore();
         const elapsed = ((Date.now() - importStartedAt) / 1000).toFixed(1);
         console.log(`[import] Android zip processed in ${elapsed}s: settings=${summary.settingsImported} files=${summary.filesImported} skills=${summary.skillsImported} convs=${summary.conversationsImported} dbErr=${summary.dbReadError ?? "none"}`);
         const messages = [
@@ -479,6 +490,7 @@ export async function handleDataRoutes(request: Request, _url: URL, path: string
       const text = readFileSync(onDiskPath, "utf-8");
       const body = JSON.parse(text) as { state?: Partial<State>; skills?: unknown } & Partial<State>;
       const jsonReport = applyBackupPayload(body);
+      afterRestore();
       const elapsed = ((Date.now() - importStartedAt) / 1000).toFixed(1);
       console.log(`[import] PC json processed in ${elapsed}s`);
       const jsonCustomJsWarning = customJsImportWarning(customJsBefore, state.settings);

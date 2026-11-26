@@ -133,9 +133,10 @@ export interface AssistantProfile {
   mcpToolOverrides?: Record<string, Record<string, McpToolOverride>>;
   modeInjectionIds?: string[];
   lorebookIds?: string[];
+  /** 本助手启用的引擎插件 id(插件记录在 Settings.enginePlugins;PC-only,导出给 APP 时剥离)。 */
+  enginePluginIds?: string[];
   allowConversationSystemPrompt?: boolean;
-  // 专题9:独立对话提示词注入(对齐安卓 Assistant.allowConversationPromptInjection)。
-  // 开启后 modeInjectionIds/lorebookIds 的生效来源改为会话上的同名字段。
+  // 与 APP 共用的助手字段,界面不再提供开关(会话层选择成为常态,D19);只为备份往返保留。
   allowConversationPromptInjection?: boolean;
   name: string;
   systemPrompt?: string;
@@ -252,6 +253,8 @@ export interface ProviderProfile {
   models: ProviderModel[];
   promptCaching?: boolean;
   promptCacheTtl?: "5m" | "1h";
+  /** Claude 格式的 API Key 行与 Claude 订阅 — 「缓存预热」,三态,不填按端点取默认(prompt-cache-defaults.ts)。 */
+  promptCacheWarming?: boolean;
   /** OpenAI providers only — 请求附带 prompt_cache_key=会话ID 提高官方端缓存命中(专题12),默认关。 */
   promptCacheKey?: boolean;
   /** OpenAI providers only — 是否在历史回放里把 reasoning_content 回传给上游（默认开启）。对齐安卓 e63d017。 */

@@ -1,142 +1,225 @@
-// engines/index.ts — 引擎抽象契约 + 注册表(T1 路由枚举化)
+// engines/index.ts — 引擎注册表与路由(P2.7 定稿;P7.2.6 pi 改走引擎宿主进程)
 //
-// 定位:把「引擎」从布尔(piRuntime 有/无)提升为一等的、可枚举、可注册的概念。
-// 这是多引擎拓展的唯一接入面——第三引擎(dsh)、第四/五候选(codex/claude-code)
-// 落地时各新增一个 adapter 并注册进 ENGINE_REGISTRY,不改动共享面、不改动已有引擎。
+// 注册表是驱动数组,顺序即优先级。路由只读驱动的声明式能力,不按引擎种类特判:会话工作区可用
+// (workspaceRuntimeForConversation 的三道闸)→ 首个 workspace:"required" 的驱动;否则 → 首个
+// workspace:"none" 的驱动(聊天引擎,排在最后兜底)。路由在生成/压缩入口判定一次并贯穿本次调用,
+// 工作区运行时随判定结果带出(cwd/root 进 TurnInput),执行时不再重判。
 //
-// 最小抽象纪律(防「把 pi 形状烙进公共契约」):EngineRunContext 只含引擎无关输入包
-// (会话 + 消息 + 助手/Provider/模型快照 + 工具执行闭包);引擎专属决策(pi 的工作区
-// runtime、子进程引擎的 spawn 句柄)由各 adapter 在 matches()/run() 内部自行解析,
-// 不进公共契约。进程内引擎(chat/pi)与子进程引擎(dsh/codex,见 T4 骨架)共享同一
-// 输出契约 GenerationEvent,前端永远无感知。
+// pi 驱动跑在引擎宿主进程里(方案 §5.14,D22:发布版只有这一条路,没有同进程开关):这里只有监管器
+// (subprocess-engine/supervisor)和它给的驱动外壳,能力声明取自纯模块 pi-engine/capabilities,主程序不加载 pi。
+// 宿主是应用唯一的 appEngineHost。同进程的 pi 驱动只给测试用(test-utils/in-process-pi 经
+// replaceEngineDriverForTests 换上)。聊天引擎直连(上游错误要以原对象到达编排器的错误归类)。
+// 具体驱动只在本模块实例化,编排器只认契约(engines/engine-agnostic-guard.test.ts 锁定)。新增引擎 = 契约里追加
+// 种类字面量 + 一个驱动 + 本数组一行。
 //
-// 防循环导入:本模块不 import orchestrator;两个引擎的生成函数(callProviderStreaming /
-// runPiWorkspaceGeneration)由编排器在组装注册表时经参数注入。matches() 只做路由判定,
-// 不产副作用。
+// 宿主进程的意外退出、放弃重启经错误中心提示(带码,中英文案在前端);状态变化交给编排器(无响应时给卡住的
+// 会话亮状态条)。记录目录 engineHostRecordsDir 供下次启动清扫(sweepStaleEngines,bootstrap 在就绪前调)。
 
-import type { Assistant, Conversation, Model, Provider } from "../foundation/types";
-import type { GenerationEventSink, GenerationTarget, ToolExecutor } from "../inference-engine/events";
-import type { WorkspaceRuntime } from "../workspace/runtime";
-import { createChatAdapter } from "./chat-adapter";
-import { createPiAdapter } from "./pi-adapter";
+import { bumpAnalyticsEngineRestartCount } from "../app-config/analytics";
+import { engineHostRecordsDir } from "../foundation/paths";
+import { onSystemProxyChange, readSystemProxy } from "../foundation/net";
+import type { Conversation, ProxyConfig } from "../foundation/types";
+import { getStringArray } from "../foundation/utils";
+import { reportError } from "../observability/app-errors";
+import { state } from "../persistence/json-store";
+import { PI_CAPABILITIES } from "../pi-engine/capabilities";
+import { launchEngineHost, type EngineHostProcess } from "../subprocess-engine/host-launch";
+import {
+  EngineHostSupervisor,
+  supervisedDriver,
+  sweepStaleEngineHosts,
+  type SupervisorEvent,
+  type SupervisorState,
+  type UnplannedExitReason,
+} from "../subprocess-engine/supervisor";
+import { workspaceRuntimeForConversation, type WorkspaceRuntime } from "../workspace/runtime";
+import { createChatDriver } from "./chat-driver";
+import type { EngineDriver, EnginePlugin, EnginePluginInspectionDto } from "./contract";
+import { appEngineHost } from "./host";
+import { STRICT_CONTRACT_TRANSPORT } from "./loopback";
+import { pluginNameFromPath } from "./plugins";
 
-/** 引擎种类(开放枚举)。新增引擎 = 追加一个字面量 + 一个 adapter + 注册一行。 */
-export type EngineKind = "chat" | "pi" | "dsh" | "codex" | "claude-code" | (string & {});
+const UNPLANNED_EXIT_CODES: Record<UnplannedExitReason, string> = {
+  crashed: "engine_host_crashed",
+  hung: "engine_host_hung",
+  "stop-ignored": "engine_host_stop_ignored",
+  "launch-failed": "engine_host_launch_failed",
+};
 
-/** 审批续跑语义(替代 orchestrator.ts 写死的 `!piRuntime` 二选一):
- *  - "pause-resume":聊天引擎——待审批工具整批暂停生成,用户逐卡批准后重触发续跑
- *    (resumeApprovedToolParts + hasPendingToolApproval 收尾)。
- *  - "run-and-suspend":pi 引擎——生成保持在跑,单个工具调用挂起等待审批门放行
- *    (approval-gate 汇合),不重触发整轮。
- *  子进程引擎届时按其审批模型声明。 */
-export type EngineResumeSemantics = "pause-resume" | "run-and-suspend";
+const UNPLANNED_EXIT_TEXT: Record<UnplannedExitReason, string> = {
+  crashed: "pi 引擎进程意外退出,已自动重启",
+  hung: "pi 引擎长时间无响应,已强制结束并重启",
+  "stop-ignored": "pi 引擎在停止生成时没有及时响应,已强制结束并重启",
+  "launch-failed": "pi 引擎启动失败,正在重试",
+};
 
-/** steering 能力声明(生成中补发的用户消息如何送达模型):
- *  - "boundary":引擎在「即将构建下一模型请求之前」调用 ctx.onSteerBoundary(),把返回文本
- *    作为 user turn 喂给模型(聊天引擎 = 工具轮边界 + 最终轮;pi = turn_end)。协调器在同一
- *    调用里完成数据层分裂(定格当前节点 / 落库 steer user / 新开 continuation 节点 / 换绑落点),
- *    引擎经 ctx.target 活视图自动跟随。
- *  - "none":引擎无注入位点(单次不透明请求等)。协调器不下发回调,补发消息留在 FIFO 队列由
- *    收尾派发兜底——视觉序仍是 [ai_1, user_2, ai_2],只是晚到生成结束;按构造优雅降级,
- *    不会出现半吸收状态。
- *  必填:新引擎接入时必须显式选择,忘了调回调不会静默丢能力(契约测试锁每个 "boundary"
- *  引擎的真实调用)。 */
-export type EngineSteeringSupport = "boundary" | "none";
+let hostStateHandler: ((hostState: SupervisorState, conversationIds: string[]) => void) | null = null;
 
-/** 引擎无关的生成输入包(编排器入口一次性装配,贯穿本次生成)。 */
-export interface EngineRunContext {
-  conversation: Conversation;
-  /** 流式落点(活视图,协调器持有可换绑实现)。引擎每次现读 target.node/target.message,
-   *  不得解构缓存——steer 边界分裂会把落点换到新开的 continuation 节点。 */
-  target: GenerationTarget;
-  assistant: Assistant;
-  provider: Provider;
-  model: Model;
-  /** 工具执行闭包(协调器注入,内部已挂生成级 signal 与部分输出回写)。 */
-  executeTool: ToolExecutor;
-  /** steering 轮边界(用户问题②,对齐 Codex pending_input):声明 steering:"boundary" 的引擎
-   *  在「即将构建下一模型请求之前」调用,取「生成中补发」的用户消息文本(协调器已同步
-   *  落库、换绑落点并通知 FIFO 队列移除)。返回空数组 = 无注入。声明 "none" 的引擎收不到
-   *  此回调(协调器不下发)。 */
-  onSteerBoundary?: () => string[];
+/** 编排器登记:宿主进程状态变了(带上有调用卡在它上面的会话)。 */
+export function setEngineHostStateHandler(handler: (hostState: SupervisorState, conversationIds: string[]) => void): void {
+  hostStateHandler = handler;
 }
 
-/** 引擎无关的压缩输入包(编排器压缩入口装配,与 EngineRunContext 同哲学:
- *  只含引擎无关输入,引擎专属决策由各 adapter 内部解析)。 */
-export interface EngineCompactContext {
-  conversation: Conversation;
-  assistant: Assistant;
-  provider: Provider;
-  model: Model;
-  /** 执行摘要的模型(「设置 → 模型 → 场景模型」的压缩模型,公共基础设施:配置即对
-   *  所有引擎生效;未配置=会话模型)。与 provider/model 的角色分工:后者是"压缩对象
-   *  的视角"——窗口锚定/富化裁决/上下文极限都按会话模型算,摘要文本由 summarizer
-   *  生成。引擎用不了此模型时(如 pi 映射失败)由 adapter 自行回退会话模型——
-   *  公共设置是偏好不是硬约束,压缩必须总能进行。 */
-  summarizer: { provider: Provider; model: Model };
-  /** 用户附加指示(compress 框的 additionalPrompt)。 */
-  customInstructions: string;
+/** 监管器的状态事件转给编排器(各引擎的监管器共用;测试里自建的监管器也经它)。 */
+export function notifyEngineHostState(hostState: SupervisorState, conversationIds: string[]): void {
+  hostStateHandler?.(hostState, conversationIds);
 }
 
-/** 引擎原生压缩的产出(展示/日志用途)。压缩记录落库(conversation.engineCompactions)
- *  是各引擎注入实现的义务——与生成路径的压缩捕获同一落点、同一 helper。 */
-export interface EngineCompactionResult {
-  summary: string;
-  tokensBefore: number;
-  /** 引擎对压缩后上下文的估算(拿不到为 null)。 */
-  estimatedTokensAfter: number | null;
+/** 「放弃重启」提示里列的插件:pi 的已启用插件记录与开发者路径。 */
+function enabledPiPlugins(): string[] {
+  const records = (state.settings.enginePlugins ?? []).filter((record) => record.engine === "pi" && record.enabled);
+  return [...records.map((record) => record.name), ...getStringArray(state.settings.devPiPluginPaths).map(pluginNameFromPath)];
 }
 
-export interface EngineAdapter {
-  readonly kind: EngineKind;
-  /** 路由判定:该会话是否由本引擎接管。注册表按序取首个命中;chat 恒 true 兜底。 */
-  matches(conversation: Conversation, assistant: Assistant): boolean;
-  readonly resumeSemantics: EngineResumeSemantics;
-  readonly steering: EngineSteeringSupport;
-  /** 驱动一次生成,经 sink 发出 GenerationEvent,返回最终文本(steer 分裂后为当前段口径)。 */
-  run(ctx: EngineRunContext, sink: GenerationEventSink, signal?: AbortSignal): Promise<string>;
-  /** 可选能力:引擎原生压缩(压引擎记忆,UI 历史不动)。每个引擎的压缩机制独立设计
-   *  (prompt/切点语义各异),但共享同一调用面与 engine_status 瞬态状态通道(经 sink,
-   *  广播与终局清条由调用方统一负责)。未声明 = 该引擎无原生压缩,调用方回落
-   *  UI 历史压缩。 */
-  compact?(ctx: EngineCompactContext, sink: GenerationEventSink, signal?: AbortSignal): Promise<EngineCompactionResult>;
+function onPiHostEvent(event: SupervisorEvent): void {
+  if (event.kind === "state") notifyEngineHostState(event.state, piHosts.activeConversations());
+  else reportEngineHostTrouble(event);
 }
 
-/** 生成函数注入形状:编排器把真实实现注入 adapter 工厂,engines/ 与 orchestrator 解耦。 */
-export type ChatRunFn = (
-  ctx: EngineRunContext,
-  sink: GenerationEventSink,
-  signal?: AbortSignal,
-) => Promise<string>;
-/** pi 生成实现签名:除引擎无关输入包外,还需 pi adapter 在 run() 内注入的工作区
- *  runtime(matches() 判定产物,经 WeakMap 透传)。 */
-export type PiRunFn = (
-  ctx: EngineRunContext & { piRuntime: WorkspaceRuntime | null },
-  sink: GenerationEventSink,
-  signal?: AbortSignal,
-) => Promise<string>;
-/** pi 压缩实现签名:与 PiRunFn 同构(引擎无关输入包 + adapter 透传的 runtime)。 */
-export type PiCompactFn = (
-  ctx: EngineCompactContext & { piRuntime: WorkspaceRuntime | null },
-  sink: GenerationEventSink,
-  signal?: AbortSignal,
-) => Promise<EngineCompactionResult>;
-
-/** 组装引擎注册表(编排器在模块加载时调用一次)。顺序即优先级:pi 在前(能力命中
- *  才接管),chat 恒兜底。新增引擎往数组前部插(chat 必须保持最后兜底)。 */
-export function createEngineRegistry(deps: {
-  chatRun: ChatRunFn;
-  piRun: PiRunFn;
-  piCompact: PiCompactFn;
-}): EngineAdapter[] {
-  return [createPiAdapter({ run: deps.piRun, compact: deps.piCompact }), createChatAdapter(deps.chatRun)];
+/** 宿主进程的意外退出、放弃重启 → 错误中心(带码,前端按界面语言渲染)。 */
+export function reportEngineHostTrouble(event: Exclude<SupervisorEvent, { kind: "state" }>): void {
+  if (event.kind === "unplanned-exit") {
+    // 不再重启的那次由 gave-up 提示;主程序退出途中的不提示。看板的「引擎进程重启次数」(D24)也只数真的重启了的
+    if (event.restarting) {
+      bumpAnalyticsEngineRestartCount();
+      reportError("pi-engine", "warn", UNPLANNED_EXIT_TEXT[event.reason], event.detail, UNPLANNED_EXIT_CODES[event.reason]);
+    }
+  } else if (event.plugins.length > 0) {
+    reportError("pi-engine", "error", event.message, undefined, "engine_host_gave_up_plugins", {
+      count: event.failures,
+      plugins: event.plugins.join("、"),
+    });
+  } else {
+    reportError("pi-engine", "error", event.message, undefined, "engine_host_gave_up", { count: event.failures });
+  }
 }
 
-/** 路由:遍历注册表取首个 matches() 命中的 adapter;数组恒含 chat 兜底,不会空。 */
-export function resolveEngine(
-  registry: EngineAdapter[],
-  conversation: Conversation,
-  assistant: Assistant,
-): EngineAdapter {
-  return registry.find((adapter) => adapter.matches(conversation, assistant)) ?? registry[registry.length - 1]!;
+/** 最近一次交给宿主进程的代理配置(启动行里那份或之后推的),没变就不推。 */
+let pushedProxy = "";
+
+function pushProxyIfChanged(host: EngineHostProcess, config: ProxyConfig): void {
+  const text = JSON.stringify(config);
+  if (text === pushedProxy) return;
+  pushedProxy = text;
+  host.pushProxyConfig(config);
+}
+
+/** 同上,系统代理(主程序探测,宿主进程不自己探测)。 */
+let pushedSystemProxy: string | null = null;
+
+function pushSystemProxyIfChanged(host: EngineHostProcess, value: string | null): void {
+  if (value === pushedSystemProxy) return;
+  pushedSystemProxy = value;
+  host.pushSystemProxy(value);
+}
+
+const piHosts: EngineHostSupervisor<EngineHostProcess> = new EngineHostSupervisor<EngineHostProcess>({
+  name: "pi",
+  recordsDir: engineHostRecordsDir,
+  enabledPlugins: enabledPiPlugins,
+  onEvent: onPiHostEvent,
+  async launch({ onSpawn }) {
+    const proxyConfig = state.settings.proxyConfig;
+    const systemProxy = readSystemProxy() ?? null;
+    const host = await launchEngineHost({
+      host: appEngineHost,
+      proxyConfig,
+      systemProxy,
+      onAppError: (entry) => reportError(entry.domain, entry.severity, entry.message, entry.detail, entry.code, entry.params),
+      onProtocolError: (reason) => reportError("pi-engine", "info", `pi 引擎通道上有协议问题:${reason}`),
+      onSpawn,
+    });
+    // 握手期间用户改了代理、系统代理变了:那时还没有进程可推(whenRunning 跳过),这里补推
+    pushedProxy = JSON.stringify(proxyConfig);
+    pushProxyIfChanged(host, state.settings.proxyConfig);
+    pushedSystemProxy = systemProxy;
+    pushSystemProxyIfChanged(host, readSystemProxy() ?? null);
+    return host;
+  },
+});
+
+onSystemProxyChange((value) => {
+  piHosts.whenRunning(async (host) => pushSystemProxyIfChanged(host, value ?? null)).catch((err: unknown) => {
+    reportError("pi-engine", "info", "系统代理没能推给 pi 引擎宿主进程", err);
+  });
+});
+
+const piDriver = supervisedDriver(piHosts, "pi", PI_CAPABILITIES);
+
+const ENGINE_DRIVERS: EngineDriver[] = [piDriver, createChatDriver()];
+
+/** 仅测试:按种类换掉一个驱动(同进程的 pi 驱动、带假宿主进程的监管器),返回换回去的函数。 */
+export function replaceEngineDriverForTests(driver: EngineDriver): () => void {
+  if (!STRICT_CONTRACT_TRANSPORT) throw new Error("replaceEngineDriverForTests 只在测试里用");
+  const index = ENGINE_DRIVERS.findIndex((item) => item.kind === driver.kind);
+  if (index < 0) throw new Error(`没有 ${driver.kind} 引擎`);
+  const previous = ENGINE_DRIVERS[index]!;
+  ENGINE_DRIVERS[index] = driver;
+  return () => {
+    ENGINE_DRIVERS[index] = previous;
+  };
+}
+
+export interface EngineRoute {
+  driver: EngineDriver;
+  /** 驱动需要工作区时为判定时刻的工作区运行时;否则 null。 */
+  workspace: WorkspaceRuntime | null;
+}
+
+export function resolveEngine(conversation: Conversation): EngineRoute {
+  const runtime = workspaceRuntimeForConversation(conversation);
+  const wanted = runtime ? "required" : "none";
+  const driver = ENGINE_DRIVERS.find((item) => item.capabilities.workspace === wanted) ?? ENGINE_DRIVERS.at(-1)!;
+  return { driver, workspace: driver.capabilities.workspace === "required" ? runtime : null };
+}
+
+/** 用户打开了一个会话:要用 pi 引擎就先把宿主进程起起来,首轮不必等启动。 */
+export function prewarmEngineFor(conversation: Conversation): void {
+  if (resolveEngine(conversation).driver === piDriver) piHosts.prewarm();
+}
+
+/** 用户手动重试(重新生成):清掉连续失败记录,放弃重启之后允许再起。 */
+export function resetEngineHosts(): void {
+  piHosts.reset();
+}
+
+/** 用户改了插件(装、卸、停用、开发者路径):同上,并且正在跑的宿主进程空下来就换一个——停用的插件已经加载过的代码
+ *  和它对进程全局的改动(换掉 fetch、泄漏的内存)只有换进程才清得掉。 */
+export function enginePluginsChanged(): void {
+  piHosts.recycle();
+}
+
+/** 设置变了:代理配置变了就推给正在跑的宿主进程(它的网络壳读这份)。 */
+export function syncEngineProxyConfig(config: ProxyConfig): void {
+  piHosts.whenRunning(async (host) => pushProxyIfChanged(host, config)).catch((err: unknown) => {
+    reportError("pi-engine", "info", "代理配置没能推给 pi 引擎宿主进程", err);
+  });
+}
+
+/** 启动时清扫上次留下的宿主进程。只在拿到数据目录锁之后、起新宿主进程之前调。不抛错:清扫失败不该挡住启动。 */
+export async function sweepStaleEngines(): Promise<void> {
+  try {
+    await sweepStaleEngineHosts(engineHostRecordsDir);
+  } catch (err) {
+    reportError("internal", "warn", "清扫上次留下的引擎宿主进程失败", err);
+  }
+}
+
+/** 主程序退出:停掉宿主进程,最多等 2 秒(主程序没了它也会自己结束,见 subprocess-engine/parent-watch)。 */
+export async function disposeEngineHosts(): Promise<void> {
+  await Promise.race([piHosts.dispose(), Bun.sleep(2_000)]);
+}
+
+/** 一个插件登记了什么(插件页详情、安装 / 上传后的校验)。要执行插件代码,所以交给有插件运行时的那个驱动(P7.2.5)。 */
+export function inspectEnginePlugin(engine: string, plugin: EnginePlugin): Promise<EnginePluginInspectionDto> {
+  const driver = ENGINE_DRIVERS.find((item) => item.kind === engine && item.capabilities.plugins);
+  if (!driver?.inspectPlugin) return Promise.reject(new Error(`引擎 ${engine} 没有插件运行时`));
+  return driver.inspectPlugin({ plugin });
+}
+
+/** 让各引擎丢掉该会话的长驻状态(会话删除时)。失败只上报:删除本身不受影响。 */
+export function invalidateEngineSessions(conversationId: string): void {
+  for (const driver of ENGINE_DRIVERS) {
+    driver.invalidate(conversationId).catch((err: unknown) => reportError("internal", "info", "引擎会话状态清理失败", err));
+  }
 }

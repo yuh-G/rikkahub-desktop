@@ -13,6 +13,7 @@ import { tempDir } from "../foundation/platform";
 import { CONVERSATIONS_SQLITE_MIGRATION, MEMORY_FILE_SPLIT_MIGRATION, saveState, setState, state } from "../persistence/json-store";
 import { GLOBAL_MEMORY_ID, memoryStore } from "../memory/index";
 import { invalidateContextSnapshots } from "../inference-engine/context-snapshots";
+import { readEngineTables } from "../conversations/engine-entries";
 import { clearConvDirtyState, DEFAULT_ASSISTANT_ID, getConversationsDb, loadAllConversationsFromDb, loadConversationNodesFromDb, resetConversationsDbTo, snapshotConversationsDbBeforeImport } from "../conversations";
 import { reportError } from "../observability/app-errors";
 import { hashFileSha256, rewriteAndroidFileUrlsDeep, rewritePcFileUrlsDeep } from "./file-refs";
@@ -25,6 +26,7 @@ import { defaultSettings } from "../app-config/defaults";
 import { FILE_DEDUP_MIGRATION, normalizeState, PROVIDER_REORDER_MIGRATION, PROVIDER_REORDER_MIGRATION_V2 } from "../persistence/state-load";
 import { generating } from "../conversations/generation-state";
 import { listAllConversationMetas } from "../conversations/read-queries";
+import { readSelectionPatch } from "../assistants/extension-selection";
 
 // ── B2:结构化导入报告 ────────────────────────────────────────────────────────
 // 导入过程的「跳过/降级」此前只进 console,用户在 UI 只看到「成功/没反应」。现把三类
@@ -90,6 +92,15 @@ export function customJsImportWarning(beforeSignatures: Map<string, string>, set
   return `安全提醒：本次导入包含 ${names.length} 个自定义 JS 搜索脚本（${names.join("、")}）。这类脚本会在本机执行，请确认备份来源可信；如不确定，请到 设置 → 网络 → 搜索引擎 中检查或删除对应服务。`;
 }
 
+/** 助手按 id 合并时同 id 取 APP 条目,而 APP 不认识(导出时也剥离了)桌面端独有的引擎插件绑定:
+ *  按 id 把桌面端的 enginePluginIds 放回去;APP 独有的助手没有绑定(normalizeState 补空)。 */
+export function withPcEnginePluginBindings<T extends { id: string }>(merged: T[], pcAssistants: readonly { id: string; enginePluginIds?: unknown }[]): T[] {
+  const bindings = new Map(pcAssistants.map((assistant) => [assistant.id, assistant.enginePluginIds]));
+  return merged.map((assistant) =>
+    bindings.has(assistant.id) ? { ...assistant, enginePluginIds: bindings.get(assistant.id) } : assistant,
+  );
+}
+
 /** 七层合并·层3修正(Linux 用户实测"导入后设置覆盖不完全"):含 apiKey 的集合
  *  (providers/asrProviders/ttsProviders)同 id 时并非无条件保 PC——PC 的默认供应商与
  *  安卓共享同一批固定 UUID(互导契约刻意对齐),全新安装的 PC 条目全是无 key 出厂默认,
@@ -141,7 +152,9 @@ function snapshotStateJsonBeforeImport(): void {
  *    normalizeState 之前种入——它见标记缺失会当场重排,事后补写救不回顺序。
  *    (2.0.0-preview-v4 二次重排 PROVIDER_REORDER_MIGRATION_V2 同理。)
  *  新增一次性迁移时必须评估:恢复后其不变式是否成立;成立则登记于此,不成立则保证
- *  该迁移可在恢复后的数据上安全重跑(幂等)。 */
+ *  该迁移可在恢复后的数据上安全重跑(幂等)。
+ *  例外:描述设置数据形状的标记(state-load.ts 的 BACKUP_CARRIED_MIGRATIONS)由 pc-backup.json 自己带着,
+ *  经 incoming.appliedMigrations 原样回来;旧备份没带就照常重跑。 */
 const RESTORE_GUARANTEED_MIGRATIONS = [
   CONVERSATIONS_SQLITE_MIGRATION,
   MEMORY_FILE_SPLIT_MIGRATION,
@@ -177,6 +190,7 @@ function captureRestoreRollbackPoint(): (err: unknown) => void {
       // 下次启动被当作待迁移数据灌进活库(R4-2 的事故链)。
       delete state.conversations;
       delete state.pcWorkspaces;
+      delete state.pcEngineTables;
       reportError("backup", "error", "备份恢复失败且回滚异常，请重启应用并核对设置与记忆", rollbackErr, "restore_rollback_failed");
     }
   };
@@ -651,7 +665,10 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
         searchServiceSelected: resolveSearchSelected(),
         asrProviders: mergeKeyedCollectionById(pc.asrProviders ?? [], (Array.isArray(app.asrProviders) ? app.asrProviders : []) as { id: string }[]),
         ttsProviders: mergeKeyedCollectionById(pc.ttsProviders ?? [], (Array.isArray(app.ttsProviders) ? app.ttsProviders : []) as { id: string }[]),
-        assistants: mergeById((Array.isArray(app.assistants) ? app.assistants : []) as any[], pc.assistants ?? []),
+        assistants: withPcEnginePluginBindings(
+          mergeById((Array.isArray(app.assistants) ? app.assistants : []) as any[], pc.assistants ?? []),
+          pc.assistants ?? [],
+        ),
         mcpServers: mergeById((Array.isArray(app.mcpServers) ? app.mcpServers : []) as any[], pc.mcpServers ?? []),
         lorebooks: mergeById((Array.isArray(app.lorebooks) ? app.lorebooks : []) as any[], pc.lorebooks ?? []),
         quickMessages: mergeById((Array.isArray(app.quickMessages) ? app.quickMessages : []) as any[], pc.quickMessages ?? []),
@@ -680,6 +697,11 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
         // memorySettings 同为 PC-only(APP Settings 无此字段),保 PC 设置,否则 normalizeState
         // 的 M1 推断会覆盖用户的 globalEnabled 选择。
         memorySettings: pc.memorySettings,
+        // devPiPluginPaths 是工作区引擎插件的本机路径(开发者字段,APP 导出已剥离),恒保桌面端的值。
+        devPiPluginPaths: pc.devPiPluginPaths,
+        // 引擎插件记录同为桌面端独有(APP 导出已剥离),恒保桌面端的值。
+        enginePlugins: pc.enginePlugins,
+        pluginMarketSources: pc.pluginMarketSources,
       } as unknown as State["settings"];
       const adjusted = rewriteAvatarsInSettings(merged, ANDROID_AVATAR_TYPE_TO_PC, "to-pc");
       setState(normalizeState({ ...state, settings: adjusted as State["settings"] }));
@@ -847,6 +869,21 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
 /** 备份 2.0:读 PC 原生会话 dump 进暂存(state.conversations),替换语义。
  *  dump 两表结构与活库一致,loadAllConversationsFromDb 直读;FTS 由 finalize 的
  *  resetConversationsDbTo 统一重建。返回会话数(0 = 备份时确实无会话,仍是替换基底)。 */
+/** APP 会话表的 config 列(ConversationConfig 的 JSON,APP 库 32 起有):会话开始后固定在会话上的 MCP 与技能。
+ *  有它 = 这个会话在 APP 那边已经固定过选择,读成会话层选择的这两项(其余项第一次生成时按助手默认补齐);
+ *  空串 / 缺列 / 损坏 = 没固定过,跟随助手的默认。 */
+function appConversationSelection(raw: unknown): Conversation["extensionSelection"] {
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const config: unknown = JSON.parse(raw);
+    if (!config || typeof config !== "object") return null;
+    const { mcpServers, enabledSkills } = readSelectionPatch(config);
+    return { mcpServers: mcpServers ?? [], enabledSkills: enabledSkills ?? [] };
+  } catch {
+    return null; // 损坏的 config 按「没固定过」处理,与 APP 读不出时回退助手的行为一致
+  }
+}
+
 function importPcConversationsDump(dumpPath: string): number {
   const db = new Database(dumpPath, { readonly: true });
   try {
@@ -861,6 +898,9 @@ function importPcConversationsDump(dumpPath: string): number {
     if (hasWorkspaceTable) {
       state.pcWorkspaces = db.query("SELECT * FROM pc_workspace").all() as PcWorkspaceRow[];
     }
+    // format 3:引擎私有条目替换语义;老 dump 无两表时不暂存,finalize 保留活库里仍有效的行。
+    const engineTables = readEngineTables(db);
+    if (engineTables) state.pcEngineTables = engineTables;
     return conversations.length;
   } finally {
     try { db.close(); } catch { /* best-effort:句柄随 GC 释放 */ }
@@ -1001,6 +1041,7 @@ function importAndroidConversations(extractDir: string, dbPath: string, androidF
         updateAt: Number(row.update_at ?? Date.now()),
         modeInjectionIds: parseIdArray(row.mode_injection_ids),
         lorebookIds: parseIdArray(row.lorebook_ids),
+        extensionSelection: appConversationSelection(row.config),
       };
 
       const existingIdx = stagingIndexById.get(conv.id) ?? liveIndexById.get(conv.id);
@@ -1093,9 +1134,10 @@ function finalizeConversationImport(): void {
   if (Array.isArray(state.conversations)) {
     snapshotConversationsDbBeforeImport();
     // B6-①a:工作区(dump format 2)随会话同事务重灌,保持"会话+其绑定工作区"原子替换。
-    resetConversationsDbTo(state.conversations, state.pcWorkspaces);
+    resetConversationsDbTo(state.conversations, state.pcWorkspaces, state.pcEngineTables);
     delete state.conversations; // 中转字段用完即清(State 类型注释有角色说明)
     delete state.pcWorkspaces;
+    delete state.pcEngineTables;
   }
   clearWorkingSet();
   // R2-4:待发节点广播挂着旧实例引用,定时器触发会把导入前的陈旧帧广播出去,整表清空。

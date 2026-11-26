@@ -250,6 +250,7 @@ const ConversationListRow = React.memo(
     // 窄选择器订阅本行会话的瞬态状态,压缩/重试/审批帧跳变才重渲染本行。
     const engineStatus = useConversationEngineStatus(conversation.id);
     const awaitingApproval = engineStatus?.phase === "awaiting_approval";
+    const waitingLabel = engineStatus?.dialog ? "conversation_sidebar.awaiting_answer" : "conversation_sidebar.awaiting_approval";
 
     const moveTargets = React.useMemo(
       () => assistants.filter((assistant) => assistant.id !== conversation.assistantId),
@@ -269,7 +270,7 @@ const ConversationListRow = React.memo(
         setPendingAction(actionId);
         const loadingToastId =
           actionId === "regenerate-title"
-            ? toast.loading(t("conversation_sidebar.regenerate_title_loading", "正在生成标题..."))
+            ? toast.loading(t("conversation_sidebar.regenerate_title_loading"))
             : undefined;
         try {
           await action();
@@ -336,8 +337,8 @@ const ConversationListRow = React.memo(
                     "inline-block size-2 rounded-full",
                     awaitingApproval ? "animate-pulse bg-warning" : "bg-success",
                   )}
-                  aria-label={t(awaitingApproval ? "conversation_sidebar.awaiting_approval" : "conversation_sidebar.generating")}
-                  title={t(awaitingApproval ? "conversation_sidebar.awaiting_approval" : "conversation_sidebar.generating")}
+                  aria-label={t(awaitingApproval ? waitingLabel : "conversation_sidebar.generating")}
+                  title={t(awaitingApproval ? waitingLabel : "conversation_sidebar.generating")}
                 />
               )}
             </span>
@@ -840,13 +841,13 @@ export const ConversationSidebar = React.memo(
       setProfileSaving(true);
       try {
         await saveProfile(profileName, profileAvatar);
-        toast.success(t("conversation_sidebar.profile_saved", "Profile saved"));
+        toast.success(t("conversation_sidebar.profile_saved"));
         setProfileOpen(false);
       } catch (profileError) {
         toast.error(
           profileError instanceof Error
             ? profileError.message
-            : t("conversation_sidebar.profile_save_failed", "Failed to save profile"),
+            : t("conversation_sidebar.profile_save_failed"),
         );
       } finally {
         setProfileSaving(false);
@@ -899,13 +900,8 @@ export const ConversationSidebar = React.memo(
             </DialogTrigger>
             <DialogContent className="max-w-md">
               <DialogHeader>
-                <DialogTitle>{t("conversation_sidebar.edit_profile", "Edit profile")}</DialogTitle>
-                <DialogDescription>
-                  {t(
-                    "conversation_sidebar.edit_profile_description",
-                    "This is saved by the local PC backend and used in every chat.",
-                  )}
-                </DialogDescription>
+                <DialogTitle>{t("conversation_sidebar.edit_profile")}</DialogTitle>
+                <DialogDescription>{t("conversation_sidebar.edit_profile_description")}</DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
@@ -924,22 +920,22 @@ export const ConversationSidebar = React.memo(
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium" htmlFor="profile-name">
-                    {t("conversation_sidebar.profile_name", "Name")}
+                    {t("conversation_sidebar.profile_name")}
                   </label>
                   <Input
                     id="profile-name"
                     value={profileName}
                     onChange={(event) => setProfileName(event.target.value)}
-                    placeholder={t("conversation_sidebar.profile_name_placeholder", "Your name")}
+                    placeholder={t("conversation_sidebar.profile_name_placeholder")}
                   />
                 </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setProfileOpen(false)}>
-                  {t("common:cancel", "Cancel")}
+                  {t("conversation_sidebar.cancel")}
                 </Button>
                 <Button onClick={() => void handleProfileSave()} disabled={profileSaving}>
-                  {profileSaving ? t("common:saving", "Saving") : t("common:save", "Save")}
+                  {profileSaving ? t("conversation_sidebar.saving") : t("conversation_sidebar.save")}
                 </Button>
               </DialogFooter>
             </DialogContent>

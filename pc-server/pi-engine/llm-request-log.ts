@@ -1,102 +1,80 @@
-// pi-engine/llm-request-log.ts — 工作区 LLM 请求接入统一日志管线(日志问题 1)。
+// pi-engine/llm-request-log.ts — pi google 轨的请求日志壳(唯一登记在册的全局 fetch 例外,P2.5 收窄)
 //
-// 聊天引擎的每条 LLM fetch 在调用点 addLog(inference-engine/providers.ts);pi 引擎的
-// fetch 发生在 pi SDK 内部(openai-completions/anthropic-messages 等),零补丁原则不改
-// pi——在全局 fetch 外再包一层"日志壳":runner 以 AsyncLocalStorage 圈定"本次生成的
-// LLM 目标 origin",壳内只记录打到该 origin 的请求。精准性依据:
-//   - 工具执行(搜索/抓取/MCP)虽在同一异步树内,但打的是别家主机,且各自管线已有
-//     addLog(kind: search:*/mcp:*)——origin 不匹配即透传,零双记。
-//   - 聊天引擎的 fetch 不在本 ALS 上下文内,不受影响(它有自己的调用点日志)。
+// 工作区的模型请求经模型出口(engines/model-outlet)记日志:pi 驱动把带供应商身份的 fetch 作为流选项
+// 注入(model-bridge withModelOutlet)。上游的 google 两条适配器拒收自定义 fetch
+// (google-generative-ai.ts / google-vertex.ts:options.fetch !== globalThis.fetch 即抛),这两条轨
+// 不注入出口,改由本壳补记:runner 以 AsyncLocalStorage 圈定「本轮 google 请求的目标 origin + 日志
+// 回调」,壳内只记打到该 origin 的请求(同一异步树里工具的搜索/抓取/MCP 请求打的是别家主机,各自
+// 管线已有日志)。上下文只为 google 轨开(googleRequestLogContextFor),所以与出口不会双记。
+// 记录语义与出口同一函数(recordModelResponse)。
 //
-// 安装顺序:在 installProxyFetchInterceptor 之后安装(包外层),计时覆盖代理与重试,
-// 记录端到端时长。流式响应口径:status/headers 到手即记(时长=响应头时间),
-// responseBody 不读(SSE 流由 pi 消费,tee 全量会翻倍内存);非 2xx 时 clone 读文本
-// (错误响应体小且非流式)。凭据脱敏由 addLog 入口统一负责(6-1:url/headers 打码)。
+// 安装顺序:在 installProxyFetchInterceptor 之后安装(包外层),计时覆盖代理。只装在 pi 驱动所在的进程,即引擎宿主进程
+// (pi-engine/host-process);主程序自 P7.2.6 起不跑 pi,不装。
+// **拆除条件**:pi 的 google 适配器接受注入的 fetch 后,google 轨改走模型出口,删除本文件与
+// host-process 的安装调用(engines/model-outlet.test.ts 的全局壳登记表同步删掉本文件)。
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { addLog } from "../api/logs";
+import type { Api } from "../../pi/packages/ai/src/types.ts";
+import { recordModelResponse, type ModelOutletIdentity, type ModelRequestLog } from "../engines/model-outlet";
+import { piApiRejectsCustomFetch } from "./model-bridge";
 
-export type LlmLogContext = {
-  providerId: string;
-  providerName: string;
-  /** LLM 端点 origin(协议+主机+端口)。用 origin 而非完整 baseUrl 前缀:claude 场景
-   *  pi 侧 base 被剥 /v1(model-bridge piBaseUrlFor),路径形态两引擎不同,origin 恒稳。 */
+export interface GoogleRequestLogContext {
+  identity: ModelOutletIdentity;
+  /** 模型端点 origin(协议+主机+端口)。用 origin 而非完整 baseUrl 前缀:pi 侧的路径形态可能与
+   *  应用配置不同,origin 恒稳。 */
   origin: string;
-};
+  log: ModelRequestLog;
+}
 
-const als = new AsyncLocalStorage<LlmLogContext>();
+const als = new AsyncLocalStorage<GoogleRequestLogContext>();
 
-/** runner 侧入口:把一次生成(prompt/compact)包进日志上下文。 */
-export function runWithLlmRequestLog<T>(context: LlmLogContext | null, fn: () => T): T {
+/** runner 侧入口:把一次生成(prompt/compact)包进日志上下文;context 为 null 时直跑。 */
+export function runWithGoogleRequestLog<T>(context: GoogleRequestLogContext | null, fn: () => T): T {
   if (!context) return fn();
   return als.run(context, fn);
 }
 
-/** 从 provider.baseUrl 提取 origin;不合法(本地异常配置)返回 null=该轮不记日志。 */
-export function llmLogContextFor(provider: { id: string; name: string; baseUrl: string }): LlmLogContext | null {
+/** 只有拒收自定义 fetch 的轨(google)需要本壳;其余返回 null(由模型出口记)。 */
+export function googleRequestLogContextFor(
+  api: Api,
+  grant: { providerId: string; providerName: string; baseUrl: string },
+  log: ModelRequestLog | undefined,
+): GoogleRequestLogContext | null {
+  if (!log || !piApiRejectsCustomFetch(api)) return null;
+  let origin: string;
   try {
-    return { providerId: provider.id, providerName: provider.name, origin: new URL(provider.baseUrl).origin };
+    origin = new URL(grant.baseUrl).origin;
   } catch {
+    // baseUrl 不合法(本地异常配置):该轮不记日志,请求本身照常失败并由引擎报错。
     return null;
   }
+  return { identity: { providerId: grant.providerId, providerName: grant.providerName }, origin, log };
 }
-
-const RESPONSE_BODY_LIMIT = 2000;
 
 let installed = false;
 
-/** 安装工作区 LLM 日志壳(幂等)。必须晚于 installProxyFetchInterceptor。 */
-export function installLlmRequestLogInterceptor(): void {
+/** 安装 google 轨日志壳(幂等)。必须晚于 installProxyFetchInterceptor。 */
+export function installGoogleRequestLogShell(): void {
   if (installed) return;
   installed = true;
   const inner = globalThis.fetch;
   globalThis.fetch = function (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) {
     const ctx = als.getStore();
     if (!ctx) return inner(input, init);
-    const target = typeof input === "string" ? input : input instanceof URL ? input.href : input instanceof Request ? input.url : "";
-    if (!target.startsWith(ctx.origin)) return inner(input, init);
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input instanceof Request ? input.url : "";
+    if (!url.startsWith(ctx.origin)) return inner(input, init);
     const started = Date.now();
-    const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-    const requestBody = typeof init?.body === "string" ? init.body : undefined;
     const promise = inner(input, init);
-    void promise.then(
-      async (response) => {
-        let errorBody: string | undefined;
-        if (!response.ok) {
-          try {
-            errorBody = (await response.clone().text()).slice(0, RESPONSE_BODY_LIMIT);
-          } catch {
-            // 读失败不影响日志主体。
-          }
-        }
-        addLog({
-          providerId: ctx.providerId,
-          providerName: ctx.providerName,
-          url: target,
-          ok: response.ok,
-          status: response.status,
-          kind: "provider:agent",
-          durationMs: Date.now() - started,
-          method,
-          requestBody,
-          responseHeaders: Object.fromEntries(response.headers.entries()),
-          ...(errorBody !== undefined ? { responseBody: errorBody, error: errorBody } : {}),
-        });
+    recordModelResponse(
+      {
+        identity: ctx.identity,
+        url,
+        method: init?.method ?? (input instanceof Request ? input.method : "GET"),
+        requestBody: typeof init?.body === "string" ? init.body : undefined,
+        started,
       },
-      (err: unknown) => {
-        addLog({
-          providerId: ctx.providerId,
-          providerName: ctx.providerName,
-          url: target,
-          ok: false,
-          status: 0,
-          kind: "provider:agent",
-          durationMs: Date.now() - started,
-          method,
-          requestBody,
-          error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
-        });
-      },
+      promise,
+      ctx.log,
     );
     return promise;
   } as typeof fetch;

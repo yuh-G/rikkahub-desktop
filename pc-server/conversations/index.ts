@@ -9,10 +9,13 @@ import { checkoutConversation, configureWorkingSet, peekConversation, releaseCon
 import { hasQueuedMessages } from "./message-queue";
 import { getConversationMeta } from "./read-queries";
 import { generating } from "./generation-state";
-import type { Conversation, ConversationListDto, JsonValue, Message, MessageNode, MessageNodeDto, PcConversationRow, PcMessageNodeRow, PcWorkspaceRow } from "../foundation/types";
-import { clearAllFts, deleteConversationFts, ensureMessageFtsTable, ftsRowCount, rebuildFtsFromNodeTable, replaceNodeFts } from "./fts";
+import type { Conversation, ConversationListDto, JsonValue, Message, MessageNode, MessageNodeDto, PcConversationRow, PcEngineTablesRows, PcMessageNodeRow, PcWorkspaceRow } from "../foundation/types";
+import { clearAllFts, ensureFtsDirectory, ensureMessageFtsTable, ftsRowCount, rebuildFtsFromNodeTable, replaceNodeFts } from "./fts";
 import { reportError } from "../observability/app-errors";
+import { copyEngineEntries, copyEngineTablesInto, ensureEngineEntryTables, pruneOrphanEngineEntries, refillEngineTables, snapshotLiveEngineTables } from "./engine-entries";
 import { collectPcFileRefs } from "../backup/file-refs";
+import { textFromParts } from "../foundation/utils";
+import { readConversationSelection, type ConversationExtensionSelection } from "../assistants/extension-selection";
 
 export const DEFAULT_ASSISTANT_ID = "0950e2dc-9bd5-4801-afa3-aa887aa36b4e";
 
@@ -72,7 +75,8 @@ export function ensureConversationTables(db: InstanceType<typeof Database>): voi
       lorebook_ids       TEXT NOT NULL DEFAULT '[]',
       workspace_id       TEXT,
       workspace_cwd      TEXT,
-      engine_compactions TEXT
+      engine_compactions TEXT,
+      extension_selection TEXT
     );
     CREATE TABLE IF NOT EXISTS pc_message_node (
       id              TEXT PRIMARY KEY NOT NULL,
@@ -86,6 +90,7 @@ export function ensureConversationTables(db: InstanceType<typeof Database>): voi
     -- J 族(专题2):列表分页的覆盖排序索引(assistant 过滤 + 置顶/更新时间倒序扫描)。
     CREATE INDEX IF NOT EXISTS idx_pc_conversation_list ON pc_conversation(assistant_id, is_pinned, update_at, create_at, id);
   `);
+  ensureEngineEntryTables(db);
 }
 
 /** 1.5.0 跟进安卓 Migration_16_17:废弃"清除上下文"机制,删除 truncate_index 列。
@@ -131,6 +136,29 @@ function ensureConversationWorkspaceColumns(db: InstanceType<typeof Database>): 
  *  可空列旧数据天然兼容(NULL = 无压缩记录)。P2 的 pi_session_file 列不再读写,
  *  老库中留作死列(SQLite 删列代价不值当)。仅存 PC 自有库,跨端导出白名单不含此列。
  *  export 仅为回归测试(老库升级路径需在真实 ALTER 上验证)。 */
+/** 会话层的拓展选择列(D19,P6a.4):`Conversation.extensionSelection` 的 JSON。可空列,NULL = 这个会话
+ *  还没固定过选择,取数时跟随助手的默认。幂等。仅存桌面端自有库,给 APP 的导出不含此列。 */
+function ensureConversationExtensionSelectionColumn(db: InstanceType<typeof Database>): void {
+  try {
+    const cols = db.prepare("PRAGMA table_info(pc_conversation)").all() as { name: string }[];
+    if (!cols.some((c) => c.name === "extension_selection")) {
+      db.exec("ALTER TABLE pc_conversation ADD COLUMN extension_selection TEXT");
+    }
+  } catch (err) {
+    console.warn("[conv-db] 会话拓展选择列迁移失败(会话暂时跟随助手的默认拓展,下次启动重试)", err);
+  }
+}
+
+/** extension_selection 列解析:空 / 损坏 / 形状不对回 null(= 跟随助手的默认)。 */
+export function parseExtensionSelection(text: string | null | undefined): ConversationExtensionSelection | null {
+  if (!text) return null;
+  try {
+    return readConversationSelection(JSON.parse(text));
+  } catch {
+    return null; // 损坏的列按「没固定过」处理,下次在左下角改动时整组重写
+  }
+}
+
 export function ensureConversationEngineCompactionsColumn(db: InstanceType<typeof Database>): void {
   try {
     const cols = db.prepare("PRAGMA table_info(pc_conversation)").all() as { name: string }[];
@@ -175,6 +203,7 @@ function openConversationsDbUnsafe(): InstanceType<typeof Database> {
     ensureConversationInjectionColumns(db);
     ensureConversationWorkspaceColumns(db);
     ensureConversationEngineCompactionsColumn(db);
+    ensureConversationExtensionSelectionColumn(db);
     ensureMessageFtsTable(db);
     // FTS 自愈重建：老库首次升级（表刚建、空）或索引意外丢失时，从节点表全量重建。
     // 幂等：行数>0 时零成本跳过。
@@ -186,6 +215,13 @@ function openConversationsDbUnsafe(): InstanceType<typeof Database> {
       }
     } catch (ftsErr) {
       console.warn("[conv-db] FTS 重建失败（搜索降级为空结果，不影响会话读写）:", ftsErr);
+    }
+    // 行号目录自检：第一次升级、或老版本写过这个库之后，按 FTS 现有内容重建目录（一次扫描，不重新分词）。
+    try {
+      const rebuiltDirectory = ensureFtsDirectory(db);
+      if (rebuiltDirectory) console.log(`[conv-db] 全文索引行号目录重建完成：${rebuiltDirectory.directoryRows} 行，清掉孤儿索引行 ${rebuiltDirectory.orphanRows} 行`);
+    } catch (dirErr) {
+      console.warn("[conv-db] 全文索引行号目录重建失败（改写节点时旧索引行可能残留，不影响会话读写）:", dirErr);
     }
     return db;
   } catch (err) {
@@ -219,6 +255,7 @@ export function loadConversationMetasFromDb(db: InstanceType<typeof Database>): 
     workspaceId: row.workspace_id ?? null,
     workspaceCwd: row.workspace_cwd ?? null,
     engineCompactions: safeParseJsonArray(row.engine_compactions),
+    extensionSelection: parseExtensionSelection(row.extension_selection),
   }));
 }
 
@@ -359,11 +396,11 @@ function safeParseStringArray(raw: string): string[] {
 // 该会话全部节点行被级联清空。流式期间每 200ms flush 都 upsert 会话行,等于整个流式期间
 // 磁盘上只剩正在补写的脏节点;流式中途进程死亡 = 会话历史永久丢失。
 const UPSERT_CONVERSATION_SQL =
-  "INSERT INTO pc_conversation (id, assistant_id, title, system_prompt, suggestions, is_pinned, create_at, update_at, mode_injection_ids, lorebook_ids, workspace_id, workspace_cwd, engine_compactions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+  "INSERT INTO pc_conversation (id, assistant_id, title, system_prompt, suggestions, is_pinned, create_at, update_at, mode_injection_ids, lorebook_ids, workspace_id, workspace_cwd, engine_compactions, extension_selection) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
   "ON CONFLICT(id) DO UPDATE SET assistant_id = excluded.assistant_id, title = excluded.title, system_prompt = excluded.system_prompt, " +
   "suggestions = excluded.suggestions, is_pinned = excluded.is_pinned, create_at = excluded.create_at, update_at = excluded.update_at, " +
   "mode_injection_ids = excluded.mode_injection_ids, lorebook_ids = excluded.lorebook_ids, workspace_id = excluded.workspace_id, workspace_cwd = excluded.workspace_cwd, " +
-  "engine_compactions = excluded.engine_compactions";
+  "engine_compactions = excluded.engine_compactions, extension_selection = excluded.extension_selection";
 
 const UPSERT_NODE_SQL =
   "INSERT INTO pc_message_node (id, conversation_id, node_index, messages, select_index) VALUES (?, ?, ?, ?, ?) " +
@@ -371,7 +408,7 @@ const UPSERT_NODE_SQL =
 
 /** upsert 单个会话行(不含节点),显式传 db——生产包装与回归测试共用。 */
 export function upsertConversationRowInto(db: InstanceType<typeof Database>, conv: Conversation): void {
-  db.prepare(UPSERT_CONVERSATION_SQL).run(
+  db.query(UPSERT_CONVERSATION_SQL).run(
     conv.id,
     conv.assistantId || DEFAULT_ASSISTANT_ID,
     conv.title || "",
@@ -385,6 +422,7 @@ export function upsertConversationRowInto(db: InstanceType<typeof Database>, con
     conv.workspaceId ?? null,
     conv.workspaceCwd ?? null,
     conv.engineCompactions?.length ? JSON.stringify(conv.engineCompactions) : null,
+    conv.extensionSelection ? JSON.stringify(conv.extensionSelection) : null,
   );
 }
 
@@ -398,19 +436,23 @@ export function upsertConversationRow(conv: Conversation): void {
  *  syncFts=false(专题2 H-c):流式脏 flush 专用——流式期间每 200ms 对整节点做
  *  "删 FTS 行+全文 trigram 重分词"是纯无用功(半成品文本反复索引又删除,实测 100KB
  *  文本 1.1ms、300KB 3.2ms,5 次/秒,成本 O(全文) 随流长累积 O(N²)),且同步占用事件
- *  循环与 SSE 发送竞争。流结束的 persistConversation 全量 reconcile 会重建该会话全部
- *  FTS(stop 端点亦直接 persistConversation),搜索最多晚到流结束才可见——现状本就有
- *  200ms 滞后,语义可接受。唯一残余窗口:流式中进程被硬杀,该节点 FTS 缺最后一段,
- *  下次任何 persistConversation 该会话即自愈;数据本身(节点行)不受影响。 */
+ *  循环与 SSE 发送竞争。这时只写节点行,并删掉这个节点已有的索引行(第一次之后是空操作;
+ *  按目录删,走索引):流式期间这个节点搜不到,流结束的 persistConversation 对账发现
+ *  「有正文、没索引」就补建。不删的话,最后一次 flush 恰好已写入最终内容时,对账会因内容相同
+ *  而跳过,索引就停在生成之前(如重新生成前的那个版本)。流式中进程被硬杀,缺口在下次保存
+ *  这个会话时补上;数据本身(节点行)不受影响。 */
 export function upsertMessageNodeInto(db: InstanceType<typeof Database>, convId: string, node: MessageNode, nodeIndex: number, syncFts = true): void {
-  db.prepare(UPSERT_NODE_SQL).run(
+  db.query(UPSERT_NODE_SQL).run(
     node.id,
     convId,
     nodeIndex,
     JSON.stringify(node.messages ?? []),
     node.selectIndex ?? 0,
   );
-  if (!syncFts) return;
+  if (!syncFts) {
+    db.query("DELETE FROM pc_message_fts_dir WHERE node_id = ?").run(node.id);
+    return;
+  }
   try { replaceNodeFts(db, convId, node); }
   catch (err) { console.warn("[conv-db] FTS 节点同步失败", node.id, err); }
 }
@@ -422,37 +464,75 @@ export function upsertMessageNode(convId: string, node: MessageNode, nodeIndex: 
 }
 
 /**
- * 全量 reconcile:事务内 upsert 会话行 + 删除该会话全部旧节点 + 按当前顺序重插。
- * 给非流式一次性变更用(改名/置顶/编辑/分叉/导入/流结束)。处理节点增删/重排,显而易见
- * 地正确;一次用户动作调一次,可承受。
+ * 落库对账(PF.2):事务内 upsert 会话行,读出库里这个会话的节点行逐个与内存比较,只写有差别的——内容一样
+ * 就跳过(序号或选中项变了只更新这两列),不一样或库里没有才写这一行并重建它的索引;库里有、内存里没有的
+ * 节点删掉(外键带走它的索引)。约 35 处调用不用声明「改了哪里」(漏标一处就丢数据),以库里的实际内容为准。
+ * 写入量只与这次改动成正比,与会话多长、库里有多少别的会话无关;内存里仍要把整个会话序列化比较一遍。
+ * 流式 flush 写节点行时会删掉该节点的索引行(见 upsertMessageNodeInto),所以「内容一样」时还要看有没有索引:
+ * 有正文却没有索引行就补建——流结束那次对账、流式中途崩溃后的下一次保存都靠这一条。
+ * 引擎私有条目的孤儿清理只在确实有消息离开这个会话时才做(删了节点,或改写的节点里少了消息)。漏掉的孤儿
+ * 无害——装载按锚定匹配、恢复备份时也会滤掉——并在下一次有消息离开时被一并清掉。
  */
-export function persistConversation(conv: Conversation): void {
-  if (!conversationsDb) throw new Error("conversationsDb not open");
-  const db = conversationsDb;
-  const deleteNodes = db.prepare("DELETE FROM pc_message_node WHERE conversation_id = ?");
-  const insertNode = db.prepare(UPSERT_NODE_SQL);
-  const txn = db.transaction(() => {
-    upsertConversationRow(conv);
-    deleteNodes.run(conv.id);
-    deleteConversationFts(db, [conv.id]);
+export function persistConversationInto(db: InstanceType<typeof Database>, conv: Conversation): void {
+  db.transaction(() => {
+    upsertConversationRowInto(db, conv);
+    const stored = new Map(
+      (db.query("SELECT id, node_index, messages, select_index FROM pc_message_node WHERE conversation_id = ?").all(conv.id) as PcMessageNodeRow[])
+        .map((row) => [row.id, row]),
+    );
+    const indexed = new Set(
+      (db.query("SELECT DISTINCT node_id FROM pc_message_fts_dir WHERE node_id IN (SELECT id FROM pc_message_node WHERE conversation_id = ?)").all(conv.id) as Array<{ node_id: string }>)
+        .map((row) => row.node_id),
+    );
+    const upsertNode = db.query(UPSERT_NODE_SQL);
+    const updatePosition = db.query("UPDATE pc_message_node SET node_index = ?, select_index = ? WHERE id = ?");
+    const deleteNode = db.query("DELETE FROM pc_message_node WHERE id = ?");
+    // 改写过的节点里原有的消息 id:收尾时只要有一个不在会话里了,就清引擎私有条目的孤儿
+    const replacedMessageIds: string[] = [];
     for (let i = 0; i < (conv.messages ?? []).length; i += 1) {
       const node = conv.messages[i];
       if (!node?.id) continue;
-      insertNode.run(node.id, conv.id, i, JSON.stringify(node.messages ?? []), node.selectIndex ?? 0);
+      const json = JSON.stringify(node.messages ?? []);
+      const selectIndex = node.selectIndex ?? 0;
+      const old = stored.get(node.id);
+      stored.delete(node.id);
+      if (old && old.messages === json) {
+        if (old.node_index !== i || old.select_index !== selectIndex) updatePosition.run(i, selectIndex, node.id);
+        if (!indexed.has(node.id) && (node.messages ?? []).some((message) => message?.id && textFromParts(message.parts ?? []))) replaceNodeFts(db, conv.id, node);
+        continue;
+      }
+      upsertNode.run(node.id, conv.id, i, json, selectIndex);
       replaceNodeFts(db, conv.id, node);
+      if (old) for (const message of safeParseMessageArray(old.messages)) replacedMessageIds.push(message.id);
     }
-  });
-  txn();
+    for (const row of stored.values()) deleteNode.run(row.id);
+    if (stored.size === 0 && replacedMessageIds.length === 0) return;
+    const live = new Set((conv.messages ?? []).flatMap((node) => node.messages.map((message) => message.id)));
+    if (stored.size > 0 || replacedMessageIds.some((messageId) => !live.has(messageId))) pruneOrphanEngineEntries(db, conv.id, live);
+  })();
 }
 
-/** 删除会话(CASCADE 带走其节点行,依赖 foreign_keys=ON)。 */
+export function persistConversation(conv: Conversation): void {
+  if (!conversationsDb) throw new Error("conversationsDb not open");
+  persistConversationInto(conversationsDb, conv);
+}
+
+/** 分叉落库:新会话 + 源会话里锚定在被复制消息上的引擎私有条目,同一事务。分叉保留消息 id,锚定不用改。 */
+export function persistForkedConversation(fork: Conversation, sourceConversationId: string): void {
+  if (!conversationsDb) throw new Error("conversationsDb not open");
+  const db = conversationsDb;
+  db.transaction(() => {
+    persistConversation(fork);
+    copyEngineEntries(db, sourceConversationId, fork.id, new Set(fork.messages.flatMap((node) => node.messages.map((message) => message.id))));
+  })();
+}
+
+/** 删除会话(CASCADE 带走其节点行,节点行再带走全文索引的目录行与索引行;依赖 foreign_keys=ON)。 */
 export function deletePcConversations(ids: string[]): void {
   if (!conversationsDb || ids.length === 0) return;
   const stmt = conversationsDb.prepare("DELETE FROM pc_conversation WHERE id = ?");
-  const db = conversationsDb;
-  const txn = db.transaction(() => {
+  const txn = conversationsDb.transaction(() => {
     for (const idValue of ids) stmt.run(idValue);
-    deleteConversationFts(db, ids);
   });
   txn();
 }
@@ -514,7 +594,7 @@ export function flushConvDirty(): void {
     const idx = conv.messages.findIndex((n) => n.id === nodeId);
     if (idx < 0) continue; // 节点已被删除/替换
     try {
-      // H-c:流式 flush 跳过 FTS(见 upsertMessageNodeInto 注释),流结束 reconcile 补索引。
+      // H-c:流式 flush 不建索引、只删该节点的旧索引行(见 upsertMessageNodeInto 注释),流结束的对账补建。
       upsertMessageNode(convId, conv.messages[idx], idx, false);
     } catch (err) {
       console.warn("[conv-db] upsert message node failed", convId, nodeId, err);
@@ -586,9 +666,9 @@ export function migrateConversationsIntoDb(db: InstanceType<typeof Database>, co
         conv.workspaceId ?? null,
         conv.workspaceCwd ?? null,
         conv.engineCompactions?.length ? JSON.stringify(conv.engineCompactions) : null,
+        conv.extensionSelection ? JSON.stringify(conv.extensionSelection) : null,
       );
       deleteNodes.run(conv.id);
-      deleteConversationFts(db, [conv.id]);
       for (let i = 0; i < (conv.messages ?? []).length; i += 1) {
         const node = conv.messages[i];
         if (!node?.id) continue;
@@ -628,7 +708,10 @@ export async function migrateConversationsIntoDbBatched(
  *  却指向不存在的工作区(绑定悬空)。pc_workspace 与 pc_conversation 同驻一个活库,故
  *  此处一并 ATTACH 复制;导入侧在同库事务内重灌。硬约束:此表只进 pc dump,绝不进
  *  安卓 rikka_hub.db(安卓 workspaces 表同名不同构),PC→APP 边界不受影响。
- *  表按存在性探测(不读 format 号),老 dump(format 1,无该表)导入时跳过工作区重灌。 */
+ *  表按存在性探测(不读 format 号),老 dump(format 1,无该表)导入时跳过工作区重灌。
+ *
+ *  format 2→3(P3.1):增引擎私有条目两表(engine-entries.ts)。同样只进桌面端 dump——
+ *  给 APP 的 rikka_hub.db 由安卓模板另建,从不复制 PC 表。 */
 export function exportPcConversationsDump(targetPath: string): number {
   if (!conversationsDb) return -1;
   const db = conversationsDb;
@@ -651,7 +734,8 @@ export function exportPcConversationsDump(targetPath: string): number {
         lorebook_ids       TEXT NOT NULL DEFAULT '[]',
         workspace_id       TEXT,
         workspace_cwd      TEXT,
-        engine_compactions TEXT
+        engine_compactions TEXT,
+        extension_selection TEXT
       );
       CREATE TABLE pcdump.pc_message_node (
         id              TEXT PRIMARY KEY NOT NULL,
@@ -671,8 +755,8 @@ export function exportPcConversationsDump(targetPath: string): number {
         update_at         INTEGER NOT NULL,
         last_access_at    INTEGER NOT NULL
       );
-      INSERT INTO pcdump.pc_dump_meta (key, value) VALUES ('format', '2'), ('exportedAt', strftime('%Y-%m-%dT%H:%M:%fZ','now'));
-      INSERT INTO pcdump.pc_conversation SELECT id, assistant_id, title, system_prompt, suggestions, is_pinned, create_at, update_at, mode_injection_ids, lorebook_ids, workspace_id, workspace_cwd, engine_compactions FROM main.pc_conversation;
+      INSERT INTO pcdump.pc_dump_meta (key, value) VALUES ('format', '3'), ('exportedAt', strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+      INSERT INTO pcdump.pc_conversation SELECT id, assistant_id, title, system_prompt, suggestions, is_pinned, create_at, update_at, mode_injection_ids, lorebook_ids, workspace_id, workspace_cwd, engine_compactions, extension_selection FROM main.pc_conversation;
       INSERT INTO pcdump.pc_message_node SELECT id, conversation_id, node_index, messages, select_index FROM main.pc_message_node;
     `);
     // 工作区表在活库懒建(workspace/index.ts 的 db()):用户从未建过工作区时 main 侧该表
@@ -684,6 +768,7 @@ export function exportPcConversationsDump(targetPath: string): number {
     if (hasWorkspaceTable) {
       db.exec("INSERT INTO pcdump.pc_workspace SELECT id, name, type, root, permission_preset, trusted_at, create_at, update_at, last_access_at FROM main.pc_workspace");
     }
+    copyEngineTablesInto(db, "pcdump");
     return (db.prepare("SELECT COUNT(*) AS n FROM pcdump.pc_conversation").get() as { n: number }).n;
   } finally {
     db.exec("DETACH DATABASE pcdump");
@@ -714,14 +799,21 @@ export function snapshotConversationsDbBeforeImport(): void {
  *  pc_conversation 同驻一个活库,工作区重灌必须与会话灌库同事务——否则会话灌失败回滚、
  *  工作区却写进库的半成品态。传入时先全清再重灌(与会话替换语义一致,绑定悬空由会话侧
  *  workspace_id 决定);未传(老 dump 无该表)不动现有工作区。表结构幂等懒建,与
- *  workspace/index.ts 同型。 */
-export function resetConversationsDbTo(conversations: Conversation[], workspaces?: PcWorkspaceRow[]): void {
+ *  workspace/index.ts 同型。
+ *
+ *  P3.1:引擎私有条目外键挂在会话行上,DELETE 会把它们级联清空。传入 engineTables(dump
+ *  format 3)即替换;未传(APP 库合并 / JSON 备份 / 老 dump / bak 重灌)先读出现有行、灌库后
+ *  写回会话与锚定消息仍在的那些——封存摘要会自校验,内容变了的组装载时自然回退。 */
+export function resetConversationsDbTo(conversations: Conversation[], workspaces?: PcWorkspaceRow[], engineTables?: PcEngineTablesRows): void {
   if (!conversationsDb) throw new Error("conversationsDb not open");
   const db = conversationsDb;
   const txn = db.transaction(() => {
-    db.exec("DELETE FROM pc_conversation");
+    const keptEngineTables = engineTables ?? snapshotLiveEngineTables(db);
+    // 先删表重建索引,再删会话行:反过来的话级联会逐行删索引,每行都要重新分词一遍
     clearAllFts(db);
+    db.exec("DELETE FROM pc_conversation");
     migrateConversationsIntoDb(db, conversations);
+    if (keptEngineTables) refillEngineTables(db, keptEngineTables, conversations);
     if (workspaces) {
       db.exec(`CREATE TABLE IF NOT EXISTS pc_workspace (
         id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, root TEXT NOT NULL DEFAULT '',

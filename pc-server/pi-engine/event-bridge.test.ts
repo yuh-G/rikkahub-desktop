@@ -14,7 +14,7 @@ import type { Conversation, Message, MessageNode, ToolOutputEntry, ToolPart } fr
 import type { GenerationEvent } from "../inference-engine/events";
 import { createGenerationEventApplier } from "../conversations/generation-apply";
 import { message } from "../foundation/utils";
-import { clearAppErrors, recentAppErrors } from "../observability/app-errors";
+import type { EngineErrorReport } from "../engines/contract";
 import { createPiEventBridge, mapPiToolContent, mapPiUsage } from "./event-bridge";
 
 // ----- pi 事件样本工厂(形状由 vendored pi 类型编译期锁定)-----
@@ -150,6 +150,37 @@ describe("pi 事件桥:纯映射", () => {
     ).toEqual([{ kind: "tool_result", toolCallId: "call-3", output: [{ error: "boom" }] }]);
   });
 
+  test("工具卡署名:插件工具建卡带插件 id;被插件否决的调用在结束时补否决方与理由;应用工具不署名", () => {
+    const vetoes = new Map([["call-v", { pluginId: "dev:guard", reason: "no secrets" }]]);
+    const bridge = createPiEventBridge({
+      appToolNames: new Set(["write_note"]),
+      toolPlugin: (name) => (name === "counter_add" || name === "write_note" ? "dev:counter" : undefined),
+      takeVeto: (id) => vetoes.get(id),
+    });
+    expect(bridge.handle({ type: "tool_execution_start", toolCallId: "call-p", toolName: "counter_add", args: {} })).toEqual([
+      { kind: "tool_call_created", toolCallId: "call-p", toolName: "counter_add", input: "{}", approvalState: { type: "auto" }, metadata: { attribution: { pluginId: "dev:counter" } } },
+    ]);
+    expect(bridge.handle({ type: "tool_execution_start", toolCallId: "call-v", toolName: "write_note", args: {} })).toEqual([
+      { kind: "tool_call_created", toolCallId: "call-v", toolName: "write_note", input: "{}", approvalState: { type: "auto" } },
+    ]);
+    expect(
+      bridge.handle({
+        type: "tool_execution_end",
+        toolCallId: "call-v",
+        toolName: "write_note",
+        result: { content: [{ type: "text", text: 'Blocked by plugin "dev:guard": no secrets' }], details: undefined },
+        isError: true,
+      }),
+    ).toEqual([
+      {
+        kind: "tool_result",
+        toolCallId: "call-v",
+        output: [{ error: 'Blocked by plugin "dev:guard": no secrets' }],
+        metadata: { attribution: { blockedBy: { pluginId: "dev:guard", reason: "no secrets" } } },
+      },
+    ]);
+  });
+
   test("details.app.output 优先于 content:通用工具结构化输出(含图)忠实还原+来源标记", () => {
     const bridge = createPiEventBridge();
     bridge.handle({ type: "tool_execution_start", toolCallId: "call-app", toolName: "search_web", args: {} });
@@ -207,71 +238,18 @@ describe("pi 事件桥:纯映射", () => {
     expect(bridge.handle({ type: "bash_execution_update", id: "call-6", delta: "raw" })).toEqual([]);
   });
 
-  test("message_end(assistant) → engine_fidelity(先) + usage 映射 + 终局文本/停止原因进 outcome", () => {
+  test("message_end(assistant) → usage 映射 + 终局文本/停止原因进 outcome(块结构不经事件,P3.4)", () => {
     const bridge = createPiEventBridge();
     const final = assistantMessage([{ type: "text", text: "答案" }], {
       usage: usage({ input: 100, output: 20, cacheRead: 60, cacheWrite: 10, totalTokens: 190 }),
     });
     expect(bridge.handle({ type: "message_end", message: final })).toEqual([
-      {
-        kind: "engine_fidelity",
-        message: {
-          msg: 0,
-          api: "openai-completions",
-          provider: "test-provider",
-          model: "test-model",
-          blocks: [{ type: "text", len: 2 }],
-        },
-      },
-      { kind: "usage", usage: { promptTokens: 170, completionTokens: 20, totalTokens: 190, cachedTokens: 60 } },
+      { kind: "usage", usage: { promptTokens: 170, completionTokens: 20, totalTokens: 190, cachedTokens: 60, cacheWriteTokens: 10 } },
     ]);
     const outcome = bridge.outcome();
     expect(outcome.text).toBe("答案");
     expect(outcome.stopReason).toBe("stop");
     expect(outcome.errorMessage).toBeNull();
-  });
-
-  test("engine_fidelity(P7):块结构/签名/redacted 逐块捕获,消息序号跨 message_end 递增", () => {
-    const bridge = createPiEventBridge();
-    const first = bridge.handle({
-      type: "message_end",
-      message: assistantMessage(
-        [
-          { type: "thinking", thinking: "推理", thinkingSignature: "sig-1" },
-          { type: "thinking", thinking: "", thinkingSignature: "enc-payload", redacted: true },
-          toolCall("call-f", "bash", { command: "ls" }),
-        ],
-        { stopReason: "toolUse" },
-      ),
-    });
-    expect(first[0]).toEqual({
-      kind: "engine_fidelity",
-      message: {
-        msg: 0,
-        api: "openai-completions",
-        provider: "test-provider",
-        model: "test-model",
-        blocks: [
-          { type: "thinking", len: 2, sig: "sig-1" },
-          { type: "thinking", len: 0, sig: "enc-payload", redacted: true },
-          { type: "toolCall", toolCallId: "call-f" },
-        ],
-      },
-    });
-    const second = bridge.handle({
-      type: "message_end",
-      message: assistantMessage([{ type: "text", text: "完成" }]),
-    });
-    expect(second[0]).toEqual({
-      kind: "engine_fidelity",
-      message: {
-        msg: 1,
-        api: "openai-completions",
-        provider: "test-provider",
-        model: "test-model",
-        blocks: [{ type: "text", len: 2 }],
-      },
-    });
   });
 
   test("上游失败:stopReason=error 与 errorMessage 进 outcome", () => {
@@ -290,7 +268,7 @@ describe("pi 事件桥:纯映射", () => {
       { type: "message_start", message: assistantMessage([]) },
       { type: "turn_end", message: assistantMessage([]), toolResults: [] },
       { type: "agent_end", messages: [], willRetry: false },
-      { type: "agent_settled" },
+      { type: "agent_settled", aborted: false },
       { type: "queue_update", steering: [], followUp: [] },
       { type: "session_info_changed", name: undefined },
       { type: "thinking_level_changed", level: "off" },
@@ -323,29 +301,33 @@ describe("pi 事件桥:纯映射", () => {
   });
 
   test("压缩失败(pi 0.84.2 compaction_end.errorMessage)→ 自动压缩上报;手动/成功/中止不上报", () => {
-    clearAppErrors();
-    const bridge = createPiEventBridge();
-    // 自动压缩(threshold/overflow)失败:状态条照常清除,同时把 errorMessage 上报进错误中心
-    // (severity error;用户不知情,压缩没发生=后续可能上下文溢出,必须知道)。
+    const reports: EngineErrorReport[] = [];
+    const bridge = createPiEventBridge({ report: (report) => void reports.push(report) });
+    // 自动压缩(threshold/overflow)失败:状态条照常清除,同时把 errorMessage 经 host.report
+    // 上报进错误中心(severity error;用户不知情,压缩没发生=后续可能上下文溢出,必须知道)。
     expect(
       bridge.handle({ type: "compaction_end", reason: "threshold", result: undefined, aborted: false, willRetry: false, errorMessage: "Compaction failed: boom" }),
     ).toEqual([{ kind: "engine_status", status: { busy: false } }]);
-    const errs = recentAppErrors();
-    expect(errs.some((e) => e.domain === "pi-engine" && e.severity === "error" && e.message.includes("压缩失败"))).toBe(true);
+    expect(reports).toEqual([
+      { domain: "pi-engine", severity: "error", message: "会话上下文压缩失败,继续对话可能超出模型上下文窗口", detail: "Compaction failed: boom" },
+    ]);
     // 手动压缩(manual)失败不上报:HTTP 错误路径已给人话 toast(runner PI_COMPACT_ERROR_TEXT
     // 映射),再报即同一失败双 toast(内测反馈:/compact 小会话必报"记忆还很小"时弹两条)。
-    clearAppErrors();
+    reports.length = 0;
     bridge.handle({ type: "compaction_end", reason: "manual", result: undefined, aborted: false, willRetry: false, errorMessage: "Compaction failed: Nothing to compact (session too small)" });
-    expect(recentAppErrors().filter((e) => e.domain === "pi-engine")).toHaveLength(0);
+    expect(reports).toHaveLength(0);
     // 成功(有 result)与中止(aborted,errorMessage 为 undefined)均不上报。
     bridge.handle({ type: "compaction_end", reason: "manual", result: { summary: "s", firstKeptEntryId: "e", tokensBefore: 1, estimatedTokensAfter: 1, usage: undefined, details: undefined } as never, aborted: false, willRetry: false });
     bridge.handle({ type: "compaction_end", reason: "manual", result: undefined, aborted: true, willRetry: false });
-    expect(recentAppErrors().filter((e) => e.domain === "pi-engine")).toHaveLength(0);
+    expect(reports).toHaveLength(0);
   });
 
   test("mapPiUsage/mapPiToolContent 口径", () => {
     expect(mapPiUsage(usage({ input: 10, output: 5, cacheRead: 3, cacheWrite: 2, totalTokens: 0 })))
-      .toEqual({ promptTokens: 15, completionTokens: 5, totalTokens: 20, cachedTokens: 3 });
+      .toEqual({ promptTokens: 15, completionTokens: 5, totalTokens: 20, cachedTokens: 3, cacheWriteTokens: 2 });
+    // 零写入不发键(不回报写入量的协议/命中全读的轮次,形状与旧数据一致)。
+    expect("cacheWriteTokens" in mapPiUsage(usage({ input: 10, output: 5, cacheRead: 3, cacheWrite: 0, totalTokens: 0 })))
+      .toBe(false);
     expect(mapPiToolContent([
       { type: "text", text: "t" },
       { type: "image", data: "QUJD", mimeType: "image/png" },
@@ -448,23 +430,8 @@ describe("pi 事件桥:落地回放(生产同款应用器)", () => {
     // usage 按 mergeTokenUsage 合并(两轮,后轮非零值覆盖);P5 统计对齐:应用器统一补
     // contextLimit 分母(测试环境 models.dev 缓存未加载 → null,前端降级只显示分子)
     expect(msg.usage).toEqual({ promptTokens: 20, completionTokens: 6, totalTokens: 26, cachedTokens: 0, contextLimit: null });
-    // P7 保真注解:两条引擎消息的块结构按序落 annotations(重建分组与签名的依据)
-    expect(msg.annotations).toEqual([
-      {
-        type: "pi-fidelity",
-        v: 1,
-        api: "openai-completions",
-        provider: "test-provider",
-        model: "test-model",
-        messages: [
-          [
-            { type: "thinking", len: 4 },
-            { type: "toolCall", toolCallId: "call-a" },
-          ],
-          [{ type: "text", len: 5 }],
-        ],
-      },
-    ]);
+    // P3.4:引擎块结构不再写成消息注解(在引擎私有条目里)。
+    expect(msg.annotations).toEqual([]);
   });
 
   test("bash 增量输出:tool part 单 text 条目纯前缀增长(SSE 可走 text_delta 快路),终局替换", () => {
@@ -501,7 +468,7 @@ describe("pi 事件桥:落地回放(生产同款应用器)", () => {
 // 在 GenerationEvent 扩展时提醒同步审视桥的产出面,运行时恒真)。
 const _generationKinds: GenerationEvent["kind"][] = [
   "text_delta", "reasoning_delta", "image_delta", "tool_call_created", "tool_input_delta",
-  "tool_approval_updated", "tool_result", "usage", "engine_status", "engine_fidelity",
+  "tool_approval_updated", "tool_result", "usage", "engine_status",
   "finished", "error", "abort",
 ];
 void _generationKinds;

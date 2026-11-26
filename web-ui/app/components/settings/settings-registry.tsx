@@ -13,6 +13,7 @@ import { BackupSection } from "~/components/settings/data/backup";
 import { WebServiceSection } from "~/components/settings/data/web-service";
 import { DefaultModelsSection } from "~/components/settings/default-models";
 import { McpSection } from "~/components/settings/extensions/mcp";
+import { PluginsSection } from "~/components/settings/extensions/plugins";
 import { PromptInjectionSection } from "~/components/settings/extensions/injection";
 import { QuickMessagesSection } from "~/components/settings/extensions/quick-messages";
 import { SkillsSection } from "~/components/settings/extensions/skills";
@@ -90,6 +91,7 @@ export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<Setting
   "network/port": PortRequestSection,
   "extensions/mcp": McpSection,
   "extensions/skills": SkillsSection,
+  "extensions/plugins": PluginsSection,
   "extensions/injection": PromptInjectionSection,
   "extensions/quick": QuickMessagesSection,
   "personalization/appearance": AppearanceSection,
@@ -110,7 +112,7 @@ export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<Setting
  * (两套外壳:模态与窄屏整页)据此把内容容器从「随内容增长」(min-h-full)切成「定高占满
  * 视口」(h-full)——栏内滚动的整条高度链从这里才闭环;不在此集合的页面维持整页滚动。
  * 判据:页面主区被 SettingsSplit(scroll) 独占。语音朗读页不是——它还有整页级的
- * 「朗读过滤」,两套滚轴会打架。
+ * 「朗读过滤」,两套滚轴会打架。插件页也在此:它是页内视图栈,吸顶工具栏要以定高的面板为滚动容器。
  */
 export const SETTINGS_DOCKED_PAGES: ReadonlySet<SettingsPageKey> = new Set([
   "assistants",
@@ -118,6 +120,7 @@ export const SETTINGS_DOCKED_PAGES: ReadonlySet<SettingsPageKey> = new Set([
   "network/search",
   "extensions/mcp",
   "extensions/skills",
+  "extensions/plugins",
   "extensions/injection",
   "extensions/quick",
   "speech/asr",

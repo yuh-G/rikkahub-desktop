@@ -1,6 +1,6 @@
 // tools/skills-validation.test.ts — P4 技能规范化校验(方案 §3.1)
 //
-// 契约对照(升级回归门,与 workspace-tools.test 的工具契约同族):我们的
+// 契约对照(升级回归门,与 pi-engine/app-tools.test 的工具契约同族):我们的
 // validateSkillMetadata 镜像 pi 的 validateName/validateDescription 规则与消息原文,
 // 但那两个函数是 pi 模块私有——对照走行为面:同一 fixture 目录喂 pi 的
 // loadSkillsFromDir,其 diagnostics 消息必须与我们镜像规则的产出逐字一致。

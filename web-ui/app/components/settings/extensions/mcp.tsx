@@ -2,14 +2,13 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { ArrowUpRight, Loader2, Puzzle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Notice } from "~/components/ui/notice";
-import { StatusBadge } from "~/components/ui/status-badge";
+import { StatusBadge, statusBadgeVariants } from "~/components/ui/status-badge";
 import { SegmentedControl } from "~/components/ui/segmented-tabs";
-import { Switch } from "~/components/ui/switch";
 import Markdown from "~/components/markdown/markdown";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
@@ -19,9 +18,12 @@ import { copyItemName } from "~/lib/copy-name";
 import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
+import { openPluginDetail } from "~/stores/plugins-view-store";
+import { getSettingsParam } from "~/stores/settings-dialog-store";
 import { useMcpHealthStore } from "~/stores";
 import type { McpHealthEntryDto, Settings } from "~/types";
 import { readMcpHeaders, toMcpHeaderPairs } from "@server/tools/mcp-headers";
+import { pluginMcpSource, type PluginMcpSource } from "@server/tools/mcp-source";
 import {
   clone,
   copyRowAction,
@@ -43,8 +45,10 @@ import {
   ExpandChevron,
   LabeledSwitch,
   pullSettings,
+  ToolSwitch,
   type SectionProps,
 } from "~/components/settings/extensions/common";
+import { pluginDisplayName } from "~/components/settings/extensions/plugins/model";
 
 /** 拓展 › MCP。MCP 服务器是全局配置(哪个助手用它在输入框 MCP 选择器里决定),无需选助手。 */
 export function McpSection({ settings, onSettings }: SectionProps) {
@@ -59,29 +63,6 @@ const MCP_TRANSPORTS = [
 function headersOf(commonOptions: unknown): SettingsKeyValue[] {
   const common = commonOptions && typeof commonOptions === "object" ? (commonOptions as Record<string, unknown>) : {};
   return readMcpHeaders(common.headers).map((header) => ({ key: header.name, value: header.value }));
-}
-
-/** 工具行内的紧凑开关:标签与开关同排,标签可点击。 */
-function ToolSwitch({
-  label,
-  checked,
-  disabled,
-  onCheckedChange,
-}: {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  const id = React.useId();
-  return (
-    <div className="flex shrink-0 items-center gap-1.5">
-      <label htmlFor={id} className="text-xs text-[var(--ds-text-secondary)]">
-        {label}
-      </label>
-      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
-    </div>
-  );
 }
 
 function mcpName(server: Record<string, unknown>, fallback: string) {
@@ -100,7 +81,7 @@ function mcpStatusKey(server: Record<string, unknown>, health?: McpHealthEntryDt
     server.commonOptions && typeof server.commonOptions === "object"
       ? (server.commonOptions as Record<string, unknown>)
       : {};
-  if (common.enable === false) return { ok: false, key: "off" };
+  if (common.enable === false || pluginMcpSource(server)?.active === false) return { ok: false, key: "off" };
   if (health) {
     switch (health.status) {
       case "ready": return { ok: true, key: "connected" };
@@ -123,7 +104,11 @@ function McpServerEditor({
   const { t } = useTranslation();
   const mcpHealth = useMcpHealthStore((s) => s.health);
   const servers = (settings.mcpServers ?? []) as Array<Record<string, unknown>>;
-  const [selectedId, setSelectedId] = React.useState(textValue(servers[0]?.id));
+  // 深链 serverId(插件详情的「在 MCP 页查看」)选中那一台;不在列表里就照常选第一台。
+  const [selectedId, setSelectedId] = React.useState(() => {
+    const wanted = getSettingsParam("serverId");
+    return wanted && servers.some((item) => String(item.id) === wanted) ? wanted : textValue(servers[0]?.id);
+  });
   const selected =
     servers.find((item) => String(item.id) === selectedId) ?? servers[0] ?? createMcpServer();
   const [draft, setDraft] = React.useState<Record<string, unknown>>(clone(selected));
@@ -259,6 +244,7 @@ function McpServerEditor({
       ? (liveServerCommon.oauth as Record<string, unknown>)
       : null;
   const oauthAuthorized = Boolean(liveOauth && textValue(liveOauth.accessToken));
+  const pluginSource = pluginMcpSource(liveServer ?? draft);
   const [oauthBusy, setOauthBusy] = React.useState(false);
   // 决策①③:当前服务器的实时健康项(状态灯/重连按钮的数据源)。
   const liveHealth = useMcpHealthStore((s) => s.health[String(draft.id ?? "")]);
@@ -379,6 +365,7 @@ function McpServerEditor({
       }}
       renderItem={(item) => {
         const status = mcpStatusKey(item, mcpHealth[String(item.id ?? "")]);
+        const source = pluginMcpSource(item);
         return (
           <div className="flex min-w-0 items-center gap-2 text-left">
             <span
@@ -395,6 +382,12 @@ function McpServerEditor({
               title={t(`settings:mcp.status_${status.key}`)}
             />
             <span className="truncate">{mcpName(item, t("settings:mcp.server.default_name"))}</span>
+            {source ? (
+              <Puzzle
+                className="size-3 shrink-0 text-[var(--ds-text-tertiary)]"
+                aria-label={t("settings:mcp.from_plugin", { name: pluginDisplayName(settings.enginePlugins, source.pluginId) })}
+              />
+            ) : null}
           </div>
         );
       }}
@@ -425,6 +418,11 @@ function McpServerEditor({
             title={textValue(common.name)}
             titlePlaceholder={t("settings:mcp.server.default_name")}
             titleLabel={t("settings:mcp.name")}
+            titleAddon={
+              pluginSource ? (
+                <PluginSourceBadge source={pluginSource} name={pluginDisplayName(settings.enginePlugins, pluginSource.pluginId)} />
+              ) : undefined
+            }
             onTitleCommit={(name) => patchDraft({ ...draft, commonOptions: { ...common, name } })}
             description={t("settings:mcp.server.detail_desc")}
             action={
@@ -645,6 +643,26 @@ function McpServerEditor({
         </SettingsStack>
       </div>
     </EditorShell>
+  );
+}
+
+/** 插件带来的服务器(D13):标题旁的来源徽标,点开是那个插件的详情。插件停用时它的服务器对谁都不可用,徽标转灰。 */
+function PluginSourceBadge({ source, name }: { source: PluginMcpSource; name: string }) {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      title={t("settings:mcp.from_plugin_open")}
+      onClick={() => openPluginDetail(source.pluginId)}
+      className={cn(
+        statusBadgeVariants({ tone: source.active ? "brand" : "neutral" }),
+        "max-w-48 cursor-pointer outline-none transition-opacity duration-(--ds-duration-fast) hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none",
+      )}
+    >
+      <Puzzle />
+      <span className="truncate">{t(source.active ? "settings:mcp.from_plugin" : "settings:mcp.from_plugin_disabled", { name })}</span>
+      <ArrowUpRight />
+    </button>
   );
 }
 

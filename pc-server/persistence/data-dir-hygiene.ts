@@ -1,10 +1,10 @@
 // persistence/data-dir-hygiene.ts — 数据目录卫生(全面审查 R1-13)
 // 原则(审查阶段九):只碰"冗余/可再生/已过期"三类,绝不触碰唯一副本;每次清理在
-// 错误中心留 info 级痕迹。就绪后由 server.ts 异步触发,失败只留痕、不影响运行。
+// 错误中心留 info 级痕迹。就绪后由 server-main.ts 异步触发,失败只留痕、不影响运行。
 // 保留策略(批次四决策,详见发现文档批次四记录):
 // - corrupt-* 损坏隔离文件(活库/记忆):同族保最新一份(取证价值),其余超龄 30 天清;
-// - pi-agent/sessions/:P7 起引擎会话状态并入会话行,该目录是 jsonl 时代的死残留
-//   (含损坏隔离件),存在即整目录退役删除;pi-agent/ 客房本体保留(P4 资源面在用);
+// - pi-agent/:旧版 pi 数据目录(装过 jsonl 时代的引擎记忆与空置的客房),pi 的数据目录已迁到
+//   engines/pi/,旧目录存在即整目录退役删除;
 // - updates/:版本 ≤ 当前 APP_VERSION 的安装包与 extracted-* 解压残留即删(纯可再生);
 // - state.json.pre-memory-split.bak:迁移标记已写且超龄 30 天即删(全代码无读取方,纯遗物);
 //   pre-sqlite.bak 原样保留——它仍是活库损坏恢复链的最后兜底,退役需先补替代兜底(未做);
@@ -13,7 +13,7 @@
 
 import { existsSync, readdirSync, rmSync, statSync, unlinkSync, type Dirent } from "node:fs";
 import { basename, join } from "node:path";
-import { dataDir, filesDir, memoryDir, piAgentDir, updatesCacheDir } from "../foundation/paths";
+import { dataDir, filesDir, memoryDir, updatesCacheDir } from "../foundation/paths";
 import { compareSemver } from "../foundation/utils";
 import { APP_VERSION } from "../updates/index";
 import { reportError } from "../observability/app-errors";
@@ -136,26 +136,28 @@ export function computeOrphanUploadStats(referenced: Set<number>): OrphanUploadS
   return { orphanEntries, orphanBytes, untrackedFiles, untrackedBytes };
 }
 
-/** P7 一次性退役清理:jsonl 引擎记忆目录整目录删除(它再无任何读取方,
- *  内容是"冗余"类残留——UI 历史与压缩记录都在会话行里,删了零数据损失)。 */
-function sweepPiSessionsDirOnce(): boolean {
-  const retiredDir = join(piAgentDir, "sessions");
+/** 退役清理:旧版 pi 数据目录 pi-agent/ 整目录删除。它只装过 jsonl 引擎记忆(P7 起无读取方)与空置
+ *  的客房;pi 的数据目录已迁到 engines/pi/(paths.piAgentDir)。全局 AGENTS.md 在发版之前就已迁出
+ *  (v2.0.0-preview-v5 同版内完成),所以这里没有用户亲写的内容,删了零数据损失。 */
+export function sweepLegacyPiAgentDirIn(dir: string): boolean {
+  const retiredDir = join(dir, "pi-agent");
   try {
     if (!existsSync(retiredDir)) return false;
     rmSync(retiredDir, { recursive: true, force: true });
     return true;
   } catch {
+    // 删不掉(文件被占用等)就留到下次启动再试,残留不影响运行。
     return false;
   }
 }
 
-/** 就绪后异步执行的卫生任务总入口(server.ts 调用)。 */
+/** 就绪后异步执行的卫生任务总入口(server-main.ts 调用)。 */
 export async function runDataDirHygiene(): Promise<void> {
   try {
     // 让开启动后的首屏请求高峰
     await Bun.sleep(3_000);
-    if (sweepPiSessionsDirOnce()) {
-      reportError("persistence", "info", "数据目录清理：退役并移除旧版引擎记忆目录", "pi-agent/sessions/(jsonl 时代残留)", "hygiene_pi_sessions_retired");
+    if (sweepLegacyPiAgentDirIn(dataDir)) {
+      reportError("persistence", "info", "数据目录清理：退役并移除旧版引擎数据目录", "pi-agent/(已迁到 engines/pi/)", "hygiene_pi_agent_dir_retired");
     }
     const removedCorrupt = [...sweepCorruptQuarantineIn(dataDir), ...sweepCorruptQuarantineIn(memoryDir)];
     if (removedCorrupt.length > 0) {

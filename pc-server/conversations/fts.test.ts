@@ -1,12 +1,12 @@
 // conversations/fts 单元测试（P1-2）。
 // 契约：中英文子串匹配（与旧 includes 语义对齐）、短查询 LIKE 兜底、
-// 节点级增量同步、会话删除清理、从节点表重建自愈、[匹配] 高亮片段形状。
+// 节点级增量同步、清空、从节点表重建自愈、[匹配] 高亮片段形状。
+// 行号目录（删节点 / 删会话靠外键级联、自检与修复、老版本写过之后）在 fts-directory.test.ts。
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 
 import {
   clearAllFts,
-  deleteConversationFts,
   ensureMessageFtsTable,
   ftsRowCount,
   rebuildFtsFromNodeTable,
@@ -90,16 +90,16 @@ describe("replaceNodeFts / searchMessageFts", () => {
   });
 });
 
-describe("deleteConversationFts / clearAllFts", () => {
-  test("按会话删除只清该会话的行", () => {
+describe("clearAllFts", () => {
+  test("删表重建：索引与目录都清空，之后照常可写可搜", () => {
     const db = freshDb();
     replaceNodeFts(db, "c1", node("n1", ["alpha text"]));
     replaceNodeFts(db, "c2", node("n2", ["beta text"]));
-    deleteConversationFts(db, ["c1"]);
-    expect(searchMessageFts(db, "alpha")).toHaveLength(0);
-    expect(searchMessageFts(db, "beta")).toHaveLength(1);
     clearAllFts(db);
     expect(ftsRowCount(db)).toBe(0);
+    expect((db.query("SELECT COUNT(*) AS n FROM pc_message_fts_dir").get() as { n: number }).n).toBe(0);
+    replaceNodeFts(db, "c2", node("n2", ["beta again"]));
+    expect(searchMessageFts(db, "beta")).toHaveLength(1);
   });
 });
 

@@ -1,36 +1,36 @@
 {
   "commands": {
     "menu_label": "Slash commands",
+    "group_app": "General",
+    "group_engine": "Engine",
     "compact": {
       "description": "Compact the conversation context",
       "argument_hint": "[instructions]"
+    },
+    "new": {
+      "description": "Start a new conversation"
+    },
+    "fork": {
+      "description": "Fork from the latest reply"
+    },
+    "name": {
+      "description": "Edit the conversation title"
+    },
+    "model": {
+      "description": "Switch model"
+    },
+    "thinking": {
+      "description": "Adjust reasoning intensity"
+    },
+    "mcp": {
+      "description": "Choose MCP servers for this conversation"
+    },
+    "skill": {
+      "description": "Choose skills for this conversation"
+    },
+    "settings": {
+      "description": "Open settings"
     }
-  },
-  "mcp": {
-    "title": "MCP",
-    "description": "Select MCP servers available to this assistant",
-    "update_failed": "Failed to update MCP settings",
-    "unnamed_server": "Unnamed MCP Server",
-    "tools_enabled": "{{enabled}}/{{total}} tools enabled",
-    "empty": "No MCP servers available"
-  },
-  "injection": {
-    "title": "Extensions",
-    "description": "Enable quick message templates, mode injections and lorebooks for the current assistant",
-    "update_failed": "Failed to update extensions",
-    "tab_quickmessages": "Quick message templates",
-    "tab_mode": "Mode injection",
-    "tab_lorebook": "Lorebook",
-    "unnamed_mode": "Unnamed mode injection",
-    "unnamed_lorebook": "Unnamed Lorebook",
-    "unnamed_quickmessage": "Unnamed quick message template",
-    "disabled": "Disabled",
-    "empty_mode": "No mode injections available",
-    "empty_lorebook": "No lorebooks available",
-    "empty_quickmessages": "No quick message templates available",
-    "tab_skills": "Skills",
-    "empty_skills": "No skills available",
-    "manage": "Manage"
   },
   "reasoning": {
     "title": "Reasoning",
@@ -191,8 +191,9 @@
     "save_failed": "Failed to save permission preset"
   },
   "integrations": {
-    "title": "MCP & Extensions",
-    "description": "Pick MCP tools and extensions for this assistant",
-    "tab_mcp": "MCP"
+    "title": "Extensions",
+    "description": "These switches apply to this conversation only. Defaults for new conversations are set in the assistant's \"Manage extensions\".",
+    "update_failed": "Failed to update this conversation's extensions",
+    "manage": "Settings"
   }
 }

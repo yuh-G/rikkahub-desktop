@@ -21,18 +21,20 @@
 // (聊天引擎:internalMessages[0];pi:appendSystemPrompt 条目),保证聊天位序列稳定。
 
 import type { Assistant, Conversation, JsonValue, Message, MessagePart, Model } from "../foundation/types";
-import { applyPlaceholders, cloneJson, getStringArray, message, textFromParts } from "../foundation/utils";
+import { applyPlaceholders, cloneJson, message, textFromParts } from "../foundation/utils";
 import { state } from "../persistence/json-store";
 import {
   activePromptInjections as activePromptInjectionsCore,
   applyMessageTemplateToParts,
   applyPromptInjectionsToMessages,
+  createTemplateContext,
   templateVariables as templateVariablesCore,
+  type TemplateContext,
 } from "../assistants";
 
 // ---- 模板变量(与 conversation-encoding.templateVariables 同一装配,集中到此) ----
 
-export function templateVariables(messageText: string, role: string, assistant: Assistant, modelItem: Model, at?: Date) {
+export function templateVariables(messageText: string, role: string, assistant: Assistant, modelItem: Model, at?: Date, context?: TemplateContext) {
   return templateVariablesCore(
     messageText,
     role,
@@ -40,6 +42,7 @@ export function templateVariables(messageText: string, role: string, assistant: 
     modelItem,
     String(state.settings.displaySetting.userNickname ?? "").trim() || "User",
     at,
+    context,
   );
 }
 
@@ -55,10 +58,13 @@ function messageTimestamp(msg: Message): Date | undefined {
 // 间隔 10min~1h 的回来接着聊才是桌面高频)。可调则必须补分钟级文案分支。
 const TIME_REMINDER_GAP_THRESHOLD_SECONDS = 10 * 60;
 
-function timeReminderContent(current: Message, previous?: Message) {
+const WEEKDAY_LONG: Intl.DateTimeFormatOptions = { weekday: "long" };
+const DATETIME_MEDIUM: Intl.DateTimeFormatOptions = { dateStyle: "medium", timeStyle: "medium" };
+
+function timeReminderContent(current: Message, previous: Message | undefined, context: TemplateContext) {
   const currentTime = new Date(current.createdAt);
-  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(currentTime);
-  const timeText = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(currentTime);
+  const weekday = context.format(WEEKDAY_LONG, currentTime);
+  const timeText = context.format(DATETIME_MEDIUM, currentTime);
   if (!previous) return `<time_reminder>Current time: ${weekday}, ${timeText}</time_reminder>`;
   const gapSeconds = Math.floor((Date.parse(current.createdAt) - Date.parse(previous.createdAt)) / 1000);
   // createdAt 不可解析时 gapSeconds 为 NaN(NaN<=阈值 为 false),原实现会输出 "NaN d",
@@ -81,6 +87,7 @@ export function applyTimeReminders(
   messages: Message[],
   assistant: Assistant,
   previousUserMessage?: Message,
+  context: TemplateContext = createTemplateContext(),
 ): { messages: Message[]; syntheticIds: Set<string> } {
   if (!assistant.enableTimeReminder) return { messages, syntheticIds: new Set() };
   const out: Message[] = [];
@@ -89,7 +96,7 @@ export function applyTimeReminders(
   let previous = previousUserMessage;
   for (const selected of messages) {
     if (selected.role === "USER") {
-      const reminder = timeReminderContent(selected, firstUserReminderInjected ? previous : undefined);
+      const reminder = timeReminderContent(selected, firstUserReminderInjected ? previous : undefined, context);
       if (reminder) {
         const reminderMessage = message("USER", [{ type: "text", text: reminder }]);
         syntheticIds.add(reminderMessage.id);
@@ -105,24 +112,10 @@ export function applyTimeReminders(
 
 // ---- lorebook / 模式注入 ----
 
-export interface ConversationInjectionOverride {
-  modeInjectionIds: string[];
-  lorebookIds: string[];
-}
-
-/** 生效注入集合(专题9:助手允许会话级绑定时,生效 id 集完全来自会话)。 */
-export function activePromptInjections(
-  conversation: Conversation,
-  assistant: Assistant,
-  messages: Message[],
-): Array<Record<string, JsonValue>> {
-  const override = assistant.allowConversationPromptInjection === true
-    ? {
-        modeInjectionIds: getStringArray(conversation.modeInjectionIds),
-        lorebookIds: getStringArray(conversation.lorebookIds),
-      }
-    : undefined;
-  return activePromptInjectionsCore(assistant, messages, state.settings.lorebooks, state.settings.modeInjections, override);
+/** 生效注入集合。assistant 是会话视角下的助手(conversationAssistant),它的模式注入 / 世界书 id
+ *  已经是这个会话实际选的那一份(D19)。 */
+export function activePromptInjections(assistant: Assistant, messages: Message[]): Array<Record<string, JsonValue>> {
+  return activePromptInjectionsCore(assistant, messages, state.settings.lorebooks, state.settings.modeInjections);
 }
 
 /** 注入按位置分两路:系统位(before/after_system_prompt)返回文本,由调用方并入
@@ -144,26 +137,26 @@ export function splitInjectionsByPlacement(injections: Array<Record<string, Json
 
 /** 对单条消息应用占位符(非 ASSISTANT 的 {{message}} 等)与模板包装。
  *  与 conversation-encoding 里两条消费路径(OpenAI messages / Responses input)
- *  共用的 per-message 加工,抽出来供 pi 编码器复用。 */
+ *  共用的 per-message 加工,抽出来供 pi 编码器复用。逐消息调用时由调用方传同一个渲染上下文
+ *  (enrichMessages 每次请求建一个),格式化器整个请求只建一次。 */
 export function applyTemplateToMessage(
   selected: Message,
   template: string,
   role: string,
   assistant: Assistant,
   modelItem: Model,
+  context: TemplateContext = createTemplateContext(),
 ): MessagePart[] {
-  const rawContent = textFromParts(selected.parts);
   const messageAt = messageTimestamp(selected);
   if (selected.role === "ASSISTANT") {
     // 助手消息无占位符展开(rawContent 不进模板变量),只套模板。
-    return applyMessageTemplateToParts(selected.parts, "assistant", template, messageAt);
+    return applyMessageTemplateToParts(selected.parts, "assistant", template, messageAt, context);
   }
+  const variables = templateVariables(textFromParts(selected.parts), role, assistant, modelItem, messageAt, context);
   const placeholderParts = selected.parts.map((part) =>
-    part.type === "text"
-      ? { ...part, text: applyPlaceholders(String(part.text ?? ""), templateVariables(rawContent, role, assistant, modelItem, messageAt)) }
-      : part,
+    part.type === "text" ? { ...part, text: applyPlaceholders(String(part.text ?? ""), variables) } : part,
   );
-  return applyMessageTemplateToParts(placeholderParts, role, template, messageAt);
+  return applyMessageTemplateToParts(placeholderParts, role, template, messageAt, context);
 }
 
 // ---- 上下文滞回截断(专题11-P2-1) ----
@@ -261,7 +254,7 @@ export interface EnrichResult {
  *  会被双重包装。纯函数:不改 conversation/assistant,合成消息 id 经 syntheticIds
  *  显式返回。 */
 export function enrichMessages(baseMessages: Message[], options: EnrichOptions): EnrichResult {
-  const { conversation, assistant, model } = options;
+  const { assistant, model } = options;
   const template = assistant.messageTemplate?.trim() || "{{ message }}";
 
   // 1. 窗口化:滞回截断与压缩切点锚取 max(锚不在序列中视为无锚)。与聊天引擎
@@ -276,10 +269,11 @@ export function enrichMessages(baseMessages: Message[], options: EnrichOptions):
   const start = alignContextStart(baseMessages, rawStart);
   const windowed = start > 0 ? baseMessages.slice(start) : baseMessages;
 
-  // 2. 模板/占位符逐消息渲染(一次到位:pi 编码器与聊天编码器吃同一份渲染产物)。
+  // 2. 模板/占位符逐消息渲染(一次到位:pi 编码器与聊天编码器吃同一份渲染产物)。整个请求共用一个渲染上下文。
+  const templateContext = createTemplateContext();
   const templated = windowed.map((msg) => {
     const role = msg.role === "SYSTEM" ? "system" : msg.role === "TOOL" ? "tool" : msg.role === "ASSISTANT" ? "assistant" : "user";
-    return { ...msg, parts: applyTemplateToMessage(msg, template, role, assistant, model) };
+    return { ...msg, parts: applyTemplateToMessage(msg, template, role, assistant, model, templateContext) };
   });
 
   // 3. 时间提醒(在模板之后、注入之前——提醒本身不套模板,与聊天引擎现状一致)。
@@ -287,10 +281,11 @@ export function enrichMessages(baseMessages: Message[], options: EnrichOptions):
     templated,
     assistant,
     options.timeReminderAnchor,
+    templateContext,
   );
 
   // 4. lorebook/模式注入:系统位文本抽出,聊天位消息插队(合成 id 并入返回集)。
-  const injections = activePromptInjections(conversation, assistant, withReminders);
+  const injections = activePromptInjections(assistant, withReminders);
   const { system, chat } = splitInjectionsByPlacement(injections);
   const withRemindersIds = new Set(withReminders.map((msg) => msg.id));
   const injected = applyPromptInjectionsToMessages(withReminders, chat);

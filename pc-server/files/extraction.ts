@@ -7,16 +7,14 @@
 //   3. 卡死可杀——解析卡住可以直接 kill,主进程里跑的同步 wasm 代码杀不掉。
 //   4. 逐页进度——子进程 stdout 逐行上报 EXTRACT_PROGRESS,前端进度圆圈轮询消费。
 //
-// 单 exe 自孵化:cmd = [process.execPath, ...process.argv.slice(1)] 原样复刻本进程的
-// 启动命令(dev 下是 `bun server.ts …`,编译单 exe 下 argv[1] 是 bunfs 虚拟入口路径、
-// exe 会照常跑自己嵌入的入口,该路径只当普通参数落进 args Set,不影响旗标判定),用
-// 环境变量 RIKKAHUB_EXTRACT_WORKER=1 让入口在绑端口/抢数据目录锁【之前】拐进 worker 分支。
-// Bun 的 process.argv 不含 --watch 等运行时旗标,不会复刻出常驻的 watch 子进程。
+// 单 exe 自孵化:经 foundation/process-roles 的 spawnSelf 以 extract-worker 身份启动本程序,入口在数据目录锁与
+// 端口绑定之前就分流到 runExtractionWorker;任务参数(文件 id、路径、名字、类型)走环境变量。
 //
 // 纪律:本模块只管"怎么跑提取",解析器本体在 files/index.ts;不修改业务状态。
 
 import { existsSync } from "node:fs";
 import process from "node:process";
+import { spawnSelf } from "../foundation/process-roles";
 import type { StoredFile } from "../foundation/types";
 import {
   extractStoredFileText,
@@ -108,11 +106,9 @@ async function runExtractionChild(entry: StoredFile): Promise<void> {
   const t0 = Date.now();
   let result: "ok" | "empty" | null = null;
   try {
-    const child = Bun.spawn({
-      cmd: [process.execPath, ...process.argv.slice(1)],
+    const child = spawnSelf("extract-worker", {
       env: {
         ...process.env,
-        RIKKAHUB_EXTRACT_WORKER: "1",
         RIKKAHUB_EXTRACT_FILE_ID: String(entry.id),
         RIKKAHUB_EXTRACT_PATH: entry.path,
         RIKKAHUB_EXTRACT_NAME: entry.fileName,
@@ -185,11 +181,8 @@ async function runExtractionChild(entry: StoredFile): Promise<void> {
 
 // ── 子侧:worker 模式 ────────────────────────────────────────────────────────
 
-/** server.ts 入口最早处调用(必须先于数据目录锁与端口绑定):被父进程以
- *  RIKKAHUB_EXTRACT_WORKER=1 孵化时,执行单次提取后由调用方 process.exit。
- *  返回 true 表示本进程是提取 worker。 */
-export async function maybeRunExtractionWorker(): Promise<boolean> {
-  if (process.env.RIKKAHUB_EXTRACT_WORKER !== "1") return false;
+/** 进程角色 extract-worker 的主体(入口 server.ts 分流后调用):执行单次提取,返回退出码。 */
+export async function runExtractionWorker(): Promise<number> {
   const fileId = Number(process.env.RIKKAHUB_EXTRACT_FILE_ID);
   const entry: StoredFile = {
     id: fileId,
@@ -218,7 +211,7 @@ export async function maybeRunExtractionWorker(): Promise<boolean> {
     }
   } catch (err) {
     console.error("[extract-worker] failed:", err);
-    process.exitCode = 1;
+    return 1;
   }
-  return true;
+  return 0;
 }

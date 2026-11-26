@@ -5,16 +5,19 @@
 //   分裂时刻与 pi 排水注入时刻同点;模型仍在流式时绝不触发;
 // - 边界返回的文本进下一次上游请求(注入成立),且一次吸收全部(steeringMode=all:两条
 //   插话同轮进入,不按轮次逐条滴灌);
-// - 注入后 runner 的返回文本切到「当前段」口径(不含第一段正文)。
+// - 注入后 runner 的返回文本切到「当前段」口径(不含第一段正文);
+// - 写路径(P3.4):第一段的原生条目在边界取补发之前交出,落在换绑前的落点上。
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { GenerationEvent } from "../inference-engine/events";
-import type { Message } from "../foundation/types";
+import type { EngineEntryInput } from "../engines/contract";
 import { model, provider } from "../model-providers";
 import { runPiGeneration } from "./runner";
+import { modelGrantFor } from "../engines/model-grant";
+import { sessionViewOf } from "../test-utils/engine-session-view";
 import { startFakeOpenAiSse, type FakeOpenAiSseServer } from "../test-utils/fake-openai-sse";
 
 const PROVIDER_ID = "00000000-0000-4000-8000-00000000000a";
@@ -48,20 +51,24 @@ afterAll(async () => {
 describe("pi runner steering 轮边界", () => {
   test("边界只在 turn_end 触发、整批注入下一轮请求、返回文本切当前段", async () => {
     const events: GenerationEvent[] = [];
+    // 写路径(P3.4):应用在 take 里换绑落点,条目按交出时刻的落点锚定。
+    let anchor = "ai_1";
+    const appended: Array<{ anchor: string; entries: EngineEntryInput[] }> = [];
     const ourProvider = provider({ id: PROVIDER_ID, name: "Steer Provider", baseUrl: server.baseUrl, apiKey: "sk-test" });
     const ourModel = model("fake-model", "Steer Model");
     const result = await runPiGeneration({
-      provider: ourProvider,
-      model: ourModel,
+      grant: modelGrantFor(ourProvider, ourModel, null, "conv-runner-steer")!,
       conversationId: "conv-runner-steer",
       cwd,
-      history: [] as Message[],
+      view: sessionViewOf([]),
       promptText: "开始",
       sink: (event) => events.push(event),
+      appendEntries: async (entries) => void appended.push({ anchor, entries }),
       onSteerBoundary: () => {
         boundaryCalls += 1;
         const taken = pending;
         pending = [];
+        if (taken.length > 0) anchor = "ai_2";
         return taken;
       },
     });
@@ -91,5 +98,14 @@ describe("pi runner steering 轮边界", () => {
     const streamed = events.filter((e): e is Extract<GenerationEvent, { kind: "text_delta" }> => e.kind === "text_delta").map((e) => e.text).join("|");
     expect(streamed).toContain("第一段正文");
     expect(streamed).toContain("第二段正文");
+
+    // 第一段的助手条目在换绑之前交出(落旧落点),第二段的落新落点;插话(用户消息)不写。
+    const byAnchor = (name: string) =>
+      appended.filter((item) => item.anchor === name).flatMap((item) => item.entries.map((entry) => JSON.stringify(entry.payload)));
+    expect(byAnchor("ai_1").length).toBe(1);
+    expect(byAnchor("ai_1")[0]).toContain("第一段正文");
+    expect(byAnchor("ai_2").length).toBe(1);
+    expect(byAnchor("ai_2")[0]).toContain("第二段正文");
+    expect(appended.flatMap((item) => item.entries).every((entry) => !JSON.stringify(entry.payload).includes('"role":"user"'))).toBe(true);
   });
 });

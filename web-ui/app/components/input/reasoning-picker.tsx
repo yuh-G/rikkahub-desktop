@@ -105,10 +105,13 @@ export function useCurrentReasoningLabel(): string | null {
 
 export interface ReasoningSubmenuProps {
   disabled?: boolean;
+  /** 受控展开(/thinking 指令要直接停在这个子菜单上);缺省由菜单自己管。 */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 /** 模型级联菜单里的思考强度子菜单(参考项目 ModelSelector 的 thinkingMenuItem 形态)。 */
-export function ReasoningSubmenu({ disabled = false }: ReasoningSubmenuProps) {
+export function ReasoningSubmenu({ disabled = false, open, onOpenChange }: ReasoningSubmenuProps) {
   const { t } = useTranslation("input");
   const { currentAssistant } = useCurrentAssistant();
   const { currentModel } = useCurrentModel();
@@ -147,7 +150,7 @@ export function ReasoningSubmenu({ disabled = false }: ReasoningSubmenuProps) {
   return (
     <>
       <DropdownMenuSeparator />
-      <DropdownMenuSub>
+      <DropdownMenuSub {...(open === undefined ? {} : { open, onOpenChange })}>
       <DropdownMenuSubTrigger disabled={!canUse || loading}>
         <ReasoningIcon level={currentLevel} />
         <span className="flex-1">{t("reasoning.title")}</span>

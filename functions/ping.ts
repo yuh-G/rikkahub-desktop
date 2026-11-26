@@ -41,6 +41,8 @@ export const onRequest = async (context) => {
   // 看板对该行回退 hb×10)。一天只有 1440 分钟,超出即伪造,截顶。
   const am = Math.min(clampCount("am"), 1440);
   const fs = clampCount("fs"), ft = clampCount("ft"), fm = clampCount("fm"), fi = clampCount("fi");
+  // rs=当日引擎宿主进程意外退出后的自动重启次数(0004 迁移新增;老客户端不带,落 0)。
+  const rs = clampCount("rs");
   // 国家码来自 CF 边缘(request.cf),不采集/不存 IP;仅 ISO 两位码白名单。
   const rawCountry = String(context.request.cf?.country ?? "");
   const country = /^[A-Z]{2}$/.test(rawCountry) ? rawCountry : "";
@@ -92,7 +94,8 @@ export const onRequest = async (context) => {
          EXISTS(SELECT 1 FROM pings WHERE device_id = ?1) AS has_any,
          p.msg_count AS cur_mc, p.version AS cur_ver, p.os AS cur_os, p.country AS cur_country,
          p.hb_count AS cur_hb, p.active_minutes AS cur_am, p.err_count AS cur_er,
-         p.feat_search AS cur_fs, p.feat_tts AS cur_ft, p.feat_mcp AS cur_fm, p.feat_img AS cur_fi
+         p.feat_search AS cur_fs, p.feat_tts AS cur_ft, p.feat_mcp AS cur_fm, p.feat_img AS cur_fi,
+         p.engine_restarts AS cur_rs
        FROM (SELECT 1) LEFT JOIN pings p ON p.device_id = ?1 AND p.date = ?2`
     ).bind(id, date).first();
 
@@ -100,14 +103,14 @@ export const onRequest = async (context) => {
     const hasToday = pre?.cur_mc != null;
     const countersUp = !hasToday
       || clampedMc > pre.cur_mc || hb > pre.cur_hb || am > pre.cur_am || er > pre.cur_er
-      || fs > pre.cur_fs || ft > pre.cur_ft || fm > pre.cur_fm || fi > pre.cur_fi;
+      || fs > pre.cur_fs || ft > pre.cur_ft || fm > pre.cur_fm || fi > pre.cur_fi || rs > pre.cur_rs;
     const identityChanged = hasToday && (version !== pre.cur_ver || os !== pre.cur_os || (country !== "" && country !== pre.cur_country));
 
     if (countersUp || identityChanged) {
       await DB.prepare(
         `INSERT INTO pings (device_id, date, version, os, country, msg_count, hb_count, active_minutes, err_count,
-                            feat_search, feat_tts, feat_mcp, feat_img, first_seen)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            feat_search, feat_tts, feat_mcp, feat_img, engine_restarts, first_seen)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(device_id, date) DO UPDATE SET
            version     = excluded.version,
            os          = excluded.os,
@@ -119,8 +122,9 @@ export const onRequest = async (context) => {
            feat_search = MAX(feat_search, excluded.feat_search),
            feat_tts    = MAX(feat_tts, excluded.feat_tts),
            feat_mcp    = MAX(feat_mcp, excluded.feat_mcp),
-           feat_img    = MAX(feat_img, excluded.feat_img)`
-      ).bind(id, date, version, os, country, clampedMc, hb, am, er, fs, ft, fm, fi, isNew ? 1 : 0).run();
+           feat_img    = MAX(feat_img, excluded.feat_img),
+           engine_restarts = MAX(engine_restarts, excluded.engine_restarts)`
+      ).bind(id, date, version, os, country, clampedMc, hb, am, er, fs, ft, fm, fi, rs, isNew ? 1 : 0).run();
 
       // daily_summary 只含 dau/eff_dau/new_users/total_msgs/os 计数——心跳、失败数、
       // 功能计数的变化不影响它;version_dist 只在新行或版本变化时重建。

@@ -1,6 +1,8 @@
 // conversations/generation-state.ts — 会话生成中的运行时状态（AbortController 注册表）
 // 单独成文件：api/sse 与编排层都要读它，独立后互不成环。
 
+import type { EngineStatus } from "../inference-engine/events";
+
 export const generating = new Map<string, AbortController>();
 
 /** 中止意图(对齐 Codex TurnAbortReason::{Interrupted, Replaced}):谁中止谁声明,收尾按它
@@ -49,4 +51,30 @@ export const compressing = new Map<string, number>();
  *  通知也无从恢复。由 approval-flow.gateToolApproval 在进入/离开等待时维护;
  *  生成终局(finally busy:false)兜底清除。一个会话同时只挂一张审批卡(sequential),
  *  故单值而非集合。 */
-export const awaitingApproval = new Map<string, { startedAt: number; toolName?: string; summary?: string }>();
+export const awaitingApproval = new Map<string, { startedAt: number; toolName?: string; summary?: string; dialog?: { source: string } }>();
+
+/** P7.2.6:引擎宿主进程无响应期间,有调用卡在它上面的会话 → 无响应开始时刻。同一套瞬态哲学:SSE 重连时补发
+ *  「引擎无响应」状态条。宿主进程缓过来或被强杀重启时整表清空;生成终局兜底清除本会话。 */
+export const engineUnresponsive = new Map<string, number>();
+
+/** 会话此刻常驻的状态条帧(压缩中 / 等待审批 / 引擎无响应),按显示优先级从低到高;SSE 连接时逐帧补发,
+ *  前端以最后一帧为准。「引擎无响应」结束时据此恢复原来的状态条。 */
+export function standingEngineStatuses(conversationId: string): EngineStatus[] {
+  const statuses: EngineStatus[] = [];
+  const compressStartedAt = compressing.get(conversationId);
+  if (compressStartedAt) statuses.push({ busy: true, phase: "compacting", startedAt: compressStartedAt });
+  const pendingApproval = awaitingApproval.get(conversationId);
+  if (pendingApproval) {
+    statuses.push({
+      busy: true,
+      phase: "awaiting_approval",
+      startedAt: pendingApproval.startedAt,
+      ...(pendingApproval.toolName ? { toolName: pendingApproval.toolName } : {}),
+      ...(pendingApproval.summary ? { summary: pendingApproval.summary } : {}),
+      ...(pendingApproval.dialog ? { dialog: pendingApproval.dialog } : {}),
+    });
+  }
+  const unresponsiveSince = engineUnresponsive.get(conversationId);
+  if (unresponsiveSince) statuses.push({ busy: true, phase: "unresponsive", startedAt: unresponsiveSince });
+  return statuses;
+}

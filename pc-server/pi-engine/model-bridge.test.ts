@@ -1,19 +1,23 @@
 // model-bridge 单测：协议映射矩阵、URL 口径差、鉴权占位、registerProvider 内存注册闭环、
-// 订阅供应商内建身份往返(真实 pi 运行时)。
+// 订阅供应商内建身份往返(真实 pi 运行时)。输入是契约 ModelGrant,经应用侧 modelGrantFor
+// 从 provider/模型行组装——两段一起测,锁住"应用配置 → pi 请求选项"的整条翻译链。
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 
 import { defaultSettings } from "../app-config/defaults";
 import { piAgentDir } from "../foundation/paths";
-import type { Provider } from "../foundation/types";
-import { bundledModelsFor, isOAuthProvider, OAUTH_FLOWS } from "../model-providers/auth";
+import type { Model, Provider } from "../foundation/types";
+import type { SubscriptionCredential } from "../engines/contract";
+import { modelGrantFor } from "../engines/model-grant";
+import { bundledModelsFor, OAUTH_FLOWS } from "../model-providers/auth";
+import { freshSubscriptionCredential } from "../model-providers/auth/resolve";
 import { model, provider } from "../model-providers";
 import type { ProviderChatModelConfig } from "../../pi/packages/coding-agent/src/core/provider-composer.ts";
 import type { OpenAICompletionsCompat, ThinkingLevelMap } from "../../pi/packages/ai/src/types.ts";
 import { setState, state } from "../persistence/json-store";
 import {
   createPiModelRuntime,
-  mapProviderModelToPi as mapAny,
+  mapGrantToPi,
   piApiFor,
   PI_THINKING_BUDGETS,
   type PiModelMapping,
@@ -22,6 +26,21 @@ import {
 
 function makeProvider(input: Parameters<typeof provider>[0]) {
   return provider({ apiKey: "sk-test", ...input });
+}
+
+function grantOf(providerRow: Provider, modelRow: Model = model("m"), sessionId?: string) {
+  const grant = modelGrantFor(providerRow, modelRow, null, sessionId);
+  if (!grant) throw new Error(`unknown provider type ${providerRow.type}`);
+  return grant;
+}
+
+function mapAny(providerRow: Provider, modelRow: Model, sessionId?: string) {
+  return mapGrantToPi(grantOf(providerRow, modelRow, sessionId));
+}
+
+/** 订阅令牌取用口(生产 = host.models.credential → freshSubscriptionCredential)。 */
+function credentialSourceFor(row: Provider) {
+  return () => freshSubscriptionCredential(row) as Promise<SubscriptionCredential>;
 }
 
 /** 断言映射产物注册的是 chat 模型并取其配置(pi 1.0.3 起 ProviderModelConfig 是
@@ -46,23 +65,23 @@ function mapProviderModelToPi(
 
 describe("piApiFor 协议映射矩阵", () => {
   it("openai 默认 → openai-completions", () => {
-    expect(piApiFor(makeProvider({ id: "p1", name: "P", baseUrl: "https://x/v1" }))).toBe("openai-completions");
+    expect(piApiFor(grantOf(makeProvider({ id: "p1", name: "P", baseUrl: "https://x/v1" })))).toBe("openai-completions");
   });
   it("openai + useResponseApi → openai-responses", () => {
-    expect(piApiFor(makeProvider({ id: "p1", name: "P", baseUrl: "https://x/v1", useResponseApi: true }))).toBe(
+    expect(piApiFor(grantOf(makeProvider({ id: "p1", name: "P", baseUrl: "https://x/v1", useResponseApi: true })))).toBe(
       "openai-responses",
     );
   });
   it("openai + 自定义补全路径 → 无法映射", () => {
     expect(
-      piApiFor(makeProvider({ id: "p1", name: "P", baseUrl: "https://x", chatCompletionsPath: "/api/v3/chat" })),
+      piApiFor(grantOf(makeProvider({ id: "p1", name: "P", baseUrl: "https://x", chatCompletionsPath: "/api/v3/chat" }))),
     ).toBeNull();
   });
   it("claude → anthropic-messages;google → google-generative-ai", () => {
-    expect(piApiFor(makeProvider({ id: "p1", name: "P", baseUrl: "https://x", type: "claude" }))).toBe(
+    expect(piApiFor(grantOf(makeProvider({ id: "p1", name: "P", baseUrl: "https://x", type: "claude" })))).toBe(
       "anthropic-messages",
     );
-    expect(piApiFor(makeProvider({ id: "p1", name: "P", baseUrl: "https://x", type: "google" }))).toBe(
+    expect(piApiFor(grantOf(makeProvider({ id: "p1", name: "P", baseUrl: "https://x", type: "google" })))).toBe(
       "google-generative-ai",
     );
   });
@@ -363,7 +382,7 @@ describe("mapProviderModelToPi", () => {
 
   it("会话身份头经注册头带进 pi 请求(§7.4);缺省兜底随机 UUID(#1902)", () => {
     const provider = makeProvider({ id: "p1", name: "P", baseUrl: "https://api.openai.com/v1" });
-    const withSession = mapProviderModelToPi(provider, model("gpt-4.1"), undefined, "conv-pi");
+    const withSession = mapProviderModelToPi(provider, model("gpt-4.1"), "conv-pi");
     if (!withSession.ok) throw new Error(withSession.reason);
     expect(withSession.mapping.config.headers?.["X-Session-ID"]).toBe("conv-pi");
     // 缺省(纯测试/冒烟)兜底随机 UUID——OpenCode Zen 拒收无会话头请求,注入层不再留空洞。
@@ -397,8 +416,8 @@ describe("createPiModelRuntime 内存注册闭环", () => {
     expect(piModel.baseUrl).toBe("https://relay.example/v1");
     expect(runtime.hasConfiguredAuth(piModel.provider)).toBe(true);
 
-    // 零落盘:客房目录整个不存在(auth 用内存存储,models 用内存 store,方案 §3.5 红线)。
-    // (全局 AGENTS.md 已迁引擎中立的 pc-data/AGENTS.md,客房回归纯空置。)
+    // 零落盘:pi 数据目录整个不存在(auth 用内存存储,models 用内存 store,方案 §3.5 红线)。
+    // (全局 AGENTS.md 住引擎中立的 pc-data/AGENTS.md,不在 pi 数据目录。)
     expect(existsSync(piAgentDir)).toBe(false);
   });
 });
@@ -428,24 +447,25 @@ describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运
   beforeEach(() => setState({ settings: structuredClone(defaultSettings()) } as any));
   afterEach(() => setState({ ...state, settings: { ...state.settings, providers: [] } } as any));
 
-  it("Kimi Code:身份译成 pi 内建 kimi-coding,取回内建 k3(anthropic-messages + 官方 coding 端点),鉴权由我们的 store 供给", async () => {
+  it("Kimi Code:身份译成 pi 内建 kimi-coding,取回内建 k3(pi 1.3 起为 openai-completions + 官方 coding/v1 端点),鉴权由我们的 store 供给", async () => {
     const row = seedSignedIn(KIMI);
     const k3 = row.models.find((m) => m.modelId === "k3")!;
-    const mapped = mapAny(row, k3, undefined, "conv-ws");
+    const mapped = mapAny(row, k3, "conv-ws");
     if (!mapped.ok) throw new Error(mapped.reason);
     expect(mapped.mapping.kind).toBe("builtin");
     expect(mapped.mapping.providerId).toBe("kimi-coding");
 
-    const { runtime, model: piModel } = await createPiModelRuntime(mapped.mapping);
+    const { runtime, model: piModel } = await createPiModelRuntime(mapped.mapping, credentialSourceFor(row));
     expect(piModel.provider).toBe("kimi-coding");
     expect(piModel.id).toBe("k3");
-    expect(piModel.api).toBe("anthropic-messages");
-    expect(piModel.baseUrl).toBe("https://api.kimi.com/coding");
+    expect(piModel.api).toBe("openai-completions");
+    expect(piModel.baseUrl).toBe("https://api.kimi.com/coding/v1");
     // 内建定义为权威:上游维护的 compat/档位表原样保留,不被宿主覆盖。
-    expect((piModel.compat as Record<string, unknown> | undefined)?.forceAdaptiveThinking).toBe(true);
+    expect((piModel.compat as Record<string, unknown> | undefined)?.requiresReasoningContentOnAssistantMessages).toBe(true);
+    expect(piModel.thinkingLevelMap?.max).toBe("max");
     // 宿主只叠加自己独有的东西:会话身份头(§7.4)。
     expect(piModel.headers?.["X-Session-ID"]).toBe("conv-ws");
-    // 凭证来自宿主 state(经 createPiCredentialStore 的 pi id → flow → 行 反查)。
+    // 凭证由应用供给(credentialSource → freshSubscriptionCredential 读应用 state)。
     expect(runtime.hasConfiguredAuth("kimi-coding")).toBe(true);
     const auth = await runtime.getAuth(piModel);
     expect(auth?.auth.apiKey ?? auth?.auth.headers?.Authorization).toContain("acc");
@@ -490,8 +510,8 @@ describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运
     expect(piModel.id).toBe("k4-preview");
     expect(piModel.name).toBe("Kimi K4 Preview");
     expect(piModel.reasoning).toBe(true);
-    expect(piModel.api).toBe("anthropic-messages");
-    expect(piModel.baseUrl).toBe("https://api.kimi.com/coding");
+    expect(piModel.api).toBe("openai-completions");
+    expect(piModel.baseUrl).toBe("https://api.kimi.com/coding/v1");
   });
 
   it("目录标 true 的模型也强制 supportsMidConvoSystemMessages=false(D1:上下文归宿主,pi 1.0 差异 system 消息须挪回开头)", async () => {
@@ -516,7 +536,10 @@ describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运
     expect((piModel.compat as Record<string, unknown>).supportsMidConvoSystemMessages).toBe(false);
     // Anthropic 另关 toolAdditions 闸门(nativeToolChanges 复合条件之一)。
     expect((piModel.compat as Record<string, unknown>).supportsMidConvoToolChanges).toBe(false);
-    // 其余内建 compat 原样保留(只叠我们不妥协的两个键)。
+    // pi 1.5.1 message threads 对 Claude 订阅轨默认开(provider=anthropic + api.anthropic.com),宿主关。
+    expect(piModel.provider).toBe("anthropic");
+    expect((piModel.compat as Record<string, unknown>).supportsMessageThreads).toBe(false);
+    // 其余内建 compat 原样保留(只叠我们不妥协的键)。
     expect((piModel.compat as Record<string, unknown>).forceAdaptiveThinking).toBe(true);
 
     const codexRow = seedSignedIn(CODEX);
@@ -529,6 +552,7 @@ describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运
 
   it("未登录的预置订阅供应商(无 oauth 行)仍能按固定 UUID 译出内建身份;鉴权缺失由 pi getAuth 在请求时报,不在映射期拦", async () => {
     const row = seedSignedIn(KIMI, { oauth: undefined, enabled: false });
+    expect(grantOf(row).credential).toEqual({ kind: "subscription", flow: "kimi-coding", signedIn: false });
     const mapped = mapAny(row, row.models[0]!);
     if (!mapped.ok) throw new Error(mapped.reason);
     expect(mapped.mapping.providerId).toBe("kimi-coding");
@@ -536,14 +560,12 @@ describe("订阅供应商(OAuth)桥接契约:pi 内建身份往返(真实 pi 运
     expect(runtime.hasConfiguredAuth("kimi-coding")).toBe(false);
   });
 
-  it("apiKey 供应商 isOAuthProvider 判 false → registered 变体,正常走 registerProvider", () => {
-    const mapped = mapAny(
-      makeProvider({ id: "p-key", name: "K", baseUrl: "https://relay.example/v1" }),
-      model("gpt-4.1", "GPT 4.1"),
-    );
+  it("apiKey 供应商授权为 api-key 凭据 → registered 变体,正常走 registerProvider", () => {
+    const row = makeProvider({ id: "p-key", name: "K", baseUrl: "https://relay.example/v1" });
+    expect(grantOf(row).credential).toEqual({ kind: "api-key", apiKey: "sk-test" });
+    const mapped = mapAny(row, model("gpt-4.1", "GPT 4.1"));
     if (!mapped.ok) throw new Error(mapped.reason);
     expect(mapped.mapping.kind).toBe("registered");
-    expect(isOAuthProvider(mapped.mapping.provider)).toBe(false);
     expect(mapped.mapping.providerId).toBe("p-key");
   });
 });

@@ -40,7 +40,10 @@
       "@earendil-works/pi-codemode/worker": ["../pi/packages/codemode/src/runtime/worker.ts"],
       "@earendil-works/pi-mcp": ["../pi/packages/mcp/src/index.ts"],
       "@earendil-works/pi-mcp/oauth": ["../pi/packages/mcp/src/oauth/index.ts"],
-      "@earendil-works/pi-mcp/testing": ["../pi/packages/mcp/src/testing/index.ts"]
+      "@earendil-works/pi-mcp/testing": ["../pi/packages/mcp/src/testing/index.ts"],
+      // pi 1.5.0 新增 schema 包(ai/agent 的工具参数校验与 compat schema 都经它)。
+      "@earendil-works/pi-schema": ["../pi/packages/schema/src/index.ts"],
+      "@earendil-works/pi-schema/formats": ["../pi/packages/schema/src/formats/index.ts"]
     },
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,

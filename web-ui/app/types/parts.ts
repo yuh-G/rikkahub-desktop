@@ -10,6 +10,8 @@ export type {
   DocumentPart,
   ReasoningPart,
   ToolPart,
+  ToolCardAttribution,
+  NoticePart,
   LoadingPart,
   ToolErrorOutput,
   ToolPendingOutput,

@@ -8,8 +8,8 @@
 //
 // 进程内引擎(chat/pi)与子进程引擎(dsh/codex/claude-code)共享同一输出契约
 // GenerationEvent,差异只在"事件从哪来"。本骨架把"从子进程来"这一半收敛成
-// 可复用层,接 dsh 时 dsh-engine/ adapter 只需:注入 map(协议消息→事件)+ 注册进
-// ENGINE_REGISTRY,不碰这里。
+// 可复用层,接 dsh 时 dsh-engine/ 的驱动只需:注入 map(协议消息→事件)+ 登记进
+// engines/index 的驱动数组,不碰这里。
 
 export { spawnSubprocess, runSubprocessToExit } from "./process";
 export type { SpawnSubprocessOptions, SubprocessHandle } from "./process";

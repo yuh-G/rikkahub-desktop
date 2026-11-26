@@ -50,6 +50,10 @@ export type TokenUsage = {
   completionTokens: number;
   cachedTokens: number;
   totalTokens: number;
+  /** 缓存写入量(已含在 promptTokens 内;Anthropic 口径即 cache_creation_input_tokens)。目前只有
+   *  工作区 pi 路径采集(事件桥 mapPiUsage);缺省 = 零或未回报。给 APP 的备份原样透传,
+   *  APP 端按未知键忽略。 */
+  cacheWriteTokens?: number;
   /** true = 本地字数折算的估算值(厂商未回报 usage,见 conversations/helpers.ts ensureUsage);
    *  统计页命中率分母与前端上下文用量条均排除估算记录。 */
   estimated?: boolean;
@@ -336,8 +340,9 @@ export type EngineStatusEventDto =
   | {
       busy: true;
       /** awaiting_approval(域4-1):审批挂起期间持续——外显等待,供侧栏/标签双态点
-       *  与桌面通知消费。与 events.ts EngineStatus 同构。 */
-      phase: "compacting" | "retrying" | "awaiting_approval";
+       *  与桌面通知消费。与 events.ts EngineStatus 同构。unresponsive(P7.2.6):引擎宿主进程无响应,
+       *  在途调用还在等它缓过来(一直不答会被强杀重启)。 */
+      phase: "compacting" | "retrying" | "awaiting_approval" | "unresponsive";
       /** compacting:manual/threshold/overflow;retrying 无。 */
       reason?: string;
       /** retrying:第几次/共几次。 */
@@ -352,4 +357,34 @@ export type EngineStatusEventDto =
       toolCallId?: string;
       toolName?: string;
       summary?: string;
+      /** awaiting_approval:等的是插件的对话框(不是工具审批);source 是发问的插件 id,认领不到为空串。 */
+      dialog?: { source: string };
     };
+
+/** 插件对话框的内容(与 engines/contract 的 EngineDialogRequest 同构,conversations/engine-interaction 赋值校验)。 */
+export type EngineUiDialogRequestDto =
+  | { kind: "select"; title: string; options: string[] }
+  | { kind: "confirm"; title: string; message: string }
+  | { kind: "input"; title: string; placeholder?: string }
+  | { kind: "editor"; title: string; prefill?: string };
+
+/** 会话详情 SSE:插件界面状态(事件名 engine-ui,P5.5)。每次变化发整份,空数组 / null = 没有。
+ *  瞬态:不落库、不进快照与备份,SSE 连接时补发当前状态。source 是插件 id(认领不到为空串)。 */
+export type EngineUiStateEventDto = {
+  conversationId: string;
+  dialogs: Array<{ requestId: string; source: string; request: EngineUiDialogRequestDto; startedAt: number }>;
+  statuses: Array<{ source: string; key: string; text: string }>;
+  widgets: Array<{ source: string; key: string; lines: string[] }>;
+  working: string | null;
+};
+
+/** 会话详情 SSE:插件通知(事件名 engine-notify,P5.5)。前端提示一次,不留存。 */
+export type EngineUiNotifyEventDto = {
+  conversationId: string;
+  source: string;
+  message: string;
+  level: "info" | "warning" | "error";
+};
+
+/** POST /api/conversations/:id/ui-response:回答插件对话框。select / input / editor 的 value 是字符串,confirm 是布尔。 */
+export type EngineUiResponseDto = { requestId: string; cancelled: true } | { requestId: string; cancelled?: false; value: string | boolean };

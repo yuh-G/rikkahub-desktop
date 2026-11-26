@@ -14,6 +14,7 @@ import { SettingsEmpty, SettingsRows } from "~/components/settings/shared";
 import { SegmentedTabs } from "~/components/ui/segmented-tabs";
 import { appErrorText, useAppErrorsStore } from "~/stores";
 import { confirmDialog } from "~/stores/confirm-store";
+import api from "~/services/api";
 import type { AppErrorDto } from "~/types";
 
 // FE-P1-2 收编:线上契约单源在后端 foundation/types(此前本地手抄漏了 providerId)。
@@ -93,6 +94,15 @@ export function LogsSection({ logs, onClear }: { logs: RequestLog[]; onClear: ()
 const FEED_ROW =
   "block w-full rounded-[var(--ds-radius-md)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--ds-on-surface)]";
 
+/** 缓存预热的重发(log.purpose === "cache_warm")在列表与详情里带一枚「预热」徽标。 */
+function CacheWarmBadge({ log }: { log: RequestLog }) {
+  const { t } = useTranslation();
+  if (log.purpose !== "cache_warm") return null;
+  return (
+    <StatusBadge title={t("settings:logs.purpose_cache_warm_hint")}>{t("settings:logs.purpose_cache_warm")}</StatusBadge>
+  );
+}
+
 function RequestLogRow({ log, onClick }: { log: RequestLog; onClick: () => void }) {
   return (
     <button
@@ -101,7 +111,10 @@ function RequestLogRow({ log, onClick }: { log: RequestLog; onClick: () => void 
       className={FEED_ROW}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="font-semibold text-primary">{log.method ?? "POST"}</span>
+        <span className="flex items-center gap-2">
+          <span className="font-semibold text-primary">{log.method ?? "POST"}</span>
+          <CacheWarmBadge log={log} />
+        </span>
         <span className={cn("text-xs font-medium", log.ok ? "text-success" : "text-destructive")}>
           {log.status}
         </span>
@@ -181,11 +194,69 @@ function AppErrorDetailDialog({ entry, onClose }: { entry: AppErrorDto | null; o
 }
 
 
-function LogDetailDialog({ log, onClose }: { log: RequestLog | null; onClose: () => void }) {
+// 列表接口不带正文(长会话里 100 条正文能有上亿字符),点开哪条才按 id 取它的完整条目。
+// 取回之前、或这条已不在服务端(被清空 / 挤出最近 100 条)时,先用列表里的基本信息顶上。
+type LogDetailState = { id: string; log: RequestLog | null; failed: boolean };
+
+function useLogDetail(summary: RequestLog | null): LogDetailState | null {
+  const [detail, setDetail] = React.useState<LogDetailState | null>(null);
+  React.useEffect(() => {
+    if (!summary) {
+      setDetail(null);
+      return;
+    }
+    let cancelled = false;
+    setDetail({ id: summary.id, log: null, failed: false });
+    api
+      .get<RequestLog>(`logs/${encodeURIComponent(summary.id)}`)
+      .then((log) => {
+        if (!cancelled) setDetail({ id: summary.id, log, failed: false });
+      })
+      .catch(() => {
+        // 条目已不在服务端:对话框照常显示列表里的基本信息,正文区给说明
+        if (!cancelled) setDetail({ id: summary.id, log: null, failed: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [summary]);
+  return detail && detail.id === summary?.id ? detail : null;
+}
+
+function LogDetailDialog({ log: summary, onClose }: { log: RequestLog | null; onClose: () => void }) {
+  const detail = useLogDetail(summary);
+  const log = detail?.log ?? summary;
+  return (
+    <Dialog
+      open={summary !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="truncate font-mono text-sm">{log?.url ?? ""}</DialogTitle>
+        </DialogHeader>
+        {log ? <LogDetailContent log={log} loading={!detail?.log && !detail?.failed} unavailable={!!detail?.failed} /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** 详情对话框的内容(对话框走 portal,静态渲染测试直接渲染这一层)。 */
+export function LogDetailContent({ log, loading, unavailable }: { log: RequestLog; loading: boolean; unavailable: boolean }) {
   const { t } = useTranslation();
   const [reveal, setReveal] = React.useState(false);
-  const requestText = log?.requestBody || "";
-  const responseText = log?.responseBody || log?.error || "";
+  // 取回详情之前不拿列表里截短过的错误文本冒充响应体
+  const requestText = loading ? "" : log.requestBody || "";
+  const responseText = loading ? "" : log.responseBody || log.error || "";
+  const bodyNote = loading
+    ? t("settings:logs.body_loading")
+    : log.bodiesReleased
+      ? t("settings:logs.body_released")
+      : unavailable
+        ? t("settings:logs.body_unavailable")
+        : null;
   const requestJson = React.useMemo(() => tryParseJson(requestText), [requestText]);
   const responseJson = React.useMemo(() => tryParseJson(responseText), [responseText]);
   const copy = React.useCallback(
@@ -199,45 +270,51 @@ function LogDetailDialog({ log, onClose }: { log: RequestLog | null; onClose: ()
     [t],
   );
   return (
-    <Dialog
-      open={log !== null}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle className="truncate font-mono text-sm">{log?.url ?? ""}</DialogTitle>
-        </DialogHeader>
-        {log ? (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3">
-              <DetailField label={t("settings:logs.field_time")} value={new Date(log.at).toLocaleString()} />
-              <DetailField label={t("settings:logs.field_method")} value={log.method ?? "-"} />
-              <DetailField label={t("settings:logs.field_status")} value={String(log.status)} valueClass={log.ok ? "text-success" : "text-destructive"} />
-              <DetailField label={t("settings:logs.field_duration")} value={`${log.durationMs ?? 0}ms`} />
-              <DetailField label={t("settings:logs.field_provider")} value={log.providerName} />
-              <DetailField label={t("settings:logs.field_kind")} value={log.kind ?? "-"} />
-            </div>
-            <div className="flex justify-end">
-              <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={() => setReveal((v) => !v)}>
-                {reveal ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-                {reveal ? t("settings:logs.hide_sensitive") : t("settings:logs.show_sensitive")}
-              </Button>
-            </div>
-            {log.error ? (
-              <pre className="overflow-auto rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-xs whitespace-pre-wrap text-destructive">
-                {log.error}
-              </pre>
-            ) : null}
-            <HeaderList title={t("settings:logs.request_headers")} headers={log.requestHeaders} reveal={reveal} />
-            <BodySection title={t("settings:logs.request_body")} text={requestText} json={requestJson} onCopy={copy} emptyText={t("settings:logs.no_request_body")} />
-            <HeaderList title={t("settings:logs.response_headers")} headers={log.responseHeaders} reveal={reveal} />
-            <BodySection title={t("settings:logs.response_body")} text={responseText} json={responseJson} onCopy={copy} emptyText={t("settings:logs.no_response_body")} />
-          </div>
-        ) : null}
-      </DialogContent>
-    </Dialog>
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3">
+        <DetailField label={t("settings:logs.field_time")} value={new Date(log.at).toLocaleString()} />
+        <DetailField label={t("settings:logs.field_method")} value={log.method ?? "-"} />
+        <DetailField label={t("settings:logs.field_status")} value={String(log.status)} valueClass={log.ok ? "text-success" : "text-destructive"} />
+        <DetailField label={t("settings:logs.field_duration")} value={`${log.durationMs ?? 0}ms`} />
+        <DetailField label={t("settings:logs.field_provider")} value={log.providerName} />
+        <DetailField label={t("settings:logs.field_kind")} value={log.kind ?? "-"} />
+      </div>
+      {log.purpose === "cache_warm" ? (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <CacheWarmBadge log={log} />
+          <span>{t("settings:logs.purpose_cache_warm_hint")}</span>
+        </div>
+      ) : null}
+      <div className="flex justify-end">
+        <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={() => setReveal((v) => !v)}>
+          {reveal ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+          {reveal ? t("settings:logs.hide_sensitive") : t("settings:logs.show_sensitive")}
+        </Button>
+      </div>
+      {log.error ? (
+        <pre className="overflow-auto rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-xs whitespace-pre-wrap text-destructive">
+          {log.error}
+        </pre>
+      ) : null}
+      <HeaderList title={t("settings:logs.request_headers")} headers={log.requestHeaders} reveal={reveal} />
+      <BodySection
+        title={t("settings:logs.request_body")}
+        text={requestText}
+        json={requestJson}
+        onCopy={copy}
+        emptyText={bodyNote ?? t("settings:logs.no_request_body")}
+        length={log.requestBodyLength}
+      />
+      <HeaderList title={t("settings:logs.response_headers")} headers={log.responseHeaders} reveal={reveal} />
+      <BodySection
+        title={t("settings:logs.response_body")}
+        text={responseText}
+        json={responseJson}
+        onCopy={copy}
+        emptyText={bodyNote ?? t("settings:logs.no_response_body")}
+        length={log.responseBodyLength}
+      />
+    </div>
   );
 }
 
@@ -294,18 +371,23 @@ function BodySection({
   json,
   onCopy,
   emptyText,
+  length,
 }: {
   title: string;
   text: string;
   json: unknown;
   onCopy: (text: string) => void;
   emptyText: string;
+  length?: number;
 }) {
   const { t } = useTranslation();
   return (
     <div>
       <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
-        <span>{title}</span>
+        <span>
+          {title}
+          {length ? <span className="ml-2 font-normal">{t("settings:logs.body_length", { chars: length.toLocaleString() })}</span> : null}
+        </span>
         {text ? (
           <button type="button" className="rounded px-1.5 py-0.5 hover:bg-[var(--ds-on-surface-active)]" onClick={() => void onCopy(text)}>
             {t("settings:logs.copy")}

@@ -1,6 +1,12 @@
 // components/settings/providers/common.ts — 供应商页的纯函数与常量(无 React):类型推断、端点预览、
 // 格式切换换算。端点预览与服务端 model-providers/checks.ts 的 endpointFor 同款规则。
 
+import {
+  claudePromptCacheWarmingDefault,
+  claudePromptCacheWarmingEligible,
+  claudePromptCacheWarmingEnabled,
+  claudePromptCachingEnabled,
+} from "@server/model-providers/prompt-cache-defaults";
 import { createId } from "~/lib/id";
 import type { ProviderProfile } from "~/types";
 import { textValue } from "~/components/settings/shared";
@@ -40,6 +46,28 @@ export function applyAutoModelType<M extends { modelId?: string; type?: string }
 
 export function providerKind(provider: ProviderProfile): string {
   return textValue(provider.type) || "openai";
+}
+
+/** 高级区「缓存预热」这一行(方案 §5.17.6):API Key 的 Claude 格式在缓存开着时显示,订阅只有 Claude 订阅显示(缓存恒开);
+ *  说明按端点选(官方端点与 Claude 订阅一句,其余端点一句);与默认值不同时高级区亮小圆点。 */
+export function cacheWarmingRowOf(provider: ProviderProfile): {
+  visible: boolean;
+  checked: boolean;
+  nonDefault: boolean;
+  descriptionKey: string;
+} {
+  const flow = provider.oauthStatus?.flow;
+  const isDefaultOn = claudePromptCacheWarmingDefault(provider, flow);
+  const checked = claudePromptCacheWarmingEnabled(provider, flow);
+  const visible = claudePromptCacheWarmingEligible(provider, flow) && (provider.authMode === "oauth" || claudePromptCachingEnabled(provider));
+  return {
+    visible,
+    checked,
+    nonDefault: visible && checked !== isDefaultOn,
+    descriptionKey: isDefaultOn
+      ? "settings:providers.prompt_cache_warming_desc_official"
+      : "settings:providers.prompt_cache_warming_desc_other",
+  };
 }
 
 export function balanceOptionOf(provider: ProviderProfile): Record<string, unknown> {

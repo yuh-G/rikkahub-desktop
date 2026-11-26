@@ -1,9 +1,11 @@
-// 专题2 H-c 回归测试:流式脏 flush 跳过 FTS 同步,流结束 persist 全量 reconcile。
+// 专题2 H-c 回归测试:流式脏 flush 不建 FTS,流结束 persist 对账补建。
 // 契约:
-// - upsertMessageNodeInto(..., syncFts=false) 只写节点行,绝不触碰 pc_message_fts;
+// - upsertMessageNodeInto(..., syncFts=false) 写节点行,并删掉这个节点已有的索引行(PF.2:
+//   否则最后一次 flush 已写入最终内容时,对账因内容相同跳过,索引停在旧版本),不新建索引;
 // - 默认(syncFts 省略/true)行为与历史一致:删旧 FTS 行 + 插新行;
-// - 模拟完整流式生命周期:N 次跳过 FTS 的 flush 后,一次带 FTS 的 upsert(对应流结束
-//   persistConversation 内的逐节点重建)让索引恰好收敛到最终文本,无中间态残留。
+// - 模拟完整流式生命周期:N 次 flush 后,一次带 FTS 的 upsert(对应流结束
+//   persistConversation 对账时的补建)让索引恰好收敛到最终文本,无中间态残留。
+// 对账本身的流式用例在 persist-reconcile.test.ts。
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 
@@ -43,17 +45,17 @@ function ftsTexts(db: Database, nodeId: string): string[] {
 }
 
 describe("H-c: 流式 flush 跳过 FTS", () => {
-  test("syncFts=false 只写节点行,不触碰 FTS", () => {
+  test("syncFts=false 写节点行、删掉这个节点的旧索引行,不建新索引,别的节点不动", () => {
     const db = realSchemaDb();
-    migrateConversationsIntoDb(db, [conv("c1", [node("n1", "初始")])]);
+    migrateConversationsIntoDb(db, [conv("c1", [node("n1", "初始"), node("n2", "旁边的节点")])]);
     expect(ftsTexts(db, "n1")).toEqual(["初始"]);
 
     upsertMessageNodeInto(db, "c1", node("n1", "初始加了新内容"), 0, false);
     // 节点行已更新
     const row = db.prepare("SELECT messages FROM pc_message_node WHERE id = ?").get("n1") as { messages: string };
     expect(row.messages).toContain("初始加了新内容");
-    // FTS 保持旧值(未被删也未被改)
-    expect(ftsTexts(db, "n1")).toEqual(["初始"]);
+    expect(ftsTexts(db, "n1")).toEqual([]);
+    expect(ftsTexts(db, "n2")).toEqual(["旁边的节点"]);
   });
 
   test("默认 syncFts 行为不变:删旧行插新行", () => {

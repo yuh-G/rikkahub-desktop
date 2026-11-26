@@ -11,7 +11,6 @@ import {
   type SettingsLocation,
   type SettingsTabId,
 } from "~/components/settings/settings-nav";
-import { resetBindingAssistant } from "~/stores/extension-binding-store";
 
 interface SettingsDialogState {
   open: boolean;
@@ -68,7 +67,6 @@ function rememberSub(
 /** 打开模态。search 为空 = 回到上次位置且清掉旧深链参数;合法深链则定位过去。 */
 export function openSettingsDialog(search = ""): void {
   const location = resolveSettingsLocation(search);
-  resetBindingAssistant();
   useSettingsDialogStore.setState((state) => ({
     open: true,
     search,

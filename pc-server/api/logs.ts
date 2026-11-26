@@ -106,13 +106,47 @@ export function sanitizeLogUrl(url: string): string {
   }
 }
 
+// ── PF.4 内存预算 ──────────────────────────────────────────────
+// 日志留最近 LOG_LIMIT 条的基本信息;请求体与响应体合计超过预算时,从最旧的开始只释放正文,
+// 条目留着(详情里显示「正文已释放」)。长会话里每次模型请求都带整段上下文,不限量的话 300 轮
+// 会话的 100 条正文约 9600 万字符常驻内存。最新一条永远保留正文,哪怕它自己就超预算。
+const LOG_LIMIT = 100;
+export const LOG_BODY_BUDGET_CHARS = 16_000_000;
+/** 列表里的错误文本只给一行摘要用;失败请求的 error 往往就是整段响应体,完整的在详情里。 */
+const LIST_ERROR_CHARS = 1000;
+
+/** 从最新往最旧累加正文字符数,超过预算之后(含越线的那条)的条目释放正文。logs 按新→旧排列。 */
+export function releaseOldLogBodies(logs: RequestLog[], budget = LOG_BODY_BUDGET_CHARS): void {
+  let used = 0;
+  for (let i = 0; i < logs.length; i += 1) {
+    const log = logs[i]!;
+    if (log.bodiesReleased) continue;
+    used += (log.requestBody?.length ?? 0) + (log.responseBody?.length ?? 0);
+    if (i === 0 || used <= budget) continue;
+    delete log.requestBody;
+    delete log.responseBody;
+    log.bodiesReleased = true;
+  }
+}
+
+/** GET /api/logs 的列表项:不带正文(点开某一条才按 id 取详情),错误文本截短。 */
+export function logListItem(log: RequestLog): RequestLog {
+  const { requestBody: _requestBody, responseBody: _responseBody, ...item } = log;
+  if (item.error && item.error.length > LIST_ERROR_CHARS) item.error = `${item.error.slice(0, LIST_ERROR_CHARS)}…`;
+  return item;
+}
+
 export function addLog(input: Omit<RequestLog, "id" | "at">) {
-  bumpStatsCounters(state.stats, input);
+  // 缓存预热的重发(方案 §5.17.5)只进日志,不算请求:统计页的请求数、失败数只数会话与辅助请求。
+  if (input.purpose !== "cache_warm") bumpStatsCounters(state.stats, input);
   const entry: RequestLog = { id: id(), at: Date.now(), ...input, url: sanitizeLogUrl(input.url) };
   if (entry.requestHeaders) entry.requestHeaders = sanitizeLogHeaders(entry.requestHeaders);
   if (entry.responseHeaders) entry.responseHeaders = sanitizeLogHeaders(entry.responseHeaders);
+  if (entry.requestBody !== undefined) entry.requestBodyLength = entry.requestBody.length;
+  if (entry.responseBody !== undefined) entry.responseBodyLength = entry.responseBody.length;
   state.logs.unshift(entry);
-  state.logs = state.logs.slice(0, 100);
+  state.logs = state.logs.slice(0, LOG_LIMIT);
+  releaseOldLogBodies(state.logs);
   // R1-6:每条请求日志一次全量 state 序列化落盘是放大的 IO(高频工具调用期尤甚),
   // 改节流保存——日志/计数是可容忍秒级丢失的非关键数据,与流式期间的既有节流语义一致。
   scheduleThrottledSaveState();

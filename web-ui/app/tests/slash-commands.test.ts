@@ -1,10 +1,10 @@
 // tests/slash-commands.test.ts — 斜杠指令前端解析纯函数
 import { describe, expect, test } from "bun:test";
 
-import { filterSlashCommands, parseSlashCommand, slashMenuQuery, type SlashCommandDto } from "~/lib/slash-commands";
+import { filterSlashCommands, groupSlashCommands, parseSlashCommand, slashMenuQuery, type SlashCommandDto } from "~/lib/slash-commands";
 
-const compact: SlashCommandDto = { name: "compact", hasArgument: true, executionTarget: "server" };
-const copy: SlashCommandDto = { name: "copy", hasArgument: false, executionTarget: "client" };
+const compact: SlashCommandDto = { name: "compact", hasArgument: true, executionTarget: "server", source: "app", invocation: "compact" };
+const copy: SlashCommandDto = { name: "copy", hasArgument: false, executionTarget: "client", source: "app", invocation: "copy" };
 const commands = [compact, copy];
 
 describe("slashMenuQuery:菜单触发判定", () => {
@@ -72,5 +72,48 @@ describe("parseSlashCommand:完整指令判定(拦截与染色共用)", () => {
 
   test("可用清单为空时一切放行", () => {
     expect(parseSlashCommand("/compact", [])).toBeNull();
+  });
+});
+
+describe("引擎特色指令:按来源分组、按写法认(方案 §5.9 / D17)", () => {
+  const engine = (source: SlashCommandDto["source"], name: string, invocation = name): SlashCommandDto => ({
+    name,
+    hasArgument: true,
+    executionTarget: "engine",
+    source,
+    invocation,
+    commandId: `${source}|${name}`,
+  });
+  const todoCompact = engine("plugin:dev:todo", "compact", "compact:todo");
+  const todos = engine("plugin:dev:todo", "todos");
+  const aReview = engine("plugin:dev:a", "review", "review:a");
+  const bReview = engine("plugin:dev:b", "review", "review:b");
+  const stats = engine("engine", "stats");
+  // 服务端清单里引擎与插件指令排在通用指令后面,顺序不一定按组。
+  const listed = [compact, copy, aReview, todoCompact, stats, bReview, todos];
+
+  test("分组:通用 → 引擎 → 各插件按首次出现;组内保持清单序", () => {
+    expect(groupSlashCommands(listed).map((group) => [group.source, group.commands.map((c) => c.invocation)])).toEqual([
+      ["app", ["compact", "copy"]],
+      ["engine", ["stats"]],
+      ["plugin:dev:a", ["review:a"]],
+      ["plugin:dev:todo", ["compact:todo", "todos"]],
+      ["plugin:dev:b", ["review:b"]],
+    ]);
+  });
+
+  test("过滤按写法匹配,结果按组排(与菜单显示、键盘上下同序)", () => {
+    expect(filterSlashCommands(listed, "").map((c) => c.invocation)).toEqual(["compact", "copy", "stats", "review:a", "compact:todo", "todos", "review:b"]);
+    expect(filterSlashCommands(listed, "comp").map((c) => `${c.source} /${c.invocation}`)).toEqual(["app /compact", "plugin:dev:todo /compact:todo"]);
+    expect(filterSlashCommands(listed, ":todo").map((c) => c.invocation)).toEqual(["compact:todo"]);
+    expect(filterSlashCommands(listed, "review").map((c) => c.invocation)).toEqual(["review:a", "review:b"]);
+  });
+
+  test("裸名归通用;限定写法指向那个插件;没人认领的裸名不算完整指令", () => {
+    expect(parseSlashCommand("/compact", listed)?.command).toBe(compact);
+    expect(parseSlashCommand("/compact:todo 只留待办", listed)).toEqual({ command: todoCompact, argument: "只留待办", tokenLength: 13 });
+    expect(parseSlashCommand("/Review:B", listed)?.command).toBe(bReview);
+    expect(parseSlashCommand("/todos", listed)?.command).toBe(todos);
+    expect(parseSlashCommand("/review", listed)).toBeNull();
   });
 });

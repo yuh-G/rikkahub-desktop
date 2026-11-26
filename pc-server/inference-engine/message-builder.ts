@@ -4,7 +4,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import type { ApiMessage, Assistant, JsonValue, Message, MessagePart, Model, Provider, ToolOutputEntry } from "../foundation/types";
-import { id, isRecord } from "../foundation/utils";
+import { id, isRecord, parseDataUrl } from "../foundation/utils";
 import {
   ARK_SEED2_EFFORT_BY_LEVEL,
   budgetTokensFor,
@@ -28,6 +28,7 @@ import {
   SILICONFLOW_THINKING_MODELS,
   ZHIPU_GLM53_EFFORT_BY_LEVEL,
 } from "../model-providers/request-dialect";
+import { claudePromptCachingEnabled } from "../model-providers/prompt-cache-defaults";
 import { fallbackDocumentText, readExtractedTextSync } from "../files/index";
 import { ensureExtractedTextAsync } from "../files/extraction";
 import { UNRESOLVED_TOOL_RESULT_TEXT, parseToolInput, toolArgumentsJson, toolResultTextForApi } from "../tools/format";
@@ -46,12 +47,6 @@ export function dataUrlForMessageUrl(url: string) {
   if (!entry || !existsSync(entry.path)) return url;
   const data = readFileSync(entry.path).toString("base64");
   return `data:${entry.mime || "application/octet-stream"};base64,${data}`;
-}
-
-
-export function parseDataUrl(url: string) {
-  const match = url.match(/^data:([^;,]+);base64,(.+)$/);
-  return match ? { mime: match[1], data: match[2] } : null;
 }
 
 
@@ -120,6 +115,11 @@ export function contentPartsForApi(parts: MessagePart[], targetModel?: Model) {
     } else if (part.type === "audio" || part.type === "video") {
       const url = String(part.url ?? "");
       if (url) result.push({ type: "text", text: `[${part.type}: ${url}]` });
+    } else if (part.type === "notice") {
+      // 只有 notice 的用户消息(APP 空闲时收到运行时通知开的那一轮):发 text,title 只给界面。聊天引擎在这之前已由
+      // expandNotices 拆开,走到这里的是工作区引擎的用户行与本轮输入。
+      const text = String(part.text ?? "");
+      if (text) result.push({ type: "text", text });
     }
   }
   return result;
@@ -259,7 +259,7 @@ export function claudeSystemContent(system: unknown, providerItem: Provider) {
   // 对齐安卓 ClaudeProvider.buildMessageRequest：system 始终以 text block 数组发送
   // （无缓存时也用数组，避免部分第三方代理只认数组格式）；开启 promptCaching 时
   // 在最后一个 block 上加 cache_control。
-  if (providerItem.promptCaching === true) return withClaudeCacheOnLastBlock(text, providerItem);
+  if (claudePromptCachingEnabled(providerItem)) return withClaudeCacheOnLastBlock(text, providerItem);
   return [claudeTextBlock(text)];
 }
 
@@ -306,7 +306,7 @@ export function claudeMessagesFromApiMessages(messages: ApiMessage[], providerIt
     }
   }
 
-  if (providerItem.promptCaching !== true) return mergedItems;
+  if (!claudePromptCachingEnabled(providerItem)) return mergedItems;
 
   const realUserIndices = mergedItems
     .map((item, index) => {
@@ -335,7 +335,7 @@ export function claudeToolsFromOpenAiTools(tools: any[], providerItem: Provider)
         name,
         description: String(fn.description ?? ""),
         input_schema: isRecord(fn.parameters) ? fn.parameters : { type: "object", properties: {} },
-        ...(providerItem.promptCaching === true && index === tools.length - 1
+        ...(claudePromptCachingEnabled(providerItem) && index === tools.length - 1
           ? { cache_control: claudeCacheControlEphemeral(providerItem) }
           : {}),
       };
@@ -698,7 +698,7 @@ export function hasBuiltInTool(modelItem: Model, toolType: string) {
  *  functionTools 与 responseApiBuiltInTools 并列发出)与一切未来引擎。
  *
  *  单源纪律:外挂 search_web 的唯一注入源 openAiSearchTools(tools/bound)经本谓词门控,
- *  聊天引擎(conversationFunctionTools)与 pi 引擎(createPiGeneralTools)同口消费——
+ *  聊天引擎(conversationFunctionTools)与工作区引擎的应用工具面(engines/app-tools)同口消费——
  *  未来新引擎只要从同一注入源取外挂搜索,天然继承本闸,无需各自复刻判定。 */
 export function shouldUseExternalWebSearch(enableWebSearch: boolean, modelItem: Model | null | undefined) {
   return enableWebSearch && !(modelItem && hasBuiltInTool(modelItem, "search"));

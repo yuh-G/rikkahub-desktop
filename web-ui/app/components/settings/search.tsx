@@ -69,6 +69,7 @@ const SEARCH_SERVICE_TYPE_LABELS: Record<string, string> = {
   grok: "Grok",
   tinyfish: "Tinyfish",
   serper: "Serper",
+  deepseek: "DeepSeek",
   custom_js: "Custom JS",
 };
 
@@ -93,6 +94,7 @@ const SEARCH_SERVICE_CREATABLE_TYPES = [
   "grok",
   "tinyfish",
   "serper",
+  "deepseek",
   "custom_js",
 ] as const;
 

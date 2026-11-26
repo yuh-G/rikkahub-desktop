@@ -5,7 +5,8 @@
 // e2e 路径(applyAndroidZipBackupFromPath)涉全局 state 与真实落盘,项目惯例锁纯函数层。
 import { describe, expect, test } from "bun:test";
 
-import { mergeKeyedCollectionById } from "./import";
+import { mergeById } from "../foundation/utils";
+import { mergeKeyedCollectionById, withPcEnginePluginBindings } from "./import";
 
 const OPENAI_ID = "1eeea727-9ee5-4cae-93e6-6fb01a4d051e"; // 两端共享的默认供应商固定 UUID
 
@@ -60,5 +61,24 @@ describe("mergeKeyedCollectionById(七层合并·层3)", () => {
     const pc = [{ id: "x", apiKey: "sk-pc" }];
     const app = [{ id: "x" } as { id: string; apiKey?: string }];
     expect(mergeKeyedCollectionById(pc, app)[0].apiKey).toBe("sk-pc");
+  });
+});
+
+describe("助手合并后还原桌面端的引擎插件绑定", () => {
+  test("同 id 取 APP 条目时绑定按 id 放回;桌面端独有的助手原样保留;APP 独有的助手不带绑定", () => {
+    const pc = [
+      { id: "shared", name: "PC 名", enginePluginIds: ["pi:todo"] },
+      { id: "pc-only", name: "桌面端助手", enginePluginIds: ["pi:guard"] },
+    ];
+    const app = [
+      { id: "shared", name: "APP 名" },
+      { id: "app-only", name: "手机端助手" },
+    ];
+    const merged = withPcEnginePluginBindings(mergeById(app as any[], pc), pc);
+    expect(merged).toEqual([
+      { id: "shared", name: "APP 名", enginePluginIds: ["pi:todo"] },
+      { id: "app-only", name: "手机端助手" },
+      { id: "pc-only", name: "桌面端助手", enginePluginIds: ["pi:guard"] },
+    ]);
   });
 });

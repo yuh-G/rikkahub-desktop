@@ -1,5 +1,5 @@
 import i18n from "~/i18n";
-import type { ConversationDto, MessageDto, ToolPart, UIMessagePart } from "~/types";
+import { isNoticeOnly, type ConversationDto, type MessageDto, type ToolPart, type UIMessagePart } from "~/types";
 
 function t(key: string, params?: Record<string, unknown>): string {
   return i18n.t(`message:chat_message.${key}`, params ?? {});
@@ -148,6 +148,7 @@ export async function convertMessagesToMarkdown(
   lines.push("");
 
   for (const message of messages) {
+    if (isNoticeOnly(message.parts)) continue;
     lines.push(...(await messageToLines(message, includeReasoning)));
     lines.push("---");
     lines.push("");
@@ -169,7 +170,7 @@ export async function convertConversationToMarkdown(
 
   for (const node of detail.messages) {
     const message = node.messages[node.selectIndex] ?? node.messages[0];
-    if (!message) continue;
+    if (!message || isNoticeOnly(message.parts)) continue;
     lines.push(...(await messageToLines(message, includeReasoning)));
     lines.push("---");
     lines.push("");

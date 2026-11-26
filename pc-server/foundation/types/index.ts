@@ -3,6 +3,7 @@
 
 import type { Settings } from "./settings";
 import type { MessagePart } from "./parts";
+import type { ConversationExtensionSelection } from "../../assistants/extension-selection";
 
 export * from "./parts";
 export * from "./dto";
@@ -81,6 +82,9 @@ export interface Provider {
   includeHistoryReasoning?: boolean;
   promptCaching?: boolean;
   promptCacheTtl?: "5m" | "1h";
+  // 「缓存预热」(方案 §5.17.3):工作区会话一轮之内在缓存到期前重发一次请求续期。三态,不填 = 官方端点与 Claude
+  // 订阅开、其余关(model-providers/prompt-cache-defaults.ts)。桌面端独有字段,APP 端解析时忽略。
+  promptCacheWarming?: boolean;
   // 专题12:OpenAI 系请求附带 prompt_cache_key=会话ID,官方端据此把同一会话路由到
   // 同一缓存分片提高命中率(codex 同款)。第三方兼容端可能不识别该字段报 400,
   // 故做成 provider 级开关,默认关。
@@ -188,10 +192,13 @@ export interface Assistant {
   modeInjectionIds: string[];
   lorebookIds: string[];
   enabledSkills: string[];
+  /** PC-only:本助手启用的引擎插件 id(D16,与 mcpServers / enabledSkills 同一模式;插件记录在
+   *  settings.enginePlugins)。导出给 APP 时剥离,APP→桌面端导入按助手 id 还原桌面端的值。 */
+  enginePluginIds: string[];
   enableTimeReminder: boolean;
   allowConversationSystemPrompt: boolean;
-  /** 专题9:允许"会话级"绑定提示词注入/世界书(对齐安卓 Assistant.allowConversationPromptInjection)。
-   *  开启后生效的注入 id 集来自 Conversation.modeInjectionIds/lorebookIds,完全取代助手级集合。 */
+  /** 与 APP 共用的助手字段,界面已不再提供开关(会话层选择成为常态,D19)。桌面端只在读还没固定过选择的
+   *  老会话时认它(见 extension-selection.ts 的 LEGACY-READ);导出给 APP 时原样保留存量值。 */
   allowConversationPromptInjection: boolean;
 }
 
@@ -317,8 +324,8 @@ export interface Conversation {
   isPinned: boolean;
   createAt: number;
   updateAt: number;
-  /** 专题9:会话级绑定的注入/世界书 id(仅当助手开启 allowConversationPromptInjection 时生效,
-   *  对齐安卓 Conversation.modeInjectionIds/lorebookIds)。缺省 = 空集。 */
+  /** 会话层选择里的模式注入 / 世界书 id(与 APP 共用的两列;其余几类在 extensionSelection 里)。
+   *  取数规则见 extension-selection.ts 的 effectiveSelection。 */
   modeInjectionIds?: string[];
   lorebookIds?: string[];
   /** 工作区归属(agent 模式)。null/缺省 = 对话模式。创建时绑定,不随会话迁移。
@@ -333,6 +340,9 @@ export interface Conversation {
    *  (编码器自校验,编辑/fork 后失效记录自动跳过)。仅存 PC 自有库;跨端导出
    *  白名单不含此列。 */
   engineCompactions?: JsonValue[] | null;
+  /** 会话层的拓展选择(D19,P6a.4;模式注入 / 世界书在上面两列)。null / 缺省 = 还没固定过,
+   *  取数时跟随助手当前的默认;缺的键同理。规则在 assistants/extension-selection。仅存桌面端自有库。 */
+  extensionSelection?: ConversationExtensionSelection | null;
 }
 
 // ----- 工作区(agent 模式)领域模型 -----
@@ -374,6 +384,28 @@ export interface PcWorkspaceRow {
   last_access_at: number;
 }
 
+// 引擎私有条目两表的原始行(conversations/engine-entries.ts),payload / header 是 JSON 文本。
+export interface PcEngineSessionRow {
+  conversation_id: string;
+  engine: string;
+  format: string;
+  header: string;
+}
+export interface PcEngineEntryRow {
+  conversation_id: string;
+  engine: string;
+  seq: number;
+  format: string;
+  anchor_message_id: string;
+  entry_id: string | null;
+  payload: string;
+  digest: string | null;
+}
+export interface PcEngineTablesRows {
+  sessions: PcEngineSessionRow[];
+  entries: PcEngineEntryRow[];
+}
+
 export interface RequestLog {
   id: string;
   at: number;
@@ -391,6 +423,13 @@ export interface RequestLog {
   responseBody?: string;
   responseHeaders?: Record<string, string>;
   toolName?: string;
+  /** 请求体 / 响应体的字符数(PF.4):入列时记下,正文被释放后列表与详情仍能显示大小。 */
+  requestBodyLength?: number;
+  responseBodyLength?: number;
+  /** 正文因内存预算被释放(api/logs.ts 的 LOG_BODY_BUDGET_CHARS);条目本身还在。 */
+  bodiesReleased?: boolean;
+  /** "cache_warm" = 工作区引擎续期提示缓存的重发(契约 ModelRequestRecord.purpose):日志页标「预热」,不计入统计。 */
+  purpose?: "cache_warm";
 }
 
 // 与 logs 解耦的持久化请求统计累加器。logs 已改为内存态(重启清空,对齐移动端),
@@ -447,6 +486,8 @@ export interface State {
   // B6-①a:备份导入流程的工作区暂存中转(dump format 2 的 pc_workspace 行),与 conversations
   // 同生命周期——finalize 随会话同事务灌库后 delete。仅暂存,运行时权威在活库。
   pcWorkspaces?: PcWorkspaceRow[];
+  // 备份导入流程的引擎私有条目暂存(dump format 3),同上生命周期;不写进 state.json。
+  pcEngineTables?: PcEngineTablesRows;
   files: StoredFile[];
   generatedImages: GeneratedImage[];
   logs: RequestLog[];
@@ -574,6 +615,7 @@ export interface PcConversationRow {
   workspace_id?: string | null;
   workspace_cwd?: string | null;
   engine_compactions?: string | null;
+  extension_selection?: string | null;
 }
 export interface PcMessageNodeRow {
   id: string;

@@ -22,8 +22,8 @@
 // 未知事件/未知 delta 官方要求"log and skip"——容错跳过,不抛错。
 
 import type { Assistant, JsonValue, Message, Model, Provider, ApiMessage } from "../foundation/types";
-import { id, isRecord } from "../foundation/utils";
-import { initialApprovalState } from "../tools/approval";
+import { id, isRecord, parseDataUrl } from "../foundation/utils";
+import { decideAppToolPermission } from "../tools/approval";
 import { toolResultTextForApi } from "../tools/format";
 import { appendReasoningDelta, finishReasoningParts } from "./parts";
 import type { StreamHooksWithSink } from "./events";
@@ -31,7 +31,6 @@ import {
   apiContentText,
   googleFunctionDeclarations,
   hasBuiltInTool,
-  parseDataUrl,
   supportsAbility,
   supportsOutputModality,
 } from "./message-builder";
@@ -355,7 +354,7 @@ export function makeInteractionsDecoder(result: InteractionsStreamRoundResult, h
         toolCallId: callId,
         toolName: name,
         input: JSON.stringify(args),
-        approvalState: initialApprovalState(name, assistant, hooks.conversation, JSON.stringify(args)),
+        approvalState: decideAppToolPermission(name, assistant, hooks.conversation, JSON.stringify(args)),
         ...(signature ? { metadata: { interactions_signature: signature } } : {}),
       });
     }
@@ -511,6 +510,7 @@ export async function streamInteractionsChatWithTools(
     providerItem,
     logUrl: url,
     logHeaders: headers,
+    // 这一家的流式开关要改进请求体,发出去的与骨架记进日志的那份差一个 stream 字段,只能另序列化
     fetchRound: (requestBody, _round, sig, nonStream) => fetch(url, {
       method: "POST",
       headers: nonStream ? headers : { ...headers, Accept: "text/event-stream" },

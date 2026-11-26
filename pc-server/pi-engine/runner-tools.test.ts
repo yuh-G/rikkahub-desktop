@@ -1,8 +1,7 @@
-// pi-engine/runner-tools.test.ts — runner × customTools × 审批门的全链路集成(P3)
+// pi-engine/runner-tools.test.ts — runner × 工作区工具 × 审批门的全链路集成(P3,P4b 起工具是 pi 内建定义)
 //
-// 与 workspace-tools.test.ts(工具 execute 单体生命周期)的分工:本文件跑真 pi 会话
-// 循环——假 OpenAI SSE 回工具调用帧 → pi 执行我们的 customTools → 结果回灌上游 →
-// 终局文本落 sink。核心断言三件事:
+// 本文件跑真 pi 会话循环——假 OpenAI SSE 回工具调用帧 → pi 执行内建工具(应用后端)→ 执行前经应用
+// 审批口(生产 = host.permission.check → createToolPermissionChecker)→ 结果回灌上游 → 终局文本落 sink。核心断言三件事:
 //   1) 工具产出真的进了下一轮上游请求(引擎循环闭合的硬证据);
 //   2) 审批 pending 挂起时循环不散架,放行/拒绝后循环走到终局;
 //   3) 等待审批中用户停止:prompt 正常返回(非 error),等待者零泄漏。
@@ -17,12 +16,14 @@ const conversations = await import("../conversations");
 const { configureWorkingSet } = await import("../conversations/working-set");
 const { getConversationMeta } = await import("../conversations/read-queries");
 const ws = await import("../workspace");
-const { workspaceRuntimeForConversation } = await import("../workspace/runtime");
-const { createPiWorkspaceTools } = await import("./workspace-tools");
+const { shellAvailability, workspaceRuntimeForConversation } = await import("../workspace/runtime");
+const { createToolPermissionChecker } = await import("../engines/app-tools");
 const { resolveToolApproval, pendingToolApprovalCount } = await import("../inference-engine/approval-gate");
 const { runPiGeneration } = await import("./runner");
+const { modelGrantFor } = await import("../engines/model-grant");
 const { model, provider } = await import("../model-providers");
 const { startFakeOpenAiSse } = await import("../test-utils/fake-openai-sse");
+const { sessionViewOf } = await import("../test-utils/engine-session-view");
 
 import type { GenerationEvent } from "../inference-engine/events";
 import type { FakeOpenAiSseServer, FakeSseTurn } from "../test-utils/fake-openai-sse";
@@ -79,14 +80,26 @@ async function scriptedRun(
   servers.push(server);
   const events: GenerationEvent[] = [];
   const sink = (event: GenerationEvent) => void events.push(event);
+  // 应用侧审批口(生产 = orchestrator 绑定 + host.permission.check):取消信号与生成同源。
+  const toolCtx = { conversation: conversation as never, assistant: fakeAssistant, sink, signal: extras.signal };
+  const check = createToolPermissionChecker(toolCtx);
+  const { shell } = shellAvailability();
   const run = runPiGeneration({
-    provider: provider({ id: crypto.randomUUID(), name: "Runner Tools Provider", baseUrl: server.baseUrl, apiKey: "sk-test" }),
-    model: model("fake-model", "Runner Tools Model"),
+    grant: modelGrantFor(
+      provider({ id: crypto.randomUUID(), name: "Runner Tools Provider", baseUrl: server.baseUrl, apiKey: "sk-test" }),
+      model("fake-model", "Runner Tools Model"),
+      null,
+      conversation.id,
+    )!,
     conversationId: conversation.id,
     cwd,
-    history: [],
+    view: sessionViewOf([]),
     promptText: "干活",
-    tools: createPiWorkspaceTools({ conversation: conversation as never, assistant: fakeAssistant, sink }),
+    workspaceTools: {
+      root: workspaceRuntimeForConversation(conversation as never)!.root,
+      ...(shell ? { shell } : {}),
+      approve: (req) => check({ ...req, origin: { kind: "engine" } }),
+    },
     sink,
     ...extras,
   });
@@ -184,8 +197,7 @@ describe("pi runner × customTools 集成", () => {
   }, 30_000);
 
   test("bash 增量输出全链路:执行中 partial 快照流进 sink,终局带 exitCode metadata", async () => {
-    const { mountedWorkspaceToolNames } = await import("../workspace/runtime");
-    if (!mountedWorkspaceToolNames().includes("bash")) return; // K3:无 bash 机器挂载矩阵不含 bash
+    if (!shellAvailability().available) return; // 无 bash 的机器不挂 bash
     const { conversation } = bindWorkspaceConversation();
     const cwd = workspaceRuntimeForConversation(conversation as never)!.cwd;
     const { events, run } = await scriptedRun(

@@ -7,8 +7,18 @@ import { isMcpToolEnabledForAssistant } from "./approval";
 import { listSkills } from "./skills";
 import { ASK_USER_TOOL_DESCRIPTION, ASK_USER_TOOL_NAME, askUserQuestionsSchema } from "./ask-user";
 import { inlineMcpToolSchema } from "./schema-inline";
+import { isMcpServerSelected } from "./mcp-source";
 
-export function openAiSearchTools(enableWebSearch: boolean) {
+const SEARCH_QUERY_DESCRIPTION = "Focused search query";
+
+/** 选中的搜索服务认得的查询写法,写进 query 参数说明,模型才会用(DeepSeek 文档:1–128 字,运算符可组合)。 */
+const SEARCH_QUERY_SYNTAX: Readonly<Record<string, string>> = {
+  deepseek: 'Use 1-128 characters. Supports operators: site:, -site:, -keyword, "exact phrase", lang:zh,en, after:2025-01-01, before:2026-06-01.',
+};
+
+export function openAiSearchTools(enableWebSearch: boolean, serviceType = "") {
+  const syntax = SEARCH_QUERY_SYNTAX[serviceType.trim().toLowerCase()];
+  const queryDescription = syntax ? `${SEARCH_QUERY_DESCRIPTION}. ${syntax}` : SEARCH_QUERY_DESCRIPTION;
   return enableWebSearch
     ? [
       {
@@ -42,7 +52,7 @@ The population is about 2.1 million. [citation,example.com](abc123) [citation,ex
           parameters: {
             type: "object",
             properties: {
-              query: { type: "string", description: "Focused search query" },
+              query: { type: "string", description: queryDescription },
               // `max_results` deliberately omitted from the tool schema — see the search
               // execution in search/index.ts. The user-configured `resultSize` is the authoritative count;
               // letting the LLM specify max_results caused most models to silently downgrade
@@ -192,9 +202,8 @@ Do not mention to the user that you are saving a memory.`,
 }
 
 export function openAiMcpTools(assistant: Assistant, mcpServers: JsonValue[]) {
-  const selected = new Set(getStringArray(assistant.mcpServers));
   return (mcpServers as Array<Record<string, JsonValue>>)
-    .filter((server) => selected.has(String(server.id ?? "")) && isRecord(server.commonOptions) && server.commonOptions.enable !== false)
+    .filter((server) => isMcpServerSelected(assistant, server) && isRecord(server.commonOptions) && server.commonOptions.enable !== false)
     .flatMap((server) => {
       const serverId = String(server.id ?? "");
       const serverName = String((server.commonOptions as Record<string, JsonValue>).name ?? server.id ?? "mcp");

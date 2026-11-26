@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, Clock3, Copy, Ellipsis, Gauge, GitFork, Languages, Pencil, RefreshCw, Share2, Volume2, VolumeX, Trash2, Zap } from "lucide-react";
 import { useSettingsStore } from "~/stores";
-import type { AssistantProfile, MessageDto, MessageNodeDto, ProviderProfile, ProviderModel, TokenUsage, UIMessageAnnotation, UIMessagePart } from "~/types";
+import { isNoticeOnly, type AssistantProfile, type MessageDto, type MessageNodeDto, type NoticePart, type ProviderProfile, type ProviderModel, type TokenUsage, type UIMessageAnnotation, type UIMessagePart } from "~/types";
 
 import { copyTextToClipboard } from "~/lib/clipboard";
 import { openExternal } from "~/lib/external-link";
@@ -21,6 +21,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { ChatMessageAnnotationsRow } from "./chat-message-annotations";
 import { ChatMessageAvatarRow } from "./chat-message-avatar-row";
 import { MessageParts } from "./message-part";
+import { NoticeCard } from "./parts/notice-part";
 import { ModelCallErrorCard } from "./model-call-error-card";
 import Markdown from "~/components/markdown/markdown";
 import { toast } from "sonner";
@@ -47,6 +48,7 @@ interface ChatMessageProps {
     approved: boolean,
     reason: string,
     answer?: string,
+    alwaysAllowInSession?: boolean,
   ) => void | Promise<void>;
   onShare?: (messageId: string) => void;
   selecting?: boolean;
@@ -68,6 +70,7 @@ function hasRenderablePart(part: UIMessagePart): boolean {
       return part.reasoning.trim().length > 0;
     case "tool":
       return true;
+    case "notice":
     case "loading":
       return false;
   }
@@ -125,6 +128,7 @@ function formatPartForCopy(part: UIMessagePart, t: TFunction): string | null {
       // Tool calls (web search, calculator, etc.) are conversation machinery, not body
       // content. The model's answer that follows is what the user wants to copy.
       return null;
+    case "notice":
     case "loading":
       return null;
   }
@@ -980,6 +984,43 @@ const ChatMessageNerdLineRow = React.memo(
   },
 );
 
+/** 只有 notice 的用户消息(APP 空闲时收到运行时通知开的那一轮)。重试 = 从这条重新生成。 */
+function NoticeMessage({
+  message,
+  onRetry,
+  onDelete,
+}: {
+  message: MessageDto;
+  onRetry?: () => void | Promise<void>;
+  onDelete?: (messageId: string) => void | Promise<void>;
+}) {
+  const { t } = useTranslation("message");
+  const notices = React.useMemo(
+    () => message.parts.filter((part): part is NoticePart => part.type === "notice"),
+    [message.parts],
+  );
+  const run = (action: () => void | Promise<void>) => {
+    void Promise.resolve()
+      .then(action)
+      .catch(() => toast.error(t("chat_message.action_failed")));
+  };
+  const handleDelete = onDelete
+    ? async () => {
+        const confirmed = await confirmDialog({ title: t("chat_message.delete_confirm"), danger: true });
+        if (confirmed) await onDelete(message.id);
+      }
+    : undefined;
+  return (
+    <div className="flex w-full" data-message-role="notice">
+      <NoticeCard
+        notices={notices}
+        onRetry={onRetry ? () => run(onRetry) : undefined}
+        onDelete={handleDelete ? () => run(handleDelete) : undefined}
+      />
+    </div>
+  );
+}
+
 export const ChatMessage = React.memo(
   ({
     node,
@@ -1042,6 +1083,16 @@ export const ChatMessage = React.memo(
       },
       [citationUrlMap],
     );
+
+    if (isUser && isNoticeOnly(message.parts)) {
+      return (
+        <NoticeMessage
+          message={message}
+          onRetry={isLastMessage && !loading && onRegenerate ? () => onRegenerate(message.id) : undefined}
+          onDelete={onDelete}
+        />
+      );
+    }
 
     return (
       <div

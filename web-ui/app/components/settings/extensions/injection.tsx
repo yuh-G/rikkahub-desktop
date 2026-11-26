@@ -18,7 +18,7 @@ import { createId } from "~/lib/id";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import { getSettingsParam } from "~/stores/settings-dialog-store";
-import type { AssistantProfile, Settings } from "~/types";
+import type { Settings } from "~/types";
 import {
   clone,
   copyRowAction,
@@ -37,14 +37,11 @@ import {
   textValue,
 } from "~/components/settings/shared";
 import {
-  BindingAssistantToolbar,
-  BindingSwitch,
   EditorShell,
   ExpandChevron,
-  NoAssistantsState,
+  LabeledSwitch,
   pullSettings,
   type SectionProps,
-  useBindingAssistant,
 } from "~/components/settings/extensions/common";
 
 type InjectionPanel = "mode" | "lorebook";
@@ -72,34 +69,28 @@ export function PromptInjectionSection({ settings, onSettings }: SectionProps) {
   const [panel, setPanel] = React.useState<InjectionPanel>(() =>
     getSettingsParam("tab") === "lorebook" ? "lorebook" : "mode",
   );
-  const assistant = useBindingAssistant(settings);
-  if (!assistant) return <NoAssistantsState />;
   return (
     // flex 容器是宿主面板(SETTINGS_PAGE_PANEL_ID);本页多一层整行工具栏,工具栏固定高、
     // 编辑器占余高。两个编辑器常驻挂载用 hidden 切换:hidden 时 display:none 不占布局,
     // 可见的那个 flex-1 占满余高,EditorShell 内两栏的独立滚动高度链从这里接通。
     <div className="flex min-h-full flex-col">
-      <BindingAssistantToolbar
-        settings={settings}
-        assistant={assistant}
-        leading={
-          <SegmentedTabs
-            size="sm"
-            aria-label={t("settings:subnav.extensions.injection")}
-            items={[
-              { value: "mode", label: t("settings:mcp.tab.mode") },
-              { value: "lorebook", label: t("settings:mcp.tab.lorebook") },
-            ]}
-            value={panel}
-            onChange={setPanel}
-          />
-        }
-      />
+      <div className="mb-6">
+        <SegmentedTabs
+          size="sm"
+          aria-label={t("settings:subnav.extensions.injection")}
+          items={[
+            { value: "mode", label: t("settings:mcp.tab.mode") },
+            { value: "lorebook", label: t("settings:mcp.tab.lorebook") },
+          ]}
+          value={panel}
+          onChange={setPanel}
+        />
+      </div>
       <div hidden={panel !== "mode"} className="flex min-h-0 flex-1 flex-col">
-        <ModeInjectionEditor settings={settings} assistant={assistant} onSettings={onSettings} />
+        <ModeInjectionEditor settings={settings} onSettings={onSettings} />
       </div>
       <div hidden={panel !== "lorebook"} className="flex min-h-0 flex-1 flex-col">
-        <LorebookEditor settings={settings} assistant={assistant} onSettings={onSettings} />
+        <LorebookEditor settings={settings} onSettings={onSettings} />
       </div>
     </div>
   );
@@ -107,11 +98,9 @@ export function PromptInjectionSection({ settings, onSettings }: SectionProps) {
 
 function ModeInjectionEditor({
   settings,
-  assistant,
   onSettings,
 }: {
   settings: Settings;
-  assistant: AssistantProfile;
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
@@ -134,14 +123,12 @@ function ModeInjectionEditor({
   return (
     <PromptItemEditor
       settings={settings}
-      assistant={assistant}
       onSettings={onSettings}
       items={items}
       selectedId={selectedId}
       setSelectedId={setSelectedId}
       draft={draft}
       setDraft={setDraft}
-      bindKey="modeInjectionIds"
       savePath="settings/mode-injection/detail"
       deletePath="settings/mode-injection"
       reorderPath="settings/mode-injection/reorder"
@@ -464,11 +451,9 @@ function KeywordChipInput({
 
 function LorebookEditor({
   settings,
-  assistant,
   onSettings,
 }: {
   settings: Settings;
-  assistant: AssistantProfile;
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
@@ -499,7 +484,6 @@ function LorebookEditor({
   const entries = Array.isArray(draft.entries)
     ? (draft.entries as Array<Record<string, unknown>>)
     : [];
-  const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const patchDraft = (patch: Record<string, unknown>) => {
     autosave.markDirty();
     setDraft({ ...draft, ...patch });
@@ -507,16 +491,6 @@ function LorebookEditor({
   const setEntries = (next: Array<Record<string, unknown>>) => {
     autosave.markDirty();
     setDraft({ ...draft, entries: next });
-  };
-  const bind = async (checked: boolean) => {
-    const ids = new Set(assistant.lorebookIds ?? []);
-    if (checked) ids.add(String(draft.id));
-    else ids.delete(String(draft.id));
-    await api.post("settings/assistant/injections", {
-      assistantId: assistant.id,
-      lorebookIds: [...ids],
-    });
-    await pullSettings(onSettings);
   };
   // 复制世界书:克隆配置(新 id、「原名 (N)」),落盘后选中新副本。条目 id 全部重分配
   // (createLorebook 的条目有 id,克隆时旧 id 无意义)。
@@ -605,9 +579,10 @@ function LorebookEditor({
             onTitleCommit={(name) => patchDraft({ name })}
             description={t("settings:mcp.lorebook.page_desc")}
             action={
-              <BindingSwitch
-                checked={(assistant.lorebookIds ?? []).includes(String(draft.id))}
-                onCheckedChange={(checked) => void bind(checked)}
+              <LabeledSwitch
+                label={t("settings:mcp.enabled")}
+                checked={draft.enabled !== false}
+                onCheckedChange={(checked) => patchDraft({ enabled: checked })}
               />
             }
           />
@@ -656,21 +631,6 @@ function LorebookEditor({
             )}
           </SettingsGroup>
 
-          <SettingsAdvancedSection
-            open={advancedOpen}
-            onOpenChange={setAdvancedOpen}
-            attention={draft.enabled === false}
-          >
-            <SettingsRows>
-              <SettingsSwitchRow
-                label={t("settings:mcp.lorebook.enable")}
-                description={t("settings:mcp.global_enable_desc")}
-                checked={draft.enabled !== false}
-                onCheckedChange={(checked) => patchDraft({ enabled: checked })}
-              />
-            </SettingsRows>
-          </SettingsAdvancedSection>
-
           <SettingsDetailFooter
             status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
           />
@@ -707,14 +667,12 @@ function createLorebook(): Record<string, unknown> {
 
 function PromptItemEditor({
   settings,
-  assistant,
   onSettings,
   items,
   selectedId,
   setSelectedId,
   draft,
   setDraft,
-  bindKey,
   savePath,
   deletePath,
   reorderPath,
@@ -722,14 +680,12 @@ function PromptItemEditor({
   title,
 }: {
   settings: Settings;
-  assistant: AssistantProfile;
   onSettings: (settings: Settings) => void;
   items: Array<Record<string, unknown>>;
   selectedId: string;
   setSelectedId: (id: string) => void;
   draft: Record<string, unknown>;
   setDraft: (draft: Record<string, unknown>) => void;
-  bindKey: "modeInjectionIds";
   savePath: string;
   deletePath: string;
   reorderPath: string;
@@ -760,16 +716,6 @@ function PromptItemEditor({
     const content = textValue(draft.content);
     const separator = content && !content.endsWith("\n") ? "\n" : "";
     patchDraft({ content: `${content}${separator}${variable}` });
-  };
-  const bind = async (checked: boolean) => {
-    const ids = new Set(assistant[bindKey] ?? []);
-    if (checked) ids.add(String(draft.id));
-    else ids.delete(String(draft.id));
-    await api.post("settings/assistant/injections", {
-      assistantId: assistant.id,
-      [bindKey]: [...ids],
-    });
-    await pullSettings(onSettings);
   };
   // 复制模式注入:克隆配置(新 id、「原名 (N)」),落盘后选中新副本。
   const copyInjectionById = async (targetId: string) => {
@@ -858,9 +804,10 @@ function PromptItemEditor({
             onTitleCommit={(name) => patchDraft({ name })}
             description={t("settings:mcp.mode_page_desc")}
             action={
-              <BindingSwitch
-                checked={(assistant[bindKey] ?? []).includes(String(draft.id))}
-                onCheckedChange={(checked) => void bind(checked)}
+              <LabeledSwitch
+                label={t("settings:mcp.enabled")}
+                checked={draft.enabled !== false}
+                onCheckedChange={(checked) => patchDraft({ enabled: checked })}
               />
             }
           />
@@ -888,18 +835,10 @@ function PromptItemEditor({
           <SettingsAdvancedSection
             open={advancedOpen}
             onOpenChange={setAdvancedOpen}
-            attention={draft.enabled === false || Number(draft.priority ?? 0) !== 0}
+            attention={Number(draft.priority ?? 0) !== 0}
           >
             <div className="space-y-5 pt-2">
               <PriorityField value={draft.priority} onChange={(priority) => patchDraft({ priority })} />
-              <SettingsRows>
-                <SettingsSwitchRow
-                  label={t("settings:mcp.enabled")}
-                  description={t("settings:mcp.global_enable_desc")}
-                  checked={draft.enabled !== false}
-                  onCheckedChange={(checked) => patchDraft({ enabled: checked })}
-                />
-              </SettingsRows>
             </div>
           </SettingsAdvancedSection>
 

@@ -32,7 +32,7 @@ export { PC_KNOWN_ASR_TYPES } from "./index";
 export const ANDROID_SEARCH_SERVICE_TYPES: ReadonlySet<string> = new Set([
   "bing_local", "zhipu", "tavily", "exa", "searxng", "linkup", "brave", "metaso", "ollama",
   "perplexity", "firecrawl", "jina", "bocha", "rikkahub", "grok", "tinyfish", "serper", "custom_js",
-  "doubao",
+  "doubao", "deepseek",
 ]);
 
 /** 安卓 UIMessagePart 全判别符。含已 @Deprecated 但仍在 sealed 集合内的 search/tool_call/
@@ -40,7 +40,7 @@ export const ANDROID_SEARCH_SERVICE_TYPES: ReadonlySet<string> = new Set([
  *  (UIMessagePart.kt:168)——之前 vendored 漏了它,正是「哨兵沉睡」事故的直接证据。 */
 export const ANDROID_MESSAGE_PART_TYPES: ReadonlySet<string> = new Set([
   "text", "image", "video", "audio", "document", "reasoning",
-  "search", "tool_call", "tool_result", "tool", "server_tool",
+  "search", "tool_call", "tool_result", "tool", "server_tool", "notice",
 ]);
 
 export const ANDROID_ANNOTATION_TYPES: ReadonlySet<string> = new Set(["url_citation"]);

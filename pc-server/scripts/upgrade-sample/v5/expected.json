@@ -1,0 +1,471 @@
+{
+  "baseline": "2.0.0-preview-v5",
+  "ids": {
+    "tools": "00000000-0000-4000-8000-0000000000a1",
+    "compacted": "00000000-0000-4000-8000-0000000000a2",
+    "chat": "00000000-0000-4000-8000-0000000000a3",
+    "fork": "47ec6684-995d-4634-8e56-09fe532074a4"
+  },
+  "shapes": {
+    "tools": {
+      "nodes": 8,
+      "selects": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "branches": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        2
+      ],
+      "selectedIds": [
+        "810a5ff1-0da5-4f4a-9f84-3b435a1407ef",
+        "2fb7f487-82fc-4dc5-925c-a57bce2d558d",
+        "67b607ca-be14-4bba-b5c8-fc67c766baa5",
+        "fd53592a-bb2a-4066-a755-e4ef7a2671cf",
+        "527b9647-d1af-494e-bd07-46e799a6fecf",
+        "719d653a-7a30-41b4-b2cb-592e3b2e372f",
+        "2e07ebd3-6995-49e6-a85c-a5edf6a724e4",
+        "90d5816f-60c3-4985-8fb2-f8d6e1256851"
+      ],
+      "compactions": 0
+    },
+    "compacted": {
+      "nodes": 14,
+      "selects": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "branches": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "selectedIds": [
+        "fdafc587-56ec-4239-a1f6-16384a5aa7c0",
+        "ca1ae809-2a80-4836-bbfe-9b75bbc086f2",
+        "051c8b8a-b261-46ef-88fd-2677ac4bd28e",
+        "8c3665c4-f41e-4e7d-a202-208d76853cda",
+        "92674ee8-9e0a-4367-a9dd-8041aca34f79",
+        "37b669d1-8f3f-4b1a-b2a7-294dc72f62dc",
+        "d8267411-734f-4ba9-942f-2ef7187ca775",
+        "38bce75d-2a04-4f7e-9694-f16585eacf78",
+        "4ccb9f74-4dca-4e3a-bb6f-aa807b8ea3c4",
+        "eb329314-170f-4985-9e55-33ac46d23887",
+        "1e1c1592-330b-4f1e-bf55-301b351b4485",
+        "47e8e64f-2617-4e9a-be09-f7d71b6e8b82",
+        "2ed234aa-aa4b-453a-9c14-c0a294d0b1f5",
+        "46b177ec-64ca-4a79-bc75-023c6b1c6080"
+      ],
+      "compactions": 1
+    },
+    "chat": {
+      "nodes": 6,
+      "selects": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "branches": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2
+      ],
+      "selectedIds": [
+        "99f9128b-1044-4203-9e0d-cbc2a9b450a2",
+        "2a268473-7011-4aeb-8e22-92794a319d60",
+        "02410bad-9f42-401d-93b4-91261aa897a7",
+        "909dcd9e-9301-4744-ac1b-31e9ec8968c8",
+        "6384d090-a36a-4f54-90d4-9b77642cb053",
+        "8675be11-3ffe-48d6-9df2-c6067af87136"
+      ],
+      "compactions": 0
+    },
+    "fork": {
+      "nodes": 4,
+      "selects": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "branches": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "selectedIds": [
+        "810a5ff1-0da5-4f4a-9f84-3b435a1407ef",
+        "2fb7f487-82fc-4dc5-925c-a57bce2d558d",
+        "67b607ca-be14-4bba-b5c8-fc67c766baa5",
+        "fd53592a-bb2a-4066-a755-e4ef7a2671cf"
+      ],
+      "compactions": 0
+    }
+  },
+  "toolCards": [
+    {
+      "type": "tool",
+      "toolCallId": "call_1",
+      "toolName": "write",
+      "input": "{\"path\":\"notes.txt\",\"content\":\"alpha\\nbeta\\n\"}",
+      "output": [
+        {
+          "type": "text",
+          "text": "Successfully wrote 11 bytes to notes.txt"
+        }
+      ],
+      "approvalState": {
+        "type": "auto"
+      },
+      "metadata": {
+        "toolStartedAt": "2026-11-22T16:52:08.835Z",
+        "toolFinishedAt": "2026-11-22T16:52:08.843Z"
+      }
+    },
+    {
+      "type": "tool",
+      "toolCallId": "call_2",
+      "toolName": "read",
+      "input": "{\"path\":\"notes.txt\"}",
+      "output": [
+        {
+          "type": "text",
+          "text": "alpha\nbeta\n"
+        }
+      ],
+      "approvalState": {
+        "type": "auto"
+      },
+      "metadata": {
+        "toolStartedAt": "2026-11-22T16:52:08.962Z",
+        "toolFinishedAt": "2026-11-22T16:52:08.966Z"
+      }
+    },
+    {
+      "type": "tool",
+      "toolCallId": "call_3",
+      "toolName": "edit",
+      "input": "{\"path\":\"notes.txt\",\"edits\":[{\"oldText\":\"beta\",\"newText\":\"gamma\"}]}",
+      "output": [
+        {
+          "type": "text",
+          "text": "Successfully replaced 1 block(s) in notes.txt.",
+          "metadata": {
+            "workspace": {
+              "tool": "edit",
+              "details": {
+                "diff": " 1 alpha\n-2 beta\n+2 gamma",
+                "patch": "--- notes.txt\n+++ notes.txt\n@@ -1,2 +1,2 @@\n alpha\n-beta\n+gamma\n",
+                "firstChangedLine": 2
+              }
+            }
+          }
+        }
+      ],
+      "approvalState": {
+        "type": "auto"
+      },
+      "metadata": {
+        "toolStartedAt": "2026-11-22T16:52:09.132Z",
+        "toolFinishedAt": "2026-11-22T16:52:09.138Z"
+      }
+    }
+  ],
+  "histories": {
+    "tools": [
+      {
+        "role": "user",
+        "text": "[write] create notes.txt"
+      },
+      {
+        "role": "assistant",
+        "text": "",
+        "reasoning": "Thinking about: [write] create notes.txt",
+        "toolCalls": [
+          {
+            "id": "call_1",
+            "name": "write",
+            "args": {
+              "path": "notes.txt",
+              "content": "alpha\nbeta\n"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "text": "Successfully wrote 11 bytes to notes.txt",
+        "toolCallId": "call_1"
+      },
+      {
+        "role": "assistant",
+        "text": "Tool step 1 finished.",
+        "reasoning": "Checking the tool result."
+      },
+      {
+        "role": "user",
+        "text": "[read] show notes.txt"
+      },
+      {
+        "role": "assistant",
+        "text": "",
+        "reasoning": "Thinking about: [read] show notes.txt",
+        "toolCalls": [
+          {
+            "id": "call_2",
+            "name": "read",
+            "args": {
+              "path": "notes.txt"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "text": "alpha\nbeta\n",
+        "toolCallId": "call_2"
+      },
+      {
+        "role": "assistant",
+        "text": "Tool step 2 finished.",
+        "reasoning": "Checking the tool result."
+      },
+      {
+        "role": "user",
+        "text": "[edit] change beta to gamma"
+      },
+      {
+        "role": "assistant",
+        "text": "",
+        "reasoning": "Thinking about: [edit] change beta to gamma",
+        "toolCalls": [
+          {
+            "id": "call_3",
+            "name": "edit",
+            "args": {
+              "path": "notes.txt",
+              "edits": [
+                {
+                  "oldText": "beta",
+                  "newText": "gamma"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "text": "Successfully replaced 1 block(s) in notes.txt.",
+        "toolCallId": "call_3"
+      },
+      {
+        "role": "assistant",
+        "text": "Tool step 3 finished.",
+        "reasoning": "Checking the tool result."
+      },
+      {
+        "role": "user",
+        "text": "Summarize what we did"
+      },
+      {
+        "role": "assistant",
+        "text": "Reply 4 to: Summarize what we did",
+        "reasoning": "Thinking about: Summarize what we did"
+      },
+      {
+        "role": "user",
+        "text": "probe:tools"
+      }
+    ],
+    "compacted": [
+      {
+        "role": "user",
+        "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY: the user asked for long notes on six topics.\n\n---\n\n**Turn Context (split turn):**\n\nSUMMARY: the user asked for long notes on six topics.\n</summary>"
+      },
+      {
+        "role": "assistant",
+        "text": "Reply 8: [long] notes on topic 3. Point 1: keep the notes short, specific and easy to check. Point 2: keep the notes short, specific and easy to check. Point 3: keep the notes short, specific and easy to check. Point 4: keep the notes short, specific and easy to check. Point 5: keep the notes short, specific and easy to check. Point 6: keep the notes short, specific and easy to check. Point 7: keep the notes short, specific and easy to check. Point 8: keep the notes short, specific and easy to check. Point 9: keep the notes short, specific and easy to check. Point 10: keep the notes short, specific and easy to check. Point 11: keep the notes short, specific and easy to check. Point 12: keep the notes short, specific and easy to check. Point 13: keep the notes short, specific and easy to check. Point 14: keep the notes short, specific and easy to check. Point 15: keep the notes short, specific and easy to check. Point 16: keep the notes short, specific and easy to check. Point 17: keep the notes short, specific and easy to check. Point 18: keep the notes short, specific and easy to check. Point 19: keep the notes short, specific and easy to check. Point 20: keep the notes short, specific and easy to check. Point 21: keep the notes short, specific and easy to check. Point 22: keep the notes short, specific and easy to check. Point 23: keep the notes short, specific and easy to check. Point 24: keep the notes short, specific and easy to check. Point 25: keep the notes short, specific and easy to check. Point 26: keep the notes short, specific and easy to check. Point 27: keep the notes short, specific and easy to check. Point 28: keep the notes short, specific and easy to check. Point 29: keep the notes short, specific and easy to check. Point 30: keep the notes short, specific and easy to check. Point 31: keep the notes short, specific and easy to check. Point 32: keep the notes short, specific and easy to check. Point 33: keep the notes short, specific and easy to check. Point 34: keep the notes short, specific and easy to check. Point 35: keep the notes short, specific and easy to check. Point 36: keep the notes short, specific and easy to check. Point 37: keep the notes short, specific and easy to check. Point 38: keep the notes short, specific and easy to check. Point 39: keep the notes short, specific and easy to check. Point 40: keep the notes short, specific and easy to check.",
+        "reasoning": "Thinking about: [long] notes on topic 3"
+      },
+      {
+        "role": "user",
+        "text": "[long] notes on topic 4"
+      },
+      {
+        "role": "assistant",
+        "text": "Reply 9: [long] notes on topic 4. Point 1: keep the notes short, specific and easy to check. Point 2: keep the notes short, specific and easy to check. Point 3: keep the notes short, specific and easy to check. Point 4: keep the notes short, specific and easy to check. Point 5: keep the notes short, specific and easy to check. Point 6: keep the notes short, specific and easy to check. Point 7: keep the notes short, specific and easy to check. Point 8: keep the notes short, specific and easy to check. Point 9: keep the notes short, specific and easy to check. Point 10: keep the notes short, specific and easy to check. Point 11: keep the notes short, specific and easy to check. Point 12: keep the notes short, specific and easy to check. Point 13: keep the notes short, specific and easy to check. Point 14: keep the notes short, specific and easy to check. Point 15: keep the notes short, specific and easy to check. Point 16: keep the notes short, specific and easy to check. Point 17: keep the notes short, specific and easy to check. Point 18: keep the notes short, specific and easy to check. Point 19: keep the notes short, specific and easy to check. Point 20: keep the notes short, specific and easy to check. Point 21: keep the notes short, specific and easy to check. Point 22: keep the notes short, specific and easy to check. Point 23: keep the notes short, specific and easy to check. Point 24: keep the notes short, specific and easy to check. Point 25: keep the notes short, specific and easy to check. Point 26: keep the notes short, specific and easy to check. Point 27: keep the notes short, specific and easy to check. Point 28: keep the notes short, specific and easy to check. Point 29: keep the notes short, specific and easy to check. Point 30: keep the notes short, specific and easy to check. Point 31: keep the notes short, specific and easy to check. Point 32: keep the notes short, specific and easy to check. Point 33: keep the notes short, specific and easy to check. Point 34: keep the notes short, specific and easy to check. Point 35: keep the notes short, specific and easy to check. Point 36: keep the notes short, specific and easy to check. Point 37: keep the notes short, specific and easy to check. Point 38: keep the notes short, specific and easy to check. Point 39: keep the notes short, specific and easy to check. Point 40: keep the notes short, specific and easy to check.",
+        "reasoning": "Thinking about: [long] notes on topic 4"
+      },
+      {
+        "role": "user",
+        "text": "[long] notes on topic 5"
+      },
+      {
+        "role": "assistant",
+        "text": "Reply 10: [long] notes on topic 5. Point 1: keep the notes short, specific and easy to check. Point 2: keep the notes short, specific and easy to check. Point 3: keep the notes short, specific and easy to check. Point 4: keep the notes short, specific and easy to check. Point 5: keep the notes short, specific and easy to check. Point 6: keep the notes short, specific and easy to check. Point 7: keep the notes short, specific and easy to check. Point 8: keep the notes short, specific and easy to check. Point 9: keep the notes short, specific and easy to check. Point 10: keep the notes short, specific and easy to check. Point 11: keep the notes short, specific and easy to check. Point 12: keep the notes short, specific and easy to check. Point 13: keep the notes short, specific and easy to check. Point 14: keep the notes short, specific and easy to check. Point 15: keep the notes short, specific and easy to check. Point 16: keep the notes short, specific and easy to check. Point 17: keep the notes short, specific and easy to check. Point 18: keep the notes short, specific and easy to check. Point 19: keep the notes short, specific and easy to check. Point 20: keep the notes short, specific and easy to check. Point 21: keep the notes short, specific and easy to check. Point 22: keep the notes short, specific and easy to check. Point 23: keep the notes short, specific and easy to check. Point 24: keep the notes short, specific and easy to check. Point 25: keep the notes short, specific and easy to check. Point 26: keep the notes short, specific and easy to check. Point 27: keep the notes short, specific and easy to check. Point 28: keep the notes short, specific and easy to check. Point 29: keep the notes short, specific and easy to check. Point 30: keep the notes short, specific and easy to check. Point 31: keep the notes short, specific and easy to check. Point 32: keep the notes short, specific and easy to check. Point 33: keep the notes short, specific and easy to check. Point 34: keep the notes short, specific and easy to check. Point 35: keep the notes short, specific and easy to check. Point 36: keep the notes short, specific and easy to check. Point 37: keep the notes short, specific and easy to check. Point 38: keep the notes short, specific and easy to check. Point 39: keep the notes short, specific and easy to check. Point 40: keep the notes short, specific and easy to check.",
+        "reasoning": "Thinking about: [long] notes on topic 5"
+      },
+      {
+        "role": "user",
+        "text": "[long] notes on topic 6"
+      },
+      {
+        "role": "assistant",
+        "text": "Reply 11: [long] notes on topic 6. Point 1: keep the notes short, specific and easy to check. Point 2: keep the notes short, specific and easy to check. Point 3: keep the notes short, specific and easy to check. Point 4: keep the notes short, specific and easy to check. Point 5: keep the notes short, specific and easy to check. Point 6: keep the notes short, specific and easy to check. Point 7: keep the notes short, specific and easy to check. Point 8: keep the notes short, specific and easy to check. Point 9: keep the notes short, specific and easy to check. Point 10: keep the notes short, specific and easy to check. Point 11: keep the notes short, specific and easy to check. Point 12: keep the notes short, specific and easy to check. Point 13: keep the notes short, specific and easy to check. Point 14: keep the notes short, specific and easy to check. Point 15: keep the notes short, specific and easy to check. Point 16: keep the notes short, specific and easy to check. Point 17: keep the notes short, specific and easy to check. Point 18: keep the notes short, specific and easy to check. Point 19: keep the notes short, specific and easy to check. Point 20: keep the notes short, specific and easy to check. Point 21: keep the notes short, specific and easy to check. Point 22: keep the notes short, specific and easy to check. Point 23: keep the notes short, specific and easy to check. Point 24: keep the notes short, specific and easy to check. Point 25: keep the notes short, specific and easy to check. Point 26: keep the notes short, specific and easy to check. Point 27: keep the notes short, specific and easy to check. Point 28: keep the notes short, specific and easy to check. Point 29: keep the notes short, specific and easy to check. Point 30: keep the notes short, specific and easy to check. Point 31: keep the notes short, specific and easy to check. Point 32: keep the notes short, specific and easy to check. Point 33: keep the notes short, specific and easy to check. Point 34: keep the notes short, specific and easy to check. Point 35: keep the notes short, specific and easy to check. Point 36: keep the notes short, specific and easy to check. Point 37: keep the notes short, specific and easy to check. Point 38: keep the notes short, specific and easy to check. Point 39: keep the notes short, specific and easy to check. Point 40: keep the notes short, specific and easy to check.",
+        "reasoning": "Thinking about: [long] notes on topic 6"
+      },
+      {
+        "role": "user",
+        "text": "What was the third topic?"
+      },
+      {
+        "role": "assistant",
+        "text": "Reply 12 to: What was the third topic?",
+        "reasoning": "Thinking about: What was the third topic?"
+      },
+      {
+        "role": "user",
+        "text": "probe:compacted"
+      }
+    ],
+    "chat": [
+      {
+        "role": "user",
+        "text": "chat one"
+      },
+      {
+        "role": "assistant",
+        "text": "Reply 13 to: chat one",
+        "reasoning": "Thinking about: chat one"
+      },
+      {
+        "role": "user",
+        "text": "chat two"
+      },
+      {
+        "role": "assistant",
+        "text": "Reply 14 to: chat two",
+        "reasoning": "Thinking about: chat two"
+      },
+      {
+        "role": "user",
+        "text": "chat three"
+      },
+      {
+        "role": "assistant",
+        "text": "Reply 16 to: chat three",
+        "reasoning": "Thinking about: chat three"
+      },
+      {
+        "role": "user",
+        "text": "probe:chat"
+      }
+    ],
+    "fork": [
+      {
+        "role": "user",
+        "text": "[write] create notes.txt"
+      },
+      {
+        "role": "assistant",
+        "text": "",
+        "reasoning": "Thinking about: [write] create notes.txt",
+        "toolCalls": [
+          {
+            "id": "call_1",
+            "name": "write",
+            "args": {
+              "path": "notes.txt",
+              "content": "alpha\nbeta\n"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "text": "Successfully wrote 11 bytes to notes.txt",
+        "toolCallId": "call_1"
+      },
+      {
+        "role": "assistant",
+        "text": "Tool step 1 finished.",
+        "reasoning": "Checking the tool result."
+      },
+      {
+        "role": "user",
+        "text": "[read] show notes.txt"
+      },
+      {
+        "role": "assistant",
+        "text": "",
+        "reasoning": "Thinking about: [read] show notes.txt",
+        "toolCalls": [
+          {
+            "id": "call_2",
+            "name": "read",
+            "args": {
+              "path": "notes.txt"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "text": "alpha\nbeta\n",
+        "toolCallId": "call_2"
+      },
+      {
+        "role": "assistant",
+        "text": "Tool step 2 finished.",
+        "reasoning": "Checking the tool result."
+      },
+      {
+        "role": "user",
+        "text": "probe:fork"
+      }
+    ]
+  }
+}

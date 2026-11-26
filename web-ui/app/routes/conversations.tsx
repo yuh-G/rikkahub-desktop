@@ -44,9 +44,12 @@ import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "~/com
 import { useIsMobile } from "~/hooks/use-mobile";
 import { useAvailableCommands } from "~/hooks/use-available-commands";
 import { useConversationList } from "~/hooks/use-conversation-list";
-import { onHotkeyAction, type HotkeyBusAction } from "~/lib/hotkey-events";
+import { emitHotkeyAction, onHotkeyAction, type HotkeyBusAction } from "~/lib/hotkey-events";
 import { useCurrentAssistant } from "~/hooks/use-current-assistant";
+import { createClientCommandExecutors, type SlashCommandComposer, type SlashCommandExecutor } from "~/lib/client-commands";
+import { extractErrorMessage } from "~/lib/error";
 import type { SlashCommandDto } from "~/lib/slash-commands";
+import { openSettings } from "~/components/settings/settings-link";
 import {
   convertConversationToMarkdown,
   safeMarkdownFilename,
@@ -77,6 +80,7 @@ import { SidebarBrandRow } from "~/components/sidebar-brand";
 import { WindowControlsBar, windowDragRegionProps } from "~/components/window-controls";
 import { ConversationTabStrip } from "~/components/workspace/conversation-tab-strip";
 import { EngineStatusBar } from "~/components/workspace/engine-status-bar";
+import { EnginePluginPanel } from "~/components/workspace/engine-plugin-panel";
 import { PaneContainerProvider } from "~/components/workspace/pane-container-context";
 import { WorkspaceEmptyState } from "~/components/workspace/workspace-empty-state";
 import { useCompressStore, useConversationCompressing } from "~/stores/compress-store";
@@ -300,6 +304,8 @@ function getQuickJumpPreview(
         : t("conversations.preview.tool_call");
     case "loading":
       return t("conversations.preview.thinking");
+    case "notice":
+      return truncatePreviewText(fallbackPart.title.trim().replace(/\s+/g, " "));
     case "text":
       return t("conversations.preview.empty_message");
   }
@@ -495,11 +501,15 @@ function useDraftInputController({
     // 双层标签(M2-1):新会话归属发起它的那一列的容器——工作区容器时把 workspaceId
     // 一并送给 ensureConversation,服务端据此挂载工作区工具与提示词段。并排后必须用
     // 列的容器而不是全局激活容器,否则在非聚焦列发第一句会挂到邻列的工作区上。
-    await api.post<{ status: string }>(
-      `conversations/${conversationId}/messages`,
-      container !== CHAT_CONTAINER ? { parts, workspaceId: container } : { parts },
-    );
+    // 左下角在发出前改过的拓展选择一并带上,作这个会话的初值(D19)。
+    const extensionSelection = useChatInputStore.getState().extensionDrafts[draftKey];
+    await api.post<{ status: string }>(`conversations/${conversationId}/messages`, {
+      parts,
+      ...(container !== CHAT_CONTAINER ? { workspaceId: container } : {}),
+      ...(extensionSelection ? { extensionSelection } : {}),
+    });
     clearDraft(draftKey);
+    useChatInputStore.getState().clearExtensionDraft(draftKey);
     useContainerTabsStore.getState().openConversation(container, conversationId);
 
     setActiveId(conversationId);
@@ -568,7 +578,11 @@ interface ChatInputAreaProps {
   onToggleVoiceMode?: () => void;
   voiceModeActive?: boolean;
   slashCommands?: SlashCommandDto[];
-  onSlashCommand?: (name: string, argument: string) => Promise<boolean | void> | boolean | void;
+  onSlashCommand?: (
+    command: SlashCommandDto,
+    argument: string,
+    composer: SlashCommandComposer,
+  ) => Promise<boolean | void> | boolean | void;
   getOptimizeContext?: () => string;
   /** 提示词优化回退用的当前会话 id(未配置优化模型时后端用它回退会话模型)。 */
   conversationId?: string | null;
@@ -653,6 +667,7 @@ const ChatInputArea = React.memo(function ChatInputArea({
       onSlashCommand={onSlashCommand}
       getOptimizeContext={getOptimizeContext}
       conversationId={conversationId}
+      draftKey={draftKey}
       queueSlot={queueSlot}
     />
   );
@@ -739,6 +754,7 @@ const ConversationTimeline = React.memo(
       approved: boolean,
       reason: string,
       answer?: string,
+      alwaysAllowInSession?: boolean,
     ) => Promise<void>;
   }) => {
     const { t } = useTranslation("page");
@@ -1545,13 +1561,14 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
   }, [container, paneIndex]);
 
   const handleToolApproval = React.useCallback(
-    async (toolCallId: string, approved: boolean, reason: string, answer?: string) => {
+    async (toolCallId: string, approved: boolean, reason: string, answer?: string, alwaysAllowInSession?: boolean) => {
       if (!activeId) return;
       await api.post<{ status: string }>(`conversations/${activeId}/tool-approval`, {
         toolCallId,
         approved,
         reason,
         ...(answer != null ? { answer } : {}),
+        ...(alwaysAllowInSession ? { alwaysAllowInSession: true } : {}),
       });
     },
     [activeId],
@@ -1816,36 +1833,117 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
     });
   }, [compressAdditionalPrompt, compressKeepRecent, compressTargetTokens, performCompress]);
 
-  // ── 斜杠指令:清单(服务端权威)+ 执行分发表(实现池前端部分;方案 §3.4) ──────
-  const availableSlashCommands = useAvailableCommands(activeId);
+  // ── 斜杠指令:清单(服务端权威)+ 执行分发表(实现池前端部分;方案 §3.4 / §5.9) ──────
+  // 新对话页也列全部指令:按本列的工作区与左下角改过的插件选择取;作用对象还不在的(压缩、重命名、引擎指令)执行时报。
+  const draftEnginePluginIds = useChatInputStore((state) =>
+    !activeId && draftKey ? state.extensionDrafts[draftKey]?.enginePluginIds : undefined,
+  );
+  const availableSlashCommands = useAvailableCommands(activeId, {
+    workspaceId: container !== CHAT_CONTAINER ? container : null,
+    ...(draftEnginePluginIds ? { enginePluginIds: draftEnginePluginIds } : {}),
+  });
+  // 「创建分叉」挂在每条回复下;指令分叉的是选中路径上最新的那条回复。
+  const forkLatestReply = React.useCallback(async () => {
+    const detail = activeId ? useConversationStore.getState().entries[activeId]?.detail : null;
+    const latest = (detail?.messages ?? [])
+      .map((node) => node.messages[node.selectIndex] ?? node.messages[0])
+      .filter((message) => message?.role === "ASSISTANT")
+      .at(-1);
+    if (!latest) {
+      toast.info(t("conversations.commands.fork_nothing"));
+      return false;
+    }
+    try {
+      await handleForkMessage(latest.id);
+    } catch {
+      toast.error(i18n.t("message:chat_message.action_failed"));
+      return false;
+    }
+  }, [activeId, handleForkMessage, t]);
   // 域5-1(3F):执行器返回 false=未受理(如压缩占用),chat-input 据此回填原文;正常受理返回 void。
-  const slashExecutors: Record<string, (argument: string) => Promise<boolean | void>> = React.useMemo(
+  const slashExecutors: Record<string, SlashCommandExecutor> = React.useMemo(
     () => ({
       // /compact [额外指示] → 既有压缩链路;进行中再触发提示占用(复用现有互斥)并告知未受理。
       compact: async (argument: string) => {
+        if (!activeId) {
+          toast.info(t("conversations.commands.compact_nothing"));
+          return false;
+        }
         if (compressing) {
           toast.error(t("conversations.compress.busy"));
           return false;
         }
         await performCompress({ additionalPrompt: argument }, "/compact ");
       },
+      // 入口类:与对应按钮同一个处理函数。新建、重命名作用于聚焦列,先把本列设为聚焦。
+      ...createClientCommandExecutors({
+        newConversation: () => {
+          focusSelf();
+          emitHotkeyAction("newConversation");
+        },
+        renameConversation: () => {
+          if (!activeId) {
+            toast.info(t("conversations.commands.needs_conversation", { command: "/name" }));
+            return false;
+          }
+          focusSelf();
+          emitHotkeyAction("renameConversation");
+        },
+        openSettings: () => openSettings(navigate),
+        forkLatestReply,
+      }),
     }),
-    [compressing, performCompress, t],
+    [activeId, compressing, focusSelf, forkLatestReply, navigate, performCompress, t],
   );
-  // 防两表漂移(方案 §3.1):服务端说可用但前端无执行器的指令不展示,并留痕便于排查。
+  // 引擎特色指令(插件指令、引擎自带指令):交给引擎执行,执行中会话按生成中显示,停止键可中止。
+  // 接口要等指令跑完才返回(中间可能弹插件对话框),所以不等它:输入框立刻放手,停止键才按得到。
+  const runEngineCommand = React.useCallback(
+    (command: SlashCommandDto, argument: string) => {
+      if (!command.commandId) return false;
+      // 引擎指令在引擎的会话里跑,第一条消息发出前还没有这个会话。
+      if (!activeId) {
+        toast.info(t("conversations.commands.needs_conversation", { command: `/${command.invocation}` }));
+        return false;
+      }
+      // 生成中输入框本就不认指令;压缩中服务端会拒,先在这里拦下,原文回填不丢参数。
+      if (compressing) {
+        toast.info(t("conversations.commands.busy"));
+        return false;
+      }
+      const label = `/${command.invocation}`;
+      api
+        .post<{ status: string }>(
+          "commands/run",
+          { conversationId: activeId, commandId: command.commandId, args: argument },
+          { timeout: false },
+        )
+        .then((result) => {
+          if (result.status === "aborted") toast.info(t("conversations.commands.aborted", { command: label }));
+        })
+        .catch((error: unknown) => {
+          if (error instanceof ApiError && error.errorCode === "command_busy") toast.info(t("conversations.commands.busy"));
+          else toast.error(t("conversations.commands.failed", { command: label, error: extractErrorMessage(error, "") }));
+        });
+    },
+    [activeId, compressing, t],
+  );
+  // 防两表漂移(方案 §3.1):服务端说可用但前端无执行器的通用指令不展示,并留痕便于排查。
   const slashCommands = React.useMemo(() => {
-    const known = availableSlashCommands.filter((command) => command.name in slashExecutors);
+    const runnable = (command: SlashCommandDto) =>
+      command.executionTarget === "engine" ? Boolean(command.commandId) : command.name in slashExecutors;
+    const known = availableSlashCommands.filter(runnable);
     if (known.length !== availableSlashCommands.length) {
-      const missing = availableSlashCommands.filter((c) => !(c.name in slashExecutors)).map((c) => c.name);
+      const missing = availableSlashCommands.filter((c) => !runnable(c)).map((c) => `${c.source} /${c.invocation}`);
       console.warn("[slash-commands] 服务端清单存在前端未实现的指令,已隐藏:", missing);
     }
     return known;
   }, [availableSlashCommands, slashExecutors]);
   const handleSlashCommand = React.useCallback(
-    async (name: string, argument: string) => {
-      return await slashExecutors[name]?.(argument);
+    async (command: SlashCommandDto, argument: string, composer: SlashCommandComposer) => {
+      if (command.executionTarget === "engine") return await runEngineCommand(command, argument);
+      return await slashExecutors[command.name]?.(argument, composer);
     },
-    [slashExecutors],
+    [runEngineCommand, slashExecutors],
   );
 
   const handleStop = React.useCallback(async () => {
@@ -2089,6 +2187,8 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
           {focused ? <TtsPlayBar /> : null}
           {/* pi 引擎瞬态状态条(P5):按窗格各自订阅本会话状态,分栏互不串扰。 */}
           <EngineStatusBar conversationId={activeId} />
+          {/* 插件界面(P5.5):对话框卡、状态条目、挂件。同样按窗格订阅。 */}
+          <EnginePluginPanel conversationId={activeId} />
           {/* 语音模式横幅(免提对话循环;关闭时不渲染)。 */}
           {voiceActive && activeId ? (
             <VoiceModeBanner onEnd={() => voiceMode.stop()} onRetry={handleToggleVoiceMode} />

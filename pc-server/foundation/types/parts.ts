@@ -77,6 +77,13 @@ export type ToolPendingOutput = {
 /** ToolPart.output 的合法成员：标准 part + 两种历史契约载荷。 */
 export type ToolOutputEntry = MessagePart | ToolErrorOutput | ToolPendingOutput;
 
+/** 工具卡的署名(挂 metadata.attribution,P6.1):插件登记的工具记插件 id(「来自插件 X」);插件的工具调用钩子
+ *  否决了这次调用时记否决方与理由(D14「被插件 X 拒绝」)。应用工具、MCP、引擎自带的工具不带。 */
+export type ToolCardAttribution = {
+  pluginId?: string;
+  blockedBy?: { pluginId: string; reason: string };
+};
+
 export type ToolPart = BaseMessagePart & {
   type: "tool";
   toolCallId: string;
@@ -84,6 +91,15 @@ export type ToolPart = BaseMessagePart & {
   input: string;
   output: ToolOutputEntry[];
   approvalState: ToolApprovalState;
+};
+
+/** 运行时通知(APP 端工作区的后台命令退出时产生;桌面端不产生,只承载从 APP 备份导进来的)。title 只给界面,
+ *  text 是发给模型的原文:请求组装的最后一步在原位拆成一条用户消息(inference-engine/notices.ts)。
+ *  界面不当气泡、不可编辑,不进全文索引、复制与 Markdown 导出。 */
+export type NoticePart = BaseMessagePart & {
+  type: "notice";
+  title: string;
+  text: string;
 };
 
 /** 生成首 token 前的占位符，收到真实增量后即被剥离；不落盘到历史。 */
@@ -100,12 +116,13 @@ export type MessagePart =
   | DocumentPart
   | ReasoningPart
   | ToolPart
+  | NoticePart
   | LoadingPart;
 
 /** 专题3 批4:PC 消息 part 判别符注册表(联合类型的运行时镜像)。MessagePart 新增成员
  *  而不登记于此 = 编译失败(下方双向断言);登记后 android-contract-sync.test.ts 会强制
  *  声明其安卓兼容性(安卓 UIMessagePart 已知类型 or 导出过滤黑名单 PC_ONLY_MESSAGE_PART_TYPES)。 */
-export const PC_MESSAGE_PART_TYPES = ["text", "image", "video", "audio", "document", "reasoning", "tool", "loading"] as const;
+export const PC_MESSAGE_PART_TYPES = ["text", "image", "video", "audio", "document", "reasoning", "tool", "notice", "loading"] as const;
 type AssertTrue<T extends true> = T;
 type MutuallyEqual<A extends string, B extends string> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 export type _PartRegistryComplete = AssertTrue<

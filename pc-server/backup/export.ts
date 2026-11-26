@@ -18,6 +18,8 @@ import { isWindowsReservedName } from "../foundation/windows-names";
 import { reportError } from "../observability/app-errors";
 import { tempDir } from "../foundation/platform";
 import { state } from "../persistence/json-store";
+import { BACKUP_CARRIED_MIGRATIONS } from "../persistence/state-load";
+import { claudePromptCachingEnabled } from "../model-providers/prompt-cache-defaults";
 import { GLOBAL_MEMORY_ID, memoryStore } from "../memory/index";
 import { DEFAULT_ASSISTANT_ID, collectConversationReferencedFileIds, exportPcConversationsDump, flushConvDirtyNow, getConversationsDb, loadConversationNodesFromDb } from "../conversations";
 import { listAllConversationMetas } from "../conversations/read-queries";
@@ -27,6 +29,7 @@ import { adaptWorkspaceToolPartForAndroid } from "./workspace-android-export";
 import androidSchemaV24 from "./android-schema-v24.json";
 import { exportSkills } from "../tools";
 import { normalizeMcpHeaders } from "../tools/mcp-headers";
+import { pluginMcpSource } from "../tools/mcp-source";
 
 export function copyDirRecursive(src: string, dest: string): number {
   let count = 0;
@@ -91,6 +94,8 @@ export function backupPayloadMetadataOnly(settingsOverride?: Settings, backupNam
     // Including them here caused OOM crashes for users with large imported Android histories.
     state: {
       settings,
+      // 只带描述设置数据形状的迁移标记(BACKUP_CARRIED_MIGRATIONS 头注);本机安装史的标记不随备份跨机(import.ts R4-1)。
+      appliedMigrations: (state.appliedMigrations ?? []).filter((marker) => BACKUP_CARRIED_MIGRATIONS.includes(marker)),
       generatedImages: state.generatedImages,
       // backupName = zip 内 upload/ 实际文件名(去重/重名规避后),恢复端据此回链原 id(批5)。
       files: state.files.map((file) =>
@@ -158,18 +163,29 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
         // 安卓对齐批6:allowConversationSystemPrompt 已是安卓正式字段(Assistant.kt),
         // 不再 strip——此前误删导致 PC→APP 后所有助手的会话级系统提示词开关归 false。
         delete fixed.mcpToolOverrides;
+        // 引擎插件绑定(插件记录同样不导出):APP 没有工作区引擎,kotlinx 也不认这个键。
+        delete fixed.enginePluginIds;
       }
       return fixed;
     });
   }
   // MCP 请求头:安卓 McpCommonOptions.headers 是 List<Pair<String,String>>,只认 {first,second}。
   // 旧版设置页落成的 [["k","v"]] 元组会让 APP 的 settings 解码整体失败,导出时一律归一。
+  // 插件带来的服务器不导出(APP 没有对应插件;它们随插件记录走桌面端备份),助手对它们的勾选一并去掉。
   if (stripPcOnly && Array.isArray(copy.mcpServers)) {
-    copy.mcpServers = copy.mcpServers.map((server: any) =>
+    const pluginServerIds = new Set(copy.mcpServers.filter((server: unknown) => pluginMcpSource(server)).map((server: any) => String(server.id)));
+    copy.mcpServers = copy.mcpServers.filter((server: unknown) => !pluginMcpSource(server)).map((server: any) =>
       isRecord(server) && isRecord(server.commonOptions)
         ? { ...server, commonOptions: { ...server.commonOptions, headers: normalizeMcpHeaders(server.commonOptions.headers) } }
         : server,
     );
+    if (pluginServerIds.size > 0 && Array.isArray(copy.assistants)) {
+      copy.assistants = copy.assistants.map((assistant: any) =>
+        isRecord(assistant) && Array.isArray(assistant.mcpServers)
+          ? { ...assistant, mcpServers: assistant.mcpServers.filter((serverId: unknown) => !pluginServerIds.has(String(serverId))) }
+          : assistant,
+      );
+    }
   }
   // modeInjections role: PC uses "USER", Android expects "user"
   if (stripPcOnly && Array.isArray(copy.modeInjections)) {
@@ -216,6 +232,12 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     // shellPath 是机器级 bash 绝对路径,PC→APP/跨机恢复无意义;带到目标机反而因路径不存在
     // 锁死 bash(getShellConfig 对不存在的 customShellPath 抛错),故剥离,目标机走自动探测。
     delete copy.shellPath;
+    // devPiPluginPaths 是工作区引擎插件的本机路径(开发者字段),APP 无工作区引擎。
+    delete copy.devPiPluginPaths;
+    // 引擎插件记录:安装位置是本机的,APP 没有工作区引擎。PC→PC 的 pc-backup 照常带上(包本身不带,目标机重装)。
+    delete copy.enginePlugins;
+    // 用户添加的插件市场源同为桌面端独有(APP 没有插件市场)。
+    delete copy.pluginMarketSources;
     // 专题3 S-1(机制,详见 filterSearchServicesForAndroid):PC-only 搜索服务过滤 +
     // 选中下标修正;全被过滤时删键,让安卓走自身默认值(避免空列表越界)。
     if (Array.isArray(copy.searchServices)) {
@@ -258,10 +280,16 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     // 订阅制供应商 OAuth 凭证(方案 §3 决策④):refresh token 是长效凭证,不扩散到移动端 zip。
     // 剥 authMode/oauth 但保留供应商行——chatModelId/favoriteModels 等引用仍可解析,APP 侧表现
     // 同「未填 key」。pc-backup(PC→PC)不剥,跨机恢复带上(免重登,与 apiKey 同策略)。
+    // 「Claude 提示缓存」桌面端可以不填(按端点取默认,官方端点开),APP 端字段必填、默认关:写生效值,两端聊天行为一致。
+    // 须在剥 authMode 之前算——订阅行的默认值靠它判定。
     if (Array.isArray(copy.providers)) {
       copy.providers = copy.providers.map((p: any) => {
-        if (!isRecord(p) || (p.authMode === undefined && p.oauth === undefined)) return p;
-        const stripped = { ...p };
+        if (!isRecord(p)) return p;
+        const withCaching = p.type === "claude" && typeof p.promptCaching !== "boolean"
+          ? { ...p, promptCaching: claudePromptCachingEnabled(p) }
+          : p;
+        if (withCaching.authMode === undefined && withCaching.oauth === undefined) return withCaching;
+        const stripped = { ...withCaching };
         delete stripped.authMode;
         delete stripped.oauth;
         return stripped;
@@ -352,7 +380,8 @@ export function filterMessagePartsForAndroid(
 
 /** PC-only 消息注解判别符(安卓 UIMessageAnnotation 只有 url_citation;PC 生成失败时
  *  写入的 model_call_error 若流入安卓即"会话打不开")。pi-fidelity 是 P7 引擎消息
- *  保真注解(块结构/思维链签名),纯 PC 工作区语义,同样不得流入安卓。steered 是
+ *  保真注解(块结构/思维链签名),纯 PC 工作区语义,同样不得流入安卓;P3.4 起不再写入,
+ *  老会话里仍有,剥离保留 [LEGACY-READ: pi-fidelity]。steered 是
  *  steer 插话用户消息的轻量标注(仅 PC 用于将来可选 UI 标记),同样不得流入安卓。 */
 export const PC_ONLY_ANNOTATION_TYPES: ReadonlySet<string> = new Set(["model_call_error", "pi-fidelity", "compaction_boundary", "steered"]);
 

@@ -14,6 +14,7 @@ import { GOOGLE_SAFETY_SETTINGS, apiContentFromParts, apiContentText, appendAssi
 import { responsesHistoryReasoningAllowed } from "../model-providers/request-dialect";
 import { isEmptyAssistantPlaceholder } from "./parts";
 import { enrichMessages, templateVariables } from "./message-enrichment";
+import { expandNotices } from "./notices";
 
 // 消息模板/时间提醒/lorebook+模式注入/滞回截断 已上收至 message-enrichment.ts
 // (引擎无关层);本文件只负责"富化产物 → 三家 Provider 请求体"的编码。
@@ -130,7 +131,8 @@ function conversationTransformedMessages(conversation: Conversation, assistant: 
   if (systemWithInjections) {
     internalMessages.push(message("SYSTEM", [{ type: "text", text: systemWithInjections }]));
   }
-  internalMessages.push(...enriched.messages);
+  // notice 在输入变换之后拆开(照 APP):变换不碰它,前缀不变。
+  internalMessages.push(...expandNotices(enriched.messages));
   return { messages: internalMessages, picked };
 }
 

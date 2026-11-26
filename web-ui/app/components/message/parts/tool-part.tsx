@@ -34,6 +34,8 @@ import { cn } from "~/lib/utils";
 import type { TextPart as UITextPart, ToolPart as UIToolPart } from "~/types";
 
 import { workspaceToolKind } from "~/lib/workspace-tool-model";
+import { usePaneContainer } from "~/components/workspace/pane-container-context";
+import { CHAT_CONTAINER } from "~/stores/container-tabs-store";
 import {
   buildAskUserAnswerMap,
   normalizeAskUserQuestions,
@@ -51,6 +53,7 @@ import {
 } from "./workspace-tool-part";
 import { useToolElapsedSeconds } from "~/hooks/use-elapsed-since";
 import { AudioPart as AudioPartRenderer } from "./audio-part";
+import { PluginSourceLink, PluginSourceTag, PluginVetoNotice, readToolAttribution } from "./plugin-attribution";
 import { ImagePart as ImagePartRenderer } from "./image-part";
 import { VideoPart as VideoPartRenderer } from "./video-part";
 
@@ -69,6 +72,7 @@ interface ToolPartProps {
     approved: boolean,
     reason: string,
     answer?: string,
+    alwaysAllowInSession?: boolean,
   ) => void | Promise<void>;
   isFirst?: boolean;
   isLast?: boolean;
@@ -806,6 +810,8 @@ export function ToolPart({
   const deniedReason =
     tool.approvalState.type === "denied" ? (tool.approvalState.reason ?? "") : "";
   const isExecuted = tool.output.length > 0;
+  const attribution = React.useMemo(() => readToolAttribution(tool), [tool]);
+  const veto = attribution?.blockedBy ?? null;
 
   // 决策③④(7.2):MCP 工具失败的结构化诊断——解析 output 里 {error} 载荷的
   //  MCP_TOOL_FAILURE 头,渲染成内联失败块(不打断对话)。非 MCP 失败(无该前缀)为 null。
@@ -832,6 +838,7 @@ export function ToolPart({
         getArrayField(outputContent, "items").length > 0)) ||
     (tool.toolName === TOOL_NAMES.SCRAPE_WEB && Boolean(getStringField(args, "url"))) ||
     isDenied ||
+    veto !== null ||
     mcpFailure !== null ||
     hasMediaOutput;
 
@@ -874,6 +881,7 @@ export function ToolPart({
         label={<span className="text-foreground line-clamp-2 text-xs font-medium">{title}</span>}
         extra={
           <span className="flex shrink-0 items-center gap-1.5">
+            {attribution?.pluginId ? <PluginSourceTag pluginId={attribution.pluginId} className="hidden sm:inline-flex" /> : null}
             {isPending && onToolApproval ? (
               <span className="flex items-center gap-1">
                 <Button onClick={handleDeny} size="icon-xs" type="button" variant="secondary">
@@ -932,6 +940,8 @@ export function ToolPart({
                   : t("tool_part.denied")}
               </div>
             )}
+
+            {veto !== null && <PluginVetoNotice veto={veto} />}
 
             {mcpFailure !== null && (
               <div className="flex items-center gap-1.5 text-destructive text-xs">
@@ -994,6 +1004,7 @@ export function ToolPart({
         title={title}
         description={t("tool_part.tool_name_label", { toolName: tool.toolName })}
       >
+        {attribution?.pluginId ? <PluginSourceTag pluginId={attribution.pluginId} className="mb-3 max-w-full text-xs" /> : null}
         {tool.toolName === TOOL_NAMES.SEARCH_WEB && isExecuted ? (
           <SearchWebPreview args={args} content={outputContent} />
         ) : tool.toolName === TOOL_NAMES.SCRAPE_WEB && isExecuted ? (
@@ -1090,6 +1101,7 @@ export function PendingToolAttentionCard({
   const { t } = useTranslation("message");
   // 渲染的卡恒为 pending 态:计时存活只取决于审批等待是否仍在挂起。
   const elapsedSeconds = useToolElapsedSeconds(tool, messageCreatedAt, messageFinishedAt, Boolean(loading) || Boolean(awaitingApproval));
+  const paneContainer = usePaneContainer();
 
   // ask_user 已经有自己的专属醒目卡片（AskUserToolStep 内部的 pending 分支），
   // 不需要再多套一层 banner。
@@ -1119,9 +1131,15 @@ export function PendingToolAttentionCard({
     }
   })();
 
-  const handleApprove = async () => {
+  // 插件登记的工具:卡上写明来源。第三方工具(插件工具、工作区会话里的 MCP 工具)可「此会话内总是允许」,后端只对
+  // 这两类的审批记这个免问(D32);对话模式的 MCP 工具由逐工具的「需要用户审核」决定,不给这个按钮。MCP 工具名的
+  // mcp__ 前缀见 pc-server/tools/definitions.ts。
+  const pluginId = readToolAttribution(tool)?.pluginId ?? null;
+  const canAlwaysAllow = pluginId !== null || (paneContainer !== CHAT_CONTAINER && tool.toolName.startsWith("mcp__"));
+
+  const handleApprove = async (alwaysAllowInSession = false) => {
     if (!onToolApproval) return;
-    await onToolApproval(tool.toolCallId, true, "");
+    await onToolApproval(tool.toolCallId, true, "", undefined, alwaysAllowInSession || undefined);
   };
 
   const handleDeny = async () => {
@@ -1162,6 +1180,7 @@ export function PendingToolAttentionCard({
           <p className="text-xs text-muted-foreground">
             {t("tool_part.pending_approval_desc", { toolName: tool.toolName })}
           </p>
+          {pluginId ? <PluginSourceLink pluginId={pluginId} /> : null}
         </div>
       </div>
 
@@ -1176,7 +1195,18 @@ export function PendingToolAttentionCard({
           <X className="mr-1.5 h-3.5 w-3.5" />
           {t("tool_part.pending_deny")}
         </Button>
-        <Button size="sm" onClick={handleApprove} disabled={!onToolApproval}>
+        {canAlwaysAllow ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void handleApprove(true)}
+            disabled={!onToolApproval}
+            title={t("tool_part.always_allow_hint")}
+          >
+            {t("tool_part.always_allow")}
+          </Button>
+        ) : null}
+        <Button size="sm" onClick={() => void handleApprove()} disabled={!onToolApproval}>
           <Check className="mr-1.5 h-3.5 w-3.5" />
           {t("tool_part.pending_approve")}
         </Button>

@@ -3,7 +3,7 @@
 // resolveProviderAuth(读-改-写锁内刷新)+ toAuth 归一成 headers/baseUrl。
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { resolveProviderAuthForProvider } from "./resolve";
+import { freshSubscriptionCredential, resolveProviderAuthForProvider } from "./resolve";
 import { overrideOAuthFlow } from "./flows";
 import { setState, state } from "../../persistence/json-store";
 import { defaultSettings } from "../../app-config/defaults";
@@ -47,7 +47,7 @@ describe("resolveProviderAuthForProvider", () => {
 
   test("chatCapable:false 的订阅(Claude Pro/Max)在宿主全路径闸门拒绝,人话报错(仅工作区可用)", async () => {
     // 宿主引擎的凭证都经本函数:对话/辅助/图像/连通性测试在此统一拦下。pi 引擎(工作区)
-    // 走 createPiCredentialStore,不经过本函数——闸门不能误伤工作区。
+    // 经 freshSubscriptionCredential 取令牌,不经过本函数——闸门不能误伤工作区。
     const provider = makeProvider({
       authMode: "oauth",
       oauth: {
@@ -177,5 +177,74 @@ describe("resolveProviderAuthForProvider", () => {
     const resolved = await resolveProviderAuthForProvider(provider, { minOAuthValidityMs: 10 * 60_000 });
     expect(refreshCalls).toBe(1);
     expect(resolved.headers.Authorization).toBe("Bearer a-fresh");
+  });
+});
+
+describe("freshSubscriptionCredential(引擎取令牌的应用侧实现)", () => {
+  beforeEach(() => setState({ settings: structuredClone(defaultSettings()) } as any));
+  afterEach(() => setState({ ...state, settings: { ...state.settings, providers: [] } } as any));
+
+  function seed(expiresInMs: number, flow: "openai-codex" | "anthropic" = "openai-codex"): Provider {
+    const provider = makeProvider({
+      authMode: "oauth",
+      oauth: { flow, credential: { type: "oauth", access: "a-old", refresh: "r-old", expires: Date.now() + expiresInMs }, signedInAt: 1 },
+      apiKey: "",
+    });
+    setState({ ...state, settings: { ...state.settings, providers: [provider] } } as any);
+    return provider;
+  }
+
+  function countingRefresh(flow: "openai-codex" | "anthropic") {
+    const calls = { n: 0 };
+    overrideOAuthFlow(flow, {
+      name: "Test",
+      login: async () => {
+        throw new Error("not in test");
+      },
+      refresh: async () => {
+        calls.n += 1;
+        return { type: "oauth", access: `a-${calls.n}`, refresh: `r-${calls.n}`, expires: Date.now() + 30 * 60_000 };
+      },
+      toAuth: async (cred) => ({ apiKey: cred.access }),
+    });
+    return calls;
+  }
+
+  test("余量充足:原样返回,不刷新", async () => {
+    const calls = countingRefresh("openai-codex");
+    const provider = seed(30 * 60_000);
+    const credential = await freshSubscriptionCredential(provider);
+    expect(credential.access).toBe("a-old");
+    expect(calls.n).toBe(0);
+  });
+
+  test("进入 5 分钟窗口:应用侧锁内刷新一次并回写行;并发取共享同一次刷新", async () => {
+    const calls = countingRefresh("openai-codex");
+    const provider = seed(60_000);
+    const [first, second] = await Promise.all([freshSubscriptionCredential(provider), freshSubscriptionCredential(provider)]);
+    expect(calls.n).toBe(1);
+    expect(first.access).toBe("a-1");
+    expect(second.access).toBe("a-1");
+    expect(state.settings.providers[0]?.oauth?.credential?.refresh).toBe("r-1");
+  });
+
+  test("minValidityMs 要求更长余量时同样刷新", async () => {
+    const calls = countingRefresh("openai-codex");
+    const provider = seed(6 * 60_000);
+    const credential = await freshSubscriptionCredential(provider, { minValidityMs: 10 * 60_000 });
+    expect(calls.n).toBe(1);
+    expect(credential.access).toBe("a-1");
+  });
+
+  test("仅工作区的订阅(Claude Pro/Max)不被聊天轨闸门拦截", async () => {
+    countingRefresh("anthropic");
+    const provider = seed(30 * 60_000, "anthropic");
+    expect((await freshSubscriptionCredential(provider)).access).toBe("a-old");
+  });
+
+  test("已登出(无 oauth 行):以 credential unavailable 形态抛出(归类为「请重新登录」)", async () => {
+    const provider = makeProvider({ id: "f9622c8b-5037-4540-b875-3d301521367b", authMode: "oauth", apiKey: "" });
+    setState({ ...state, settings: { ...state.settings, providers: [provider] } } as any);
+    await expect(freshSubscriptionCredential(provider)).rejects.toThrow("OAuth credential unavailable");
   });
 });

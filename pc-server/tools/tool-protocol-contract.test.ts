@@ -18,8 +18,7 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
-import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
-import type { Message, Model, ToolPart } from "../foundation/types";
+import type { Message, ToolPart } from "../foundation/types";
 import { message } from "../foundation/utils";
 import {
   appendAssistantApiMessages,
@@ -28,7 +27,8 @@ import {
   responseApiMessagesFromUiMessages,
 } from "../inference-engine/message-builder";
 import { chatToolCallsFromNormalized, responseApiToolCallItems } from "../inference-engine/providers";
-import { seedPiSessionFromHistory } from "../pi-engine/context-encoder";
+import { createPiSessionFromView } from "../pi-engine/session-view";
+import { sessionViewOf } from "../test-utils/engine-session-view";
 
 /** 退化工具卡:参数与结果双缺。旧 id 串台产的幽灵卡、中断残留卡都是这个形状。 */
 const DEGENERATE: ToolPart = {
@@ -104,11 +104,11 @@ describe("A 行为:退化工具卡在每条上线路径都不得投影成空", (
   });
 
   test("pi 引擎(工作区模式)上下文编码", () => {
-    const manager = SessionManager.inMemory(process.cwd());
-    seedPiSessionFromHistory({
-      manager,
-      history: [assistantRow()],
-      model: { modelId: "m", inputModalities: ["TEXT"] } as unknown as Model,
+    const { manager } = createPiSessionFromView({
+      cwd: process.cwd(),
+      conversationId: "conv-protocol",
+      view: sessionViewOf([assistantRow()]),
+      fallbackModelId: "m",
     });
     const toolResult = manager.buildSessionContext().messages.find((entry) => entry.role === "toolResult")!;
     expect(nonEmpty((toolResult as { content: unknown }).content)).toBe(true);

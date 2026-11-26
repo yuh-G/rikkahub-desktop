@@ -4,13 +4,16 @@
 // APP 端导入 PC 备份是全量替换语义,PC 若不携带这些字段,用户"手机→PC→手机"一轮后设置归零。
 import { waitForServerReady } from "../test-utils/e2e-server";
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { readZipEntries } from "../files/index";
 
 const serverEntry = join(import.meta.dir, "..", "server.ts");
+/** 出厂默认助手(两端共享的固定 id)。 */
+const SHARED_ASSISTANT_ID = "0950e2dc-9bd5-4801-afa3-aa887aa36b4e";
+const DEEPSEEK_SERVICE_ID = "9d5e0a1b-2c3d-4e5f-8a9b-0c1d2e3f4a5b";
 
 // ── 合法 zip 构造器(带真 CRC32;PowerShell/unzip 解压前校验,zip-structure 的 CRC=0 版不够)──
 const CRC_TABLE = (() => {
@@ -79,6 +82,32 @@ describe("安卓独有字段透传(产品决策②)", () => {
       const port = await waitForServerReady(proc);
       const base = `http://127.0.0.1:${port}`;
 
+      // 桌面端独有的本机路径字段(工作区引擎插件清单):导入 APP 备份后保桌面端的值,导出给 APP 时剥离。
+      const pluginPathsRes = await fetch(`${base}/api/settings/dev/pi-plugin-paths`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths: [dataDir] }),
+      });
+      expect(pluginPathsRes.status).toBe(200);
+      // 插件记录 + 助手绑定(桌面端独有):同 id 的助手在 APP 备份里也有,导入后绑定仍是桌面端的。
+      const localPlugin = join(dataDir, "demo-plugin");
+      mkdirSync(localPlugin, { recursive: true });
+      writeFileSync(join(localPlugin, "index.js"), "export default function () {}\n");
+      const installRes = await fetch(`${base}/api/plugins/install`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: { kind: "local", spec: localPlugin } }),
+      });
+      expect(installRes.status).toBe(200);
+      const pluginId = ((await installRes.json()) as { plugin: { id: string } }).plugin.id;
+      expect(pluginId).toBe("pi:demo-plugin");
+      const bindRes = await fetch(`${base}/api/settings/assistant/plugins`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assistantId: SHARED_ASSISTANT_ID, pluginIds: [pluginId] }),
+      });
+      expect(bindRes.status).toBe(200);
+
       // 安卓 settings.json:PC 类型系统不认识的顶层字段 + 助手内字段
       const androidSettings = {
         fastModelId: "android-fast-model-uuid",
@@ -91,8 +120,17 @@ describe("安卓独有字段透传(产品决策②)", () => {
           id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
           name: "手机端助手",
           androidOnlyPerAssistantFlag: "keep-me",
+        }, {
+          id: SHARED_ASSISTANT_ID,
+          name: "两端都有的助手",
         }],
         displaySetting: { showDateTimeInMessage: true },
+        // APP 选中的搜索服务是 DeepSeek(APP 3.0.0 起有):导入后可用、选中,导出原样带回。
+        searchServices: [
+          { type: "bing_local", id: "11111111-2222-3333-4444-555555555555" },
+          { type: "deepseek", id: DEEPSEEK_SERVICE_ID, apiKey: "sk-synthetic-app" },
+        ],
+        searchServiceSelected: 1,
       };
       const zip = buildStoredZip([
         { name: "settings.json", data: Buffer.from(JSON.stringify(androidSettings), "utf8") },
@@ -116,6 +154,17 @@ describe("安卓独有字段透传(产品决策②)", () => {
         .find((a) => a.id === "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
       expect(importedAssistant?.androidOnlyPerAssistantFlag).toBe("keep-me");
       expect((settings.displaySetting as Record<string, unknown>).showDateTimeInMessage).toBe(true);
+      expect(settings.devPiPluginPaths).toEqual([dataDir]);
+      expect((settings.enginePlugins as Array<{ id: string }>).map((record) => record.id)).toEqual([pluginId]);
+      const sharedAssistant = (settings.assistants as Array<Record<string, unknown>>).find((a) => a.id === SHARED_ASSISTANT_ID);
+      expect(sharedAssistant?.name).toBe("两端都有的助手");
+      expect(sharedAssistant?.enginePluginIds).toEqual([pluginId]);
+      expect(importedAssistant?.enginePluginIds).toEqual([]);
+      const services = settings.searchServices as Array<Record<string, unknown>>;
+      expect(services.filter((service) => service.type === "deepseek")).toEqual([
+        { type: "deepseek", id: DEEPSEEK_SERVICE_ID, apiKey: "sk-synthetic-app" },
+      ]);
+      expect(services[settings.searchServiceSelected as number]?.id).toBe(DEEPSEEK_SERVICE_ID);
 
       // PC 导出 zip → settings.json 原样携带(APP 全量替换导入时不归零)
       const exportRes = await fetch(`${base}/api/data/export`);
@@ -133,6 +182,14 @@ describe("安卓独有字段透传(产品决策②)", () => {
       const exportedAssistant = (exported.assistants as Array<Record<string, unknown>>)
         .find((a) => a.id === "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
       expect(exportedAssistant?.androidOnlyPerAssistantFlag).toBe("keep-me");
+      expect("devPiPluginPaths" in exported).toBe(false);
+      expect("enginePlugins" in exported).toBe(false);
+      expect((exported.assistants as Array<Record<string, unknown>>).every((a) => !("enginePluginIds" in a))).toBe(true);
+      const exportedServices = exported.searchServices as Array<Record<string, unknown>>;
+      expect(exportedServices.filter((service) => service.type === "deepseek")).toEqual([
+        { type: "deepseek", id: DEEPSEEK_SERVICE_ID, apiKey: "sk-synthetic-app" },
+      ]);
+      expect(exportedServices[exported.searchServiceSelected as number]?.id).toBe(DEEPSEEK_SERVICE_ID);
     } finally {
       proc.kill();
       await proc.exited;

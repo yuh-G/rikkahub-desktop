@@ -139,6 +139,9 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
     proxyConfig: { host: "127.0.0.1" },
     preferredPort: 8080,
     shellPath: "D:\\SoftWare\\Git\\bin\\bash.exe",
+    devPiPluginPaths: ["D:\\plugins\\rpiv-todo"],
+    enginePlugins: [{ id: "pi:rpiv-todo", engine: "pi", name: "rpiv-todo", source: { kind: "npm", spec: "rpiv-todo" } }],
+    pluginMarketSources: [{ id: "market-1", engine: "pi", kind: "catalog", name: "团队", url: "https://example.com/p.json", addedAt: "" }],
     assistants: [
       {
         id: "a1",
@@ -146,6 +149,7 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
         reasoningLevel: "AUTO",
         presetMessages: [{ role: "USER", content: "hi" }],
         mcpToolOverrides: { x: true },
+        enginePluginIds: ["pi:rpiv-todo"],
         allowConversationSystemPrompt: true,
       },
     ],
@@ -160,6 +164,7 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
     expect(assistant.reasoningLevel).toBe("auto");
     expect(assistant.presetMessages[0].role).toBe("user");
     expect(assistant.mcpToolOverrides).toBeUndefined();
+    expect(assistant.enginePluginIds).toBeUndefined();
     // 安卓对齐批6:allowConversationSystemPrompt 已是安卓正式字段(Assistant.kt),必须存活——
     // 此前误 strip 导致 PC→APP 后所有助手的会话级系统提示词开关归 false。
     expect(assistant.allowConversationSystemPrompt).toBe(true);
@@ -171,11 +176,31 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
     expect(out.preferredPort).toBeUndefined();
     // 机器级 bash 绝对路径随导出剥离(目标机走自动探测,不锁死)
     expect(out.shellPath).toBeUndefined();
+    // 工作区引擎插件的本机路径同理剥离(APP 无工作区引擎)
+    expect(out.devPiPluginPaths).toBeUndefined();
+    // 插件记录与助手的插件绑定同为桌面端独有
+    expect(out.enginePlugins).toBeUndefined();
+    expect(out.pluginMarketSources).toBeUndefined();
     // Android Uuid 反序列化拒空串 → 填随机 UUID
     expect(out.chatModelId).toMatch(/^[0-9a-f-]{36}$/);
     // 原对象不被就地修改
     expect(pcSettings.assistants[0].reasoningLevel).toBe("AUTO");
     expect(pcSettings.chatModelId).toBe("");
+  });
+
+  test("插件带来的 MCP 服务器不导出给 APP,助手对它的勾选一并去掉;用户自己的服务器照常导出", () => {
+    const settings = {
+      mcpServers: [
+        { id: "user-mcp", url: "https://u.example/mcp", commonOptions: { enable: true, name: "U", headers: [] } },
+        { id: "plugin-mcp", url: "https://p.example/mcp", source: { kind: "plugin", pluginId: "pi:carrier", name: "p", active: true }, commonOptions: { enable: true, name: "p", headers: [] } },
+      ],
+      assistants: [{ id: "a1", mcpServers: ["user-mcp", "plugin-mcp"] }],
+    };
+    const out = rewriteAvatarsInSettings(settings, PC_AVATAR_TYPE_TO_ANDROID, "to-android");
+    expect(out.mcpServers.map((server: { id: string }) => server.id)).toEqual(["user-mcp"]);
+    expect(out.assistants[0].mcpServers).toEqual(["user-mcp"]);
+    // 桌面端之间的备份(to-pc 方向不剥)原样保留。
+    expect(rewriteAvatarsInSettings(settings, ANDROID_AVATAR_TYPE_TO_PC, "to-pc").mcpServers).toHaveLength(2);
   });
 });
 

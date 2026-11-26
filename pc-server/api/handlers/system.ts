@@ -13,9 +13,10 @@ import { contextWindowFor } from "../../model-providers/model-limits";
 import { error, json, readJson } from "../request";
 import { isLoopbackRequest } from "../net-context";
 import { stripAuthSecrets } from "../auth";
-import { appClients, mcpHealthSnapshotFrame, openSse } from "../sse";
+import { appClients, mcpHealthSnapshotFrame, openSse, pluginReinstallStateFrame } from "../sse";
 import { memoryStore } from "../../memory/index";
 import { recentAppErrors } from "../../observability/app-errors";
+import { logListItem } from "../logs";
 import { computeStats } from "../../conversations/stats";
 import { getConversation } from "../../conversations";
 import { DEFAULT_PROMPT_OPTIMIZE_PROMPT, PROMPT_OPTIMIZE_OUTPUT_TOKENS } from "../../app-config/prompts";
@@ -50,6 +51,7 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
         ["app_errors_snapshot", { type: "snapshot", errors: recentAppErrors() }],
         ["invalidate", { type: "invalidate", assistantId: state.settings.assistantId, timestamp: Date.now() }],
         mcpHealthSnapshotFrame(),
+        pluginReinstallStateFrame(),
         // 进行中的订阅登录:重连即重推最近一帧,挂载中的登录面板即刻重新对齐。
         // provider_auth 是增量语义(不入前端 REPLAY_EVENTS 缓存)——这里读的是服务端
         // attempts 表的实时帧,终态(success/error/cancelled)已随 attempt 清理,不会重推陈旧成功帧。
@@ -273,7 +275,12 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
       return error(err instanceof Error ? err.message : String(err), 502);
     }
   }
-  if (path === "logs" && request.method === "GET") return json(state.logs);
+  if (path === "logs" && request.method === "GET") return json(state.logs.map(logListItem));
+  const logDetail = path.match(/^logs\/([^/]+)$/);
+  if (logDetail && request.method === "GET") {
+    const entry = state.logs.find((log) => log.id === decodeURIComponent(logDetail[1]!));
+    return entry ? json(entry) : error("Log not found", 404);
+  }
   if (path === "logs" && request.method === "DELETE") {
     state.logs = [];
     saveState();
