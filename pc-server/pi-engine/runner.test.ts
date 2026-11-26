@@ -62,9 +62,6 @@ function testContext(conversationId: string, promptText: string, extras: Partial
       promptText,
       sink: (event: GenerationEvent) => events.push(event),
       ...extras,
-      // T4:LLM 请求通道工厂必填(置于 extras 之后,保证类型非可选)——测试直接用全局
-      // fetch(不打 api.anthropic.com,预热不触发),工厂忽略 provider 恒返回它。
-      llmFetchFor: () => fetch,
     },
   };
 }
@@ -121,8 +118,6 @@ describe("pi runner 集成(P7 统一会话数据)", () => {
       cwd,
       history: [user1, asst1],
       sink: (event: GenerationEvent) => events.push(event),
-      // T4:压缩也走 LLM 请求通道工厂(测试直用全局 fetch)。
-      llmFetchFor: () => fetch,
     });
 
     expect(result.summary).toContain("手动压缩摘要");

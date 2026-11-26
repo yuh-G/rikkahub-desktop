@@ -19,11 +19,6 @@ export function createChatAdapter(chatRun: ChatRunFn): EngineAdapter {
     resumeSemantics: "pause-resume",
     // 工具循环骨架在工具轮边界与最终轮调用 onSteerBoundary(inference-engine/tool-loop absorbSteering)。
     steering: "boundary",
-    // 进程内引擎,但 LLM 请求在调用点直接 fetch + addLog(带响应体与轮次 kind,信息更全),
-    // 不经请求通道中间件。聊天引擎不预热(D-T2):pause-resume 语义遇审批即结束本轮生成,
-    // finally 立即 stopCacheWarming——「生成在等待中仍然活着」的主价值场景根本不存在;
-    // 这一「不预热」由组装点推导(host + pause-resume ⇒ 不挂捕获中间件),非特例声明。
-    transport: { mode: "host", requestLog: "call-site" },
     run(ctx, sink, signal) {
       return chatRun(ctx, sink, signal);
     },

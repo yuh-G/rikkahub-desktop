@@ -118,14 +118,6 @@ describe("P4 资源装配", () => {
     expect(resourceLoader.getAppendSystemPrompt().join("\n")).not.toContain("HIJACKED");
   });
 
-  test("C2/D2:pi 自带缓存预热显式关闭(宿主服务接管,防双热)", async () => {
-    const root = mkdtempSync(join(tmpdir(), "rkh-res-warm-"));
-    const { assistant, conversation } = fixture();
-    const { settingsManager } = await createPiSessionResources({ conversation, assistant, model: fakeModel, cwd: root, root });
-    // pi 默认 "streaming";宿主侧同提交起改为 "off"(inference-engine/cache-warming 接管)。
-    expect(settingsManager.getCacheWarmingMode()).toBe("off");
-  });
-
   test("appendSystemPrompt 冻结:时间模板变量同会话字节稳定;人设原文变更立即生效", async () => {
     const { assistant, conversation } = fixture({ systemPrompt: "You are {{char}}. Now: {{cur_datetime}}" });
     const first = buildPiAppendSystemPrompt(conversation, assistant, fakeModel);

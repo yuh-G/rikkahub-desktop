@@ -15,7 +15,7 @@
 // 会话↔jsonl 文件关联。pi 自动压缩发生在 prompt 内部,结果捕获为
 // capturedCompactions(firstKeptEntryId 反查灌注映射回到 DB 消息 id),由调用方落
 // conversation.engineCompactions——下一轮经编码器 appendCompaction 重放,语义逐字等价。
-// P9 灌注统一:history 是富化全序列(含合成行,pi-engine/assembly 以压缩切点为富化窗口
+// P9 灌注统一:history 是富化全序列(含合成行,orchestrator 以压缩切点为富化窗口
 // 锚),聊天位注入/时间提醒在工作区会话与聊天引擎逐字同生效。
 //
 // P3 工具面:noTools:"builtin"——pi 内建 read/bash/edit/write 一律不启用(它们绕开
@@ -27,32 +27,23 @@ import { createAgentSession } from "../../pi/packages/coding-agent/src/core/sdk.
 
 import type { ToolDefinition } from "../../pi/packages/coding-agent/src/core/extensions/types.ts";
 import { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
-import type { StreamFn } from "../../pi/packages/agent/src/types.ts";
 import type { GenerationEventSink } from "../inference-engine/events";
-import type { CapturedEngineCompaction, EngineCompactionRecord, Message, Model, Provider } from "../foundation/types";
+import type { Message, Model, Provider } from "../foundation/types";
 import { piAgentDir } from "../foundation/paths";
 import { CodedError } from "../foundation/errors";
-import { promptCachePolicyFor } from "../model-providers/prompt-cache";
-import type { LlmFetch } from "../inference-engine/llm-transport";
 import { createPiModelRuntime, mapProviderModelToPi, piThinkingLevelFor, type PiModelLimits } from "./model-bridge";
 import { llmLogContextFor, runWithLlmRequestLog } from "./llm-request-log";
 import { createPiEventBridge } from "./event-bridge";
 import { clearToolApprovalWaiters } from "../inference-engine/approval-gate";
 import type { PiSessionResources } from "./resources";
-import { seedPiSessionFromHistory } from "./context-encoder";
+import { seedPiSessionFromHistory, type EngineCompactionRecord } from "./context-encoder";
 import { sweepWorkspaceReservedNameArtifacts } from "../workspace/files";
 
 export interface PiGenerationContext {
   /** 生效 provider/model(调用方经 findModel 解析,providerOverwrite 已展开)。 */
   provider: Provider;
   model: Model;
-  /** LLM 请求通道工厂(T4):pi SDK 内部发出的每条请求经此出口——请求日志 / 缓存预热
-   *  捕获作为有序中间件挂在其上,身份(会话/供应商/用途)由组装点显式给出。**本 runner 只
-   *  以自身 provider 取一次通道**(ctx.llmFetchFor(ctx.provider)),工厂形态留给「供应商
-   *  在调用时才定」的压缩路径(见 EngineRunContext.llmFetchFor)。pi 内建 google 适配器
-   *  拒收自定义 fetch(§2.3 P5),包装器按 provider.type 判定不注入(见 withLlmFetch 头注)。 */
-  llmFetchFor: (provider: Provider) => LlmFetch;
-  /** 模型极限(P5:pi-engine/assembly 从 models.dev/助手配置取值;不传用 model-bridge 保守默认)。
+  /** 模型极限(P5:orchestrator 从 models.dev/助手配置取值;不传用 model-bridge 保守默认)。
    *  contextWindow 决定 pi 自动压缩阈值(contextWindow - reserveTokens),必须尽量真实。 */
   modelLimits?: PiModelLimits;
   /** 助手思考强度(assistant.reasoningLevel 原值;经 piThinkingLevelFor 译成 pi 档位:
@@ -94,32 +85,15 @@ export interface PiGenerationContext {
   onSteerBoundary?: () => string[];
 }
 
-/** pi 的 cacheRetention(策略单源翻译,C1)。anthropicCaching 关 = "none"(工作区请求
- *  随「Claude 提示缓存」开关逐字收敛,修复 S6:此前 pi 默认 short 恒打 cache_control);
- *  开则 TTL 决定 short/long。OpenAI 格式:openaiCacheKey 开 = "short"(pi 会话 id 已
- *  稳定成 conversationId,Responses/completions 由此发 prompt_cache_key 做缓存路由)、
- *  关 = "none"。其他协议(google)pi 原生不消费该值,给 none 亦无副作用。
- *  订阅 Claude 行恒开规则住在策略函数里(model-providers/prompt-cache),本翻译层
- *  零业务规则——未来引擎照此翻译即可继承同款语义。 */
-function piCacheRetentionFor(provider: Provider): "none" | "short" | "long" {
-  const policy = promptCachePolicyFor(provider);
-  if (provider.type === "claude") {
-    if (!policy.anthropicCaching) return "none";
-    return policy.anthropicTtl === "1h" ? "long" : "short";
-  }
-  if (provider.type === "openai") return policy.openaiCacheKey ? "short" : "none";
-  return "none";
-}
-
-/** 会话组装公共件:每轮生成的 pi SessionManager 用 conversationId 作会话 id——
- *  pi 的 prompt_cache_key(Responses/completions 的缓存路由键)与 OpenRouter 亲和头
- *  都读它,稳定 id 让缓存路由跨轮命中(此前每轮随机 uuidv7,同会话永远打不进同一
- *  缓存分片)。与 §7.4 会话身份头同一值:「缓存路由身份」与「限流分桶身份」统一为
- *  会话 id。会话 id 须过 pi 的字符白名单(字母数字与 -_.),宿主会话 id 是 uuid,
- *  天然合法;防御性替换非白名单字符(断言形状,不发明新 id)。 */
-function piSessionManagerFor(cwd: string, conversationId: string): SessionManager {
-  const safeId = conversationId.replace(/[^A-Za-z0-9._-]/g, "_") || "session";
-  return SessionManager.inMemory(cwd, { id: safeId });
+/** 压缩产物的 DB 侧映射(runner 返回;orchestrator 负责落 conversation.engineCompactions)。
+ *  引擎中性(T3):结构与引擎无关,任何 run-and-suspend 引擎的压缩捕获都用它。 */
+export interface CapturedEngineCompaction {
+  /** 切点(首个保留原文的 DB 消息 id)。null = 切点落在本轮(prompt 之后)——
+   *  本轮消息尚未入库,调用方按"外收拢"落为当前尾消息 id(只多保不少保,
+   *  下一轮编码器按"切点在场"自校验生效)。 */
+  cutMessageId: string | null;
+  summary: string;
+  tokensBefore: number;
 }
 
 export interface PiGenerationResult {
@@ -153,38 +127,6 @@ function captureRoundCompactions(
   return captured;
 }
 
-/** pi 是否可注入自定义 fetch = 是否非 google 轨(§2.3 P5:pi 的 google-generative-ai /
- *  google-vertex 适配器收到非全局 fetch 直接抛 "Custom fetch is not supported")。
- *  单点判定,StreamFn 包装与测试共用;将来 pi 支持 google 注入或新增同类协议,只改这里。 */
-export function piInjectsLlmFetch(provider: Provider): boolean {
-  return provider.type !== "google";
-}
-
-/** 把 LLM 请求通道注入 pi 的 streamFunction 包装器公共件(生成与手动压缩都用)。
- *
- *  - `options?.fetch ?? 通道` 语义与 C1 的 cacheRetention 同款:pi 内部显式给的
- *    fetch 不覆盖(对称于 compaction 自带的 cacheRetention:"none")。
- *  - **google 例外**(见 piInjectsLlmFetch):不注入时,pi google 轨的请求日志由一层窄全局
- *    壳兜底(runner 的 runWithProviderLog + bootstrap 的 installLlmRequestLogInterceptor,
- *    「上游支持注入 fetch 后删除」)。
- *  - 这是 pi 官方公开扩展点(session.agent.streamFunction),非补丁;上游若重构流路径,
- *    失效形态是"请求不经通道"(回到全局 fetch),集成锁(cache-retention / pi-route)先红。 */
-function withLlmFetch(streamFn: StreamFn, provider: Provider, llmFetch: LlmFetch): StreamFn {
-  if (!piInjectsLlmFetch(provider)) return streamFn;
-  return (model, context, options) =>
-    streamFn(model, context, { ...options, fetch: options?.fetch ?? llmFetch });
-}
-
-/** google 例外的日志兜底(§2.3 P5,决策 b):pi 的 google 适配器拒收自定义 fetch,其请求
- *  不经 LLM 通道,故**只在 pi google 轨**用这层窄全局日志壳补记——只记日志、不预热。
- *  其余协议经 withLlmFetch 走通道记日志,不走这里(零双记)。
- *  拆除条件:上游支持注入 fetch 后,随 installLlmRequestLogInterceptor 一并删除
- *  (CLAUDE.md pi 维护手册「清除冗余」条目已登记)。 */
-function runWithProviderLog<T>(provider: Provider, fn: () => T): T {
-  if (provider.type !== "google") return fn();
-  return runWithLlmRequestLog(llmLogContextFor(provider), fn);
-}
-
 export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGenerationResult> {
   if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
   const mapped = mapProviderModelToPi(ctx.provider, ctx.model, ctx.modelLimits, ctx.conversationId);
@@ -195,9 +137,8 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
   // 兼作存量自愈:内测期已产生的残留在用户下次使用该工作区时自动消失。
   sweepWorkspaceReservedNameArtifacts(ctx.cwd);
 
-  // P7:引擎上下文从 SQLite 历史每轮重建,inMemory 会话零文件生命周期。会话 id 用
-  // conversationId(piSessionManagerFor:缓存路由/亲和头跨轮稳定)。
-  const manager = piSessionManagerFor(ctx.cwd, ctx.conversationId);
+  // P7:引擎上下文从 SQLite 历史每轮重建,inMemory 会话零文件生命周期。
+  const manager = SessionManager.inMemory(ctx.cwd);
   const seeded = seedPiSessionFromHistory({
     manager,
     history: ctx.history,
@@ -225,20 +166,6 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
       ? { resourceLoader: ctx.resources.resourceLoader, settingsManager: ctx.resources.settingsManager }
       : {}),
   });
-
-  // C1 缓存策略注入:包一层 streamFunction 把策略翻译的 cacheRetention 塞进 options
-  // (sdk 的 buildRequestOptions 以 ...options 透传)。`?? 策略值` 语义 = 显式值优先:
-  // pi 压缩/摘要请求自带 cacheRetention:"none"(compaction.ts completeSummarization),
-  // 包装器不得覆盖。这是 pi 官方公开扩展点(proxy 流同款),非补丁;上游若重构
-  // streamFn 内部结构,失效形态是"回到 pi 默认 short",行为锁测试会先红。
-  const cacheRetention = piCacheRetentionFor(ctx.provider);
-  const innerStreamFn = session.agent.streamFunction;
-  const wrappedStreamFn: StreamFn = (model_, context, options) =>
-    innerStreamFn(model_, context, { ...options, cacheRetention: options?.cacheRetention ?? cacheRetention });
-  // T3:同一包装器上再叠 LLM 通道注入(fetch)。包装后的函数本身就是 StreamFn,故直接把
-  // 通道注入叠在策略包装外层(顺序无关:两者读/写 options 的不同字段)。本 runner 只以
-  // 自身 provider 取通道——压缩路径的「调用时供应商」由 runPiCompaction 侧负责。
-  session.agent.streamFunction = withLlmFetch(wrappedStreamFn, ctx.provider, ctx.llmFetchFor(ctx.provider));
 
   // steering 一次吸收全部:与聊天引擎 steerBoundary 整批排水、Codex pending_input
   // split_off(0) 同语义——多条插话 = 多个 user 气泡 + 一个 ai_2,不按轮次逐条滴灌。
@@ -277,9 +204,8 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     if (ctx.signal?.aborted) throw new DOMException("Generation stopped", "AbortError");
     // expandPromptTemplates:false——用户消息逐字直达模型。pi 默认会把 "/" 开头的输入
     // 当模板/扩展命令拦截(agent-session.ts:1926-1931),我们的会话 UX 不走 pi 命令面。
-    // T3:本轮生成的 LLM fetch(pi SDK 内部)经通道记入统一日志管线(见
-    // streamFunction 包装);google 轨不经通道,由 runWithProviderLog 的窄壳兜底补记。
-    await runWithProviderLog(ctx.provider, () =>
+    // runWithLlmRequestLog:本轮生成的 LLM fetch(pi SDK 内部)记入统一日志管线(日志问题 1)。
+    await runWithLlmRequestLog(llmLogContextFor(ctx.provider), () =>
       session.prompt(ctx.promptText, {
         expandPromptTemplates: false,
         ...(ctx.images?.length ? { images: ctx.images } : {}),
@@ -315,8 +241,6 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
 export interface PiCompactionContext {
   provider: Provider;
   model: Model;
-  /** LLM 请求通道工厂(T4;同 PiGenerationContext.llmFetchFor)——压缩摘要请求走它记日志。 */
-  llmFetchFor: (provider: Provider) => LlmFetch;
   /** 助手思考强度(同 PiGenerationContext.reasoningLevel;压缩摘要与主会话同档,勿分叉)。 */
   reasoningLevel?: string | null;
   modelLimits?: PiModelLimits;
@@ -380,9 +304,7 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
   if (!mapped.ok) throw new Error(`该模型无法在工作区引擎使用：${mapped.reason}`);
   const { runtime, model } = await createPiModelRuntime(mapped.mapping);
 
-  // 会话 id 同生成路径(piSessionManagerFor);压缩请求自带的 cacheRetention:"none"
-  // 在 pi 内部(completeSummarization),不经我们的包装面,天然不受策略影响。
-  const manager = piSessionManagerFor(ctx.cwd, ctx.conversationId);
+  const manager = SessionManager.inMemory(ctx.cwd);
   const seeded = seedPiSessionFromHistory({
     manager,
     history: ctx.history,
@@ -406,11 +328,6 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
       : {}),
   });
 
-  // T3:压缩摘要请求经同一 LLM 通道记日志(P3:压缩走 this.agent.streamFunction,与主循环
-  // 同注入点)。压缩自带 cacheRetention:"none"(compaction.ts completeSummarization),
-  // 不经我们的策略包装面,故这里只叠通道注入。以 ctx.provider(调用方传入的最终供应商)取通道。
-  session.agent.streamFunction = withLlmFetch(session.agent.streamFunction, ctx.provider, ctx.llmFetchFor(ctx.provider));
-
   const bridge = createPiEventBridge();
   const unsubscribe = session.subscribe((event) => {
     for (const generationEvent of bridge.handle(event)) ctx.sink(generationEvent);
@@ -421,7 +338,7 @@ export async function runPiCompaction(ctx: PiCompactionContext): Promise<PiCompa
   ctx.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     if (ctx.signal?.aborted) throw new DOMException("Compaction cancelled", "AbortError");
-    const result = await runWithProviderLog(ctx.provider, () =>
+    const result = await runWithLlmRequestLog(llmLogContextFor(ctx.provider), () =>
       session.compact(ctx.customInstructions?.trim() || undefined),
     );
     const captured = captureRoundCompactions(manager, seededEntryIds, seeded.entryIdsByMessageId).at(-1);

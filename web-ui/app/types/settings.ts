@@ -252,9 +252,6 @@ export interface ProviderProfile {
   models: ProviderModel[];
   promptCaching?: boolean;
   promptCacheTtl?: "5m" | "1h";
-  /** Claude providers only — 缓存保温(C2 宿主预热服务):工具/审批等待超过缓存时长时自动发
-   *  1-token 保温请求防缓存过期。语义 !== false 即开(默认开);仅 Claude 提示缓存开启时生效。 */
-  promptCacheWarming?: boolean;
   /** OpenAI providers only — 请求附带 prompt_cache_key=会话ID 提高官方端缓存命中(专题12),默认关。 */
   promptCacheKey?: boolean;
   /** OpenAI providers only — 是否在历史回放里把 reasoning_content 回传给上游（默认开启）。对齐安卓 e63d017。 */

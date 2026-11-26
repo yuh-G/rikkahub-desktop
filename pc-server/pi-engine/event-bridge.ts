@@ -43,9 +43,7 @@ import type { JsonValue, ToolOutputEntry } from "../foundation/types";
 import { reportError } from "../observability/app-errors";
 
 /** pi Usage → 我们的 TokenUsage(conversations/helpers ensureUsage 同形)。
- *  口径:promptTokens 含缓存读写(对齐 OpenAI prompt_tokens 语义);cachedTokens=cacheRead;
- *  cacheWriteTokens 镜像聊天引擎 mergeClaudeUsage(pi 侧 cacheWrite 已含 1h 细分
- *  cacheWrite1h 的合计,C2 预热「值得预热」判定用)。
+ *  口径:promptTokens 含缓存读写(对齐 OpenAI prompt_tokens 语义);cachedTokens=cacheRead。
  *  P5 统计对齐阶段按 provider 逐一精化(方案 §六 P5-2)。 */
 export function mapPiUsage(usage: PiUsage): Record<string, JsonValue> {
   const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
@@ -54,7 +52,6 @@ export function mapPiUsage(usage: PiUsage): Record<string, JsonValue> {
     completionTokens: usage.output,
     totalTokens: usage.totalTokens > 0 ? usage.totalTokens : promptTokens + usage.output,
     cachedTokens: usage.cacheRead,
-    ...(usage.cacheWrite > 0 ? { cacheWriteTokens: usage.cacheWrite } : {}),
   };
 }
 

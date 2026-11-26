@@ -23,7 +23,7 @@ export type ModelCallErrorAnnotation = {
 };
 
 /** 压缩发生点标记:压缩完成时打在"当时的最新一条消息"上(对话模式 auxiliary.ts /
- *  引擎原生压缩 conversations/engine-compactions applyCapturedEngineCompactions)。前端据此在该消息下方渲染
+ *  工作区 orchestrator applyCapturedEngineCompactions)。前端据此在该消息下方渲染
  *  "上下文已压缩"分割线——锚定用户发起压缩的位置,线上的会话已被压缩处理。
  *  PC 特有注解,安卓导出时过滤(backup/export.ts PC_ONLY_ANNOTATION_TYPES)。 */
 export type CompactionBoundaryAnnotation = {
@@ -50,11 +50,6 @@ export type TokenUsage = {
   completionTokens: number;
   cachedTokens: number;
   totalTokens: number;
-  /** 上一轮缓存写入量(Anthropic cache_creation_input_tokens;pi 侧 cacheWrite 含 1h
-   *  细分)。C2 宿主预热「值得预热」判定的数据源(证明该端点确实在缓存)。可选——
-   *  仅 Anthropic 格式回报,其余协议缺省;前端统计页按 key 取值,未知 key 无感;
-   *  安卓导出整体忽略 usage(JsonValue),零跨端风险。 */
-  cacheWriteTokens?: number;
   /** true = 本地字数折算的估算值(厂商未回报 usage,见 conversations/helpers.ts ensureUsage);
    *  统计页命中率分母与前端上下文用量条均排除估算记录。 */
   estimated?: boolean;

@@ -58,7 +58,6 @@ describe("pi runner steering 轮边界", () => {
       history: [] as Message[],
       promptText: "开始",
       sink: (event) => events.push(event),
-      llmFetchFor: () => fetch, // T4:LLM 请求通道工厂必填(测试直用全局 fetch)
       onSteerBoundary: () => {
         boundaryCalls += 1;
         const taken = pending;

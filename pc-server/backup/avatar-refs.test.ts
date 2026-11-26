@@ -115,20 +115,6 @@ describe("PC→APP:订阅供应商 OAuth 凭证剥离(方案 §3 决策④)", ()
     expect(out.providers.find((p: any) => p.id === "p-plain")).toEqual({ id: "p-plain", name: "OpenAI", apiKey: "sk-x" });
   });
 
-  test("to-android 剥 promptCacheWarming(PC-only 缓存预热开关,安卓无此概念);to-pc 保留", () => {
-    const settings = {
-      providers: [
-        { id: "p-warm", name: "Claude", apiKey: "sk-x", promptCaching: true, promptCacheWarming: false },
-        { id: "p-default", name: "OpenAI", apiKey: "sk-y" }, // 未设置该字段 → 不虚构
-      ],
-    };
-    const android = rewriteAvatarsInSettings(settings, PC_AVATAR_TYPE_TO_ANDROID, "to-android");
-    expect(android.providers[0].promptCacheWarming).toBeUndefined();
-    expect("promptCacheWarming" in android.providers[1]).toBe(false);
-    const pc = rewriteAvatarsInSettings(settings, ANDROID_AVATAR_TYPE_TO_PC, "to-pc");
-    expect(pc.providers[0].promptCacheWarming).toBe(false);
-  });
-
   test("to-pc 方向不剥(PC→PC 跨机恢复带上凭证,免重登,与 apiKey 同策略)", () => {
     const settings = {
       providers: [

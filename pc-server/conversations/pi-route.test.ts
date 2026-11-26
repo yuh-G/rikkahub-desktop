@@ -351,18 +351,12 @@ describe("引擎判定单源(审批旁路/压缩路由收编)", () => {
     // steering 能力声明:两个引擎都在真边界调 onSteerBoundary(pi=turn_end,chat=工具轮/最终轮),
     // 协调器据此下发回调;声明改成 "none" 会让编排层不再下发,补发退化为收尾派发。
     expect(piAdapter.steering).toBe("boundary");
-    // 传输形态声明(T4 §4.3):描述事实——进程内引擎 + 请求在 SDK 内部发(日志只能在
-    // 通道层记)。预热的唯一运行时判定已收敛到 engines/llm-middlewares 的推导谓词
-    // (host + run-and-suspend + 策略开 + 官方端点),不再靠 adapter 声明。
-    expect(piAdapter.transport).toEqual({ mode: "host", requestLog: "transport" });
 
     const chatAdapter = resolveEngineForConversation(seedConversation(null));
     expect(chatAdapter.kind).toBe("chat");
     expect(chatAdapter.resumeSemantics).toBe("pause-resume");
     expect(chatAdapter.compact).toBeUndefined();
     expect(chatAdapter.steering).toBe("boundary");
-    // 聊天引擎请求在调用点直接 fetch+addLog(信息更全),不经通道中间件。
-    expect(chatAdapter.transport).toEqual({ mode: "host", requestLog: "call-site" });
   }, 30_000);
 
   test("compactEngineConversation:普通会话回落(null),工作区会话穿透到 pi 压缩驱动", async () => {

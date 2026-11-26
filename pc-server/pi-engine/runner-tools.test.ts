@@ -88,7 +88,6 @@ async function scriptedRun(
     promptText: "干活",
     tools: createPiWorkspaceTools({ conversation: conversation as never, assistant: fakeAssistant, sink }),
     sink,
-    llmFetchFor: () => fetch, // T4:LLM 请求通道工厂必填(测试直用全局 fetch)
     ...extras,
   });
   return { server, events, run };

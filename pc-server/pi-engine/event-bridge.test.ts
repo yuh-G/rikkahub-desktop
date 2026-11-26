@@ -223,7 +223,7 @@ describe("pi 事件桥:纯映射", () => {
           blocks: [{ type: "text", len: 2 }],
         },
       },
-      { kind: "usage", usage: { promptTokens: 170, completionTokens: 20, totalTokens: 190, cachedTokens: 60, cacheWriteTokens: 10 } },
+      { kind: "usage", usage: { promptTokens: 170, completionTokens: 20, totalTokens: 190, cachedTokens: 60 } },
     ]);
     const outcome = bridge.outcome();
     expect(outcome.text).toBe("答案");
@@ -345,10 +345,7 @@ describe("pi 事件桥:纯映射", () => {
 
   test("mapPiUsage/mapPiToolContent 口径", () => {
     expect(mapPiUsage(usage({ input: 10, output: 5, cacheRead: 3, cacheWrite: 2, totalTokens: 0 })))
-      .toEqual({ promptTokens: 15, completionTokens: 5, totalTokens: 20, cachedTokens: 3, cacheWriteTokens: 2 });
-    // cacheWrite=0 不发键:非 Anthropic 格式恒零,零值键会让旧数据语义膨胀。
-    expect(mapPiUsage(usage({ input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 0 })))
-      .toEqual({ promptTokens: 10, completionTokens: 5, totalTokens: 15, cachedTokens: 0 });
+      .toEqual({ promptTokens: 15, completionTokens: 5, totalTokens: 20, cachedTokens: 3 });
     expect(mapPiToolContent([
       { type: "text", text: "t" },
       { type: "image", data: "QUJD", mimeType: "image/png" },

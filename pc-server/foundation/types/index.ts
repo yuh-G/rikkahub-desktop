@@ -81,11 +81,6 @@ export interface Provider {
   includeHistoryReasoning?: boolean;
   promptCaching?: boolean;
   promptCacheTtl?: "5m" | "1h";
-  // 缓存预热(PC 独有,C2 宿主预热服务消费):长时间工具运行/等待审批时在缓存过期前
-  // 自动发保温请求。语义 !== false 即开——旧数据与 APP 导入缺失该字段时跟随默认开,
-  // 仅 anthropicCaching 开启时有意义(见 model-providers/prompt-cache.ts 策略单源)。
-  // to-android 备份导出剥离(backup/export.ts stripPcOnly,安卓无此字段)。
-  promptCacheWarming?: boolean;
   // 专题12:OpenAI 系请求附带 prompt_cache_key=会话ID,官方端据此把同一会话路由到
   // 同一缓存分片提高命中率(codex 同款)。第三方兼容端可能不识别该字段报 400,
   // 故做成 provider 级开关,默认关。
@@ -338,26 +333,6 @@ export interface Conversation {
    *  (编码器自校验,编辑/fork 后失效记录自动跳过)。仅存 PC 自有库;跨端导出
    *  白名单不含此列。 */
   engineCompactions?: JsonValue[] | null;
-}
-
-/** 引擎压缩记录(Conversation.engineCompactions 的元素契约;解析/落库见
- *  conversations/engine-compactions)。引擎中立:任何原生压缩引擎读写同一结构。 */
-export interface EngineCompactionRecord {
-  /** 切点:从这条消息(含)起保留原文,之前的历史被 summary 取代。 */
-  cutMessageId: string;
-  summary: string;
-  tokensBefore: number;
-  createdAt?: string;
-}
-
-/** 引擎本轮捕获的压缩产物(待落库)。 */
-export interface CapturedEngineCompaction {
-  /** 切点(首个保留原文的 DB 消息 id)。null = 切点落在本轮(prompt 之后)——
-   *  本轮消息尚未入库,落库时按"外收拢"取当前尾消息 id(只多保不少保,
-   *  下一轮编码器按"切点在场"自校验生效)。 */
-  cutMessageId: string | null;
-  summary: string;
-  tokensBefore: number;
 }
 
 // ----- 工作区(agent 模式)领域模型 -----

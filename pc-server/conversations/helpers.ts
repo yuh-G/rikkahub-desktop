@@ -12,7 +12,6 @@ import { clearMessageQueue } from "./message-queue";
 import { findAssistant as findAssistantCore } from "../assistants";
 import { fillContextLimit } from "../inference-engine/providers";
 import { finishToolParts } from "../inference-engine/parts";
-import { discardCacheWarmingState } from "../inference-engine/cache-warming";
 
 /** 删会话路径的中止(唯一调用方 deleteConversationsById):意图 deleted——队列随会话清除,
  *  旧流收尾无事可做。 */
@@ -40,9 +39,6 @@ export function deleteConversationsById(ids: Set<string>) {
     dropConversationSse(conversationId);
     // 会话删除即清其发送队列(纯内存态,孤儿队列只是泄漏,顺手清)。
     clearMessageQueue(conversationId);
-    // C2:预热计划与缓存证明随会话清除(流式中删会话时 generateAnswer 的 finally
-    // stop 仍会跑,这里双保险且把 provenTokens 一并清掉防泄漏)。
-    discardCacheWarmingState(conversationId);
   }
   // P7:引擎会话状态(压缩记录)在会话行内(engine_compactions 列),随行删除天然级联,
   // 无文件生命周期可管——P2 的 jsonl 收集/删除逻辑随层退役。
@@ -203,10 +199,8 @@ export function ensureUsage(msg: Message, conversation?: Conversation) {
     promptTokens,
     completionTokens,
     totalTokens: promptTokens + completionTokens,
-    // 上游回报过的缓存命中数是真实值,保留(Kimi 场景 cache_read 正常回报);缓存写入量
-    // 同为上游真实回报,一并保留(C2 预热判定的数据源,估算不应抹掉它)。
+    // 上游回报过的缓存命中数是真实值,保留(Kimi 场景 cache_read 正常回报)。
     cachedTokens: usable ? Number(existing.cachedTokens ?? 0) : 0,
-    ...(usable && Number(existing.cacheWriteTokens ?? 0) > 0 ? { cacheWriteTokens: Number(existing.cacheWriteTokens) } : {}),
     // 只要有估算成分就标 estimated(统计页照旧排除),不冒充全真实。
     estimated: true,
     // 估算只兜 token;骨架已累计的纯生成耗时是真实测量值,保留(速度=估算token/真实时长)。

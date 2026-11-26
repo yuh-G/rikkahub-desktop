@@ -30,12 +30,8 @@ export async function bootstrap(): Promise<void> {
   // 2) 代理拦截器:必须在首次出站 fetch 之前安装,否则首个请求会触发 Bun 的 env 快照
   //    锁定,之后改代理不生效。就绪前 /api 全部 503,不会有业务出站请求先行。
   installProxyFetchInterceptor(() => state.settings.proxyConfig);
-  // 2b) 工作区 LLM 日志壳(日志问题 1)。T3 起 pi 的请求日志改走 LLM 请求通道中间件
-  //     (runner 的 streamFunction 包装注入组装点下发的通道),不再依赖本壳。**本壳保留仅为
-  //     pi 的 google 轨**:pi 的 google 适配器拒收自定义 fetch(§2.3 P5),该轨请求不经
-  //     通道,靠本壳(ALS + origin)补记日志以保住用户排障面。其余协议经通道记日志,与本
-  //     壳零交集(壳只在 pi google 轨的 ALS 内生效,其余上下文直通)。
-  //     拆除条件:上游支持注入 fetch 后,连同 runner 的 runWithProviderLog 一并删除。
+  // 2b) 工作区 LLM 日志壳(日志问题 1):包在代理拦截器外层(后安装者先执行),pi SDK 内部的
+  //     LLM fetch 经 AsyncLocalStorage 上下文记入统一日志管线,与聊天引擎同一套 addLog。
   installLlmRequestLogInterceptor();
   // R1-7:系统代理探测(reg query/gsettings)已全异步化,拦截器 per-request 只读缓存。
   // 这里预热一次,保证首个业务出站请求就能拿到正确的系统代理(之后 TTL 过期走

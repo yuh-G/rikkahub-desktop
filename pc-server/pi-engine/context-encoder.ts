@@ -10,12 +10,12 @@
 // 富化与保真的接缝(P8/P9):模板渲染会改变文本长度,fidelity 注解的 len 按原始 parts
 // 记录——takeText 的 charOffset + len > full.length 判定会让整行自动退化 legacy,
 // 剥 thinking 后重放。这是设计内行为(编辑即退化),不是缺陷。P9 起合成消息(提醒/
-// 注入)随富化全序列灌进本编码器(pi-engine/assembly 把 EnrichResult.messages 整列传入,
+// 注入)随富化全序列灌进本编码器(orchestrator 把 EnrichResult.messages 整列传入,
 // syntheticIds 标出合成行):它们只有 USER/ASSISTANT 两种 role,现有路径全覆盖
 // (USER→encodeUser,ASSISTANT 无注解→legacy),零特判;但 synthetic 行不进
 // entryIdsByMessageId(压缩切点反查按 DB 消息 id 说话)也不进 degradedMessageIds
 // (legacy 是合成行唯一可走的路径,非"用户编辑过")。合成行恒在压缩切点之后——
-// 富化层的 windowStartMessageId 窗口锚保证(pi-engine/assembly 以 effectiveEngineCompaction
+// 富化层的 windowStartMessageId 窗口锚保证(orchestrator 以 effectiveEngineCompaction
 // 的切点为锚),永不进被 appendCompaction 摘要吸收的旧历史。
 //
 // 确定性=缓存稳定性(§4.8 硬约束):同一历史两次编码逐字节一致(单测锁定)。所有输入
@@ -44,7 +44,7 @@
 //   (provider 拒绝无结果的调用)。
 
 import type { SessionManager } from "../../pi/packages/coding-agent/src/core/session-manager.ts";
-import type { EngineCompactionRecord, JsonValue, Message, MessagePart, Model, ToolOutputEntry } from "../foundation/types";
+import type { JsonValue, Message, MessagePart, Model, ToolOutputEntry } from "../foundation/types";
 import type {
   AssistantMessage,
   ImageContent,
@@ -401,6 +401,17 @@ function encodesToEntries(message: Message, model: Model): boolean {
 
 // ----- 主入口 -----
 
+/** DB 压缩记录(conversation 级 engineCompactions 元素)。压缩记录是引擎中性的会话级
+ *  状态(T3 泛化:压缩是引擎无关能力,任何 run-and-suspend 引擎都可压缩,结构不再绑死
+ *  pi)。 */
+export interface EngineCompactionRecord {
+  /** 切点:从这条消息(含)起保留原文,之前的历史被 summary 取代。 */
+  cutMessageId: string;
+  summary: string;
+  tokensBefore: number;
+  createdAt?: string;
+}
+
 export interface PiHistoryEncodeResult {
   /** DB messageId → 灌注生成的 pi entry id 列表(压缩切点映射用;合成行不在内)。 */
   entryIdsByMessageId: Map<string, string[]>;
@@ -445,7 +456,7 @@ export function seedPiSessionFromHistory(options: {
     }
     // SYSTEM 行不进引擎上下文:工作区会话的 system 面由 resources(系统提示词/appendSystemPrompt)全权承载
     // 合成行不进切点映射:id 非 DB id,压缩切点若经外收拢落上来,反查 miss 由
-    // captureRoundCompactions 的 null 路径兜底(conversations/engine-compactions 按尾消息收拢,现有语义)。
+    // captureRoundCompactions 的 null 路径兜底(orchestrator 按尾消息收拢,现有语义)。
     if (entryIds.length) {
       if (firstSeededEntryId === null) firstSeededEntryId = entryIds[0];
       if (!synthetic) entryIdsByMessageId.set(message.id, entryIds);

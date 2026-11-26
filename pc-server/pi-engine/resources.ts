@@ -171,9 +171,6 @@ export async function createPiSessionResources(options: {
   // 而我们的引擎上下文每轮由 context-encoder 从 SQLite 原图重建——本轮「缩放图+说明」
   // 下轮「原图无说明」,模型前后所见不一致且该轮缓存失效。关闭后两轮逐字节一致
   // (代价:工具结果图片也不缩放,与我们聊天引擎的图片直发口径对齐)。
-  // cacheWarming:"off"(D2/C2):预热由宿主级服务接管(inference-engine/cache-warming,
-  // 经 LLM 请求通道的 cacheWarmCaptureMiddleware 捕获、策略单源门控、多引擎统一)——
-  // pi 自带的 CacheWarmer 关闭,防双热。
   const settingsManager = SettingsManager.inMemory(
     {
       compaction: {
@@ -182,7 +179,6 @@ export async function createPiSessionResources(options: {
       },
       thinkingBudgets: { ...PI_THINKING_BUDGETS },
       images: { autoResize: false },
-      cacheWarming: "off",
     },
     { projectTrusted: false },
   );

@@ -1,22 +1,20 @@
-// pi-engine/llm-request-log.ts — pi google 轨的 LLM 请求日志**兜底壳**。
+// pi-engine/llm-request-log.ts — 工作区 LLM 请求接入统一日志管线(日志问题 1)。
 //
-// 背景:pi 的 google-generative-ai / google-vertex 适配器拒收自定义 fetch(§2.3 P5),
-// 其请求不经宿主 LLM 请求通道(inference-engine/llm-transport),故无法用通道中间件记日志。
-// 本文件用一层**窄**全局 fetch 壳 + AsyncLocalStorage 圈定「这条请求属于 pi 的哪个 google
-// provider」来补记,保住用户的排障面。**只记日志、不预热**——预热对 google 无意义(官方
-// Anthropic 端点专属),且本壳的存在只是为了日志不降级。
+// 聊天引擎的每条 LLM fetch 在调用点 addLog(inference-engine/providers.ts);pi 引擎的
+// fetch 发生在 pi SDK 内部(openai-completions/anthropic-messages 等),零补丁原则不改
+// pi——在全局 fetch 外再包一层"日志壳":runner 以 AsyncLocalStorage 圈定"本次生成的
+// LLM 目标 origin",壳内只记录打到该 origin 的请求。精准性依据:
+//   - 工具执行(搜索/抓取/MCP)虽在同一异步树内,但打的是别家主机,且各自管线已有
+//     addLog(kind: search:*/mcp:*)——origin 不匹配即透传,零双记。
+//   - 聊天引擎的 fetch 不在本 ALS 上下文内,不受影响(它有自己的调用点日志)。
 //
-// 拆除条件:pi 上游支持注入 fetch 后,删除本文件 + bootstrap 的安装调用 + runner 的
-// runWithProviderLog(CLAUDE.md pi 维护手册「清除冗余」条目已登记)。
-//
-// 与主路径的关系:非 google 协议的 pi 请求、以及未来所有进程内引擎的请求,都经请求通道
-// 的 requestLogMiddleware 记日志(inference-engine/request-log)——那条路无全局壳、无 ALS。
-// 本壳与它共用 recordRequest(记录语义单点),故同一份日志口径。
-//
-// 安装顺序:在 installProxyFetchInterceptor 之后安装(包外层),计时覆盖代理与重试。
+// 安装顺序:在 installProxyFetchInterceptor 之后安装(包外层),计时覆盖代理与重试,
+// 记录端到端时长。流式响应口径:status/headers 到手即记(时长=响应头时间),
+// responseBody 不读(SSE 流由 pi 消费,tee 全量会翻倍内存);非 2xx 时 clone 读文本
+// (错误响应体小且非流式)。凭据脱敏由 addLog 入口统一负责(6-1:url/headers 打码)。
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { recordRequest } from "../inference-engine/request-log";
+import { addLog } from "../api/logs";
 
 export type LlmLogContext = {
   providerId: string;
@@ -28,7 +26,7 @@ export type LlmLogContext = {
 
 const als = new AsyncLocalStorage<LlmLogContext>();
 
-/** runner 侧入口:把一次生成(prompt/compact)包进日志上下文(仅 google 轨调用)。 */
+/** runner 侧入口:把一次生成(prompt/compact)包进日志上下文。 */
 export function runWithLlmRequestLog<T>(context: LlmLogContext | null, fn: () => T): T {
   if (!context) return fn();
   return als.run(context, fn);
@@ -43,11 +41,11 @@ export function llmLogContextFor(provider: { id: string; name: string; baseUrl: 
   }
 }
 
+const RESPONSE_BODY_LIMIT = 2000;
+
 let installed = false;
 
-/** 安装 pi google 轨的 LLM 日志壳(幂等)。必须晚于 installProxyFetchInterceptor。
- *  仅当请求处于本壳的 ALS 上下文内、且 URL 以该 provider 的 origin 开头时才记
- *  (ALS 圈定「属于 pi google 轨的哪次生成」,origin 圈定「确实打到该端点」)。 */
+/** 安装工作区 LLM 日志壳(幂等)。必须晚于 installProxyFetchInterceptor。 */
 export function installLlmRequestLogInterceptor(): void {
   if (installed) return;
   installed = true;
@@ -57,11 +55,49 @@ export function installLlmRequestLogInterceptor(): void {
     if (!ctx) return inner(input, init);
     const target = typeof input === "string" ? input : input instanceof URL ? input.href : input instanceof Request ? input.url : "";
     if (!target.startsWith(ctx.origin)) return inner(input, init);
+    const started = Date.now();
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
     const requestBody = typeof init?.body === "string" ? init.body : undefined;
-    const started = Date.now();
     const promise = inner(input, init);
-    recordRequest(ctx, target, method, requestBody, started, promise);
+    void promise.then(
+      async (response) => {
+        let errorBody: string | undefined;
+        if (!response.ok) {
+          try {
+            errorBody = (await response.clone().text()).slice(0, RESPONSE_BODY_LIMIT);
+          } catch {
+            // 读失败不影响日志主体。
+          }
+        }
+        addLog({
+          providerId: ctx.providerId,
+          providerName: ctx.providerName,
+          url: target,
+          ok: response.ok,
+          status: response.status,
+          kind: "provider:agent",
+          durationMs: Date.now() - started,
+          method,
+          requestBody,
+          responseHeaders: Object.fromEntries(response.headers.entries()),
+          ...(errorBody !== undefined ? { responseBody: errorBody, error: errorBody } : {}),
+        });
+      },
+      (err: unknown) => {
+        addLog({
+          providerId: ctx.providerId,
+          providerName: ctx.providerName,
+          url: target,
+          ok: false,
+          status: 0,
+          kind: "provider:agent",
+          durationMs: Date.now() - started,
+          method,
+          requestBody,
+          error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+        });
+      },
+    );
     return promise;
   } as typeof fetch;
 }
