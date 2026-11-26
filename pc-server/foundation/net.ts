@@ -130,16 +130,18 @@ export function resetSystemProxyCacheForTests(): void {
 export function composeProxyUrl(base: string, username: string, password: string): string {
   const trimmed = base.trim();
   if (!trimmed) return "";
-  if (!username && !password) return trimmed;
+  // 设置页允许只填「主机:端口」。Bun fetch 的 proxy 选项、node:http 的代理环境变量都要求带协议,不补就整条通道失败
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  if (!username && !password) return withScheme;
   try {
-    const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`);
+    const url = new URL(withScheme);
     // The WHATWG URL setter encodes the value itself — don't pre-encode or we end up
     // double-escaping characters like "@" in `user@example.com` into "user%2540example.com".
     if (username) url.username = username;
     if (password) url.password = password;
     return url.toString();
   } catch {
-    return trimmed;
+    return withScheme;
   }
 }
 
@@ -187,7 +189,8 @@ export function applyEffectiveProxy(cfg: ProxyConfig) {
 
 // bypassRules 匹配（逻辑移植自 opencode proxy-from-env 的 shouldProxy + kelivo CIDR）。
 // localhost/127.0.0.1/::1 永远 bypass（硬编码，即使没配 rules）；用户 rules 支持精确域名 /
-// 通配（*.example.com / .example.com）/ host:port 端口限定 / IPv4 CIDR 网段（10.0.0.0/8）。
+// 通配（*.example.com / .example.com）/ host:port 端口限定 / IPv4 CIDR 网段（10.0.0.0/8）/
+// IPv6 字面量（::1，带端口写成 [::1]:8080）。
 // CIDR 仅当 target 是 IP 字面量时生效（域名请求时拿到的是域名不是 IP，CIDR 没法判断）。
 export function shouldBypassProxy(targetUrl: string, userRules: string): boolean {
   let hostname: string;
@@ -203,9 +206,20 @@ export function shouldBypassProxy(targetUrl: string, userRules: string): boolean
   for (const rule of noProxy.split(/[,\s]/)) {
     const trimmed = rule.trim();
     if (!trimmed) continue;
-    const parsed = trimmed.match(/^(.+):(\d+)$/);
-    const rh = parsed ? parsed[1] : trimmed;
-    const rp = parsed ? parseInt(parsed[2], 10) : 0;
+    let rh = trimmed;
+    let rp = 0;
+    const bracketed = trimmed.match(/^\[([^\]]+)\](?::(\d+))?$/);
+    if (bracketed) {
+      rh = bracketed[1];
+      rp = bracketed[2] ? parseInt(bracketed[2], 10) : 0;
+    } else if (!/:[^:]*:/.test(trimmed)) {
+      // 不止一个冒号的裸条目是 IPv6 字面量,末段不是端口(「::1」按 host:port 拆会变成主机「:」端口 1)
+      const parsed = trimmed.match(/^(.+):(\d+)$/);
+      if (parsed) {
+        rh = parsed[1];
+        rp = parseInt(parsed[2], 10);
+      }
+    }
     if (rp && rp !== port) continue; // 端口限定的规则，端口不匹配跳过
     if (rh === "*") return true; // 全 bypass
     if (rh.includes("/")) {
