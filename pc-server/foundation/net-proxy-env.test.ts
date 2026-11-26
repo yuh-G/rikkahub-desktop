@@ -138,6 +138,26 @@ describe("syncProxyEnvToProcess:引擎宿主把生效代理镜像进环境变量
     expect(process.env.HTTPS_PROXY).toBe("http://127.0.0.1:7890");
     expect(syncProxyEnvToProcess(env)).toBeUndefined();
     expect(proxyEnv()).toEqual(asSeen({ HTTPS_PROXY: "http://docker-proxy:3128", NO_PROXY: "internal.svc" }));
+    // 容器里切「强制直连」:docker 注入的也清掉,子进程与 pi 的 WebSocket 才是真直连;再切回 env 仍能恢复
+    syncProxyEnvToProcess(direct);
+    expect(proxyEnv()).toEqual({});
+    syncProxyEnvToProcess(env);
+    expect(proxyEnv()).toEqual(asSeen({ HTTPS_PROXY: "http://docker-proxy:3128", NO_PROXY: "internal.svc" }));
+  });
+
+  test("env 模式:环境里有代理变量时 node:http / node:https 也换上按它走的 Agent,没有就不换", () => {
+    const httpAgent = http.globalAgent;
+    const httpsAgent = https.globalAgent;
+    const env = { ...direct, mode: "env" } as ProxyConfig;
+    syncProxyEnvToProcess(env);
+    expect(http.globalAgent).toBe(httpAgent);
+    expect(https.globalAgent).toBe(httpsAgent);
+    resetProxyEnvMirrorForTests();
+    process.env.HTTPS_PROXY = "http://docker-proxy:3128";
+    syncProxyEnvToProcess(env);
+    expect(https.globalAgent).not.toBe(httpsAgent);
+    syncProxyEnvToProcess(direct);
+    expect(https.globalAgent).toBe(httpsAgent);
   });
 
   test("node:http / node:https 的全局 Agent:有代理时两个都换,清空后还原成原来的", () => {

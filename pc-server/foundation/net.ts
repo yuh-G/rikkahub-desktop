@@ -376,8 +376,8 @@ export function installProxyFetchInterceptor(getProxyConfig: () => ProxyConfig):
 // 只给引擎宿主进程用:主程序没有这类通道,保持启动删净(方案 D-PR2)。代价(方案 D-PR5):代理带账号密码时,模型执行的
 // 命令能从环境变量里看到它;NO_PROXY 由各工具按自己的口径解释;已经在跑的子进程不跟着变。
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"] as const;
-// 第一次镜像前环境里原有的代理变量。桌面上装壳时已删净,全是空;容器里是 docker 注入的,env 模式的事实源。清空时恢复成
-// 这份而不是一律删光:容器里 manual→env 来回切不能把 docker 的值弄丢。
+// 第一次镜像前环境里原有的代理变量。桌面上装壳时已删净,全是空;容器里是 docker 注入的,env 模式的事实源。切回 env 模式时
+// 恢复成这份:容器里 manual→env 来回切不能把 docker 的值弄丢。其余模式先全部删掉再按设置写。
 let inheritedProxyEnv: Partial<Record<(typeof PROXY_ENV_KEYS)[number], string>> | null = null;
 let restoreGlobalProxyAgents: (() => void) | null = null;
 
@@ -386,17 +386,22 @@ export function syncProxyEnvToProcess(cfg: ProxyConfig): string | undefined {
   inheritedProxyEnv ??= Object.fromEntries(
     PROXY_ENV_KEYS.flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]])),
   );
-  for (const key of PROXY_ENV_KEYS) {
-    const value = inheritedProxyEnv[key];
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
   // setGlobalProxyFromEnv 在构造 Agent 时读一次环境,换配置前先还原上一次的
   restoreGlobalProxyAgents?.();
   restoreGlobalProxyAgents = null;
-  if ((cfg?.mode ?? "auto") === "env") return undefined;
+  const envMode = (cfg?.mode ?? "auto") === "env";
+  for (const key of PROXY_ENV_KEYS) {
+    const value = envMode ? inheritedProxyEnv[key] : undefined;
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  if (envMode) {
+    // 环境变量本身就是事实源:fetch、子进程、pi 的 WebSocket 都自己读它,只有 node:http 要换上 Agent 才认
+    useEnvProxyForNodeHttp();
+    return undefined;
+  }
   const { url } = resolveEffectiveProxy(cfg);
-  if (!url) return undefined;
+  if (!url) return undefined; // 直连:环境里不留任何代理变量(容器注入的也不留,否则子进程会绕过「直连」)
 
   for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const) process.env[key] = url;
   delete process.env.ALL_PROXY;
@@ -404,11 +409,16 @@ export function syncProxyEnvToProcess(cfg: ProxyConfig): string | undefined {
   // 只用逗号:curl / git / pi 不认空白分隔
   const rules = (cfg?.bypassRules ?? "").split(/[,\s]+/).filter(Boolean);
   process.env.NO_PROXY = process.env.no_proxy = ["localhost", "127.0.0.1", "::1", ...rules].join(",");
+  useEnvProxyForNodeHttp();
+  return url;
+}
 
+/** 给 node:http / node:https 换上按当前环境变量走代理的全局 Agent(环境里没有代理变量时不换),记下还原函数。 */
+function useEnvProxyForNodeHttp(): void {
   const setGlobal = (http as { setGlobalProxyFromEnv?: (env: NodeJS.ProcessEnv) => () => void }).setGlobalProxyFromEnv;
   if (typeof setGlobal !== "function") {
     reportError("network", "info", "运行时缺 http.setGlobalProxyFromEnv,插件经 node:http 的请求不走代理");
-    return url;
+    return;
   }
   try {
     restoreGlobalProxyAgents = setGlobal(process.env);
@@ -416,7 +426,6 @@ export function syncProxyEnvToProcess(cfg: ProxyConfig): string | undefined {
     // 地址 fetch 认、node:http 不认(ERR_PROXY_INVALID_CONFIG):只有 node:http 这条通道直连,其余照常
     reportError("network", "warn", "代理地址不被 node:http 接受,插件经 node:http 的请求将直连", err);
   }
-  return url;
 }
 
 /** 测试用:忘掉第一次镜像前的环境快照、还原全局 Agent,下一次调用重新拍快照。 */
