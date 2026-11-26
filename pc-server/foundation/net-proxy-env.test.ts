@@ -1,7 +1,10 @@
-// 代理地址的解析与「不走代理」名单的判定(foundation/net.ts),纯函数,不联网。
-import { describe, expect, test } from "bun:test";
+// 代理地址的解析、「不走代理」名单的判定、引擎宿主把生效代理镜像进环境变量(foundation/net.ts)。不联网。
+import http from "node:http";
+import https from "node:https";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { composeProxyUrl, resolveEffectiveProxy, shouldBypassProxy } from "./net";
+import { clearAppErrors, recentAppErrors } from "../observability/app-errors";
+import { composeProxyUrl, resetProxyEnvMirrorForTests, resolveEffectiveProxy, shouldBypassProxy, syncProxyEnvToProcess } from "./net";
 import type { ProxyConfig } from "./types";
 
 const manual = (url: string, extra: Partial<ProxyConfig> = {}): ProxyConfig =>
@@ -65,5 +68,96 @@ describe("shouldBypassProxy", () => {
   });
   test("解析不出的地址不豁免", () => {
     expect(shouldBypassProxy("not a url", "*")).toBe(false);
+  });
+});
+
+describe("syncProxyEnvToProcess:引擎宿主把生效代理镜像进环境变量", () => {
+  const KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"] as const;
+  const saved = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
+  const proxyEnv = () => Object.fromEntries(KEYS.flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]])));
+  // Windows 的环境变量不分大小写:写 HTTPS_PROXY 后 https_proxy 也读得到
+  const asSeen = (expected: Record<string, string>) =>
+    process.platform === "win32"
+      ? Object.fromEntries(Object.entries(expected).flatMap(([key, value]) => [[key, value], [key.toLowerCase(), value]]))
+      : expected;
+  const clearKeys = () => {
+    for (const key of KEYS) delete process.env[key];
+  };
+  const direct = { mode: "direct", url: "", username: "", password: "", bypassRules: "", userAgent: "" } as ProxyConfig;
+
+  beforeEach(() => {
+    resetProxyEnvMirrorForTests();
+    clearKeys();
+    clearAppErrors();
+  });
+  afterEach(() => {
+    resetProxyEnvMirrorForTests();
+    clearKeys();
+  });
+  afterAll(() => {
+    for (const key of KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  test("手动代理:四个代理变量写同一地址,NO_PROXY 是回环三项 + 用户名单(只用逗号),不留 ALL_PROXY", () => {
+    expect(syncProxyEnvToProcess(manual("127.0.0.1:7890", { username: "u", password: "p@ss", bypassRules: "a.corp  b.corp,\n10.0.0.0/8" })))
+      .toBe("http://u:p%40ss@127.0.0.1:7890/");
+    const url = "http://u:p%40ss@127.0.0.1:7890/";
+    const noProxy = "localhost,127.0.0.1,::1,a.corp,b.corp,10.0.0.0/8";
+    expect(proxyEnv()).toEqual({ HTTP_PROXY: url, HTTPS_PROXY: url, http_proxy: url, https_proxy: url, NO_PROXY: noProxy, no_proxy: noProxy });
+  });
+
+  test("切到直连或手动地址留空:先写过的全部清掉", () => {
+    syncProxyEnvToProcess(manual("http://127.0.0.1:7890"));
+    expect(syncProxyEnvToProcess(direct)).toBeUndefined();
+    expect(proxyEnv()).toEqual({});
+    syncProxyEnvToProcess(manual("http://127.0.0.1:7890"));
+    expect(syncProxyEnvToProcess(manual(""))).toBeUndefined();
+    expect(proxyEnv()).toEqual({});
+  });
+
+  test("同值连调幂等,换值覆盖", () => {
+    syncProxyEnvToProcess(manual("http://127.0.0.1:7890"));
+    const first = proxyEnv();
+    syncProxyEnvToProcess(manual("http://127.0.0.1:7890"));
+    expect(proxyEnv()).toEqual(first);
+    syncProxyEnvToProcess(manual("http://127.0.0.1:7891"));
+    expect(process.env.HTTPS_PROXY).toBe("http://127.0.0.1:7891");
+    expect(process.env.http_proxy).toBe("http://127.0.0.1:7891");
+  });
+
+  test("env 模式(容器)不写;镜像前原有的变量是事实源,manual 覆盖后切回 env 恢复原值", () => {
+    process.env.HTTPS_PROXY = "http://docker-proxy:3128";
+    process.env.NO_PROXY = "internal.svc";
+    const env = { ...direct, mode: "env" } as ProxyConfig;
+    expect(syncProxyEnvToProcess(env)).toBeUndefined();
+    expect(proxyEnv()).toEqual(asSeen({ HTTPS_PROXY: "http://docker-proxy:3128", NO_PROXY: "internal.svc" }));
+    syncProxyEnvToProcess(manual("http://127.0.0.1:7890"));
+    expect(process.env.HTTPS_PROXY).toBe("http://127.0.0.1:7890");
+    expect(syncProxyEnvToProcess(env)).toBeUndefined();
+    expect(proxyEnv()).toEqual(asSeen({ HTTPS_PROXY: "http://docker-proxy:3128", NO_PROXY: "internal.svc" }));
+  });
+
+  test("node:http / node:https 的全局 Agent:有代理时两个都换,清空后还原成原来的", () => {
+    const httpAgent = http.globalAgent;
+    const httpsAgent = https.globalAgent;
+    syncProxyEnvToProcess(manual("http://127.0.0.1:7890"));
+    expect(http.globalAgent).not.toBe(httpAgent);
+    expect(https.globalAgent).not.toBe(httpsAgent);
+    syncProxyEnvToProcess(manual("http://127.0.0.1:7891"));
+    expect(http.globalAgent).not.toBe(httpAgent);
+    syncProxyEnvToProcess(direct);
+    expect(http.globalAgent).toBe(httpAgent);
+    expect(https.globalAgent).toBe(httpsAgent);
+  });
+
+  test("node:http 不接受的地址:不抛,环境变量照写,错误中心记一条 warn", () => {
+    const httpAgent = http.globalAgent;
+    expect(syncProxyEnvToProcess(manual("http://127.0.0.1:99999"))).toBe("http://127.0.0.1:99999");
+    expect(process.env.HTTPS_PROXY).toBe("http://127.0.0.1:99999");
+    expect(http.globalAgent).toBe(httpAgent);
+    expect(recentAppErrors().filter((entry) => entry.domain === "network" && entry.severity === "warn").length).toBe(1);
   });
 });

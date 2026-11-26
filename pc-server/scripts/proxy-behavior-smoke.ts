@@ -17,7 +17,16 @@
 //   C. fetch 网络错误分类正则是否仍命中(classifyProxyError):
 //      fetch 一个必死的本地端口触发 ECONNREFUSED,确认错误形态(code/message)
 //      仍被 net.ts 的正则捕获,友好提示照常产出。
-import { installProxyFetchInterceptor, classifyProxyError } from "../foundation/net";
+//
+//   D. 壳统一注入 timeout:0(禁用 Bun 300s socket 空闲定时器),显式 timeout 被尊重。
+//
+//   E. 引擎宿主把生效代理镜像进环境变量之后:壳仍是终局(直连 / 名单豁免压住环境变量,走代理时不让环境变量里的
+//      NO_PROXY 二次判定),node:http / node:https 经换上的全局 Agent 走代理,清空后全部还原。
+import http from "node:http";
+import https from "node:https";
+import { createServer, type AddressInfo } from "node:net";
+
+import { installProxyFetchInterceptor, classifyProxyError, syncProxyEnvToProcess } from "../foundation/net";
 import { RUNNING_IN_CONTAINER } from "../foundation/platform";
 import type { ProxyConfig } from "../foundation/types";
 
@@ -140,6 +149,62 @@ try {
   explicitOk = false;
 }
 check("D2 显式 timeout:false 被尊重(拦截器不覆盖、不报错)", explicitOk);
+
+// ── E. 环境变量里有代理时壳仍是终局 + 引擎宿主的镜像(syncProxyEnvToProcess)────────────────
+// 引擎宿主把生效代理写进了环境变量;壳每个请求都把决定说全,环境变量抢不走。靶标同 B 节用 .invalid。
+const manualCfg = (extra: Partial<ProxyConfig> = {}) =>
+  ({ mode: "manual", url: proxyUrl, username: "", password: "", bypassRules: "", userAgent: "", ...extra }) as ProxyConfig;
+syncProxyEnvToProcess(manualCfg());
+check("E0 镜像后环境变量指向代理", process.env.HTTPS_PROXY === proxyUrl && process.env.HTTP_PROXY === proxyUrl, { HTTPS_PROXY: process.env.HTTPS_PROXY });
+cfg = directCfg;
+check("E1 环境变量有代理、设置是直连:请求不进代理(proxy:false 压住环境变量)", !(await wentThroughProxy("http://direct-probe.invalid/")));
+check("E1b 同上,输入是 Request 对象", !(await (async () => {
+  seenByProxy.length = 0;
+  await fetch(new Request("http://request-probe.invalid/"), { signal: AbortSignal.timeout(8000) }).catch(() => undefined);
+  return seenByProxy.length > 0;
+})()));
+check("E1c 直连回环真靶可达", (await statusOf(originUrl)) === 204);
+cfg = manualCfg({ bypassRules: "bypass-probe.invalid" });
+check("E2 名单豁免的目标不进代理(名单判定是终局)", !(await wentThroughProxy("http://bypass-probe.invalid/")));
+cfg = manualCfg();
+process.env.NO_PROXY = "corp-probe.invalid";
+check("E3 不豁免的目标进代理;环境变量 NO_PROXY 不再二次判定(Bun 会把裸域名连子域一起豁免)",
+  await wentThroughProxy("http://a.corp-probe.invalid/"));
+syncProxyEnvToProcess(manualCfg());
+cfg = manualCfg({ url: `127.0.0.1:${proxy.port}` });
+check("E5 手动地址不带 http:// 也能走代理", await wentThroughProxy("http://schemeless-probe.invalid/"));
+
+// E4:node:http / node:https 经镜像换上的全局 Agent 走代理。CONNECT 要原始 TCP 才看得见,另起一个只记首行的代理
+const rawSeen: string[] = [];
+const rawProxy = createServer((socket) => {
+  socket.once("data", (head) => {
+    rawSeen.push(head.toString("latin1").split("\r\n")[0] ?? "");
+    socket.end("HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n");
+  });
+  socket.on("error", () => socket.destroy());
+});
+await new Promise<void>((resolve) => rawProxy.listen(0, "127.0.0.1", resolve));
+const rawProxyUrl = `http://127.0.0.1:${(rawProxy.address() as AddressInfo).port}`;
+const nodeGet = (mod: typeof http | typeof https, url: string) =>
+  new Promise<string>((resolve) => {
+    const req = mod.get(url, (res) => {
+      res.resume();
+      resolve(`status ${res.statusCode}`);
+    });
+    req.on("error", (err: NodeJS.ErrnoException) => resolve(`error ${err.code ?? err.message}`));
+    req.setTimeout(8000, () => req.destroy(new Error("timeout")));
+  });
+syncProxyEnvToProcess(manualCfg({ url: rawProxyUrl }));
+await nodeGet(http, "http://node-http-probe.invalid/");
+await nodeGet(https, "https://node-https-probe.invalid/");
+check("E4 node:http 请求进代理(普通 GET)", rawSeen.some((line) => line.startsWith("GET http://node-http-probe.invalid/")), rawSeen);
+check("E4b node:https 请求进代理(CONNECT)", rawSeen.some((line) => line.startsWith("CONNECT node-https-probe.invalid:443")), rawSeen);
+syncProxyEnvToProcess(directCfg);
+rawSeen.length = 0;
+const afterClear = await nodeGet(http, "http://node-http-probe.invalid/");
+check("E4c 清空后 node:http 还原直连(DNS 失败,不进代理)", rawSeen.length === 0 && afterClear.startsWith("error"), { afterClear, rawSeen });
+check("E4d 清空后环境里没有代理变量", !process.env.HTTPS_PROXY && !process.env.HTTP_PROXY && !process.env.NO_PROXY);
+rawProxy.close();
 
 proxy.stop(true);
 origin.stop(true);
