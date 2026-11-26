@@ -12,7 +12,13 @@
 // 主程序断开(通道关闭、stdin 关闭)即退出:主程序没了,宿主进程留着只会成孤儿。主线程被插件占住时这条路走不通,
 // 另有一条独立线程盯主程序(parent-watch.ts);主程序判活问的 runtime.ping 由主线程答,答不了即是卡住了。
 
-import { installProxyFetchInterceptor, normalizeProxyConfig, setExternalSystemProxy, useExternalSystemProxy } from "../foundation/net";
+import {
+  installProxyFetchInterceptor,
+  normalizeProxyConfig,
+  setExternalSystemProxy,
+  syncProxyEnvToProcess,
+  useExternalSystemProxy,
+} from "../foundation/net";
 import type { ProxyConfig } from "../foundation/types";
 import type { AppErrorDto } from "../foundation/types/dto";
 import { initAppErrorBroadcast, installProcessSafetyNet, reportError } from "../observability/app-errors";
@@ -117,6 +123,10 @@ export async function runEngineHost(createDriver: (host: EngineHost) => EngineDr
   const early: AppErrorDto[] = [];
   let forward: ((entry: AppErrorDto) => void) | null = null;
   initAppErrorBroadcast((entry) => (forward ? forward(entry) : early.push(entry)));
+  // fetch 之外的通道(node:http、pi 的 WebSocket、插件与工作区命令起的子进程)只认代理环境变量:生效代理镜像进去,
+  // 配置或系统代理一变就重写。要在驱动创建、插件加载之前;装壳时已删掉继承来的变量,镜像从干净的环境开始
+  const mirrorProxyEnv = () => void syncProxyEnvToProcess(proxyConfig);
+  mirrorProxyEnv();
   const server = serveDriverOverRpc(
     (text) => channel.send(text),
     createDriver,
@@ -124,8 +134,12 @@ export async function runEngineHost(createDriver: (host: EngineHost) => EngineDr
     {
       [RUNTIME_PROXY_CONFIG]: (next: ProxyConfig) => {
         proxyConfig = normalizeProxyConfig(next);
+        mirrorProxyEnv();
       },
-      [RUNTIME_SYSTEM_PROXY]: (value: string | null) => setExternalSystemProxy(value ?? undefined),
+      [RUNTIME_SYSTEM_PROXY]: (value: string | null) => {
+        setExternalSystemProxy(value ?? undefined);
+        mirrorProxyEnv();
+      },
       [RUNTIME_PING]: () => true,
     },
   );

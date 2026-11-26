@@ -7,6 +7,7 @@
 //      inference-engine/approval-gate 登记等待)→ 批准 → 轮边界取补发 → 结束;
 //   2. 工具调用待审批时中止:父进程先收敛自己的审批等待(应用以生成信号做同一件事),再 driver.abort。
 // 另读一次插件登记了什么(inspectPlugin,P7.2.5):插件代码在宿主进程里执行,主程序只收到清单。
+// 宿主进程以手动代理启动:插件在加载时读到的代理环境变量就是宿主镜像的结果(syncProxyEnvToProcess),改设置推过去后跟着变。
 // 断言事件带轮次身份、补发进了下一次模型请求、模型请求日志与 pi 原生条目(P3.4)经 host 回到父进程。
 // 生产不走这条路;它证明「同进程 / 独立进程」只是部署选择(方案 D9)。
 
@@ -26,6 +27,7 @@ import type {
 } from "../engines/contract";
 import type { GenerationEvent } from "../inference-engine/events";
 import { pendingToolApprovalCount, resolveToolApproval, waitForToolApproval } from "../inference-engine/approval-gate";
+import type { ProxyConfig } from "../foundation/types";
 import { launchEngineHost } from "../subprocess-engine/host-launch";
 import { startFakeOpenAiSse } from "../test-utils/fake-openai-sse";
 
@@ -153,10 +155,15 @@ const childEnv: Record<string, string | undefined> = {
   NO_PROXY: "127.0.0.1,localhost",
 };
 for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) delete childEnv[key];
+// 记数的假代理:假供应商在回环上,宿主的壳对回环一律直连,整场下来它一个请求都不该收到
+let proxyHits = 0;
+const fakeProxy = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => (proxyHits++, new Response("via-proxy")) });
+const fakeProxyPort = fakeProxy.port ?? 0;
+const proxyAt = (port: number) => `http://127.0.0.1:${port}`;
+const manualProxy = (url: string): ProxyConfig => ({ mode: "manual", url, username: "", password: "", bypassRules: "smoke.invalid", userAgent: "" });
 const child = await launchEngineHost({
   host,
-  // 宿主进程装了与主程序同一层网络壳;回环请求本来就绕过代理,这里直连
-  proxyConfig: { mode: "direct", url: "", username: "", password: "", bypassRules: "", userAgent: "" },
+  proxyConfig: manualProxy(proxyAt(fakeProxyPort)),
   onAppError: (entry) => void hostErrors.push(`${entry.severity} ${entry.message}`),
   onProtocolError: (reason) => void protocolErrors.push(reason),
   env: childEnv,
@@ -218,6 +225,35 @@ try {
       inspection);
   }
 
+  // ── 宿主把生效代理镜像进环境变量:插件加载时读到的就是它,改设置推过去后跟着变 ───────────────────
+  {
+    const pluginFile = join(scratch, "env-peek-plugin.ts");
+    writeFileSync(pluginFile, `import https from "node:https";
+export default function (pi) {
+  const seen = {
+    hp: process.env.HTTPS_PROXY ?? null,
+    np: process.env.NO_PROXY ?? null,
+    agent: Boolean(https.globalAgent.options?.proxyEnv),
+  };
+  pi.registerCommand("env-peek", { description: JSON.stringify(seen), handler: async () => {} });
+}
+`);
+    const peek = async () => {
+      const inspection = await driver.inspectPlugin!({ plugin: { id: "dev:env-peek", path: pluginFile } });
+      const description = inspection.commands.find((item) => item.name === "env-peek")?.description ?? "{}";
+      return JSON.parse(description) as { hp: string | null; np: string | null; agent: boolean };
+    };
+    const atLaunch = await peek();
+    check("宿主镜像(启动行):插件读到 HTTPS_PROXY = 设置里的代理,NO_PROXY 含回环与用户名单,node:https 全局 Agent 已换",
+      atLaunch.hp === proxyAt(fakeProxyPort) && atLaunch.np === "localhost,127.0.0.1,::1,smoke.invalid" && atLaunch.agent, atLaunch);
+    child.pushProxyConfig(manualProxy(proxyAt(fakeProxyPort + 1)));
+    const afterChange = await peek();
+    check("宿主镜像(改设置推送):下一次加载读到新地址", afterChange.hp === proxyAt(fakeProxyPort + 1) && afterChange.agent, afterChange);
+    child.pushProxyConfig({ mode: "direct", url: "", username: "", password: "", bypassRules: "", userAgent: "" });
+    const afterDirect = await peek();
+    check("宿主镜像(切直连):代理环境变量清空,全局 Agent 还原", afterDirect.hp === null && afterDirect.np === null && !afterDirect.agent, afterDirect);
+  }
+
   // ── 第二轮:待审批时中止 ─────────────────────────────────────────────────────────
   {
     const turn: TurnRef = { conversationId: "conv-smoke-2", turnId: "turn-smoke-2" };
@@ -238,6 +274,7 @@ try {
 
   await driver.dispose();
   check("通道上没有协议问题", protocolErrors.length === 0, protocolErrors);
+  check("回环上的假供应商不经代理:假代理一个请求都没收到", proxyHits === 0, { proxyHits });
 } catch (err) {
   failures++;
   console.error(`FAIL  ${err instanceof Error ? err.message : String(err)}`);
@@ -246,6 +283,7 @@ try {
   const exit = await child.exited;
   check("关掉通道后宿主进程自己以 0 退出", exit.exitCode === 0, exit);
   await upstream.close();
+  fakeProxy.stop(true);
   rmSync(scratch, { recursive: true, force: true });
   if (failures > 0) {
     console.error(`宿主进程退出码 ${String(exit.exitCode ?? exit.signal)};转来的错误 ${JSON.stringify(hostErrors)};stderr 尾部:\n${exit.stderrTail}`);
