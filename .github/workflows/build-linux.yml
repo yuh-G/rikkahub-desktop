@@ -85,7 +85,7 @@ jobs:
         run: |
           bun install --frozen-lockfile
           mkdir -p /tmp/pkg/rikkahub-pc/web-ui/build
-          bun build --compile --target=bun-linux-x64 server.ts --outfile /tmp/pkg/rikkahub-pc/rikkahub-pc
+          bun build --compile --splitting --target=bun-linux-x64 server.ts --outfile /tmp/pkg/rikkahub-pc/rikkahub-pc
           chmod +x /tmp/pkg/rikkahub-pc/rikkahub-pc
 
       # ── 组装可运行目录并打包 tar.gz ──────────────────────────────────────

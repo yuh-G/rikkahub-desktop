@@ -95,7 +95,7 @@ RUN set -eux; \
       arm64) BUN_TARGET=bun-linux-arm64 ;; \
       *) echo "Unsupported TARGETARCH: $TARGETARCH"; exit 1 ;; \
     esac; \
-    bun build --compile --target="$BUN_TARGET" server.ts --outfile rikkahub-pc
+    bun build --compile --splitting --target="$BUN_TARGET" server.ts --outfile rikkahub-pc
 
 #  — Stage 2: Runtime —
 FROM gcr.io/distroless/base-debian12
